@@ -10,6 +10,15 @@ local RenderStepped = RunService.RenderStepped;
 local LocalPlayer = Players.LocalPlayer;
 local Mouse = LocalPlayer:GetMouse();
 
+local OldLibrary = getgenv().Library;
+if type(OldLibrary) == 'table' and OldLibrary.ScreenGui then
+    pcall(function()
+        if OldLibrary.Unload then OldLibrary:Unload(); end
+        OldLibrary.ScreenGui:Destroy();
+    end);
+    getgenv().Library = nil;
+end
+
 local ProtectGui = protectgui or (syn and syn.protect_gui) or (function() end);
 
 local ScreenGui = Instance.new('ScreenGui');
@@ -30,10 +39,10 @@ local Library = {
     HudRegistry = {};
 
     FontColor = Color3.fromRGB(255, 255, 255);
-    MainColor = Color3.fromRGB(28, 28, 28);
+    MainColor = Color3.fromRGB(24, 24, 24);
     BackgroundColor = Color3.fromRGB(20, 20, 20);
-    AccentColor = Color3.fromRGB(0, 85, 255);
-    OutlineColor = Color3.fromRGB(50, 50, 50);
+    AccentColor = Color3.fromRGB(71, 119, 182);
+    OutlineColor = Color3.fromRGB(31, 31, 31);
     RiskColor = Color3.fromRGB(255, 50, 50),
 
     Black = Color3.new(0, 0, 0);
@@ -49,17 +58,26 @@ local Library = {
 
     Toggled = false;
     WireframeDrag = true;
-    UseBlur = false;
-    BlurSize = 15;
+    UseBlur = true;
+    BlurSize = 24;
+    UseDarken = true;
+    DarkenAmount = 55;
 
     KeybindMode = 'All';
 
     NotifyConfig = {
-        Alignment = 'Left';
-        BarSide   = 'Left';
-        PositionX = 0;
-        PositionY = 40;
+        ClipDescendants  = false;
+        MaxHeight        = 200;
+        PosX             = 50;
+        PosY             = 60;
+        Transparency     = 60;
+        Alignment        = "Center";
+        BarSide          = "Bottom";
+        SortOrder        = "Time";
     };
+    NotifyQueue       = {};
+    ActiveNotifyCount = 0;
+    NotifyCounter     = 0;
 };
 
 Library.KeyPickerList = {};
@@ -70,22 +88,136 @@ Library.BlurEffect.Size = 0
 Library.BlurEffect.Enabled = false
 pcall(function() Library.BlurEffect.Parent = Lighting end)
 
+do
+    local OverlayGui = Instance.new("ScreenGui")
+    OverlayGui.Name = "LinoriaBlurOverlay"
+    OverlayGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    OverlayGui.DisplayOrder = -9999
+    ProtectGui(OverlayGui)
+    OverlayGui.Parent = CoreGui
+
+    Library.DarkOverlay = Instance.new("Frame")
+    Library.DarkOverlay.Name = "DarkOverlay"
+    Library.DarkOverlay.Size = UDim2.new(10, 0, 10, 0)
+    Library.DarkOverlay.Position = UDim2.new(-5, 0, -5, 0)
+    Library.DarkOverlay.BackgroundColor3 = Color3.new(0, 0, 0)
+    Library.DarkOverlay.BackgroundTransparency = 1
+    Library.DarkOverlay.BorderSizePixel = 0
+    Library.DarkOverlay.ZIndex = 1
+    Library.DarkOverlay.Parent = OverlayGui
+end
+
 function Library:UpdateBlur()
-    if Library.UseBlur then
-        if Library.Toggled then
-            Library.BlurEffect.Enabled = true
-            TweenService:Create(Library.BlurEffect, TweenInfo.new(0.2, Enum.EasingStyle.Linear), {Size = Library.BlurSize}):Play()
-        end
-    else
-        local tween = TweenService:Create(Library.BlurEffect, TweenInfo.new(0.2, Enum.EasingStyle.Linear), {Size = 0})
-        tween:Play()
-    
-        task.delay(0.2, function()
-            if not Library.UseBlur then
-                Library.BlurEffect.Enabled = false
-            end
-        end)
+    local open = Library.Toggled and Library.UseBlur;
+    local targetSize = open and Library.BlurSize or 0;
+
+    if open then
+        Library.BlurEffect.Enabled = true;
     end
+
+    Library.BlurEffect.Size = targetSize;
+
+    if Library.DarkOverlay then
+        local dark = Library.Toggled and Library.UseDarken;
+        Library.DarkOverlay.BackgroundTransparency = dark and (1 - (Library.DarkenAmount / 100)) or 1;
+    end
+
+    if not open then
+        Library.BlurEffect.Enabled = false;
+    end
+end
+
+function Library:SetBlur(Size)
+    Library.BlurSize = math.clamp(Size, 0, 56);
+    if Library.Toggled and Library.UseBlur then
+        Library.BlurEffect.Size = Library.BlurSize;
+    end
+end
+
+-- Call this with any Groupbox to add a blur toggle + size slider
+-- e.g. Library:AddBlurSlider(MyGroupbox)
+function Library:AddBlurSlider(Groupbox)
+    Groupbox:AddToggle('LinoriaUseBlur', {
+        Text    = 'Background Blur';
+        Default = Library.UseBlur;
+        Tooltip = 'Blur the background when the menu is open';
+        Callback = function(Value)
+            Library.UseBlur = Value;
+            Library:UpdateBlur();
+        end;
+    });
+    Groupbox:AddSlider('LinoriaBlurSize', {
+        Text     = 'Blur Amount';
+        Default  = Library.BlurSize;
+        Min      = 0;
+        Max      = 56;
+        Rounding = 0;
+        Callback = function(Value)
+            Library:SetBlur(Value);
+        end;
+    });
+end
+
+-- Call this with any Groupbox to add a darken toggle + amount slider
+-- e.g. Library:AddDarkenSlider(MyGroupbox)
+function Library:AddDarkenSlider(Groupbox)
+    Groupbox:AddToggle('LinoriaUseDarken', {
+        Text    = 'Background Darken';
+        Default = Library.UseDarken;
+        Tooltip = 'Darken the background when the menu is open';
+        Callback = function(Value)
+            Library.UseDarken = Value;
+            Library:UpdateBlur();
+        end;
+    });
+    Groupbox:AddSlider('LinoriaDarkenAmount', {
+        Text     = 'Darken Amount';
+        Default  = Library.DarkenAmount;
+        Min      = 0;
+        Max      = 100;
+        Rounding = 0;
+        Suffix   = '%';
+        Callback = function(Value)
+            Library.DarkenAmount = Value;
+            Library:UpdateBlur();
+        end;
+    });
+end
+
+-- Control keybind frame background transparency (0 = opaque, 1 = invisible)
+function Library:SetKeybindTransparency(Value)
+    Value = math.clamp(Value, 0, 1);
+    local Inner = Library.KeybindInner;
+    if Library.KeybindFrame then
+        Library.KeybindFrame.BackgroundTransparency = Value;
+        Library.KeybindFrame.BorderSizePixel = Value >= 1 and 0 or 1;
+        if not Inner then
+            Inner = Library.KeybindFrame:FindFirstChildOfClass('Frame');
+        end
+    end
+    if Inner then
+        Inner.BackgroundTransparency = Value;
+        Inner.BorderSizePixel = Value >= 1 and 0 or 1;
+    end
+    if Library.KeybindColorFrame then
+        Library.KeybindColorFrame.BackgroundTransparency = Value;
+    end
+end
+
+-- Call this with any Groupbox to add a keybind frame transparency slider
+-- e.g. Library:AddKeybindTransparencySlider(MyGroupbox)
+function Library:AddKeybindTransparencySlider(Groupbox)
+    Groupbox:AddSlider('LinoriaKeybindTransparency', {
+        Text     = 'Keybind Transparency';
+        Default  = 0;
+        Min      = 0;
+        Max      = 100;
+        Rounding = 0;
+        Suffix   = '%';
+        Callback = function(Value)
+            Library:SetKeybindTransparency(Value / 100);
+        end;
+    });
 end
 
 function Library:SetFontSize(Size)
@@ -180,7 +312,9 @@ function Library:Create(Class, Properties)
         _Instance = Instance.new(Class);
     end;
     for Property, Value in next, Properties do
-        _Instance[Property] = Value;
+        pcall(function()
+            _Instance[Property] = Value;
+        end);
     end;
 
     if _Instance:IsA("TextLabel") or _Instance:IsA("TextBox") or _Instance:IsA("TextButton") then
@@ -253,14 +387,15 @@ function Library:MakeDraggable(Instance, Cutoff, IsWindow)
                                 Size = Instance.Size,
                                 Position = Instance.Position,
                                 AnchorPoint = Instance.AnchorPoint,
-                                BackgroundTransparency = 1,
+                                BackgroundColor3 = Library.MainColor,
+                                BackgroundTransparency = 0.5,
                                 Active = false,
                                 ZIndex = 100000,
                                 Parent = ScreenGui
                             })
-
-                            Library:Create("UIStroke", {
-                                Color = Color3.fromRGB(255, 255, 255),
+                         
+                            local stroke = Library:Create("UIStroke", {
+                                Color = Library.AccentColor,
                                 Thickness = 1,
                                 ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
                                 Parent = Wireframe
@@ -297,103 +432,6 @@ function Library:MakeDraggable(Instance, Cutoff, IsWindow)
                 end
             end)
         end
-    end)
-end;
-
-function Library:MakeResizable(Instance, MinSize, MaxSize)
-    MinSize = MinSize or Vector2.new(400, 300)
-    MaxSize = MaxSize or Vector2.new(1400, 1000)
-
-    local Grip = Library:Create('TextButton', {
-        Name = 'ResizeGrip',
-        Text = '',
-        AutoButtonColor = false,
-        BackgroundTransparency = 1,
-        Size = UDim2.fromOffset(16, 16),
-        Position = UDim2.new(1, -4, 1, -4),
-        AnchorPoint = Vector2.new(1, 1),
-        ZIndex = 25,
-        Parent = Instance,
-    })
-
-    local GripIcon = Library:CreateLabel({
-        BackgroundTransparency = 1,
-        Size = UDim2.fromOffset(16, 16),
-        Position = UDim2.new(1, 0, 1, 0),
-        AnchorPoint = Vector2.new(1, 1),
-        Text = '◢',
-        TextColor3 = Library.OutlineColor,
-        TextSize = Library.FontSize + 2,
-        ZIndex = 26,
-        Parent = Grip,
-    })
-    Library:AddToRegistry(GripIcon, {
-        TextColor3 = 'OutlineColor',
-    })
-
-    Grip.InputBegan:Connect(function(Input)
-        if Input.UserInputType ~= Enum.UserInputType.MouseButton1
-            and Input.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-
-        local StartSize = Instance.Size
-        local DragStart = Input.Position
-        local HasMoved = false
-        local Wireframe = nil
-        local ChangedConn, EndedConn
-
-        ChangedConn = InputService.InputChanged:Connect(function(Change)
-            if Change.UserInputType ~= Enum.UserInputType.MouseMovement and Change ~= Input then
-                return
-            end
-
-            local Delta = Change.Position - DragStart
-            if Delta.Magnitude <= 2 then return end
-            HasMoved = true
-
-            local newW = math.clamp(StartSize.X.Offset + Delta.X, MinSize.X, MaxSize.X)
-            local newH = math.clamp(StartSize.Y.Offset + Delta.Y, MinSize.Y, MaxSize.Y)
-            local newSize = UDim2.fromOffset(newW, newH)
-
-            if Library.WireframeDrag then
-                if not Wireframe then
-                    Wireframe = Library:Create('Frame', {
-                        Size = Instance.Size,
-                        Position = Instance.Position,
-                        AnchorPoint = Instance.AnchorPoint,
-                        BackgroundTransparency = 1,
-                        Active = false,
-                        ZIndex = 100000,
-                        Parent = ScreenGui,
-                    })
-                    Library:Create('UIStroke', {
-                        Color = Color3.fromRGB(255, 255, 255),
-                        Thickness = 1,
-                        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-                        Parent = Wireframe,
-                    })
-                end
-                Wireframe.Size = newSize
-                Wireframe.Position = Instance.Position
-            else
-                Instance.Size = newSize
-            end
-        end)
-
-        EndedConn = InputService.InputEnded:Connect(function(EndInput)
-            if EndInput ~= Input and EndInput.UserInputType ~= Enum.UserInputType.Touch then
-                return
-            end
-
-            ChangedConn:Disconnect()
-            EndedConn:Disconnect()
-
-            if Library.WireframeDrag and HasMoved and Wireframe then
-                Instance.Size = Wireframe.Size
-                Wireframe:Destroy()
-            end
-        end)
     end)
 end;
 
@@ -518,6 +556,17 @@ function Library:GetDarkerColor(Color)
     return Color3.fromHSV(H, S, V / 1.5);
 end;
 
+local function fontScale(font)
+    if font == Enum.Font.Code then return 0.9 end;
+    if font == Enum.Font.RobotoMono then return 0.92 end;
+    if font == Enum.Font.GothamBold then return 0.95 end;
+    if font == Enum.Font.SciFi then return 0.84 end;
+    if font == Enum.Font.Arcade then return 0.78 end;
+    if font == Enum.Font.FredokaOne then return 0.86 end;
+    if font == Enum.Font.Cartoon then return 0.88 end;
+    return 1;
+end;
+
 Library.AccentColorDark = Library:GetDarkerColor(Library.AccentColor);
 
 function Library:AddToRegistry(Instance, Properties, IsHud)
@@ -584,6 +633,10 @@ function Library:Unload()
     
     if Library.BlurEffect then
         Library.BlurEffect:Destroy()
+    end
+
+    if Library.DarkOverlay and Library.DarkOverlay.Parent then
+        Library.DarkOverlay.Parent:Destroy()
     end
 
     ScreenGui:Destroy()
@@ -1452,57 +1505,131 @@ do
         end
 
         local Picking = false;
+        local LongPressTime = Info.LongPressTime or 0.55;
+        local TouchMoveThreshold = Info.TouchMoveThreshold or 10;
+
+        local function OpenModeSelect()
+            ModeSelectOuter.Visible = true;
+        end;
+
+        local function BeginPicking()
+            if Picking then
+                return;
+            end;
+
+            Picking = true;
+
+            DisplayLabel.Text = '';
+
+            local Break;
+            local Text = '';
+
+            task.spawn(function()
+                while (not Break) do
+                    if Text == '...' then
+                        Text = '';
+                    end;
+
+                    Text = Text .. '.';
+                    DisplayLabel.Text = Text;
+
+                    wait(0.4);
+                end;
+            end);
+
+            wait(0.2);
+
+            local Event;
+            Event = InputService.InputBegan:Connect(function(Input)
+                local Key;
+
+                if Input.UserInputType == Enum.UserInputType.Keyboard then
+                    Key = Input.KeyCode.Name;
+                elseif Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    Key = 'MB1';
+                elseif Input.UserInputType == Enum.UserInputType.MouseButton2 then
+                    Key = 'MB2';
+                elseif Input.UserInputType == Enum.UserInputType.Touch then
+                    Key = 'Touch';
+                end;
+
+                if not Key then
+                    return;
+                end;
+
+                Break = true;
+                Picking = false;
+
+                DisplayLabel.Text = Key;
+                KeyPicker.Value = Key;
+                Library:SafeCallback(KeyPicker.ChangedCallback, Input.KeyCode or Input.UserInputType)
+                Library:SafeCallback(KeyPicker.Changed, Input.KeyCode or Input.UserInputType)
+
+                Library:AttemptSave();
+                Event:Disconnect();
+            end);
+        end;
+
         PickOuter.InputBegan:Connect(function(Input)
-            if (Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch) and not Library:MouseIsOverOpenedFrame() then
-                Picking = true;
+            if Library:MouseIsOverOpenedFrame() then
+                return;
+            end;
 
-                DisplayLabel.Text = '';
+            if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                BeginPicking();
+            elseif Input.UserInputType == Enum.UserInputType.MouseButton2 then
+                OpenModeSelect();
+            elseif Input.UserInputType == Enum.UserInputType.Touch then
+                local StartPosition = Input.Position;
+                local TouchMoved = false;
+                local TouchEnded = false;
+                local LongPressed = false;
+                local ChangedConn;
+                local EndedConn;
 
-                local Break;
-                local Text = '';
+                ChangedConn = InputService.InputChanged:Connect(function(Change)
+                    if Change == Input then
+                        if (Change.Position - StartPosition).Magnitude > TouchMoveThreshold then
+                            TouchMoved = true;
+                        end;
+                    end;
+                end);
 
-                task.spawn(function()
-                    while (not Break) do
-                        if Text == '...' then
-                            Text = '';
+                EndedConn = InputService.InputEnded:Connect(function(EndInput)
+                    if EndInput == Input then
+                        TouchEnded = true;
+
+                        if ChangedConn then
+                            ChangedConn:Disconnect();
                         end;
 
-                        Text = Text .. '.';
-                        DisplayLabel.Text = Text;
+                        if EndedConn then
+                            EndedConn:Disconnect();
+                        end;
 
-                        wait(0.4);
+                        if (not LongPressed) and (not TouchMoved) then
+                            task.spawn(BeginPicking);
+                        end;
                     end;
                 end);
 
-                wait(0.2);
-
-                local Event;
-                Event = InputService.InputBegan:Connect(function(Input)
-                    local Key;
-
-                    if Input.UserInputType == Enum.UserInputType.Keyboard then
-                        Key = Input.KeyCode.Name;
-                    elseif Input.UserInputType == Enum.UserInputType.MouseButton1 then
-                        Key = 'MB1';
-                    elseif Input.UserInputType == Enum.UserInputType.MouseButton2 then
-                        Key = 'MB2';
-                    elseif Input.UserInputType == Enum.UserInputType.Touch then
-                        Key = 'Touch';
+                task.delay(LongPressTime, function()
+                    if TouchEnded or TouchMoved then
+                        return;
                     end;
 
-                    Break = true;
-                    Picking = false;
+                    LongPressed = true;
 
-                    DisplayLabel.Text = Key;
-                    KeyPicker.Value = Key;
-                    Library:SafeCallback(KeyPicker.ChangedCallback, Input.KeyCode or Input.UserInputType)
-                    Library:SafeCallback(KeyPicker.Changed, Input.KeyCode or Input.UserInputType)
+                    if ChangedConn then
+                        ChangedConn:Disconnect();
+                    end;
 
-                    Library:AttemptSave();
-                    Event:Disconnect();
+                    if EndedConn then
+                        EndedConn:Disconnect();
+                    end;
+
+                    OpenModeSelect();
                 end);
-            elseif Input.UserInputType == Enum.UserInputType.MouseButton2 and not Library:MouseIsOverOpenedFrame() then
-                ModeSelectOuter.Visible = true;
             end;
         end);
 
@@ -2887,46 +3014,58 @@ do
     end;
 end;
 do
+    Library.NotificationStack = {};
+
     Library.NotificationArea = Library:Create('Frame', {
-        BackgroundTransparency = 1;
-        Position = UDim2.new(0, Library.NotifyConfig.PositionX, 0, Library.NotifyConfig.PositionY);
-        Size = UDim2.new(0, 300, 1, -Library.NotifyConfig.PositionY);
-        ZIndex = 100;
-        Parent = ScreenGui;
+        BackgroundTransparency  = 1;
+        Position                = UDim2.new(0, 0, 0, 40);
+        Size                    = UDim2.new(0, 320, 1, -50);
+        ZIndex                  = 100;
+        Parent                  = ScreenGui;
     });
-    Library.NotifLayout = Library:Create('UIListLayout', {
-        Padding = UDim.new(0, 4);
-        FillDirection = Enum.FillDirection.Vertical;
-        SortOrder = Enum.SortOrder.LayoutOrder;
-        Parent = Library.NotificationArea;
+    Library:Create('UIListLayout', {
+        Padding        = UDim.new(0, 4);
+        FillDirection  = Enum.FillDirection.Vertical;
+        SortOrder      = Enum.SortOrder.LayoutOrder;
+        Parent         = Library.NotificationArea;
     });
-    local function Library_UpdateNotifAlignment()
-        local cfg = Library.NotifyConfig
-        local area = Library.NotificationArea
-        local layout = Library.NotifLayout
 
-        area.Position = UDim2.new(0, cfg.PositionX, 0, cfg.PositionY)
-        area.Size     = UDim2.new(0, 300, 1, -cfg.PositionY)
+    function Library:ConfigureNotifications(Cfg)
+        local C = Library.NotifyConfig;
+        for k, v in next, Cfg do C[k] = v end;
 
-        local align = cfg.Alignment or 'Left'
-        if align == 'Left' then
-            layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
-            area.AnchorPoint = Vector2.new(0, 0)
-        elseif align == 'Right' then
-            layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
-            area.AnchorPoint = Vector2.new(0, 0)
-        elseif align == 'Center' then
-            layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-            area.AnchorPoint = Vector2.new(0, 0)
-        end
-    end
-    Library.UpdateNotifAlignment = Library_UpdateNotifAlignment
-    Library_UpdateNotifAlignment()
+        local AnchorX = C.Alignment == "Left" and 0 or (C.Alignment == "Right" and 1 or 0.5);
+        local AnchorY = C.BarSide == "Top" and 0 or 1;
+        local VAlign  = C.BarSide == "Top" and Enum.VerticalAlignment.Top or Enum.VerticalAlignment.Bottom;
+        local HAlign  = C.Alignment == "Left" and Enum.HorizontalAlignment.Left or (C.Alignment == "Right" and Enum.HorizontalAlignment.Right or Enum.HorizontalAlignment.Center);
+
+        Library.NotificationArea.AnchorPoint        = Vector2.new(AnchorX, AnchorY);
+        Library.NotificationArea.Position           = UDim2.new(C.PosX / 100, 0, C.PosY / 100, 0);
+        Library.NotificationArea.ClipsDescendants   = C.ClipDescendants;
+        Library.NotificationArea.AutomaticSize      = Enum.AutomaticSize.XY;
+
+        local SizeConstraint = Library.NotificationArea:FindFirstChildOfClass('UISizeConstraint');
+        if C.ClipDescendants then
+            if not SizeConstraint then
+                SizeConstraint = Library:Create('UISizeConstraint', { Parent = Library.NotificationArea });
+            end;
+            SizeConstraint.MaxSize = Vector2.new(math.huge, C.MaxHeight);
+        elseif SizeConstraint then
+            SizeConstraint:Destroy();
+        end;
+
+        local Layout = Library.NotificationArea:FindFirstChildOfClass('UIListLayout');
+        if Layout then
+            Layout.VerticalAlignment    = VAlign;
+            Layout.HorizontalAlignment  = HAlign;
+        end;
+    end;
+
+    Library:ConfigureNotifications({});
 
     local WatermarkOuter = Library:Create('Frame', {
-        AnchorPoint = Vector2.new(0.5, 0);
         BorderColor3 = Color3.new(0, 0, 0);
-        Position = UDim2.new(0.5, 0, 0, 8);
+        Position = UDim2.new(0, 100, 0, -25);
         Size = UDim2.new(0, 213, 0, 20);
         ZIndex = 200;
         Visible = false;
@@ -3013,10 +3152,12 @@ do
     Library:AddToRegistry(ColorFrame, {
         BackgroundColor3 = 'AccentColor';
     }, true);
+    Library.KeybindInner = KeybindInner;
+    Library.KeybindColorFrame = ColorFrame;
     local KeybindLabel = Library:CreateLabel({
         Size = UDim2.new(1, 0, 0, 20);
-        Position = UDim2.fromOffset(5, 2),
-        TextXAlignment = Enum.TextXAlignment.Left,
+        Position = UDim2.new(0, 0, 0, 2);
+        TextXAlignment = Enum.TextXAlignment.Center,
 
         Text = 'Keybinds';
         ZIndex = 104;
@@ -3065,137 +3206,95 @@ end;
 
 function Library:SetWatermark(Text)
     local X, Y = Library:GetTextBounds(Text, Library.Font, Library.FontSize);
-    local posY = Library.Watermark.Position.Y
-    Library.Watermark.AnchorPoint = Vector2.new(0.5, 0)
     Library.Watermark.Size = UDim2.new(0, X + 15, 0, (Y * 1.5) + 3);
-    Library.Watermark.Position = UDim2.new(0.5, 0, posY.Scale, posY.Offset)
     Library:SetWatermarkVisibility(true)
 
     Library.WatermarkText.Text = Text;
 end;
 function Library:Notify(Text, Time)
-    local cfg     = Library.NotifyConfig
-    local barSide = cfg.BarSide   or 'Left'    
-    local align   = cfg.Alignment or 'Left'    
+    if not Text or Text == "" then return end;
+    table.insert(Library.NotifyQueue, { Text = Text, Time = Time });
+    Library:ProcessNotifyQueue();
+end;
 
-    local XSize, YSize = Library:GetTextBounds(Text, Library.Font, Library.FontSize)
-    YSize = YSize + 7
+function Library:ProcessNotifyQueue()
+    local C = Library.NotifyConfig;
+    local ItemHeight = 22 + 4;
+    while #Library.NotifyQueue > 0 do
+        if C.ClipDescendants and (Library.ActiveNotifyCount + 1) * ItemHeight > C.MaxHeight then break end;
+        local Item = table.remove(Library.NotifyQueue, 1);
+        Library:SpawnNotify(Item.Text, Item.Time);
+    end;
+end;
 
-    local BAR_THIN  = 3   
-    local BAR_THICK = 3   
-
-    local innerPosX  = (barSide == 'Left')   and 1 or 1
-    local innerPosY  = (barSide == 'Top')    and BAR_THICK or 1
-    local innerSizeW = (barSide == 'Left' or barSide == 'Right') and -2 or -2
-    local innerSizeH = (barSide == 'Top' or barSide == 'Bottom') and -(BAR_THICK + 1) or -2
-
-    local labelPosX  = (barSide == 'Left')  and BAR_THIN + 2 or 4
-    local labelSizeW = (barSide == 'Left' or barSide == 'Right') and -(BAR_THIN + 4) or -4
-
-    local outerAnchor = Vector2.new(0, 0)
-    local outerPosX   = 0
-    if align == 'Center' then
-        outerAnchor = Vector2.new(0.5, 0)
-        outerPosX   = 0  
-    elseif align == 'Right' then
-        outerAnchor = Vector2.new(1, 0)
-        outerPosX   = 0
-    end
-
-    local NotifyOuter = Library:Create('Frame', {
-        BackgroundTransparency = 1;
-        AnchorPoint = outerAnchor;
-        BorderColor3 = Color3.new(0, 0, 0);
-        Position     = (align == 'Center')
-            and UDim2.new(0.5, 0, 0, 0)
-            or  (align == 'Right' and UDim2.new(1, 0, 0, 0) or UDim2.new(0, 0, 0, 0));
-        Size = UDim2.new(0, 0, 0, YSize);
-        ClipsDescendants = true;
-        ZIndex = 100;
-        Parent = Library.NotificationArea;
+function Library:SpawnNotify(Text, Time)
+    local xw = (Library:GetTextBounds(Text, Library.CustomFontFace or Library.Font, 13) or 200);
+    local H = 22;
+    local NotifyTransparency = (Library.NotifyConfig.Transparency or 0) / 100;
+    Library.NotifyCounter = Library.NotifyCounter + 1;
+    local Outer = Library:Create('Frame', {
+        BackgroundTransparency  = 1;
+        BorderSizePixel         = 0;
+        Size                    = UDim2.fromOffset(0, H);
+        ClipsDescendants        = true;
+        LayoutOrder             = Library.NotifyConfig.SortOrder == "Text Length" and #Text or Library.NotifyCounter;
+        ZIndex                  = 100;
+        Parent                  = Library.NotificationArea;
     });
-    local NotifyInner = Library:Create('Frame', {
-        BackgroundColor3 = Library.MainColor;
-        BorderColor3 = Library.OutlineColor;
-        BorderMode = Enum.BorderMode.Inset;
-        Size = UDim2.new(1, 0, 1, 0);
-        ZIndex = 101;
-        Parent = NotifyOuter;
+    local Inner = Library:Create('Frame', {
+        BackgroundColor3  = Library.MainColor;
+        BackgroundTransparency = NotifyTransparency;
+        BorderSizePixel   = 0;
+        Size              = UDim2.new(1, 0, 1, 0);
+        ZIndex            = 101;
+        Parent            = Outer;
     });
-    Library:AddToRegistry(NotifyInner, {
-        BackgroundColor3 = 'MainColor';
-        BorderColor3 = 'OutlineColor';
-    }, true);
-    local InnerFrame = Library:Create('Frame', {
-        BackgroundColor3 = Color3.new(1, 1, 1);
-        BorderSizePixel = 0;
-        Position = UDim2.new(0, innerPosX, 0, innerPosY);
-        Size     = UDim2.new(1, innerSizeW, 1, innerSizeH);
-        ZIndex = 102;
-        Parent = NotifyInner;
+    Library:AddToRegistry(Inner, { BackgroundColor3 = 'MainColor' });
+    local InnerStroke = Library:Create('UIStroke', {
+        Color       = Library.OutlineColor;
+        Transparency = NotifyTransparency;
+        Thickness   = 1;
+        Parent      = Inner;
     });
-    local Gradient = Library:Create('UIGradient', {
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Library:GetDarkerColor(Library.MainColor)),
-            ColorSequenceKeypoint.new(1, Library.MainColor),
-        });
-        Rotation = -90;
-        Parent = InnerFrame;
+    Library:AddToRegistry(InnerStroke, { Color = 'OutlineColor' });
+    local GradientFrame = Library:Create('Frame', { BackgroundColor3 = Library.MainColor; BackgroundTransparency = NotifyTransparency; BorderSizePixel = 0; Position = UDim2.new(0, 1, 0, 1); Size = UDim2.new(1, -2, 1, -2); ZIndex = 102; Parent = Inner });
+    Library:AddToRegistry(GradientFrame, { BackgroundColor3 = 'MainColor' });
+    local G = Library:Create('UIGradient', { Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Library:GetDarkerColor(Library.MainColor)), ColorSequenceKeypoint.new(1, Library.MainColor) }); Rotation = -90; Parent = GradientFrame });
+    Library:AddToRegistry(G, { Color = function() return ColorSequence.new({ ColorSequenceKeypoint.new(0, Library:GetDarkerColor(Library.MainColor)), ColorSequenceKeypoint.new(1, Library.MainColor) }) end });
+    Library:CreateLabel({ Position = UDim2.new(0, 8, 0, 0); Size = UDim2.new(1, -8, 1, 0); Text = Text; TextXAlignment = Enum.TextXAlignment.Left; TextSize = 13; ZIndex = 103; Parent = GradientFrame });
+    local BarSide = Library.NotifyConfig.BarSide or "Bottom";
+    local AccentBarPos, AccentBarSize;
+    if BarSide == "Top" then
+        AccentBarPos  = UDim2.new(0, -1, 0, -1);
+        AccentBarSize = UDim2.new(1, 2, 0, 3);
+    elseif BarSide == "Bottom" then
+        AccentBarPos  = UDim2.new(0, -1, 1, -2);
+        AccentBarSize = UDim2.new(1, 2, 0, 3);
+    elseif BarSide == "Left" then
+        AccentBarPos  = UDim2.new(0, -1, 0, -1);
+        AccentBarSize = UDim2.new(0, 3, 1, 2);
+    else
+        AccentBarPos  = UDim2.new(1, -2, 0, -1);
+        AccentBarSize = UDim2.new(0, 3, 1, 2);
+    end;
+    Library:Create('Frame', {
+        BackgroundColor3  = Library.AccentColor;
+        BorderSizePixel   = 0;
+        Position          = AccentBarPos;
+        Size              = AccentBarSize;
+        ZIndex            = 104;
+        Parent            = Outer;
     });
-    Library:AddToRegistry(Gradient, {
-        Color = function()
-            return ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Library:GetDarkerColor(Library.MainColor)),
-                ColorSequenceKeypoint.new(1, Library.MainColor),
-            });
-        end
-    });
-    local NotifyLabel = Library:CreateLabel({
-        Position = UDim2.new(0, labelPosX, 0, 0);
-        Size     = UDim2.new(1, labelSizeW, 1, 0);
-        Text     = Text;
-        TextXAlignment = (align == 'Center')
-            and Enum.TextXAlignment.Center
-            or  Enum.TextXAlignment.Left;
-        TextSize = Library.FontSize;
-        ZIndex   = 103;
-        Parent   = InnerFrame;
-    });
-    local AccentBar = Library:Create('Frame', {
-        BackgroundColor3 = Library.AccentColor;
-        BorderSizePixel  = 0;
-        ZIndex           = 104;
-        Parent           = NotifyOuter;
-    });
-    if barSide == 'Left' then
-        AccentBar.Position = UDim2.new(0, -1, 0, -1)
-        AccentBar.Size     = UDim2.new(0, BAR_THIN, 1, 2)
-    elseif barSide == 'Right' then
-        AccentBar.Position = UDim2.new(1, -BAR_THIN + 1, 0, -1)
-        AccentBar.Size     = UDim2.new(0, BAR_THIN, 1, 2)
-    elseif barSide == 'Top' then
-        AccentBar.Position = UDim2.new(0, -1, 0, -1)
-        AccentBar.Size     = UDim2.new(1, 2, 0, BAR_THICK)
-    elseif barSide == 'Bottom' then
-        AccentBar.Position = UDim2.new(0, -1, 1, -BAR_THICK + 1)
-        AccentBar.Size     = UDim2.new(1, 2, 0, BAR_THICK)
-    end
-
-    Library:AddToRegistry(AccentBar, {
-        BackgroundColor3 = 'AccentColor';
-    }, true);
-    local finalWidth = XSize + 8 + 4
-    if barSide == 'Left' or barSide == 'Right' then
-        finalWidth = finalWidth + BAR_THIN
-    end
-    pcall(NotifyOuter.TweenSize, NotifyOuter,
-        UDim2.new(0, finalWidth, 0, YSize), 'Out', 'Quad', 0.4, true);
+    Library:AddToRegistry(Outer:GetChildren()[#Outer:GetChildren()], { BackgroundColor3 = 'AccentColor' }, true);
+    pcall(Outer.TweenSize, Outer, UDim2.fromOffset(xw + 16, H), 'Out', 'Quad', 0.35, true);
+    Library.ActiveNotifyCount = Library.ActiveNotifyCount + 1;
     task.spawn(function()
-        wait(Time or 5);
-        pcall(NotifyOuter.TweenSize, NotifyOuter,
-            UDim2.new(0, 0, 0, YSize), 'Out', 'Quad', 0.4, true);
-        wait(0.4);
-        NotifyOuter:Destroy();
+        task.wait(Time or 5);
+        pcall(Outer.TweenSize, Outer, UDim2.fromOffset(0, H), 'Out', 'Quad', 0.35, true);
+        task.wait(0.4);
+        Outer:Destroy();
+        Library.ActiveNotifyCount = Library.ActiveNotifyCount - 1;
+        Library:ProcessNotifyQueue();
     end);
 end;
 
@@ -3214,11 +3313,16 @@ function Library:CreateWindow(...)
     if type(Config.TabPadding) ~= 'number' then Config.TabPadding = 0 end
     if type(Config.MenuFadeTime) ~= 'number' then Config.MenuFadeTime = 0.2 end
 
-    if typeof(Config.Size) ~= 'UDim2' then Config.Size = UDim2.fromOffset(550, 600) end
+    if type(Config.UseBlur) == 'boolean' then Library.UseBlur = Config.UseBlur end
+    if type(Config.BlurSize) == 'number' then Library.BlurSize = Config.BlurSize end
+    if type(Config.UseDarken) == 'boolean' then Library.UseDarken = Config.UseDarken end
+    if type(Config.DarkenAmount) == 'number' then Library.DarkenAmount = Config.DarkenAmount end
+
+    if typeof(Config.Size) ~= 'UDim2' then Config.Size = UDim2.fromOffset(550, 650) end
     if typeof(Config.Position) ~= 'UDim2' then Config.Position = UDim2.fromOffset(175, 50) end
 
     if InputService.TouchEnabled then
-        local vp = workspace.CurrentCamera.ViewportSize
+        local vp = Library.ScreenGui.AbsoluteSize
         local maxWidth = math.min(Config.Size.X.Offset, vp.X - 20)
       
         local maxHeight = math.min(Config.Size.Y.Offset, vp.Y - 60)
@@ -3230,17 +3334,13 @@ function Library:CreateWindow(...)
         Config.Position = UDim2.fromScale(0.5, 0.5)
     end
 
-    if Config.WireframeDrag ~= nil then
-        Library.WireframeDrag = Config.WireframeDrag
-    end
-
     local Window = {
         Tabs = {};
     };
 
     local Outer = Library:Create('Frame', {
         AnchorPoint = Config.AnchorPoint,
-        BackgroundTransparency = 1,
+        BackgroundColor3 = Color3.new(0, 0, 0);
         BorderSizePixel = 0;
         Position = Config.Position,
         Size = Config.Size,
@@ -3249,10 +3349,6 @@ function Library:CreateWindow(...)
         Parent = ScreenGui;
     });
     Library:MakeDraggable(Outer, 25, true);
-
-    if Config.Resizable then
-        Library:MakeResizable(Outer, Config.MinSize, Config.MaxSize)
-    end
 
     local Inner = Library:Create('Frame', {
         Name = "Inner",
@@ -3374,6 +3470,140 @@ function Library:CreateWindow(...)
         BackgroundColor3 = 'MainColor';
         BorderColor3 = 'OutlineColor';
     });
+    Outer.ClipsDescendants = true;
+    local CornerCircle = Library:Create('Frame', {
+        AnchorPoint      = Vector2.new(0.5, 0.5);
+        BackgroundColor3 = Library.AccentColor;
+        BackgroundTransparency = 0.5;
+        BorderSizePixel  = 0;
+        Position         = UDim2.new(1, 0, 1, 0);
+        Size             = UDim2.fromOffset(46, 46);
+        ZIndex           = 10;
+        Parent           = Inner;
+    });
+    Library:Create('UICorner', {
+        CornerRadius = UDim.new(1, 0);
+        Parent       = CornerCircle;
+    });
+    Library:AddToRegistry(CornerCircle, {
+        BackgroundColor3 = 'AccentColor';
+    });
+    CornerCircle.Active = true;
+    CornerCircle.Parent = Outer;
+    CornerCircle.ZIndex = 100;
+
+    do
+        local MinW = 420;
+        local MinH = 340;
+
+        local Resizing = false;
+        local ResizeConn, EndConn;
+        local StartSize, DragStart, DragType;
+        local HasMoved = false;
+        local Wireframe;
+
+        local function StopResize()
+            Resizing = false;
+            if ResizeConn then ResizeConn:Disconnect(); ResizeConn = nil; end
+            if EndConn then EndConn:Disconnect(); EndConn = nil; end
+        end;
+
+        local function StartResize(Position, FromType)
+            if Resizing then return; end
+            StopResize();
+
+            Resizing = true;
+            StartSize = Outer.Size;
+            DragStart = Position;
+            DragType = FromType;
+            HasMoved = false;
+            if Wireframe then Wireframe:Destroy(); Wireframe = nil; end
+
+            ResizeConn = InputService.InputChanged:Connect(function(Change)
+                local T = Change.UserInputType;
+                if T ~= Enum.UserInputType.MouseMovement and T ~= Enum.UserInputType.Touch then return; end
+                if DragType ~= Enum.UserInputType.Touch and T == Enum.UserInputType.Touch then return; end
+
+                local Delta = Change.Position - DragStart;
+                if not HasMoved and Delta.Magnitude <= 2 then return; end
+
+                local TopLeft = Outer.AbsolutePosition;
+                local VPSize = Library.ScreenGui.AbsoluteSize;
+
+                local NewW = math.clamp(StartSize.X.Offset + Delta.X, MinW, VPSize.X - TopLeft.X);
+                local NewH = math.clamp(StartSize.Y.Offset + Delta.Y, MinH, VPSize.Y - TopLeft.Y);
+
+                if Library.WireframeDrag then
+                    if not HasMoved then
+                        HasMoved = true;
+
+                        Wireframe = Library:Create('Frame', {
+                            Size = UDim2.fromOffset(NewW, NewH);
+                            Position = UDim2.fromOffset(TopLeft.X, TopLeft.Y);
+                            BackgroundTransparency = 1;
+                            Active = false;
+                            ZIndex = 100000;
+                            Parent = ScreenGui;
+                        });
+
+                        Library:Create('UIStroke', {
+                            Color = Library.AccentColor;
+                            Thickness = 1;
+                            ApplyStrokeMode = Enum.ApplyStrokeMode.Border;
+                            Parent = Wireframe;
+                        });
+                    end;
+
+                    if HasMoved and Wireframe then
+                        Wireframe.Position = UDim2.fromOffset(TopLeft.X, TopLeft.Y);
+                        Wireframe.Size = UDim2.fromOffset(NewW, NewH);
+                    end;
+                else
+                    Outer.Size = UDim2.fromOffset(NewW, NewH);
+                end;
+            end);
+
+            EndConn = InputService.InputEnded:Connect(function(EndInput)
+                if EndInput.UserInputType == DragType then
+                    if Library.WireframeDrag and HasMoved and Wireframe then
+                        Outer.Size = Wireframe.Size;
+                        Wireframe:Destroy();
+                        Wireframe = nil;
+                    end;
+                    StopResize();
+                end;
+            end);
+        end;
+
+        local function OnHandlePressed(Position, InputType)
+            StartResize(Position, InputType);
+        end;
+
+        CornerCircle.InputBegan:Connect(function(Input)
+            if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+                OnHandlePressed(Input.Position, Input.UserInputType);
+            end;
+        end);
+
+        InputService.InputBegan:Connect(function(Input)
+            if Input.UserInputType ~= Enum.UserInputType.MouseButton1 and Input.UserInputType ~= Enum.UserInputType.Touch then return; end
+            if Resizing then return; end
+
+            local WindowPos = Outer.AbsolutePosition;
+            local WindowSize = Outer.AbsoluteSize;
+            local CenterX = WindowPos.X + WindowSize.X;
+            local CenterY = WindowPos.Y + WindowSize.Y;
+            local P = Input.Position;
+            local Rad = 26;
+            local DX = CenterX - P.X;
+            local DY = CenterY - P.Y;
+
+            if (DX * DX) + (DY * DY) <= (Rad * Rad) then
+                OnHandlePressed(P, Input.UserInputType);
+            end;
+        end);
+    end;
+
     function Window:SetWindowTitle(Title)
         WindowLabel.Text = Title;
     end;
@@ -3531,10 +3761,10 @@ function Library:CreateWindow(...)
             });
             local GroupboxLabel = Library:CreateLabel({
                 Size = UDim2.new(1, 0, 0, 18);
-                Position = UDim2.new(0, 4, 0, 2);
+                Position = UDim2.new(0, 0, 0, 2);
                 TextSize = Library.FontSize;
                 Text = Info.Name;
-                TextXAlignment = Enum.TextXAlignment.Left;
+                TextXAlignment = Enum.TextXAlignment.Center;
                 ZIndex = 5;
                 Parent = BoxInner;
             });
@@ -3785,53 +4015,41 @@ function Library:CreateWindow(...)
         if Library.Toggled then
             task.spawn(function()
                 local State = InputService.MouseIconEnabled;
+                local GuiService = game:GetService("GuiService");
 
-                local Cursor = Drawing.new('Triangle');
-                Cursor.Thickness = 1;
-                Cursor.Filled = true;
-                Cursor.Visible = true;
+                local Cursor = Instance.new("ImageLabel", ScreenGui);
+                Cursor.Image = "http://www.roblox.com/asset/?id=4292970642";
+                Cursor.BackgroundTransparency = 1;
+                Cursor.ZIndex = 100;
 
-                local CursorOutline = Drawing.new('Triangle');
-                CursorOutline.Thickness = 1;
-                CursorOutline.Filled = false;
-                CursorOutline.Color = Color3.new(0, 0, 0);
-                CursorOutline.Visible = true;
+                local CursorOutline = Instance.new("ImageLabel", ScreenGui);
+                CursorOutline.Image = "http://www.roblox.com/asset/?id=4292970642";
+                CursorOutline.ImageColor3 = Color3.new();
+                CursorOutline.BackgroundTransparency = 1;
+                CursorOutline.ZIndex = 99;
+
+                Cursor.Size, CursorOutline.Size = UDim2.fromOffset(17, 17), UDim2.fromOffset(19, 19);
+                Cursor.Rotation, CursorOutline.Rotation = -45, -45;
 
                 while Library.Toggled and ScreenGui.Parent do
                     InputService.MouseIconEnabled = false;
 
                     local mPos = InputService:GetMouseLocation();
+                    local udim = UDim2.fromOffset(mPos.X, mPos.Y - GuiService:GetGuiInset().Y - 1);
 
-                    Cursor.Color = Library.AccentColor;
-
-                    Cursor.PointA = Vector2.new(mPos.X, mPos.Y);
-                    Cursor.PointB = Vector2.new(mPos.X + 16, mPos.Y + 6);
-                    Cursor.PointC = Vector2.new(mPos.X + 6, mPos.Y + 16);
-                    CursorOutline.PointA = Cursor.PointA;
-                    CursorOutline.PointB = Cursor.PointB;
-                    CursorOutline.PointC = Cursor.PointC;
+                    Cursor.ImageColor3 = Library.AccentColor;
+                    Cursor.Position, CursorOutline.Position = udim, udim - UDim2.fromOffset(1, 1);
 
                     RenderStepped:Wait();
                 end;
 
                 InputService.MouseIconEnabled = State;
 
-                Cursor:Remove();
-                CursorOutline:Remove();
+                Cursor:Destroy();
+                CursorOutline:Destroy();
             end);
         end;
-        if Library.UseBlur then
-            if Library.Toggled then
-                Library.BlurEffect.Enabled = true
-                Library.BlurEffect.Size = Library.BlurSize
-            else
-                Library.BlurEffect.Size = 0
-                Library.BlurEffect.Enabled = false
-            end
-        else
-            Library.BlurEffect.Size = 0
-            Library.BlurEffect.Enabled = false
-        end
+        Library:UpdateBlur();
     end
 
     Library:GiveSignal(InputService.InputBegan:Connect(function(Input, Processed)

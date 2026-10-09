@@ -1321,8 +1321,6 @@ do
     end })
     Avatar:Toggle({ Name = "Re-apply on respawn", Flag = "spoof_avatar_reapply", Default = true })
 
-    local About = SpooferPage:Section({ Name = "About", Side = 2 })
-    About:Label({ Name = "Client side only: you see the new look, other players still see your real avatar. R6 limbs, Korblox and headless are handled." })
 end
 
 -- Players
@@ -3311,6 +3309,41 @@ do
         local KORBLOX_LEFT, KORBLOX_RIGHT = 139607673, 139607718
         local lastUid
         local busy = false
+        local wornKeys = {} -- accessories already worn in this apply, so the same item is never added twice
+
+        -- identity of an accessory: name + mesh + texture (the same hat from the model and from the description match)
+        local function accessoryKey(acc)
+            local handle = acc:FindFirstChild("Handle")
+            local mesh, texture = "", ""
+            if handle then
+                pcall(function()
+                    local special = handle:FindFirstChildWhichIsA("SpecialMesh")
+                    if special then
+                        mesh, texture = tostring(special.MeshId), tostring(special.TextureId)
+                    elseif handle:IsA("MeshPart") then
+                        mesh, texture = tostring(handle.MeshId), tostring(handle.TextureID)
+                    end
+                end)
+            end
+            return string.lower(acc.Name) .. "|" .. mesh .. "|" .. texture
+        end
+
+        -- keeps the first copy of every accessory and destroys the rest
+        local function dedupeAccessories(char)
+            local seen, removed = {}, 0
+            for _, child in ipairs(char:GetChildren()) do
+                if child:IsA("Accessory") then
+                    local key = accessoryKey(child)
+                    if seen[key] then
+                        pcall(function() child:Destroy() end)
+                        removed += 1
+                    else
+                        seen[key] = true
+                    end
+                end
+            end
+            return removed
+        end
 
         local function notify(message)
             Library:Notify(message, 4)
@@ -3373,6 +3406,8 @@ do
 
         local function wearAccessory(char, acc)
             if not char or not acc or not acc:IsA("Accessory") then return false end
+            local key = accessoryKey(acc)
+            if wornKeys[key] then return false end
             local ok = pcall(function()
                 local copy = acc:Clone()
                 for _, part in ipairs(copy:GetDescendants()) do
@@ -3412,8 +3447,9 @@ do
                         or char:FindFirstChild("UpperTorso") or char:FindFirstChild("HumanoidRootPart")
                 end
                 weld.Parent = handle
+                wornKeys[key] = true
             end)
-            return ok
+            return ok and wornKeys[key] == true
         end
 
         local function grabAsset(id)
@@ -3650,6 +3686,7 @@ do
             end
 
             stripAppearance(char)
+            wornKeys = {}
             notify("Avatar changer: fetching " .. tostring(uid) .. "...")
             lastUid = uid
 
@@ -3660,6 +3697,7 @@ do
                         if humanoid.ApplyDescriptionAsync then humanoid:ApplyDescriptionAsync(desc) else humanoid:ApplyDescription(desc) end
                     end)
                     if humanoid.RigType == Enum.HumanoidRigType.R6 then applyR6MeshesFromDescription(char, desc) end
+                    dedupeAccessories(char)
                     notify("Avatar changer: applied the description only (no model)")
                     return true
                 end
@@ -3668,6 +3706,7 @@ do
             end
 
             stripAppearance(char) -- the fetch yields; make sure nothing came back meanwhile
+            wornKeys = {}
             copyClothesAndColors(char, model)
 
             local meshCount = applyCharacterMeshesFromModel(char, model)
@@ -3691,6 +3730,12 @@ do
                 end
             end
             if headless then forceHeadless(char) end
+
+            dedupeAccessories(char)
+            accessoryCount = 0
+            for _, child in ipairs(char:GetChildren()) do
+                if child:IsA("Accessory") then accessoryCount += 1 end
+            end
 
             pcall(function() model:Destroy() end)
             notify(string.format("Avatar applied (meshes %d, accessories %d%s)", meshCount, accessoryCount, headless and ", headless" or ""))

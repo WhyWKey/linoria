@@ -1964,6 +1964,8 @@ do
         applyAtmosphere()
     end
 
+    local updateAdornChams
+    ;(function()
     -- Layered adornment chams ---------------------------------------
     -- Two box adornments per body part, same idea as the reference script:
     --   behind-walls layer: AlwaysOnTop, so it shows through geometry
@@ -2015,7 +2017,7 @@ do
         return math.min(size.X, size.Z) / 2, size.Y
     end
 
-    local function updateAdornChams()
+    function updateAdornChams()
         local active = getFlag("esp_enabled", false)
             and getFlag("esp_chams", false)
         if not active then
@@ -2123,6 +2125,9 @@ do
         pcall(function() adornFolder:Destroy() end)
     end)
 
+    end)()
+    local updateSkeletons
+    ;(function()
     -- Skeleton ESP --------------------------------------------------
     -- Drawn here with Drawing lines (R15 uses the part chain, R6 uses points on the torso and limbs).
     local R15_BONES = {
@@ -2202,7 +2207,7 @@ do
         skeletonLines[player] = nil
     end
 
-    local function updateSkeletons()
+    function updateSkeletons()
         local camera = workspace.CurrentCamera
         local enabled = camera and getFlag("esp_enabled", false) and getFlag("esp_skeleton", false)
         if not enabled then
@@ -2264,6 +2269,9 @@ do
         for player in pairs(skeletonLines) do dropSkeleton(player) end
     end)
 
+    end)()
+    local hitConnections, pendingHits, onLocalShot
+    ;(function()
     -- Hit feedback ---------------------------------------------------
     -- Only bullets YOU fire count. The tracer hook below calls onLocalShot(origin, target) for
     -- each of your shots (the origin is your tool's Muzzle). The shot's path is raycast to find
@@ -2272,8 +2280,8 @@ do
     -- damage from anyone else in the server never triggers them.
     local HIT_WINDOW = 0.8
     local lastHitNotify = 0
-    local hitConnections = {}
-    local pendingHits = {} -- [player] = { expiry, expiry, ... } (one entry per pellet / bullet)
+    hitConnections = {}
+    pendingHits = {} -- [player] = { expiry, expiry, ... } (one entry per pellet / bullet)
 
     playHitSound = function()
         local soundId = HIT_SOUNDS[getFlag("World_HitSoundId", "Gamesense")]
@@ -2296,7 +2304,7 @@ do
         end
     end
 
-    local function onLocalShot(origin, target)
+    function onLocalShot(origin, target)
         local offset = target - origin
         if offset.Magnitude < 0.1 then return end
 
@@ -2368,6 +2376,7 @@ do
         end
     end))
 
+    end)()
     -- Unload cleanup -------------------------------------------------
     onUnload(function()
         for _, connection in pairs(hitConnections) do
@@ -2498,6 +2507,8 @@ do
         end
     end
 
+    local updateLocalVisuals, updateBlur
+    ;(function()
     -- Gun: the equipped Tool ---------------------------------------------
     local function gunConfig()
         local colorOn = getFlag("viewmodel_body_color", false)
@@ -2660,7 +2671,7 @@ do
         selfHighlight.OutlineTransparency = getFlag("Self_ChamsOutlineAlpha", 0)
     end
 
-    local function updateLocalVisuals()
+    function updateLocalVisuals()
         updateGun()
         updateBody()
         updateSelfChams()
@@ -2693,7 +2704,7 @@ do
     end
     RunService:BindToRenderStep(CAMERA_STEP, Enum.RenderPriority.Last.Value, cameraStep)
 
-    local function updateBlur()
+    function updateBlur()
         local cam = workspace.CurrentCamera
         if not cam then return end
         local blur = getFlag("camera_blur", 0)
@@ -2730,6 +2741,9 @@ do
         if blurEffect then pcall(function() blurEffect:Destroy() end) end
     end)
 
+    end)()
+    local updateTracers
+    ;(function()
     -- Bullet tracers (your own shots only) ---------------------------------------
     -- The game draws every tracer through SharedModules.GunTracers: your shots come from
     -- GunController with the equipped tool's Muzzle position as the origin, other players'
@@ -2797,7 +2811,7 @@ do
 
     -- Visible for `life` seconds, then fades over `fade`. With "Expand" the far end runs from the
     -- muzzle to the hit on a damped spring (speed 18, damping 0.7 by default) and overshoots slightly.
-    local function updateTracers(dt)
+    function updateTracers(dt)
         if #activeTracers == 0 then return end
         dt = math.min(dt, 1 / 20)
         for index = #activeTracers, 1, -1 do
@@ -2894,6 +2908,9 @@ do
         table.clear(pendingHits)
     end)
 
+    end)()
+    local updateCrosshair
+    ;(function()
     -- Custom crosshair -----------------------------------------------------------
     -- Four bars, each an outline frame with a fill frame inside, laid out around the mouse and
     -- rotated about it. The bars are horizontal frames turned by 0 / 90 / 180 / -90 degrees.
@@ -2947,7 +2964,7 @@ do
         return ok and crosshairGui ~= nil
     end
 
-    local function updateCrosshair()
+    function updateCrosshair()
         local enabled = getFlag("crosshair_enabled", false)
 
         if enabled and getFlag("crosshair_hide_cursor", false) then
@@ -3025,6 +3042,9 @@ do
         table.clear(crosshairArms)
     end)
 
+    end)()
+    local updateWeather
+    ;(function()
     -- Weather + lightning ----------------------------------------------------------
     -- Particle emitters on an invisible part that follows the camera, plus optional lightning
     -- strikes around you while the Rain preset is selected.
@@ -3246,7 +3266,7 @@ do
         end
     end
 
-    local function updateWeather()
+    function updateWeather()
         updateBolts()
 
         if not getFlag("weather_enabled", false) then
@@ -3281,11 +3301,12 @@ do
 
     -- end local visuals
 
+    end)()
     -- Avatar changer (Spoofer tab) -----------------------------------------------------
     -- Rebuilds YOUR character's look from another user's avatar. It is client side only: you
     -- see the new look, everyone else still sees your real avatar. R6 limbs (CharacterMesh,
     -- Korblox) and headless are handled. The Spoofer tab's buttons call SpooferActions.
-    do
+    ;(function()
         local HEADLESS_IDS = { [15093053680] = true, [134082579] = true, [4562128874] = true }
         local KORBLOX_LEFT, KORBLOX_RIGHT = 139607673, 139607718
         local lastUid
@@ -3711,7 +3732,7 @@ do
         onUnload(function()
             SpooferActions.apply, SpooferActions.reset = noop, noop
         end)
-    end
+    end)()
 
     local syncClock = 1
     track(RunService.RenderStepped:Connect(function(dt)

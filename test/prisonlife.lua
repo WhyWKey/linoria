@@ -860,6 +860,14 @@ warn("[Prison Life] downloading Library.lua")
 local Library = loadstring(game:HttpGet(UI_REPO .. "Library.lua"))()
 local ThemeManager = loadstring(game:HttpGet(UI_REPO .. "addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(UI_REPO .. "addons/SaveManager.lua"))()
+-- This library never sets HasTransparency on color pickers, so SaveManager reset every alpha
+-- to 0 when a config loaded. Loading now restores the saved transparency.
+pcall(function()
+    SaveManager.Parser.ColorPicker.Load = function(idx, data)
+        local picker = getgenv().Options and getgenv().Options[idx]
+        if picker then picker:SetValueRGB(Color3.fromHex(data.value), tonumber(data.transparency) or 0) end
+    end
+end)
 warn("[Prison Life] library loaded")
 getgenv().Library = Library
 
@@ -896,6 +904,17 @@ local function readFlag(name, default)
     if object == nil then object = Options[name] end
     if object == nil or object.Value == nil then return default end
     return object.Value
+end
+
+-- Player relationships: explicit Friendly / Enemy / Neutral per player, otherwise by team.
+local Relations = {} -- [UserId] = "Friendly" | "Enemy" | "Neutral"
+local function relationOf(player)
+    local explicit = Relations[player.UserId]
+    if explicit then return explicit end
+    local mine, theirs = LocalPlayer.Team, player.Team
+    if not theirs or theirs.Name == "Neutral" then return "Neutral" end
+    if not mine or mine.Name == "Neutral" then return "Enemy" end
+    return mine == theirs and "Friendly" or "Enemy"
 end
 
 -- Palette of the library's built-in "Perception" theme, applied before the window is built.
@@ -961,6 +980,7 @@ local function wrapElement(linoriaObject)
             Mode = info.Mode or "Toggle",
             Text = info.Name or "Keybind",
             NoUI = false,
+            SyncToggleState = info.Sync == true, -- the key flips the toggle it is attached to
         })
         return element
     end
@@ -1111,6 +1131,7 @@ do
     Aim:Slider({ Name = "Max distance", Flag = "aim_max_dist", Min = 50, Max = 2000, Default = 1000, Suffix = " studs", Decimals = 1 })
     Aim:Toggle({ Name = "Team check", Flag = "aim_team", Default = false })
     Aim:Toggle({ Name = "Wall check", Flag = "aim_wall", Default = false })
+    Aim:Toggle({ Name = "Forcefield check", Flag = "aim_ff", Default = false })
     Aim:Toggle({ Name = "Ignore tased / arrested", Flag = "aim_ignore_down", Default = false })
 
     local Smooth = CombatTab:Section({ Name = "Aim smoothing", Side = 1 })
@@ -1128,6 +1149,7 @@ do
     Trigger:Slider({ Name = "Delay", Flag = "Trigger_Global_Delay", Min = 0, Max = 300, Default = 40, Suffix = "ms", Decimals = 1 })
     Trigger:Slider({ Name = "Reaction time", Flag = "Trigger_Global_Reaction", Min = 0, Max = 200, Default = 0, Suffix = "ms", Decimals = 1 })
     Trigger:Toggle({ Name = "Team check", Flag = "trigger_team", Default = false })
+    Trigger:Toggle({ Name = "Forcefield check", Flag = "trigger_ff", Default = false })
 
     -- Silent aim ---------------------------------------------------------------------------
     local Silent = CombatTab:Section({ Name = "Silent aim", Side = 2 })
@@ -1142,6 +1164,7 @@ do
     Silent:Slider({ Name = "Max distance", Flag = "silent_max_dist", Min = 50, Max = 2000, Default = 1000, Suffix = " studs", Decimals = 1 })
     Silent:Toggle({ Name = "Wallbang", Flag = "silent_wallbang", Default = false })
     Silent:Toggle({ Name = "Wall check", Flag = "silent_wall", Default = false })
+    Silent:Toggle({ Name = "Forcefield check", Flag = "silent_ff", Default = false })
     Silent:Toggle({ Name = "Team check", Flag = "silent_team", Default = false })
     Silent:Toggle({ Name = "Ignore tased / arrested", Flag = "silent_ignore_down", Default = false })
     Silent:Toggle({ Name = "Auto fire", Flag = "silent_autofire", Default = false })
@@ -1186,33 +1209,34 @@ end
 do
     -- Movement: two tabboxes keep the six movement modules compact
     local fly, speed, spider = MiscPage:MultiSection({ Sections = { "Fly", "Speed", "Spider" }, Side = 1 })
-    fly:Toggle({ Name = "Fly", Flag = "misc_fly", Default = false })
+    fly:Toggle({ Name = "Fly", Flag = "misc_fly", Default = false }):Keybind({ Name = "Fly key", Flag = "misc_fly_key", Default = "None", Sync = true })
     fly:Dropdown({ Name = "Mode", Flag = "misc_fly_mode", Items = { "Velocity", "CFrame" }, Default = "Velocity" })
     fly:Slider({ Name = "Speed", Flag = "misc_fly_speed", Min = 1, Max = 150, Default = 50, Suffix = " studs", Decimals = 1 })
     fly:Slider({ Name = "Vertical speed", Flag = "misc_fly_vspeed", Min = 1, Max = 100, Default = 40, Suffix = " studs", Decimals = 1 })
     fly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_fly_cap", Default = true })
     fly:Label({ Name = "Up: Space   Down: Left Ctrl" })
-    speed:Toggle({ Name = "Speed", Flag = "misc_speed", Default = false })
+    speed:Toggle({ Name = "Speed", Flag = "misc_speed", Default = false }):Keybind({ Name = "Speed key", Flag = "misc_speed_key", Default = "None", Sync = true })
     speed:Dropdown({ Name = "Mode", Flag = "misc_speed_mode", Items = { "Velocity", "CFrame", "WalkSpeed" }, Default = "Velocity" })
     speed:Slider({ Name = "Speed", Flag = "misc_speed_value", Min = 1, Max = 150, Default = 50, Suffix = " studs", Decimals = 1 })
-    spider:Toggle({ Name = "Spider", Flag = "misc_spider", Default = false })
+    spider:Toggle({ Name = "Spider", Flag = "misc_spider", Default = false }):Keybind({ Name = "Spider key", Flag = "misc_spider_key", Default = "None", Sync = true })
     spider:Dropdown({ Name = "Mode", Flag = "misc_spider_mode", Items = { "Velocity", "Impulse", "CFrame" }, Default = "Velocity" })
     spider:Slider({ Name = "Climb speed", Flag = "misc_spider_speed", Min = 1, Max = 100, Default = 30, Suffix = " studs", Decimals = 1 })
     spider:Toggle({ Name = "Climb state", Flag = "misc_spider_state", Default = false })
 
     local high, long, phase = MiscPage:MultiSection({ Sections = { "High jump", "Long jump", "Phase" }, Side = 1 })
-    high:Toggle({ Name = "High jump", Flag = "misc_highjump", Default = false })
+    high:Toggle({ Name = "High jump", Flag = "misc_highjump", Default = false }):Keybind({ Name = "High jump key", Flag = "misc_highjump_key", Default = "None", Sync = true })
     high:Dropdown({ Name = "Mode", Flag = "misc_highjump_mode", Items = { "Velocity", "Impulse", "Instant" }, Default = "Velocity" })
     high:Slider({ Name = "Power", Flag = "misc_highjump_power", Min = 1, Max = 150, Default = 50, Suffix = " studs", Decimals = 1 })
     high:Toggle({ Name = "Auto disable (one jump)", Flag = "misc_highjump_auto", Default = true })
-    long:Toggle({ Name = "Long jump", Flag = "misc_longjump", Default = false })
+    long:Toggle({ Name = "Long jump", Flag = "misc_longjump", Default = false }):Keybind({ Name = "Long jump key", Flag = "misc_longjump_key", Default = "None", Sync = true })
     long:Dropdown({ Name = "Mode", Flag = "misc_longjump_mode", Items = { "Velocity", "Impulse", "CFrame" }, Default = "Velocity" })
     long:Slider({ Name = "Speed", Flag = "misc_longjump_speed", Min = 1, Max = 150, Default = 50, Suffix = " studs", Decimals = 1 })
     long:Toggle({ Name = "Auto disable on landing", Flag = "misc_longjump_auto", Default = true })
-    phase:Toggle({ Name = "Phase", Flag = "misc_phase", Default = false })
+    phase:Toggle({ Name = "Phase", Flag = "misc_phase", Default = false }):Keybind({ Name = "Phase key", Flag = "misc_phase_key", Default = "None", Sync = true })
     phase:Dropdown({ Name = "Mode", Flag = "misc_phase_mode", Items = { "Part", "Character", "CFrame" }, Default = "Part" })
     phase:Slider({ Name = "Wall size (CFrame)", Flag = "misc_phase_size", Min = 1, Max = 20, Default = 5, Suffix = " studs", Decimals = 1 })
     phase:Label({ Name = "Hold Shift to Phase while Spider is on" })
+    phase:Toggle({ Name = "Disabler (fixes Character mode)", Flag = "misc_disabler", Default = false })
 
     local Character = MiscPage:Section({ Name = "Character", Side = 1 })
     Character:Toggle({ Name = "No jump cooldown", Flag = "misc_no_jump_cd", Default = false })
@@ -1259,6 +1283,24 @@ do
     Detect:Toggle({ Name = "Teleport check", Flag = "misc_cheat_teleport", Default = true })
     Detect:Button({ Name = "Clear flags", Callback = function() MiscActions.clearCheats() end })
 
+    local humStates = {}
+    for _, state in ipairs(Enum.HumanoidStateType:GetEnumItems()) do
+        if state.Name ~= "None" then humStates[#humStates + 1] = state.Name end
+    end
+    local Spoof = MiscPage:Section({ Name = "Humanoid spoofer", Side = 2 })
+    Spoof:Toggle({ Name = "Humanoid spoofer", Flag = "misc_humspoof", Default = false })
+    Spoof:Dropdown({ Name = "Humanoid state", Flag = "misc_humspoof_state", Items = humStates, Default = "Running" })
+    Spoof:Toggle({ Name = "Replace jump", Flag = "misc_humspoof_replace", Default = false })
+    Spoof:Toggle({ Name = "Jump state", Flag = "misc_humspoof_jump", Default = false })
+    Spoof:Label({ Name = "Changes the state the server sees, not your own movement. Needs sethiddenproperty." })
+
+    local Kick = MiscPage:Section({ Name = "Kick exploit", Side = 2 })
+    Kick:Toggle({ Name = "Kick exploit", Flag = "misc_kick", Default = false })
+    Kick:Dropdown({ Name = "Targets", Flag = "misc_kick_mode", Items = { "All", "Selected player" }, Default = "All" })
+    Kick:Toggle({ Name = "Move to the car spawner", Flag = "misc_kick_move", Default = true })
+    Kick:Toggle({ Name = "Grab a gun first", Flag = "misc_kick_equip", Default = false })
+    Kick:Label({ Name = "Throws cars you own at other players and turns Anti fling on. Needs isnetworkowner. Selected player uses the Players tab." })
+
     local Fling = MiscPage:Section({ Name = "Fling cars", Side = 2 })
     Fling:Toggle({ Name = "Fling cars", Flag = "misc_fling_cars", Default = false })
     Fling:Slider({ Name = "Target range", Flag = "misc_fling_range", Min = 20, Max = 1000, Default = 300, Suffix = " studs", Decimals = 1 })
@@ -1266,24 +1308,30 @@ do
 
     local Invis = MiscPage:Section({ Name = "Invisibility", Side = 2 })
     local invisToggle = Invis:Toggle({ Name = "Invisibility", Flag = "misc_invis", Default = false })
-    invisToggle:Keybind({ Name = "Invisibility key", Flag = "misc_invis_key", Default = "None", Mode = "Toggle" })
+    invisToggle:Keybind({ Name = "Invisibility key", Flag = "misc_invis_key", Default = "None", Sync = true })
+    Invis:Toggle({ Name = "Hide under the map (look up)", Flag = "misc_invis_under", Default = true })
+    Invis:Slider({ Name = "Look-up pitch", Flag = "misc_invis_pitch", Min = -90, Max = 90, Default = 90, Suffix = "°", Decimals = 1 })
     Invis:Label({ Name = "Freezes your animation on the hidden frame. Other players see you vanish; you still see yourself." })
 
     local Move = MiscPage:Section({ Name = "Movement", Side = 1 })
-    Move:Toggle({ Name = "Walk speed multiplier", Flag = "misc_walkmult", Default = false })
+    Move:Toggle({ Name = "Walk speed multiplier", Flag = "misc_walkmult", Default = false }):Keybind({ Name = "Walk multiplier key", Flag = "misc_walkmult_key", Default = "None", Sync = true })
     Move:Slider({ Name = "Walk multiplier (max 4x)", Flag = "misc_walkmult_value", Min = 1, Max = 4, Default = 1.5, Suffix = "x", Decimals = 0.05 })
-    Move:Toggle({ Name = "Jump multiplier", Flag = "misc_jumpmult", Default = false })
+    Move:Toggle({ Name = "Jump multiplier", Flag = "misc_jumpmult", Default = false }):Keybind({ Name = "Jump multiplier key", Flag = "misc_jumpmult_key", Default = "None", Sync = true })
     Move:Slider({ Name = "Jump multiplier (max 3x)", Flag = "misc_jumpmult_value", Min = 1, Max = 3, Default = 1.5, Suffix = "x", Decimals = 0.05 })
-    Move:Toggle({ Name = "Spinbot", Flag = "misc_spinbot", Default = false })
+    Move:Toggle({ Name = "Spinbot", Flag = "misc_spinbot", Default = false }):Keybind({ Name = "Spinbot key", Flag = "misc_spinbot_key", Default = "None", Sync = true })
     Move:Slider({ Name = "Spin speed", Flag = "misc_spinbot_speed", Min = 1, Max = 40, Default = 10, Decimals = 1 })
+    Move:Toggle({ Name = "Infinite jump", Flag = "misc_infjump", Default = false }):Keybind({ Name = "Infinite jump key", Flag = "misc_infjump_key", Default = "None", Sync = true })
+    Move:Toggle({ Name = "Click teleport", Flag = "misc_clicktp", Default = false }):Keybind({ Name = "Click teleport key", Flag = "misc_clicktp_key", Default = "None", Sync = true })
+    Move:Toggle({ Name = "Hold Left Ctrl to teleport", Flag = "misc_clicktp_ctrl", Default = true })
+    Move:Slider({ Name = "Click teleport range", Flag = "misc_clicktp_range", Min = 10, Max = 2000, Default = 500, Suffix = " studs", Decimals = 1 })
 
     local vFly, vSpeed = MiscPage:MultiSection({ Sections = { "Vehicle fly", "Vehicle speed" }, Side = 1 })
-    vFly:Toggle({ Name = "Vehicle fly", Flag = "misc_vfly", Default = false })
+    vFly:Toggle({ Name = "Vehicle fly", Flag = "misc_vfly", Default = false }):Keybind({ Name = "Vehicle fly key", Flag = "misc_vfly_key", Default = "None", Sync = true })
     vFly:Slider({ Name = "Speed", Flag = "misc_vfly_speed", Min = 1, Max = 100, Default = 60, Suffix = " studs", Decimals = 1 })
     vFly:Toggle({ Name = "Move along camera", Flag = "misc_vfly_camera", Default = true })
     vFly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_vfly_cap", Default = true })
     vFly:Label({ Name = "Up: E   Down: Q" })
-    vSpeed:Toggle({ Name = "Vehicle speed", Flag = "misc_vspeed", Default = false })
+    vSpeed:Toggle({ Name = "Vehicle speed", Flag = "misc_vspeed", Default = false }):Keybind({ Name = "Vehicle speed key", Flag = "misc_vspeed_key", Default = "None", Sync = true })
     vSpeed:Slider({ Name = "Max speed", Flag = "misc_vspeed_value", Min = 80, Max = 200, Default = 140, Decimals = 1 })
 end
 
@@ -1327,6 +1375,8 @@ do
     EspList:Toggle({ Name = "Arrows", Flag = "esp_arrows", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_arrow_color", Default = WHITE })
     EspList:Toggle({ Name = "Team indicator", Flag = "esp_team_indicator", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_team_color", Default = WHITE })
     EspList:Toggle({ Name = "Team check", Flag = "esp_team_check", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_friendly_color", Default = Color3.fromRGB(0, 255, 0) })
+    EspList:Toggle({ Name = "Enemies only", Flag = "esp_enemies_only", Default = false })
+    EspList:Toggle({ Name = "Team colors", Flag = "esp_use_team_color", Default = false })
 EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpicker({ Name = "Visible", Flag = "esp_chams_adorn_vis_color", Default = Color3.fromRGB(59, 204, 90) }):Colorpicker({ Name = "Behind walls", Flag = "esp_chams_adorn_occ_color", Default = Color3.fromRGB(59, 144, 204) })
 
     -- Teams: which Prison Life teams get ESP (filters, so they start on)
@@ -1540,13 +1590,27 @@ do
     PlayerOptions:Dropdown({
         Name = "Relationship",
         Flag = "Player_Relationship",
-        Items = { "Neutral", "Friendly", "Enemy" },
-        Default = "Neutral",
+        Items = { "Auto", "Friendly", "Enemy", "Neutral" },
+        Default = "Auto",
         Callback = function(Value)
             local player = selectedPlayer()
-            if player then PlayerRelations[player] = Value end
+            if not player then return end
+            if Value == "Auto" then Relations[player.UserId] = nil else Relations[player.UserId] = Value end
         end,
     })
+    PlayerOptions:Toggle({ Name = "Highlight friendly", Flag = "rel_hl_friendly", Default = false }):Colorpicker({ Name = "Friendly color", Flag = "rel_hl_friendly_color", Default = Color3.fromRGB(80, 255, 120) })
+    PlayerOptions:Toggle({ Name = "Highlight enemy", Flag = "rel_hl_enemy", Default = false }):Colorpicker({ Name = "Enemy color", Flag = "rel_hl_enemy_color", Default = Color3.fromRGB(255, 70, 70) })
+    PlayerOptions:Label({ Name = "Auto uses teams. Highlights recolor the ESP boxes, text, skeleton and the visible chams layer. The behind-walls chams color is not changed." })
+    task.defer(function()
+        local picker = Options.Player_Selected
+        if picker and type(picker.OnChanged) == "function" then
+            picker:OnChanged(function()
+                local player = selectedPlayer()
+                local dropdown = Options.Player_Relationship
+                if player and dropdown and dropdown.SetValue then dropdown:SetValue(Relations[player.UserId] or "Auto") end
+            end)
+        end
+    end)
 
     PlayerOptions:Button({
         Name = "Teleport",
@@ -1788,9 +1852,19 @@ do
         end
 
         local filtered, okThree = replaceOnce(patched, TEAM_FILTER_ANCHOR, TEAM_FILTER_HOOK)
-        if okThree then return filtered end
-        warn("Team filter patch skipped: the ESP library changed")
-        return patched
+        if not okThree then
+            warn("Team filter patch skipped: the ESP library changed")
+            filtered = patched
+        end
+        -- per-player config overrides (colors for highlighted / team colored players)
+        local withOverride, okFour = replaceOnce(filtered,
+            "newTracked[player.Character]={name=player.Name,Cheap=false}",
+            "newTracked[player.Character]={name=player.Name,Cheap=false,Config=getgenv().TS_ESPOverride and getgenv().TS_ESPOverride(player) or nil}")
+        if not okFour then
+            warn("Highlight color patch skipped: the ESP library changed")
+            return filtered
+        end
+        return withOverride
     end
 
     local COINCIDE_ESP_URL = "https://raw.githubusercontent.com/ExtroDevGit/Coincide-UI/refs/heads/main/esp_lib.lua"
@@ -1831,13 +1905,47 @@ do
     local TEAM_FLAGS = { Guards = "esp_team_show_guards", Inmates = "esp_team_show_inmates", Criminals = "esp_team_show_criminals" }
 
     local function teamAllowed(player)
+        if player ~= LocalPlayer and getFlag("esp_enemies_only", false) and relationOf(player) ~= "Enemy" then return false end
         local team = player.Team
         local flag = team and TEAM_FLAGS[team.Name]
         if flag then return getFlag(flag, true) end
         return true
     end
     getgenv().TS_ESPFilter = teamAllowed
-    onUnload(function() getgenv().TS_ESPFilter = nil end)
+
+    -- Highlight colors (friendly / enemy) win over team colors. They recolor the ESP library
+    -- boxes and text through its per-player config overrides, plus the skeleton and the visible
+    -- chams layer here. The behind-walls chams color is never changed.
+    local function relationColor(player)
+        if player == LocalPlayer then return nil end
+        local relation = relationOf(player)
+        if relation == "Friendly" and getFlag("rel_hl_friendly", false) then
+            return getColor("rel_hl_friendly_color", Color3.fromRGB(80, 255, 120))
+        elseif relation == "Enemy" and getFlag("rel_hl_enemy", false) then
+            return getColor("rel_hl_enemy_color", Color3.fromRGB(255, 70, 70))
+        end
+        if getFlag("esp_use_team_color", false) and player.Team then
+            return player.Team.TeamColor.Color
+        end
+        return nil
+    end
+
+    local overrideCache = {}
+    getgenv().TS_ESPOverride = function(player)
+        local color = relationColor(player)
+        if not color then return nil end
+        local key = tostring(color)
+        local entry = overrideCache[key]
+        if not entry then
+            entry = { BoxColor = color, TextColor = color, GlowColor = color, BoxFill = { Color = color } }
+            overrideCache[key] = entry
+        end
+        return entry
+    end
+    onUnload(function()
+        getgenv().TS_ESPFilter = nil
+        getgenv().TS_ESPOverride = nil
+    end)
 
     -- The library only rescans its player list every few seconds. Adding and removing a
     -- throw-away Folder in Workspace marks it dirty, so team changes show up within 0.2s.
@@ -1845,8 +1953,13 @@ do
     local function checkTeamChanges()
         local parts = {}
         for _, name in ipairs(TEAM_ORDER) do table.insert(parts, tostring(getFlag(TEAM_FLAGS[name], true))) end
+        table.insert(parts, table.concat({
+            tostring(getFlag("esp_enemies_only", false)), tostring(getFlag("esp_use_team_color", false)),
+            tostring(getFlag("rel_hl_friendly", false)), tostring(getFlag("rel_hl_enemy", false)),
+            tostring(getColor("rel_hl_friendly_color", Color3.new(1, 1, 1))), tostring(getColor("rel_hl_enemy_color", Color3.new(1, 1, 1))),
+        }, ":"))
         for _, player in ipairs(Players:GetPlayers()) do
-            table.insert(parts, player.Team and player.Team.Name or "-")
+            table.insert(parts, (player.Team and player.Team.Name or "-") .. ":" .. relationOf(player))
         end
         local signature = table.concat(parts, ",")
         if signature == lastTeamSignature then return end
@@ -2252,6 +2365,8 @@ do
                     end
                 end
 
+                local playerVisible = relationColor(player) or visibleColor
+                local playerSignature = signature .. "|" .. tostring(playerVisible)
                 for _, part in ipairs(character:GetChildren()) do
                     if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" and part.Transparency < 1 then
                         local round = roundHead and part.Name == "Head"
@@ -2266,8 +2381,8 @@ do
                         end
 
                         local size = part.Size
-                        if pair.signature ~= signature or pair.partSize ~= size then
-                            pair.signature = signature
+                        if pair.signature ~= playerSignature or pair.partSize ~= size then
+                            pair.signature = playerSignature
                             pair.partSize = size
 
                             if round then
@@ -2286,7 +2401,7 @@ do
                             pair.behind.Transparency = behindTransparency
 
                             pair.visible.Visible = true
-                            pair.visible.Color3 = visibleColor
+                            pair.visible.Color3 = playerVisible
                             pair.visible.AlwaysOnTop = glowOn
                             pair.visible.Transparency = glowOn and (visibleTransparency / glowSize) or visibleTransparency
                         end
@@ -2408,6 +2523,7 @@ do
             local humanoid = character and character:FindFirstChildOfClass("Humanoid")
             local wanted = playersOn and (player ~= LocalPlayer or localOn) and teamAllowed(player)
             local entry = skeletonLines[player]
+            local playerColor = relationColor(player) or color
 
             if wanted and character and humanoid and humanoid.Health > 0 then
                 entry = entry or skeletonEntry(player)
@@ -2427,7 +2543,7 @@ do
                                 outline.Thickness = thickness + 2
                                 outline.Visible = outlineOn
                                 inner.From, inner.To = a, b
-                                inner.Color = color
+                                inner.Color = playerColor
                                 inner.Thickness = thickness
                                 inner.Visible = true
                                 drawn = true
@@ -2491,6 +2607,7 @@ do
     end
 
     function onLocalShot(origin, target)
+        ShotEvents.last = os.clock()
         local offset = target - origin
         if offset.Magnitude < 0.1 then return end
         for _, listener in ipairs(ShotEvents.shot) do pcall(listener, origin, target) end
@@ -2515,6 +2632,8 @@ do
         end
         table.insert(queue, { expiry = os.clock() + HIT_WINDOW, position = result.Position })
     end
+
+    ShotEvents.fire = onLocalShot
 
     local function consumePendingHit(player)
         local queue = pendingHits[player]
@@ -3499,6 +3618,31 @@ do
         local lastUid
         local busy = false
         local wornKeys = {} -- accessories already worn in this apply, so the same item is never added twice
+        local currentDesc -- the HumanoidDescription being applied (its scales size accessories)
+
+        -- accessories loaded straight from their asset are unscaled; scale them like the avatar's description
+        local function scaleAccessory(copy, factor)
+            if math.abs(factor - 1) < 0.01 then return end
+            for _, d in ipairs(copy:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    d.Size = d.Size * factor
+                elseif d:IsA("SpecialMesh") then
+                    d.Scale = d.Scale * factor
+                elseif d:IsA("Attachment") then
+                    d.CFrame = CFrame.new(d.CFrame.Position * factor) * d.CFrame.Rotation
+                end
+            end
+        end
+
+        local function descFactor(isHead)
+            local desc = currentDesc
+            if not desc then return 1 end
+            local ok, value = pcall(function()
+                if isHead then return desc.HeadScale end
+                return (desc.WidthScale + desc.HeightScale + desc.DepthScale) / 3
+            end)
+            return ok and tonumber(value) or 1
+        end
 
         -- identity of an accessory: name + mesh + texture (the same hat from the model and from the description match)
         local function accessoryKey(acc)
@@ -3593,7 +3737,7 @@ do
             end
         end
 
-        local function wearAccessory(char, acc)
+        local function wearAccessory(char, acc, fromAsset)
             if not char or not acc or not acc:IsA("Accessory") then return false end
             local key = accessoryKey(acc)
             if wornKeys[key] then return false end
@@ -3621,6 +3765,11 @@ do
                             break
                         end
                     end
+                end
+
+                if fromAsset then
+                    local isHead = targetAttachment ~= nil and targetAttachment.Parent ~= nil and targetAttachment.Parent.Name == "Head"
+                    scaleAccessory(copy, descFactor(isHead))
                 end
 
                 copy.Parent = char
@@ -3711,7 +3860,7 @@ do
                                 applied = true
                             end
                         elseif d:IsA("Accessory") then
-                            if wearAccessory(char, d) then applied = true end
+                            if wearAccessory(char, d, true) then applied = true end
                         end
                     end
                     if object:IsA("SpecialMesh") then
@@ -3722,7 +3871,7 @@ do
                         end
                     end
                     if object:IsA("Accessory") then
-                        if wearAccessory(char, object) then applied = true end
+                        if wearAccessory(char, object, true) then applied = true end
                     end
                 end
                 return applied
@@ -3762,14 +3911,42 @@ do
 
             local head, sourceHead = char:FindFirstChild("Head"), model:FindFirstChild("Head")
             if head and sourceHead then
-                for _, d in ipairs(head:GetChildren()) do
-                    if d:IsA("Decal") then pcall(function() d:Destroy() end) end
+                local function clearFaces()
+                    for _, d in ipairs(head:GetChildren()) do
+                        if d:IsA("Decal") or d:IsA("Texture") or d:IsA("SurfaceAppearance") then pcall(function() d:Destroy() end) end
+                    end
                 end
-                for _, d in ipairs(sourceHead:GetChildren()) do
-                    if d:IsA("Decal") then pcall(function() d:Clone().Parent = head end) end
+                clearFaces()
+                if sourceHead:IsA("MeshPart") then
+                    -- Dynamic head: its face lives in the head mesh and textures. The model's classic
+                    -- "face" decal is the default Roblox face, so it is not copied (it used to stack on
+                    -- top of the dynamic face), and the old head's face is removed.
+                    pcall(function()
+                        local mesh = head:FindFirstChildOfClass("SpecialMesh")
+                        if not mesh then
+                            mesh = Instance.new("SpecialMesh")
+                            mesh.Parent = head
+                        end
+                        mesh.MeshType = Enum.MeshType.FileMesh
+                        mesh.MeshId = sourceHead.MeshId
+                        local appearance = sourceHead:FindFirstChildOfClass("SurfaceAppearance")
+                        local texture = appearance and appearance.ColorMap or ""
+                        mesh.TextureId = texture ~= "" and texture or sourceHead.TextureID
+                        local native, size = sourceHead.MeshSize, sourceHead.Size
+                        if native.X > 0 and native.Y > 0 and native.Z > 0 then
+                            mesh.Scale = Vector3.new(size.X / native.X, size.Y / native.Y, size.Z / native.Z)
+                        end
+                    end)
+                    -- the game can add its own face back; sweep again shortly after
+                    task.delay(0.75, clearFaces)
+                    task.delay(2, clearFaces)
+                else
+                    for _, d in ipairs(sourceHead:GetChildren()) do
+                        if d:IsA("Decal") then pcall(function() d:Clone().Parent = head end) end
+                    end
+                    local sourceMesh = sourceHead:FindFirstChildOfClass("SpecialMesh")
+                    if sourceMesh then copySpecialMesh(head, sourceMesh) end
                 end
-                local sourceMesh = sourceHead:FindFirstChildOfClass("SpecialMesh")
-                if sourceMesh then copySpecialMesh(head, sourceMesh) end
             end
         end
 
@@ -3809,12 +3986,12 @@ do
                     for _, object in ipairs(objects) do
                         if object:IsA("Accessory") then
                             if string.find(string.lower(object.Name), "headless", 1, true) then headless = true end
-                            if wearAccessory(char, object) then count += 1 end
+                            if wearAccessory(char, object, true) then count += 1 end
                         else
                             for _, d in ipairs(object:GetDescendants()) do
                                 if d:IsA("Accessory") then
                                     if string.find(string.lower(d.Name), "headless", 1, true) then headless = true end
-                                    if wearAccessory(char, d) then count += 1 end
+                                    if wearAccessory(char, d, true) then count += 1 end
                                 elseif d:IsA("CharacterMesh") then
                                     pcall(function()
                                         d:Clone().Parent = char
@@ -3880,6 +4057,7 @@ do
             lastUid = uid
 
             local model, desc = fetchModel(uid, humanoid.RigType)
+            currentDesc = desc
             if not model then
                 if desc then
                     pcall(function()
@@ -4833,16 +5011,21 @@ do
             end
         end
 
-        local suppressed = {}
+        local suppressed, verdict = {}, {}
         local function consider(animTrack, player)
+            if suppressed[animTrack] then return end
             local anim = animTrack.Animation
             local id = anim and idOf(anim.AnimationId)
             if not id or known[id] then return end
-            -- animations that ship inside the game, the player's character or their tools are fine
-            learn(ReplicatedStorage)
-            learn(player.Character)
-            learn(player:FindFirstChildOfClass("Backpack"))
-            if known[id] then return end
+            local key = tostring(player.UserId) .. ":" .. id
+            if verdict[key] == nil then
+                -- animations that ship inside the game, the player's character or their tools are fine
+                learn(ReplicatedStorage)
+                learn(player.Character)
+                learn(player:FindFirstChildOfClass("Backpack"))
+                verdict[key] = known[id] == true
+            end
+            if verdict[key] then return end
             suppressed[animTrack] = player
             flagCheat(player, "invalid animation", 1)
         end
@@ -4865,7 +5048,25 @@ do
         feature("misc_anti_invis", function()
             for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
             bag.add(Players.PlayerAdded:Connect(hookPlayer))
-            bag.add(RunService.Heartbeat:Connect(function()
+            -- loop: every quarter second all players' playing tracks are checked again, so a target
+            -- that resets (new character, new tracks) or re-plays the animation is suppressed again
+            local acc, cleared = 0, 0
+            bag.add(RunService.Heartbeat:Connect(function(dt)
+                acc += dt
+                cleared += dt
+                if cleared > 6 then cleared = 0 table.clear(verdict) end
+                if acc >= 0.25 then
+                    acc = 0
+                    for _, player in ipairs(Players:GetPlayers()) do
+                        if player ~= LocalPlayer then
+                            local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+                            local animator = hum and hum:FindFirstChildOfClass("Animator")
+                            if animator then
+                                for _, animTrack in ipairs(animator:GetPlayingAnimationTracks()) do consider(animTrack, player) end
+                            end
+                        end
+                    end
+                end
                 for animTrack in pairs(suppressed) do
                     local ok, playing = pcall(function() return animTrack.IsPlaying end)
                     if not ok or not playing then
@@ -4878,6 +5079,7 @@ do
         end, function()
             bag.clear()
             table.clear(suppressed)
+            table.clear(verdict)
         end)
     end
 
@@ -5867,19 +6069,6 @@ end
             anim:Destroy()
         end
 
-        -- the keybind flips the toggle
-        local keyHooked = false
-        local function hookKey()
-            local picker = Options.misc_invis_key
-            if keyHooked or not picker or type(picker.OnClick) ~= "function" then return end
-            keyHooked = true
-            picker:OnClick(function()
-                local toggle = Toggles.misc_invis
-                if toggle and toggle.SetValue then toggle:SetValue(not toggle.Value) end
-            end)
-        end
-        hookKey()
-
         feature("misc_invis", function()
             token += 1
             local my = token
@@ -5887,10 +6076,26 @@ end
             bag.add(LocalPlayer.CharacterAdded:Connect(function()
                 task.delay(0.8, function() if my == token then start() end end)
             end))
+            -- the frozen pose sits below the character, so tilting the character to look up
+            -- points that offset down and puts the pose under the map
+            bag.add(stepSignal:Connect(function()
+                if not flag("misc_invis_under", true) then return end
+                local _, hum, root = localParts()
+                if not root then return end
+                local _, yaw = root.CFrame:ToEulerAnglesYXZ()
+                hum.AutoRotate = false
+                root.CFrame = CFrame.new(root.Position) * CFrame.fromEulerAnglesYXZ(math.rad(flag("misc_invis_pitch", 90)), yaw, 0)
+            end))
         end, function()
             token += 1
             bag.clear()
             stop()
+            local _, hum, root = localParts()
+            if root then
+                local _, yaw = root.CFrame:ToEulerAnglesYXZ()
+                root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, yaw, 0)
+                hum.AutoRotate = true
+            end
         end)
     end
 
@@ -6211,13 +6416,15 @@ end
             local team = flag(prefix .. "_team", false)
             local ignoreDown = opts.ignoreDown or flag(prefix .. "_ignore_down", false)
             local wall = flag(prefix .. "_wall", false) and not opts.skipWall
+            local ffCheck = flag(prefix .. "_ff", false)
 
             local bestEntity, bestPart, bestScore, bestDist
             for _, e in ipairs(otherEntities()) do
                 if (not opts.only or e.Player == opts.only) then
                     local distance = (e.Root.Position - from).Magnitude
                     local skip = distance > maxDist
-                    if not skip and team and LocalPlayer.Team ~= nil and e.Player.Team == LocalPlayer.Team then skip = true end
+                    if not skip and (Relations[e.Player.UserId] == "Friendly" or (team and relationOf(e.Player) == "Friendly")) then skip = true end
+                    if not skip and ffCheck and e.Character:FindFirstChildOfClass("ForceField") then skip = true end
                     if not skip and ignoreDown and (e.Character:GetAttribute("Tased") or e.Character:GetAttribute("Arrested")) then skip = true end
                     if not skip then
                         local radius = baseFov
@@ -6455,10 +6662,42 @@ end
             return true
         end
 
-        -- returns newOrigin, newHit (newHit is nil when the target position itself is reachable)
+        local FLAT = Vector3.new(1, 0, 1)
+        local DIRS = {}
+        for i = 0, 15 do
+            local angle = i / 16 * math.pi * 2
+            DIRS[#DIRS + 1] = v3(math.cos(angle), 0, math.sin(angle))
+        end
+        local ORIGIN_CAP = 140
+
+        -- candidate shot origins around the real one, nearest first, so the smallest move wins
+        local function candidateOrigins(origin, forward)
+            local list = { origin }
+            for _, offset in ipairs(OFFSETS) do
+                if (offset * FLAT):Dot(forward) > -0.5 then list[#list + 1] = origin + offset * 6.5 end
+            end
+            for _, radius in ipairs({ 2.5, 4.5, 6.5 }) do
+                for _, dir in ipairs(DIRS) do
+                    if dir:Dot(forward) > -0.3 then
+                        for _, height in ipairs({ 0, 2.5, -2.5, 5 }) do
+                            list[#list + 1] = origin + dir * radius + v3(0, height, 0)
+                        end
+                    end
+                end
+            end
+            table.sort(list, function(a, b) return (a - origin).Magnitude < (b - origin).Magnitude end)
+            for index = #list, ORIGIN_CAP + 1, -1 do list[index] = nil end
+            return list
+        end
+
+        -- returns newOrigin, newHit (newHit is nil when the target position itself is reachable).
+        -- A failed search is cached too (false), so a hidden target is not rescanned every shot.
         function WB.scan(origin, target, extra, part, entity)
             local cached = WB.cache[part]
-            if cached then return cached[1], cached[2] end
+            if cached ~= nil then
+                if cached == false then return nil end
+                return cached[1], cached[2]
+            end
             local hitboxes = {}
             if freeSpace(target) then
                 if extra and (origin - extra).Magnitude < 7.5 then
@@ -6466,32 +6705,44 @@ end
                     return extra
                 end
                 table.insert(hitboxes, target)
-            end
-            local flat = Vector3.new(1, 0, 1)
-            local forward = CFrame.lookAt(origin * flat, target * flat).LookVector
-            for _, normal in ipairs(Enum.NormalId:GetEnumItems()) do
-                local offset = Vector3.fromNormalId(normal)
-                if (offset * flat):Dot(-forward) > -0.5 then
-                    local position = entity.Root.Position + offset * 7.4
-                    if freeSpace(position) then table.insert(hitboxes, position) end
+                for _, normal in ipairs(Enum.NormalId:GetEnumItems()) do
+                    local nudged = target + Vector3.fromNormalId(normal) * 0.45
+                    if freeSpace(nudged) then table.insert(hitboxes, nudged) end
                 end
             end
-            local origins = { origin }
-            for _, offset in ipairs(OFFSETS) do
-                if (offset * flat):Dot(forward) > -0.5 then
-                    local position = origin + offset * 6.5
-                    if freeSpace(position) then table.insert(origins, position) end
+            local forward = CFrame.lookAt(origin * FLAT, target * FLAT).LookVector
+            for _, scale in ipairs({ 3.7, 7.4 }) do
+                for _, normal in ipairs(Enum.NormalId:GetEnumItems()) do
+                    local offset = Vector3.fromNormalId(normal)
+                    if (offset * FLAT):Dot(-forward) > -0.5 then
+                        local position = entity.Root.Position + offset * scale
+                        if freeSpace(position) then table.insert(hitboxes, position) end
+                    end
                 end
             end
+            local origins = candidateOrigins(origin, forward)
             for _, hitbox in ipairs(hitboxes) do
                 for _, position in ipairs(origins) do
-                    if not workspace:Raycast(hitbox, position - hitbox, WB.ray) then
+                    if not workspace:Raycast(hitbox, position - hitbox, WB.ray) and freeSpace(position) then
                         WB.cache[part] = { position, hitbox ~= target and hitbox or nil }
                         return position, hitbox
                     end
                 end
             end
+            WB.cache[part] = false
             return nil
+        end
+
+        -- other body parts to try when the aimed part cannot be reached
+        local ALT_PARTS = { "Head", "UpperTorso", "Torso", "LowerTorso", "HumanoidRootPart", "LeftUpperArm", "RightUpperArm",
+            "Left Arm", "Right Arm", "LeftUpperLeg", "RightUpperLeg", "Left Leg", "Right Leg" }
+        local function altParts(char, except)
+            local list = {}
+            for _, name in ipairs(ALT_PARTS) do
+                local candidate = char:FindFirstChild(name)
+                if candidate and candidate ~= except and candidate:IsA("BasePart") then list[#list + 1] = candidate end
+            end
+            return list
         end
 
         -- silent aim ---------------------------------------------------------------------
@@ -6531,24 +6782,38 @@ end
                 if not entity then return original(...) end
 
                 local args = table.pack(...)
-                local targetPos = part.Position
-                args[2] = targetPos
-
                 local _, _, myRoot = localParts()
+                local usePart, newOrigin, hit = part, nil, nil
                 if wallbang and myRoot then
                     WB.updateIgnore()
-                    local blocked
-                    if not WB.cache[part] then blocked = workspace:Raycast(targetPos, origin - targetPos, WB.ray) end
-                    if WB.cache[part] or blocked or workspace:Raycast(origin, targetPos - origin, WB.ray) then
-                        local newOrigin, hit = WB.scan(myRoot.Position, targetPos, blocked and blocked.Position + blocked.Normal * 0.01 or nil, part, entity)
-                        if newOrigin then
-                            rewriteStack(origin, newOrigin)
-                            args[1] = newOrigin
-                            if hit then return part, hit end
-                        elseif flag("silent_wall", false) then
-                            return original(...)
+                    local function plan(candidate)
+                        local position = candidate.Position
+                        local blocked
+                        if WB.cache[candidate] == nil then
+                            blocked = workspace:Raycast(position, origin - position, WB.ray)
+                            if not blocked and not workspace:Raycast(origin, position - origin, WB.ray) then return "clear" end
+                        end
+                        local moved, moveHit = WB.scan(myRoot.Position, position, blocked and blocked.Position + blocked.Normal * 0.01 or nil, candidate, entity)
+                        if moved then return "moved", moved, moveHit end
+                    end
+                    local status, moved, moveHit = plan(part)
+                    if not status then
+                        for _, alt in ipairs(altParts(entity.Character, part)) do
+                            status, moved, moveHit = plan(alt)
+                            if status then usePart = alt break end
                         end
                     end
+                    if status == "moved" then
+                        newOrigin, hit = moved, moveHit
+                    elseif not status and flag("silent_wall", false) then
+                        return original(...)
+                    end
+                end
+                args[2] = usePart.Position
+                if newOrigin then
+                    rewriteStack(origin, newOrigin)
+                    args[1] = newOrigin
+                    if hit then return usePart, hit end
                 end
                 return original(table.unpack(args, 1, args.n))
             end
@@ -6656,7 +6921,8 @@ end
                     local player = model and Players:GetPlayerFromCharacter(model)
                     local hum = model and model:FindFirstChildOfClass("Humanoid")
                     local good = player ~= nil and player ~= LocalPlayer and hum ~= nil and hum.Health > 0
-                    if good and flag("trigger_team", false) and LocalPlayer.Team ~= nil and player.Team == LocalPlayer.Team then good = false end
+                    if good and (Relations[player.UserId] == "Friendly" or (flag("trigger_team", false) and relationOf(player) == "Friendly")) then good = false end
+                    if good and flag("trigger_ff", false) and model:FindFirstChildOfClass("ForceField") then good = false end
                     if good then
                         local mode = flag("Trigger_Global_HitPart", "Head")
                         if mode == "Head" then good = result.Instance.Name == "Head"
@@ -6682,6 +6948,289 @@ end
             end)
         end
     end)()
+
+
+    -- ======================================================================================
+    -- Disabler: turns off the game's CanCollide listener on your Head so Phase (Character
+    -- mode) is not caught. Humanoid spoofer: writes a fake state to the network replication.
+    -- ======================================================================================
+    do
+        local bag, disabled = newBag(), nil
+        local function disable(char)
+            local head = char:WaitForChild("Head", 5)
+            if not head or type(getconnections) ~= "function" then return end
+            task.wait(0.5)
+            local ok, list = pcall(getconnections, head:GetPropertyChangedSignal("CanCollide"))
+            local first = ok and type(list) == "table" and list[1]
+            if first then
+                pcall(function() first:Disable() end)
+                disabled = first
+            end
+        end
+        feature("misc_disabler", function()
+            if type(getconnections) ~= "function" then
+                say("Disabler needs getconnections")
+                switchOff("misc_disabler")
+                return
+            end
+            if LocalPlayer.Character then task.spawn(disable, LocalPlayer.Character) end
+            bag.add(LocalPlayer.CharacterAdded:Connect(function(char)
+                disabled = nil
+                task.spawn(disable, char)
+            end))
+        end, function()
+            bag.clear()
+            if disabled then pcall(function() disabled:Enable() end) end
+            disabled = nil
+        end)
+    end
+
+    do
+        local bag = newBag()
+        feature("misc_humspoof", function()
+            if type(sethiddenproperty) ~= "function" then
+                say("Humanoid spoofer needs sethiddenproperty")
+                switchOff("misc_humspoof")
+                return
+            end
+            bag.add(RunService.Heartbeat:Connect(function()
+                local _, hum = localParts()
+                if not hum then return end
+                local state = Enum.HumanoidStateType[flag("misc_humspoof_state", "Running")]
+                if state then pcall(sethiddenproperty, hum, "NetworkHumanoidState", state.Value) end
+                if flag("misc_humspoof_replace", false) then
+                    pcall(sethiddenproperty, hum, "JumpReplicate", flag("misc_humspoof_jump", false))
+                end
+            end))
+        end, function()
+            bag.clear()
+            local _, hum = localParts()
+            if hum and type(sethiddenproperty) == "function" then
+                pcall(sethiddenproperty, hum, "JumpReplicate", true)
+            end
+        end)
+    end
+
+
+    -- ======================================================================================
+    -- Infinite jump and click teleport
+    -- ======================================================================================
+    do
+        local bag = newBag()
+        feature("misc_infjump", function()
+            bag.add(UserInputService.JumpRequest:Connect(function()
+                local _, hum = localParts()
+                if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+            end))
+        end, function() bag.clear() end)
+    end
+
+    do
+        local bag = newBag()
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        feature("misc_clicktp", function()
+            bag.add(UserInputService.InputBegan:Connect(function(input, processed)
+                if processed or typing() or input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+                if flag("misc_clicktp_ctrl", true) and not UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then return end
+                local char, hum, root = localParts()
+                local cam = Camera()
+                if not root or not cam then return end
+                local at = UserInputService:GetMouseLocation()
+                local ray = cam:ViewportPointToRay(at.X, at.Y)
+                params.FilterDescendantsInstances = { char, cam }
+                local hit = workspace:Raycast(ray.Origin, ray.Direction * 3000, params)
+                if not hit then return end
+                if (hit.Position - root.Position).Magnitude > flag("misc_clicktp_range", 500) then
+                    say("That point is out of click teleport range")
+                    return
+                end
+                local lift = hum.HipHeight + 3
+                root.CFrame = CFrame.new(hit.Position + v3(0, lift, 0)) * root.CFrame.Rotation
+                root.AssemblyLinearVelocity = ZERO
+            end))
+        end, function() bag.clear() end)
+    end
+
+    -- ======================================================================================
+    -- Shot fallback for hit sounds, notifications and hit effects: when the tracer hook did not
+    -- report a shot, the drop in the gun's ammo is used to detect it instead.
+    -- ======================================================================================
+    ;(function()
+        local lastTool, lastAmmo
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        pcall(function() params.CollisionGroup = "ClientBullet" end)
+
+        local function aimPoint()
+            local cam = Camera()
+            local at = UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter and cam.ViewportSize / 2 or UserInputService:GetMouseLocation()
+            local ray = cam:ViewportPointToRay(at.X, at.Y)
+            local list = { cam }
+            if LocalPlayer.Character then list[#list + 1] = LocalPlayer.Character end
+            params.FilterDescendantsInstances = list
+            local hit = workspace:Raycast(ray.Origin, ray.Direction * 1500, params)
+            return hit and hit.Position or (ray.Origin + ray.Direction * 1500)
+        end
+
+        track(RunService.Heartbeat:Connect(function()
+            local tool = equippedGun()
+            local ammo = tool and tool:GetAttribute("Local_CurrentAmmo")
+            if tool ~= lastTool then
+                lastTool, lastAmmo = tool, ammo
+                return
+            end
+            if tool and type(ammo) == "number" and type(lastAmmo) == "number" and ammo < lastAmmo then
+                local stamp = clock()
+                task.delay(0.12, function()
+                    if (ShotEvents.last or 0) >= stamp - 0.1 then return end -- the tracer hook already reported it
+                    local fire = ShotEvents.fire
+                    local cam = Camera()
+                    if not fire or not cam then return end
+                    local muzzle = tool:FindFirstChild("Muzzle")
+                    local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                    local origin = (muzzle and muzzle:IsA("BasePart") and muzzle.Position) or (head and head.Position) or cam.CFrame.Position
+                    pcall(fire, origin, aimPoint())
+                end)
+            end
+            lastAmmo = ammo
+        end))
+    end)()
+
+    -- ======================================================================================
+    -- Kick exploit (Vape): throws vehicles you own the physics of at other players. It needs
+    -- isnetworkowner and sethiddenproperty. Server hopping from the original is not included.
+    -- ======================================================================================
+    do
+        local bag = newBag()
+        local didClick, lastFling, current = {}, {}, setmetatable({}, { __mode = "k" })
+        local direction, scan, lastTeam = 0, 0, 0
+        local seats = {}
+
+        local function pickTarget(seat)
+            local held = current[seat]
+            if held and held.Root.Parent and clock() - (lastFling[held.Player.UserId] or 0) < 0.75 then return held end
+            local list = otherEntities()
+            table.sort(list, function(a, b) return (lastFling[a.Player.UserId] or 0) < (lastFling[b.Player.UserId] or 0) end)
+            local only
+            if flag("misc_kick_mode", "All") ~= "All" then only = Players:FindFirstChild(flag("Player_Selected", "")) end
+            for _, e in ipairs(list) do
+                local team = e.Player.Team
+                local seated = e.Humanoid.SeatPart and e.Humanoid.SeatPart.Anchored
+                local skip = relationOf(e.Player) == "Friendly" or not team or team.Name == "Neutral" or seated
+                if only and e.Player ~= only then skip = true end
+                if not skip then
+                    lastFling[e.Player.UserId] = clock()
+                    current[seat] = e
+                    say("Kick exploit: " .. e.Player.Name)
+                    return e
+                end
+            end
+        end
+
+        feature("misc_kick", function()
+            if type(isnetworkowner) ~= "function" then
+                say("Kick exploit needs isnetworkowner")
+                switchOff("misc_kick")
+                return
+            end
+            local protect = Toggles.misc_anti_fling
+            if protect and not protect.Value and protect.SetValue then protect:SetValue(true) end
+            direction, scan = 0, 0
+            bag.add(RunService.Heartbeat:Connect(function(dt)
+                local now = clock()
+                if not LocalPlayer.Team or LocalPlayer.Team.Name == "Neutral" then
+                    local gui = LocalPlayer.PlayerGui:FindFirstChild("TeamsFrame", true)
+                    if gui and type(firesignal) == "function" and now - lastTeam > 0.1 then
+                        local buttons = gui:GetChildren()
+                        table.sort(buttons, function(a, b) return (a.Name == "Inmates" and 1 or 2) < (b.Name == "Inmates" and 1 or 2) end)
+                        for _, holder in ipairs(buttons) do
+                            local button = holder:FindFirstChild("Button")
+                            if button and button.AutoButtonColor then
+                                lastTeam = now
+                                pcall(firesignal, button.MouseButton1Click)
+                                break
+                            end
+                        end
+                    end
+                    return
+                end
+
+                local _, hum, root = localParts()
+                if not root then return end
+
+                if flag("misc_kick_move", true) then
+                    local items = workspace:FindFirstChild("Prison_ITEMS")
+                    local buttons = items and items:FindFirstChild("buttons")
+                    local moved = false
+                    if buttons then
+                        for _, button in ipairs(buttons:GetChildren()) do
+                            local pad = button.Name == "Car Spawner" and button:FindFirstChild("Car Spawner")
+                            if pad then
+                                local distance = (pad.Position - root.Position).Magnitude
+                                if distance < 15 and (didClick[button] or 0) < now then
+                                    didClick[button] = now + 0.2
+                                    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+                                    local interact = remotes and remotes:FindFirstChild("InteractWithItem")
+                                    if interact then task.spawn(function() pcall(function() interact:InvokeServer(pad) end) end) end
+                                end
+                                if distance < 50 and pad.BrickColor == BrickColor.new("Cyan") and not moved then
+                                    local diff = math.clamp(pad.Position.X - root.Position.X, -1, 1)
+                                    direction = math.clamp(direction + diff * dt * 24, -12, 14)
+                                    moved = true
+                                end
+                            end
+                        end
+                    end
+                    if not moved then
+                        direction = math.clamp(direction + math.clamp(-direction, -1, 1) * dt * 24, -12, 14)
+                    end
+                    if flag("misc_kick_equip", false) and not LocalPlayer.Character:FindFirstChildOfClass("Tool") then
+                        local pack = LocalPlayer:FindFirstChildOfClass("Backpack")
+                        local tool = pack and pack:FindFirstChildOfClass("Tool")
+                        if tool then hum:EquipTool(tool) else root.CFrame = CFrame.new(816, 98, 2233) return end
+                    end
+                    if (root.Position - v3(633, 98, 2489)).Magnitude < 40 then
+                        root.CFrame = CFrame.new(610 + direction, 90, 2494)
+                        root.AssemblyLinearVelocity = v3(24, 0, 0)
+                    end
+                end
+
+                scan += dt
+                if scan > 0.1 then
+                    scan = 0
+                    table.clear(seats)
+                    local cars = workspace:FindFirstChild("CarContainer")
+                    if cars then
+                        for _, d in ipairs(cars:GetDescendants()) do
+                            if d:IsA("VehicleSeat") then seats[#seats + 1] = d end
+                        end
+                    end
+                end
+                for _, seat in ipairs(seats) do
+                    if seat.Parent and isnetworkowner(seat) then
+                        local target = pickTarget(seat)
+                        if target then
+                            seat.AssemblyLinearVelocity = v3(10000, 10000, 0)
+                            seat.CFrame = CFrame.new(target.Root.Position) * CFrame.new(-2, 0, -12)
+                            target.Root.AssemblyLinearVelocity = ZERO
+                            if type(sethiddenproperty) == "function" then
+                                pcall(sethiddenproperty, seat, "PhysicsRepRootPart", target.Root)
+                                if InstanceHandle and InstanceHandle.new then
+                                    pcall(function() sethiddenproperty(seat, "PhysicsRepRootRef", InstanceHandle.new(target.Root)) end)
+                                end
+                            end
+                            local wheels = seat.Parent.Parent and seat.Parent.Parent:FindFirstChild("Wheels")
+                            if wheels then wheels:Destroy() end
+                        end
+                    end
+                end
+            end))
+        end, function()
+            bag.clear()
+            table.clear(seats)
+        end)
+    end
 
     -- watcher: starts and stops features as their toggles change --------------------------
     track(RunService.Heartbeat:Connect(function()

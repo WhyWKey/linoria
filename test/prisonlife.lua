@@ -1085,6 +1085,9 @@ local PlayersPage  = Window:Page({ Name = "Players", Columns = 2, Subtabs = fals
 local SpooferPage  = Window:Page({ Name = "Spoofer", Columns = 2, Subtabs = false })
 local MiscPage     = Window:Page({ Name = "Misc",    Columns = 2, Subtabs = false })
 local MiscActions  = { clearCheats = noop }
+local TeleportPage = Window:Page({ Name = "Teleport", Columns = 2, Subtabs = false })
+local ShotEvents = { shot = {}, hit = {} } -- listeners: shot(origin, target), hit(player, position)
+local Actions = { previewHitEffect = noop, getWeapon = noop, getAllWeapons = noop, getItem = noop }
 
 local WHITE = Color3.fromRGB(255, 255, 255)
 local BLACK = Color3.fromRGB(0, 0, 0)
@@ -1093,38 +1096,76 @@ local BLACK = Color3.fromRGB(0, 0, 0)
 do
 -- Combat
 do
-    local Aim = CombatTab:Section({ Name = "Aimbot", Side = 1 })
+    -- Aim assist (camera or mouse) ------------------------------------------------------
+    local Aim = CombatTab:Section({ Name = "Aim assist", Side = 1 })
     local aimEnabled = Aim:Toggle({ Name = "Enabled", Flag = "Aim_Global_Enabled", Default = false })
-    aimEnabled:Keybind({ Name = "Hotkey", Flag = "Aim_Global_Key", Default = Enum.KeyCode.E, Mode = "Toggle" })
-    Aim:Dropdown({ Name = "Hit part", Flag = "Aim_Global_HitPart", Items = { "Head", "Torso", "Closest" }, Default = "Head" })
-    Aim:Slider({ Name = "FOV", Flag = "Aim_Global_FOV", Min = 10, Max = 360, Default = 90, Suffix = "°", Decimals = 1 })
-    Aim:Slider({ Name = "Smoothness", Flag = "Aim_Global_Smooth", Min = 1, Max = 30, Default = 8, Decimals = 0.1 })
-    Aim:Dropdown({ Name = "Smooth type", Flag = "Aim_Global_SmoothType", Items = { "None", "Lerp", "Linear", "Exponential", "Spring" }, Default = "Lerp" })
-    Aim:Slider({ Name = "Reaction time", Flag = "Aim_Global_Reaction", Min = 0, Max = 300, Default = 0, Suffix = "ms", Decimals = 1 })
-    local Silent = CombatTab:Section({ Name = "Silent aim", Side = 2 })
-    local silentEnabled = Silent:Toggle({ Name = "Enabled", Flag = "Silent_Global_Enabled", Default = false })
-    silentEnabled:Keybind({ Name = "Hotkey", Flag = "Silent_Global_Key", Default = Enum.KeyCode.Q, Mode = "Toggle" })
-    Silent:Dropdown({ Name = "Hit part", Flag = "Silent_Global_HitPart", Items = { "Head", "Torso", "Closest" }, Default = "Head" })
-    Silent:Slider({ Name = "FOV", Flag = "Silent_Global_FOV", Min = 10, Max = 360, Default = 90, Suffix = "°", Decimals = 1 })
-    Silent:Slider({ Name = "Hit chance", Flag = "Silent_Global_HitChance", Min = 1, Max = 100, Default = 100, Suffix = "%", Decimals = 1 })
-    Silent:Toggle({ Name = "Show FOV", Flag = "Silent_Global_ShowFOV", Default = false })
+    aimEnabled:Keybind({ Name = "Aim key", Flag = "Aim_Global_Key", Default = "MB2", Mode = "Hold" })
+    Aim:Dropdown({ Name = "Method", Flag = "aim_method", Items = { "Camera", "Mouse" }, Default = "Camera" })
+    Aim:Slider({ Name = "FOV", Flag = "aim_fov", Min = 10, Max = 800, Default = 120, Suffix = "px", Decimals = 1 })
+    Aim:Toggle({ Name = "Dynamic FOV", Flag = "aim_dynamic", Default = false })
+    Aim:Slider({ Name = "Dynamic FOV amount", Flag = "aim_dynamic_amount", Min = 0, Max = 100, Default = 50, Suffix = "%", Decimals = 1 })
+    Aim:Toggle({ Name = "Lock target", Flag = "aim_lock", Default = false })
+    Aim:Dropdown({ Name = "Hitscan priority", Flag = "aim_priority", Items = { "Closest", "Head", "Body" }, Default = "Closest" })
+    Aim:Dropdown({ Name = "Hitscan points", Flag = "aim_points", Items = { "Head", "Body" }, Multi = true, Default = { "Head", "Body" } })
+    Aim:Slider({ Name = "Reaction time", Flag = "aim_reaction", Min = 0, Max = 500, Default = 0, Suffix = "ms", Decimals = 1 })
+    Aim:Slider({ Name = "Max distance", Flag = "aim_max_dist", Min = 50, Max = 2000, Default = 1000, Suffix = " studs", Decimals = 1 })
+    Aim:Toggle({ Name = "Team check", Flag = "aim_team", Default = false })
+    Aim:Toggle({ Name = "Wall check", Flag = "aim_wall", Default = false })
+    Aim:Toggle({ Name = "Ignore tased / arrested", Flag = "aim_ignore_down", Default = false })
+
+    local Smooth = CombatTab:Section({ Name = "Aim smoothing", Side = 1 })
+    Smooth:Toggle({ Name = "Smoothing", Flag = "aim_smooth", Default = true })
+    Smooth:Slider({ Name = "Start", Flag = "aim_smooth_start", Min = 0, Max = 99, Default = 85, Suffix = "%", Decimals = 1 })
+    Smooth:Slider({ Name = "End", Flag = "aim_smooth_end", Min = 0, Max = 99, Default = 20, Suffix = "%", Decimals = 1 })
+    Smooth:Slider({ Name = "Increment", Flag = "aim_smooth_inc", Min = 0, Max = 200, Default = 50, Suffix = "%/s", Decimals = 1 })
+    Smooth:Slider({ Name = "Randomization", Flag = "aim_smooth_rand", Min = 0, Max = 50, Default = 5, Suffix = "%", Decimals = 1 })
+    Smooth:Label({ Name = "Smoothing starts at Start and moves to End by Increment each second the target is held. Lower is snappier." })
+
     local Trigger = CombatTab:Section({ Name = "Triggerbot", Side = 1 })
     local triggerEnabled = Trigger:Toggle({ Name = "Enabled", Flag = "Trigger_Global_Enabled", Default = false })
-    triggerEnabled:Keybind({ Name = "Hotkey", Flag = "Trigger_Global_Key", Default = Enum.KeyCode.T, Mode = "Toggle" })
+    triggerEnabled:Keybind({ Name = "Trigger key", Flag = "Trigger_Global_Key", Default = "None", Mode = "Always" })
     Trigger:Dropdown({ Name = "Hit part", Flag = "Trigger_Global_HitPart", Items = { "Head", "Torso", "Any" }, Default = "Head" })
     Trigger:Slider({ Name = "Delay", Flag = "Trigger_Global_Delay", Min = 0, Max = 300, Default = 40, Suffix = "ms", Decimals = 1 })
     Trigger:Slider({ Name = "Reaction time", Flag = "Trigger_Global_Reaction", Min = 0, Max = 200, Default = 0, Suffix = "ms", Decimals = 1 })
-    local FovRing = CombatTab:Section({ Name = "FOV circle", Side = 2 })
-    local fovCircle = FovRing:Toggle({ Name = "FOV circle", Flag = "aimbot_fov_outline", Default = false })
-    fovCircle:Colorpicker({ Name = "Color", Flag = "aimbot_outline_color1", Default = Color3.new(1, 1, 1) })
-    FovRing:Slider({ Name = "FOV radius", Flag = "silent_radius", Min = 0, Max = 500, Default = 100, Suffix = "px", Decimals = 1 })
-    FovRing:Toggle({ Name = "FOV rotation", Flag = "aimbot_fov_moving", Default = false })
-    FovRing:Slider({ Name = "FOV rotation speed", Flag = "aimbot_fov_rotation_speed", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
-    local GunMods = CombatTab:Section({ Name = "Gun mods", Side = 1 })
+    Trigger:Toggle({ Name = "Team check", Flag = "trigger_team", Default = false })
+
+    -- Silent aim ---------------------------------------------------------------------------
+    local Silent = CombatTab:Section({ Name = "Silent aim", Side = 2 })
+    local silentEnabled = Silent:Toggle({ Name = "Enabled", Flag = "Silent_Global_Enabled", Default = false })
+    silentEnabled:Keybind({ Name = "Silent key", Flag = "Silent_Global_Key", Default = "None", Mode = "Always" })
+    Silent:Slider({ Name = "FOV", Flag = "silent_fov", Min = 10, Max = 800, Default = 150, Suffix = "px", Decimals = 1 })
+    Silent:Toggle({ Name = "Dynamic FOV", Flag = "silent_dynamic", Default = false })
+    Silent:Slider({ Name = "Dynamic FOV amount", Flag = "silent_dynamic_amount", Min = 0, Max = 100, Default = 50, Suffix = "%", Decimals = 1 })
+    Silent:Dropdown({ Name = "Hitscan priority", Flag = "silent_priority", Items = { "Closest", "Head", "Body" }, Default = "Head" })
+    Silent:Dropdown({ Name = "Hitscan points", Flag = "silent_points", Items = { "Head", "Body" }, Multi = true, Default = { "Head", "Body" } })
+    Silent:Slider({ Name = "Hit chance", Flag = "Silent_Global_HitChance", Min = 1, Max = 100, Default = 100, Suffix = "%", Decimals = 1 })
+    Silent:Slider({ Name = "Max distance", Flag = "silent_max_dist", Min = 50, Max = 2000, Default = 1000, Suffix = " studs", Decimals = 1 })
+    Silent:Toggle({ Name = "Wallbang", Flag = "silent_wallbang", Default = false })
+    Silent:Toggle({ Name = "Wall check", Flag = "silent_wall", Default = false })
+    Silent:Toggle({ Name = "Team check", Flag = "silent_team", Default = false })
+    Silent:Toggle({ Name = "Ignore tased / arrested", Flag = "silent_ignore_down", Default = false })
+    Silent:Toggle({ Name = "Auto fire", Flag = "silent_autofire", Default = false })
+    Silent:Slider({ Name = "Auto fire rate", Flag = "silent_autofire_rate", Min = 1, Max = 60, Default = 15, Suffix = " hz", Decimals = 1 })
+    Silent:Label({ Name = "Wallbang moves the shot origin up to about 7 studs to find a clear line, like the Vape build." })
+
+    -- FOV circles (one per assist) ---------------------------------------------------------
+    local FovAim, FovSilent = CombatTab:MultiSection({ Sections = { "Aim FOV", "Silent FOV" }, Side = 2 })
+    local aimCircle = FovAim:Toggle({ Name = "Show FOV circle", Flag = "aim_fov_show", Default = false })
+    aimCircle:Colorpicker({ Name = "Color", Flag = "aim_fov_color", Default = Color3.new(1, 1, 1), Alpha = true })
+    FovAim:Toggle({ Name = "Filled", Flag = "aim_fov_filled", Default = false })
+    FovAim:Slider({ Name = "Thickness", Flag = "aim_fov_thick", Min = 1, Max = 5, Default = 1, Decimals = 1 })
+    local silentCircle = FovSilent:Toggle({ Name = "Show FOV circle", Flag = "silent_fov_show", Default = false })
+    silentCircle:Colorpicker({ Name = "Color", Flag = "silent_fov_color", Default = Color3.fromRGB(255, 120, 120), Alpha = true })
+    FovSilent:Toggle({ Name = "Filled", Flag = "silent_fov_filled", Default = false })
+    FovSilent:Slider({ Name = "Thickness", Flag = "silent_fov_thick", Min = 1, Max = 5, Default = 1, Decimals = 1 })
+
+    local GunMods = CombatTab:Section({ Name = "Gun mods", Side = 2 })
     GunMods:Toggle({ Name = "Gun modifications", Flag = "gun_mods", Default = false })
     GunMods:Slider({ Name = "Fire delay (% of stock)", Flag = "gun_fire_rate", Min = 1, Max = 100, Default = 100, Suffix = "%", Decimals = 1 })
     GunMods:Toggle({ Name = "No spread", Flag = "gun_no_spread", Default = false })
     GunMods:Toggle({ Name = "Full automatic", Flag = "gun_full_auto", Default = false })
+    GunMods:Toggle({ Name = "Custom range", Flag = "gun_range_on", Default = false })
+    GunMods:Slider({ Name = "Range", Flag = "gun_range", Min = 10, Max = 100000, Default = 1000, Suffix = " studs", Decimals = 1 })
     local Hits = CombatTab:Section({ Name = "Hit feedback", Side = 2 })
     Hits:Toggle({ Name = "Hit notifications", Flag = "World_HitNotify", Default = false })
     Hits:Toggle({ Name = "Hit sounds", Flag = "World_HitSound", Default = false })
@@ -1149,6 +1190,7 @@ do
     fly:Dropdown({ Name = "Mode", Flag = "misc_fly_mode", Items = { "Velocity", "CFrame" }, Default = "Velocity" })
     fly:Slider({ Name = "Speed", Flag = "misc_fly_speed", Min = 1, Max = 150, Default = 50, Suffix = " studs", Decimals = 1 })
     fly:Slider({ Name = "Vertical speed", Flag = "misc_fly_vspeed", Min = 1, Max = 100, Default = 40, Suffix = " studs", Decimals = 1 })
+    fly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_fly_cap", Default = true })
     fly:Label({ Name = "Up: Space   Down: Left Ctrl" })
     speed:Toggle({ Name = "Speed", Flag = "misc_speed", Default = false })
     speed:Dropdown({ Name = "Mode", Flag = "misc_speed_mode", Items = { "Velocity", "CFrame", "WalkSpeed" }, Default = "Velocity" })
@@ -1216,6 +1258,52 @@ do
     Detect:Toggle({ Name = "Cheat detector", Flag = "misc_cheat_detector", Default = false })
     Detect:Toggle({ Name = "Teleport check", Flag = "misc_cheat_teleport", Default = true })
     Detect:Button({ Name = "Clear flags", Callback = function() MiscActions.clearCheats() end })
+
+    local Fling = MiscPage:Section({ Name = "Fling cars", Side = 2 })
+    Fling:Toggle({ Name = "Fling cars", Flag = "misc_fling_cars", Default = false })
+    Fling:Slider({ Name = "Target range", Flag = "misc_fling_range", Min = 20, Max = 1000, Default = 300, Suffix = " studs", Decimals = 1 })
+    Fling:Label({ Name = "Throws the unoccupied Squad car at the nearest player. This is the attack Anti fling defends against." })
+
+    local Invis = MiscPage:Section({ Name = "Invisibility", Side = 2 })
+    local invisToggle = Invis:Toggle({ Name = "Invisibility", Flag = "misc_invis", Default = false })
+    invisToggle:Keybind({ Name = "Invisibility key", Flag = "misc_invis_key", Default = "None", Mode = "Toggle" })
+    Invis:Label({ Name = "Freezes your animation on the hidden frame. Other players see you vanish; you still see yourself." })
+
+    local Move = MiscPage:Section({ Name = "Movement", Side = 1 })
+    Move:Toggle({ Name = "Walk speed multiplier", Flag = "misc_walkmult", Default = false })
+    Move:Slider({ Name = "Walk multiplier (max 4x)", Flag = "misc_walkmult_value", Min = 1, Max = 4, Default = 1.5, Suffix = "x", Decimals = 0.05 })
+    Move:Toggle({ Name = "Jump multiplier", Flag = "misc_jumpmult", Default = false })
+    Move:Slider({ Name = "Jump multiplier (max 3x)", Flag = "misc_jumpmult_value", Min = 1, Max = 3, Default = 1.5, Suffix = "x", Decimals = 0.05 })
+    Move:Toggle({ Name = "Spinbot", Flag = "misc_spinbot", Default = false })
+    Move:Slider({ Name = "Spin speed", Flag = "misc_spinbot_speed", Min = 1, Max = 40, Default = 10, Decimals = 1 })
+
+    local vFly, vSpeed = MiscPage:MultiSection({ Sections = { "Vehicle fly", "Vehicle speed" }, Side = 1 })
+    vFly:Toggle({ Name = "Vehicle fly", Flag = "misc_vfly", Default = false })
+    vFly:Slider({ Name = "Speed", Flag = "misc_vfly_speed", Min = 1, Max = 100, Default = 60, Suffix = " studs", Decimals = 1 })
+    vFly:Toggle({ Name = "Move along camera", Flag = "misc_vfly_camera", Default = true })
+    vFly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_vfly_cap", Default = true })
+    vFly:Label({ Name = "Up: E   Down: Q" })
+    vSpeed:Toggle({ Name = "Vehicle speed", Flag = "misc_vspeed", Default = false })
+    vSpeed:Slider({ Name = "Max speed", Flag = "misc_vspeed_value", Min = 80, Max = 200, Default = 140, Decimals = 1 })
+end
+
+
+-- Teleport -------------------------------------------------------------------------------
+do
+    local Guns = TeleportPage:Section({ Name = "Get guns", Side = 1 })
+    Guns:Dropdown({ Name = "Weapon", Flag = "tp_weapon", Items = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }, Default = "AK-47" })
+    Guns:Button({ Name = "Get weapon", Callback = function() Actions.getWeapon(readFlag("tp_weapon", "AK-47")) end })
+    Guns:Button({ Name = "Get all weapons", Callback = function() Actions.getAllWeapons() end })
+    Guns:Label({ Name = "Teleports to the pickup, requests the item, then returns you. Your character moves for about a second." })
+
+    local Settings = TeleportPage:Section({ Name = "Teleport settings", Side = 1 })
+    Settings:Toggle({ Name = "Return after pickup", Flag = "tp_return", Default = true })
+    Settings:Slider({ Name = "Time at pickup", Flag = "tp_time", Min = 0.6, Max = 2, Default = 0.8, Suffix = "s", Decimals = 0.1 })
+
+    local Items = TeleportPage:Section({ Name = "Get items", Side = 2 })
+    Items:Dropdown({ Name = "Item", Flag = "tp_item", Items = { "Key card", "Breakfast", "Lunch", "Dinner", "Soda", "Chips", "Chocolate" }, Default = "Key card" })
+    Items:Button({ Name = "Get item", Callback = function() Actions.getItem(readFlag("tp_item", "Key card")) end })
+    Items:Label({ Name = "Items are client-side copies of the game's tools. The key card works for doors that check the tool on your side." })
 end
 
 -- Visuals (ESP and chams) and World (world, camera, gun, body and self visuals)
@@ -1384,6 +1472,23 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     CrossArms:Toggle({ Name = "Bottom arm", Flag = "crosshair_arm_bottom", Default = true })
     CrossArms:Toggle({ Name = "Left arm", Flag = "crosshair_arm_left", Default = true })
     CrossArms:Toggle({ Name = "Right arm", Flag = "crosshair_arm_right", Default = true })
+
+    -- Hit effects and particle aura -------------------------------------------------------
+    local HitFx = WorldPage:Section({ Name = "Hit effects", Side = 2 })
+    local heToggle = HitFx:Toggle({ Name = "Hit effects", Flag = "he_enabled", Default = false })
+    heToggle:Colorpicker({ Name = "Color", Flag = "he_color", Default = Color3.fromRGB(255, 81, 0) })
+    HitFx:Dropdown({ Name = "Effect", Flag = "he_effect", Items = { "nova", "sparks", "bubble", "orbs", "air", "blood", "glitch", "slash", "cosmic", "crescentslash" }, Default = "nova" })
+    HitFx:Dropdown({ Name = "Trigger", Flag = "he_trigger", Items = { "On hit", "On shot" }, Default = "On hit" })
+    HitFx:Slider({ Name = "Size", Flag = "he_size", Min = 0.5, Max = 6, Default = 2, Decimals = 0.1 })
+    HitFx:Slider({ Name = "Duration", Flag = "he_duration", Min = 0.5, Max = 5, Default = 2, Suffix = "s", Decimals = 0.1 })
+    HitFx:Button({ Name = "Preview effect", Callback = function() Actions.previewHitEffect() end })
+    HitFx:Label({ Name = "On hit plays where your bullet landed once the damage is confirmed. On shot plays at every shot's end point." })
+
+    local AuraBox = WorldPage:Section({ Name = "Particle aura", Side = 1 })
+    local auraToggle = AuraBox:Toggle({ Name = "Particle aura", Flag = "pa_enabled", Default = false })
+    auraToggle:Colorpicker({ Name = "Color", Flag = "pa_color", Default = Color3.fromRGB(133, 220, 255) })
+    AuraBox:Dropdown({ Name = "Aura", Flag = "pa_source", Items = { "starlight", "heavenly", "ribbon", "sakura", "angel", "wind", "flow", "star" }, Default = "angel" })
+    AuraBox:Slider({ Name = "Transparency", Flag = "pa_transparency", Min = 0, Max = 1, Default = 0.2, Decimals = 0.01 })
 end
 
 
@@ -2370,7 +2475,7 @@ do
         Debris:AddItem(sound, 6)
     end
 
-    local function onHit(player, damage, killed)
+    local function onHit(player, damage, killed, position)
         if getFlag("World_HitSound", false) then
             playHitSound()
         end
@@ -2378,11 +2483,17 @@ do
             lastHitNotify = os.clock()
             Library:Notify(string.format("Hit %s for %d%s", player.Name, math.floor(damage + 0.5), killed and " (kill)" or ""), 2)
         end
+        if not position then
+            local head = player.Character and player.Character:FindFirstChild("Head")
+            position = head and head.Position
+        end
+        for _, listener in ipairs(ShotEvents.hit) do pcall(listener, player, position) end
     end
 
     function onLocalShot(origin, target)
         local offset = target - origin
         if offset.Magnitude < 0.1 then return end
+        for _, listener in ipairs(ShotEvents.shot) do pcall(listener, origin, target) end
 
         local ignore = {}
         if LocalPlayer.Character then table.insert(ignore, LocalPlayer.Character) end
@@ -2402,17 +2513,16 @@ do
             queue = {}
             pendingHits[victim] = queue
         end
-        table.insert(queue, os.clock() + HIT_WINDOW)
+        table.insert(queue, { expiry = os.clock() + HIT_WINDOW, position = result.Position })
     end
 
     local function consumePendingHit(player)
         local queue = pendingHits[player]
         if not queue then return false end
         local now = os.clock()
-        while #queue > 0 and queue[1] < now do table.remove(queue, 1) end
+        while #queue > 0 and queue[1].expiry < now do table.remove(queue, 1) end
         if #queue == 0 then return false end
-        table.remove(queue, 1)
-        return true
+        return table.remove(queue, 1)
     end
 
     local function hookPlayer(player)
@@ -2430,8 +2540,9 @@ do
             hitConnections[player] = humanoid.HealthChanged:Connect(function(health)
                 local damage = previous - health
                 previous = health
-                if damage > 0 and consumePendingHit(player) then
-                    onHit(player, damage, health <= 0)
+                local pending = damage > 0 and consumePendingHit(player)
+                if pending then
+                    onHit(player, damage, health <= 0, pending.position)
                 end
             end)
         end
@@ -3994,6 +4105,25 @@ do
         return workspace:FindFirstChild("CarContainer") or workspace:WaitForChild("CarContainer", timeout or 5)
     end
 
+    -- Fly and vehicle fly are held to 49.9 studs above the ground (the game's own limit).
+    local CAP_HEIGHT = 49.9
+    local capRay = RaycastParams.new()
+    capRay.FilterType = Enum.RaycastFilterType.Exclude
+    local function capHeight(root, level, extraIgnore)
+        local list = { root.Parent, Camera() }
+        if extraIgnore then list[#list + 1] = extraIgnore end
+        capRay.FilterDescendantsInstances = list
+        local hit = workspace:Raycast(root.Position, v3(0, -500, 0), capRay)
+        if not hit then return level end
+        local limit = hit.Position.Y + CAP_HEIGHT
+        if root.Position.Y > limit then
+            root.CFrame += v3(0, limit - root.Position.Y, 0)
+            local velocity = root.AssemblyLinearVelocity
+            if velocity.Y > 0 then root.AssemblyLinearVelocity = v3(velocity.X, 0, velocity.Z) end
+        end
+        return level and math.min(level, limit) or level
+    end
+
     -- cheat flags (CheatDetector and AntiInvisible share them) ------------------------------
     local cheatCounts, cheatFlagged = {}, {}
     local function flagCheat(player, kind, limit)
@@ -4345,6 +4475,8 @@ do
                 tostring(flag("gun_no_spread", false)),
                 tostring(flag("gun_full_auto", false)),
                 tostring(flag("gun_fire_rate", 100)),
+                tostring(flag("gun_range_on", false)),
+                tostring(flag("gun_range", 1000)),
             }, "|")
         end
 
@@ -4353,7 +4485,7 @@ do
             if tool.Name == "Taser" then return false end
             local o = originals[tool]
             if not o then
-                o = { SpreadRadius = tool:GetAttribute("SpreadRadius"), FireRate = tool:GetAttribute("FireRate"), AutoFire = tool:GetAttribute("AutoFire") }
+                o = { SpreadRadius = tool:GetAttribute("SpreadRadius"), FireRate = tool:GetAttribute("FireRate"), AutoFire = tool:GetAttribute("AutoFire"), Range = tool:GetAttribute("Range") }
                 originals[tool] = o
             end
             local noSpread = not restoreOnly and flag("gun_no_spread", false)
@@ -4362,6 +4494,10 @@ do
             if o.SpreadRadius ~= nil then tool:SetAttribute("SpreadRadius", noSpread and 0 or o.SpreadRadius) end
             if o.FireRate ~= nil then tool:SetAttribute("FireRate", o.FireRate * (pct / 100)) end
             if o.AutoFire ~= nil or auto then tool:SetAttribute("AutoFire", auto and true or o.AutoFire) end
+            if o.Range ~= nil then
+                local ranged = not restoreOnly and flag("gun_range_on", false)
+                tool:SetAttribute("Range", ranged and flag("gun_range", 1000) or o.Range)
+            end
             return true
         end
 
@@ -4922,6 +5058,7 @@ do
                     yLevel = nil
                     root.AssemblyLinearVelocity = v3(dir.X * speed, 2.25 + (up + down) * vertical, dir.Z * speed)
                 end
+                if flag("misc_fly_cap", true) then yLevel = capHeight(root, yLevel) end
             end))
         end, function() bag.clear() end)
     end
@@ -5141,6 +5278,1410 @@ do
             active = nil
         end)
     end
+
+
+    -- ======================================================================================
+    -- World: hit effects (SillyScripts presets)
+    -- ======================================================================================
+    ;(function()
+        local Workspace = workspace
+        local HitEffects = {}
+HitEffects.Presets = {
+	["nova"] = function(position, color, size, duration)
+		local part = Instance.new("Part")
+		part.Position = position
+		part.Anchored = true
+		part.Transparency = 1
+		part.CanCollide = false
+		part.Size = Vector3.one
+		part.Parent = Workspace
+		local colorSeq = ColorSequence.new(color)
+		local pe = Instance.new("ParticleEmitter")
+		pe.Color = colorSeq
+		pe.Lifetime = NumberRange.new(0.5 * duration)
+		pe.LightEmission = 1
+		pe.LockedToPart = true
+		pe.Orientation = Enum.ParticleOrientation.VelocityPerpendicular
+		pe.Rate = 0
+		pe.Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(1, 10 * size),
+		})
+		pe.Speed = NumberRange.new(1.5)
+		pe.Texture = "rbxassetid://1084991215"
+		pe.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.1, 0),
+			NumberSequenceKeypoint.new(0.6, 0),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		pe.ZOffset = 1
+		pe.Parent = part
+		local pe2 = Instance.new("ParticleEmitter")
+		pe2.Color = colorSeq
+		pe2.Lifetime = NumberRange.new(0.5 * duration)
+		pe2.LightEmission = 1
+		pe2.LockedToPart = true
+		pe2.Rate = 0
+		pe2.Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(1, 10 * size),
+		})
+		pe2.Speed = NumberRange.new(0)
+		pe2.Texture = "rbxassetid://1084991215"
+		pe2.Transparency = pe.Transparency
+		pe2.ZOffset = 1
+		pe2.Parent = part
+		pe:Emit(1)
+		pe2:Emit(1)
+		task.delay(duration, function() part:Destroy() end)
+	end,
+
+	["sparks"] = function(position, color, size, duration)
+		local part = Instance.new("Part")
+		part.Position = position
+		part.Anchored = true
+		part.Transparency = 1
+		part.CanCollide = false
+		part.Size = Vector3.one
+		part.Parent = Workspace
+		local pe = Instance.new("ParticleEmitter")
+		pe.Color = ColorSequence.new(color)
+		pe.Lifetime = NumberRange.new(0.3 * duration, 0.6 * duration)
+		pe.LightEmission = 1
+		pe.Rate = 0
+		pe.Size = NumberSequence.new(0.15 * size, 0)
+		pe.Speed = NumberRange.new(8, 18)
+		pe.SpreadAngle = Vector2.new(180, 180)
+		pe.Texture = "rbxassetid://241625010"
+		pe.Parent = part
+		pe:Emit(math.clamp(math.floor(20 * size), 5, 60))
+		task.delay(duration, function() part:Destroy() end)
+	end,
+
+	["bubble"] = function(position, color, size, duration)
+		local part = Instance.new("Part")
+		part.Position = position
+		part.Anchored = true
+		part.Transparency = 1
+		part.CanCollide = false
+		part.Size = Vector3.one
+		part.Parent = Workspace
+		local pe = Instance.new("ParticleEmitter")
+		pe.Color = ColorSequence.new(color)
+		pe.Lifetime = NumberRange.new(0.8 * duration, 1.2 * duration)
+		pe.Rate = 0
+		pe.Size = NumberSequence.new(0.2 * size, 1.5 * size)
+		pe.Speed = NumberRange.new(1, 3)
+		pe.Texture = "rbxassetid://241922033"
+		pe.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.2),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		pe.Parent = part
+		pe:Emit(math.clamp(math.floor(8 * size), 3, 25))
+		task.delay(duration, function() part:Destroy() end)
+	end,
+
+	["orbs"] = function(position, color, size, duration)
+		local part = Instance.new("Part")
+		part.Position = position
+		part.Anchored = true
+		part.Transparency = 1
+		part.CanCollide = false
+		part.Size = Vector3.one
+		part.Parent = Workspace
+		local pe = Instance.new("ParticleEmitter")
+		pe.Color = ColorSequence.new(color)
+		pe.Lifetime = NumberRange.new(0.5 * duration, duration)
+		pe.LightEmission = 0.8
+		pe.Rate = 0
+		pe.Size = NumberSequence.new(0.4 * size, 0)
+		pe.Speed = NumberRange.new(2, 6)
+		pe.SpreadAngle = Vector2.new(360, 360)
+		pe.Texture = "rbxassetid://243660364"
+		pe.Parent = part
+		pe:Emit(math.clamp(math.floor(12 * size), 4, 40))
+		task.delay(duration, function() part:Destroy() end)
+	end,
+
+	["air"] = function(position, color, size, duration)
+		local part = Instance.new("Part")
+		part.Position = position
+		part.Anchored = true
+		part.Transparency = 1
+		part.CanCollide = false
+		part.Size = Vector3.one
+		part.Parent = Workspace
+		local pe = Instance.new("ParticleEmitter")
+		pe.Color = ColorSequence.new(color)
+		pe.Lifetime = NumberRange.new(0.4 * duration, 0.7 * duration)
+		pe.Rate = 0
+		pe.Size = NumberSequence.new(1.5 * size, 0)
+		pe.Speed = NumberRange.new(3, 8)
+		pe.SpreadAngle = Vector2.new(50, -50)
+		pe.Rotation = NumberRange.new(-5, 5)
+		pe.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.3),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		pe.Texture = "rbxassetid://243660424"
+		pe.Parent = part
+		pe:Emit(math.clamp(math.floor(15 * size), 5, 40))
+		task.delay(duration, function() part:Destroy() end)
+	end,
+
+	["blood"] = function(position, color, size, duration)
+		local part = Instance.new("Part")
+		part.Position = position
+		part.Anchored = true
+		part.Transparency = 1
+		part.CanCollide = false
+		part.Size = Vector3.one
+		part.Parent = Workspace
+		local pe = Instance.new("ParticleEmitter")
+		pe.Color = ColorSequence.new(color)
+		pe.Lifetime = NumberRange.new(0.45 * duration)
+		pe.Rate = 0
+		pe.Size = NumberSequence.new(0.3 * size, 0)
+		pe.Speed = NumberRange.new(4, 12)
+		pe.SpreadAngle = Vector2.new(90, 90)
+		pe.Texture = "rbxassetid://255265759"
+		pe.Parent = part
+		pe:Emit(math.clamp(math.floor(18 * size), 6, 50))
+		task.delay(duration, function() part:Destroy() end)
+	end,
+
+	["glitch"] = function(position, color, size, duration)
+		local part = Instance.new("Part")
+		part.Position = position
+		part.Anchored = true
+		part.Transparency = 1
+		part.CanCollide = false
+		part.Size = Vector3.one
+		part.Parent = Workspace
+		local pe = Instance.new("ParticleEmitter")
+		pe.Color = ColorSequence.new(color)
+		pe.Lifetime = NumberRange.new(0.45 * duration)
+		pe.Rate = 0
+		pe.RotSpeed = NumberRange.new(-10, 10)
+		pe.FlipbookFramerate = NumberRange.new(40, 40)
+		pe.Rotation = NumberRange.new(-1000, 1000)
+		pe.SpreadAngle = Vector2.new(-1000, 1000)
+		pe.Size = NumberSequence.new(1 * size, 0)
+		pe.Texture = "rbxassetid://6760532679"
+		pe.Parent = part
+		pe:Emit(math.clamp(math.floor(10 * size), 3, 30))
+		task.delay(duration, function() part:Destroy() end)
+	end,
+
+	["slash"] = function(position, color, size, duration)
+		local part = Instance.new("Part")
+		part.Size = Vector3.one
+		part.Anchored = true
+		part.CanCollide = false
+		part.Transparency = 1
+		part.Position = position
+		part.Parent = Workspace
+		local att = Instance.new("Attachment")
+		att.Parent = part
+		local pe = Instance.new("ParticleEmitter")
+		pe.Color = ColorSequence.new(color)
+		pe.Texture = "rbxassetid://8708637750"
+		pe.Size = NumberSequence.new(9 * size, 16 * size)
+		pe.Lifetime = NumberRange.new(0.16 * duration)
+		pe.Brightness = 5
+		pe.Rate = 0
+		pe.Parent = att
+		pe:Emit(1)
+		local pe2 = Instance.new("ParticleEmitter")
+		pe2.Color = ColorSequence.new(color)
+		pe2.Texture = "rbxassetid://8196169974"
+		pe2.Size = NumberSequence.new(0, 11 * size)
+		pe2.Lifetime = NumberRange.new(0.3 * duration)
+		pe2.Brightness = 5
+		pe2.Rate = 0
+		pe2.Parent = att
+		pe2:Emit(1)
+		task.delay(duration, function() part:Destroy() end)
+	end,
+
+	["cosmic"] = function(position, color, size, duration)
+		local part = Instance.new("Part")
+		part.Size = Vector3.one
+		part.Anchored = true
+		part.CanCollide = false
+		part.Transparency = 1
+		part.Position = position
+		part.Parent = Workspace
+		local att = Instance.new("Attachment")
+		att.Parent = part
+		local pe = Instance.new("ParticleEmitter")
+		pe.Color = ColorSequence.new(color)
+		pe.Lifetime = NumberRange.new(0.2 * duration, 0.4 * duration)
+		pe.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(0.5, 0.2),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		pe.Speed = NumberRange.new(0.08)
+		pe.RotSpeed = NumberRange.new(800, 1000)
+		pe.Size = NumberSequence.new(2 * size, 0)
+		pe.Texture = "rbxassetid://6035067836"
+		pe.Rate = 0
+		pe.Parent = att
+		pe:Emit(math.clamp(math.floor(8 * size), 3, 25))
+		task.delay(duration, function() part:Destroy() end)
+	end,
+
+	["crescentslash"] = function(position, color, size, duration)
+		local part = Instance.new("Part")
+		part.Size = Vector3.one
+		part.Anchored = true
+		part.CanCollide = false
+		part.Transparency = 1
+		part.Position = position
+		part.Parent = Workspace
+		local att = Instance.new("Attachment")
+		att.Parent = part
+		local pe = Instance.new("ParticleEmitter")
+		pe.Lifetime = NumberRange.new(0.16 * duration)
+		pe.Color = ColorSequence.new(color)
+		pe.Brightness = 5
+		pe.Size = NumberSequence.new(9 * size, 16 * size)
+		pe.Texture = "rbxassetid://8708637750"
+		pe.Rate = 0
+		pe.Parent = att
+		pe:Emit(1)
+		local pe2 = Instance.new("ParticleEmitter")
+		pe2.Lifetime = NumberRange.new(0.2 * duration, 0.7 * duration)
+		pe2.Color = ColorSequence.new(color)
+		pe2.Speed = NumberRange.new(90, 140)
+		pe2.Texture = "rbxassetid://8030734851"
+		pe2.Rate = 0
+		pe2.Parent = att
+		pe2:Emit(5)
+		task.delay(duration, function() part:Destroy() end)
+	end,
+}
+
+function HitEffects.Play(position, effectName, color, size, duration)
+	local fn = HitEffects.Presets[string.lower(effectName or "nova")]
+	if not fn or not position then return end
+	fn(position, color or Color3.fromRGB(255, 81, 0), size or 2, duration or 2)
+end
+
+        local function emit(position)
+            if typeof(position) ~= "Vector3" then return end
+            local picker = Options.he_color
+            local color = picker and typeof(picker.Value) == "Color3" and picker.Value or Color3.fromRGB(255, 81, 0)
+            local ok, err = pcall(HitEffects.Play, position, flag("he_effect", "nova"), color, flag("he_size", 2), flag("he_duration", 2))
+            if not ok then warnf("hit effect failed:", err) end
+        end
+
+        table.insert(ShotEvents.shot, function(_, target)
+            if flag("he_enabled", false) and flag("he_trigger", "On hit") == "On shot" then emit(target) end
+        end)
+        table.insert(ShotEvents.hit, function(_, position)
+            if flag("he_enabled", false) and flag("he_trigger", "On hit") == "On hit" then emit(position) end
+        end)
+
+        Actions.previewHitEffect = function()
+            local cam = Camera()
+            if cam then emit(cam.CFrame.Position + cam.CFrame.LookVector * 14) end
+        end
+
+        onUnload(function()
+            Actions.previewHitEffect = noop
+        end)
+    end)()
+
+    -- ======================================================================================
+    -- World: particle aura. Effects are cloned from the asset and parented to your parts.
+    -- ======================================================================================
+    ;(function()
+        local bag, active, busy = newBag(), {}, false
+        local SOURCES = {
+            starlight = "rbxassetid://134645216613107", heavenly = "rbxassetid://139300897520961",
+            ribbon = "rbxassetid://132069507632161", sakura = "rbxassetid://81755778619404",
+            angel = "rbxassetid://97658130917593", wind = "rbxassetid://80694081850877",
+            flow = "rbxassetid://119913533725648", star = "rbxassetid://73754563740680",
+        }
+
+        local function auraColor()
+            local picker = Options.pa_color
+            return picker and typeof(picker.Value) == "Color3" and picker.Value or Color3.fromRGB(133, 220, 255)
+        end
+
+        local function signature()
+            return table.concat({ tostring(flag("pa_source", "angel")), tostring(auraColor()), tostring(flag("pa_transparency", 0.2)) }, "|")
+        end
+
+        local function clear()
+            for index = #active, 1, -1 do
+                pcall(function() active[index]:Destroy() end)
+                active[index] = nil
+            end
+        end
+
+        local function tint(inst)
+            local color, alpha = auraColor(), flag("pa_transparency", 0.2)
+            local class = inst.ClassName
+            if class == "PointLight" or class == "Smoke" or class == "Fire" then
+                inst.Color = color
+                if class == "Fire" then inst.SecondaryColor = color:Lerp(Color3.new(1, 1, 1), 0.25) end
+            elseif class == "Sparkles" then
+                inst.SparkleColor = color
+            elseif inst:IsA("Light") then
+                inst.Color = color
+            elseif class == "ParticleEmitter" or class == "Beam" or class == "Trail" then
+                inst.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, color), ColorSequenceKeypoint.new(1, color) })
+                pcall(function()
+                    inst.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, alpha), NumberSequenceKeypoint.new(1, alpha) })
+                end)
+            end
+        end
+
+        local function apply()
+            clear()
+            local char = LocalPlayer.Character
+            if not char then return end
+            local model
+            local id = SOURCES[flag("pa_source", "angel")]
+            if not id then return end
+            local ok, objects = pcall(function() return game:GetObjects(id) end)
+            model = ok and objects and objects[1]
+            if not model then warnf("particle aura asset could not be loaded") return end
+            for _, part in ipairs(model:GetChildren()) do
+                if part:IsA("BasePart") then
+                    local match = char:FindFirstChild(part.Name, true)
+                    if match and match:IsA("BasePart") then
+                        for _, child in ipairs(part:GetChildren()) do
+                            local clone = child:Clone()
+                            clone.Parent = match
+                            tint(clone)
+                            for _, d in ipairs(clone:GetDescendants()) do tint(d) end
+                            active[#active + 1] = clone
+                        end
+                    end
+                end
+            end
+            pcall(function() model:Destroy() end)
+        end
+
+        feature("pa_enabled", function()
+            local last
+            local function refresh()
+                if busy then return end
+                busy = true
+                last = signature()
+                task.spawn(function()
+                    pcall(apply)
+                    busy = false
+                end)
+            end
+            refresh()
+            bag.add(LocalPlayer.CharacterAdded:Connect(function()
+                task.delay(0.6, function() if isOn("pa_enabled") then last = nil end end)
+            end))
+            bag.add(RunService.Heartbeat:Connect(function()
+                if not busy and signature() ~= last then refresh() end
+            end))
+        end, function()
+            bag.clear()
+            clear()
+        end)
+    end)()
+
+    -- ======================================================================================
+    -- Teleport: get guns and items
+    -- ======================================================================================
+    ;(function()
+        local WEAPONS = {
+            ["AK-47"] = { cframe = CFrame.new(-931.86, 92.2, 2039.39), item = "AK47_7" },
+            ["Remington 870"] = { cframe = CFrame.new(820.45, 100.8, 2229.68), item = "r870_2" },
+            ["MP5"] = { cframe = CFrame.new(813.8, 100.8, 2229.62), item = "MP5_1" },
+            ["M700"] = { cframe = CFrame.new(-919.51, 95.07, 2036.23), item = "M700" },
+            ["M4A1"] = { cframe = CFrame.new(847.68, 100.88, 2229.05), item = "M4A1" },
+            ["FAL"] = { cframe = CFrame.new(-902.63, 94.35, 2047.25), item = "FAL" },
+        }
+        local ORDER = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }
+        local ITEMS = {
+            ["Key card"] = { "Key card" }, Breakfast = { "Breakfast" }, Lunch = { "Lunch" }, Dinner = { "Dinner" },
+            Soda = { "Snacks", "Soda" }, Chips = { "Snacks", "Chips" }, Chocolate = { "Snacks", "Chocolate" },
+        }
+        local busy = false
+
+        local function hasTool(name)
+            local pack = LocalPlayer:FindFirstChildOfClass("Backpack")
+            return (pack and pack:FindFirstChild(name)) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(name))
+        end
+
+        local function getWeapon(name)
+            local data = WEAPONS[name]
+            if not data then return false end
+            if busy then say("Still teleporting, wait a moment") return false end
+            local _, _, root = localParts()
+            if not root then say("You need to be alive") return false end
+            local folder = workspace:FindFirstChild("Prison_ITEMS")
+            local item = folder and folder:FindFirstChild(data.item, true)
+            if not item then say(name .. " pickup was not found") return false end
+
+            busy = true
+            local home = root.CFrame
+            local hold = math.max(flag("tp_time", 0.8), 0.6)
+            local started = clock()
+            task.spawn(function()
+                while clock() - started < hold and root.Parent do
+                    local jitter = v3(math.random(-5, 5) / 10, math.random(-5, 5) / 10, math.random(-5, 5) / 10)
+                    root.CFrame = data.cframe * CFrame.new(jitter)
+                    task.wait()
+                end
+                if root.Parent and flag("tp_return", true) then root.CFrame = home end
+                busy = false
+            end)
+            task.wait(0.5)
+            local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+            local interact = remotes and remotes:FindFirstChild("InteractWithItem")
+            if not interact then say("InteractWithItem remote not found") return false end
+            pcall(function() interact:InvokeServer(item) end)
+            task.wait(math.max(hold - 0.5, 0.1) + 0.2)
+            local got = hasTool(name) ~= nil
+            say(got and ("Got " .. name) or (name .. " was requested but did not arrive (team or stock limit?)"))
+            return got
+        end
+
+        Actions.getWeapon = function(name) task.spawn(getWeapon, name) end
+        Actions.getAllWeapons = function()
+            task.spawn(function()
+                for _, name in ipairs(ORDER) do
+                    if not getWeapon(name) then task.wait(0.2) end
+                    while busy do task.wait(0.1) end
+                end
+            end)
+        end
+        Actions.getItem = function(name)
+            local path = ITEMS[name]
+            local pack = LocalPlayer:FindFirstChildOfClass("Backpack")
+            if not path or not pack then return end
+            local node = game:GetService("ReplicatedStorage"):FindFirstChild("Tools")
+            for _, step in ipairs(path) do node = node and node:FindFirstChild(step) end
+            if not node then say(name .. " was not found") return end
+            node:Clone().Parent = pack
+            say("Added " .. name .. " (client-side copy)")
+        end
+
+        onUnload(function()
+            Actions.getWeapon, Actions.getAllWeapons, Actions.getItem = noop, noop, noop
+        end)
+    end)()
+
+    -- ======================================================================================
+    -- Fling cars: throws the Squad car at the nearest player (SillyScripts)
+    -- ======================================================================================
+    do
+        local bag, saved, car = newBag(), {}, nil
+        feature("misc_fling_cars", function()
+            local container = waitForCars(3)
+            car = container and container:FindFirstChild("Squad")
+            if not car then
+                say("Squad car not found")
+                switchOff("misc_fling_cars")
+                return
+            end
+            local root = car.PrimaryPart or car:FindFirstChildWhichIsA("BasePart", true)
+            if not root then switchOff("misc_fling_cars") return end
+            for _, d in ipairs(car:GetDescendants()) do
+                if d:IsA("BasePart") then
+                    saved[d] = d.CanCollide
+                    d.CanCollide = false
+                end
+            end
+            bag.add(RunService.Heartbeat:Connect(function()
+                local _, _, myRoot = localParts()
+                if not myRoot or not root.Parent then return end
+                local best, bestDist
+                local limit = flag("misc_fling_range", 300)
+                for _, e in ipairs(otherEntities()) do
+                    local d = (e.Root.Position - myRoot.Position).Magnitude
+                    if d <= limit and (not bestDist or d < bestDist) then best, bestDist = e, d end
+                end
+                if not best then return end
+                local goal = best.Root.Position + v3(math.random(-2, 2), 3, math.random(-2, 2))
+                local spin = CFrame.Angles(math.rad(math.random(-45, 45)), 0, math.rad(math.random(-45, 45)))
+                car:PivotTo(car:GetPivot():Lerp(CFrame.lookAt(goal, goal + v3(0, 10, 0)) * spin, 0.5))
+                root.AssemblyLinearVelocity = v3(math.random(-1, 1), 1, math.random(-1, 1)) * 800
+            end))
+        end, function()
+            bag.clear()
+            for part, value in pairs(saved) do pcall(function() part.CanCollide = value end) end
+            table.clear(saved)
+            if car then
+                local root = car.PrimaryPart or car:FindFirstChildWhichIsA("BasePart", true)
+                if root then pcall(function() root.AssemblyLinearVelocity = ZERO end) end
+            end
+            car = nil
+        end)
+    end
+
+    -- ======================================================================================
+    -- Invisibility: animation freeze (SillyScripts). The animation ids come from their build;
+    -- they could not be checked here, so behavior depends on the game still accepting them.
+    -- ======================================================================================
+    do
+        local bag, animTrack, token = newBag(), nil, 0
+
+        local function stop()
+            if animTrack then
+                pcall(function() animTrack:Stop(0) end)
+                pcall(function() animTrack:Destroy() end)
+                animTrack = nil
+            end
+            local char = LocalPlayer.Character
+            if char then
+                for _, d in ipairs(char:GetDescendants()) do
+                    if d:IsA("BasePart") then pcall(function() d.LocalTransparencyModifier = 0 end) end
+                end
+            end
+        end
+
+        local function start()
+            stop()
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local animator = hum and (hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 2))
+            if not animator then return end
+            local r15 = hum.RigType == Enum.HumanoidRigType.R15
+            local anim = Instance.new("Animation")
+            anim.AnimationId = "rbxassetid://" .. (r15 and "18665825805" or "215384594")
+            local loaded = animator:LoadAnimation(anim)
+            loaded.Priority = Enum.AnimationPriority.Action4
+            loaded:Play(0, 1, 0)
+            task.defer(function()
+                if loaded then
+                    loaded.TimePosition = r15 and 1.95 or 0.4
+                    loaded:AdjustSpeed(0)
+                end
+            end)
+            animTrack = loaded
+            anim:Destroy()
+        end
+
+        -- the keybind flips the toggle
+        local keyHooked = false
+        local function hookKey()
+            local picker = Options.misc_invis_key
+            if keyHooked or not picker or type(picker.OnClick) ~= "function" then return end
+            keyHooked = true
+            picker:OnClick(function()
+                local toggle = Toggles.misc_invis
+                if toggle and toggle.SetValue then toggle:SetValue(not toggle.Value) end
+            end)
+        end
+        hookKey()
+
+        feature("misc_invis", function()
+            token += 1
+            local my = token
+            task.spawn(function() if my == token then start() end end)
+            bag.add(LocalPlayer.CharacterAdded:Connect(function()
+                task.delay(0.8, function() if my == token then start() end end)
+            end))
+        end, function()
+            token += 1
+            bag.clear()
+            stop()
+        end)
+    end
+
+    -- ======================================================================================
+    -- Movement: walk and jump multipliers, spinbot
+    -- ======================================================================================
+    do
+        local bag = newBag()
+        feature("misc_walkmult", function()
+            bag.add(stepSignal:Connect(function()
+                local _, h = localParts()
+                if not h or h.WalkSpeed <= 0.1 then return end
+                h.WalkSpeed = 16 * math.clamp(flag("misc_walkmult_value", 1.5), 1, 4)
+            end))
+        end, function()
+            bag.clear()
+            local _, hum = localParts()
+            if hum and hum.WalkSpeed > 0.1 then hum.WalkSpeed = 16 end
+        end)
+    end
+
+    do
+        local bag, original = newBag(), nil
+        feature("misc_jumpmult", function()
+            local _, hum = localParts()
+            if hum then original = { use = hum.UseJumpPower, power = hum.JumpPower } end
+            bag.add(stepSignal:Connect(function()
+                local _, h = localParts()
+                if not h then return end
+                local current = h.UseJumpPower and h.JumpPower or h.JumpHeight
+                if current <= 0.1 then return end
+                h.UseJumpPower = true
+                h.JumpPower = 50 * math.clamp(flag("misc_jumpmult_value", 1.5), 1, 3)
+            end))
+        end, function()
+            bag.clear()
+            local _, hum = localParts()
+            if hum and original then
+                hum.JumpPower = original.power
+                hum.UseJumpPower = original.use
+            end
+            original = nil
+        end)
+    end
+
+    do
+        local bag, joint, base, angle, autoRotate = newBag(), nil, nil, 0, nil
+        local function findJoint(char)
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not root then return end
+            local direct = root:FindFirstChild("RootJoint")
+            if direct and direct:IsA("Motor6D") then return direct end
+            local lower = char:FindFirstChild("LowerTorso")
+            local r15 = lower and lower:FindFirstChild("Root")
+            if r15 and r15:IsA("Motor6D") then return r15 end
+        end
+        local function restore()
+            if joint and base then pcall(function() joint.C0 = base end) end
+            local _, hum = localParts()
+            if hum and autoRotate ~= nil then hum.AutoRotate = autoRotate end
+            joint, base, autoRotate = nil, nil, nil
+        end
+        feature("misc_spinbot", function()
+            bag.add(stepSignal:Connect(function(dt)
+                local char, hum = localParts()
+                if not char then return end
+                if not joint or not joint.Parent or not joint:IsDescendantOf(char) then
+                    restore()
+                    joint = findJoint(char)
+                    if not joint then return end
+                    base = joint.C0
+                    autoRotate = hum.AutoRotate
+                end
+                hum.AutoRotate = false
+                angle = (angle + flag("misc_spinbot_speed", 10) * 16 * dt) % 360
+                joint.C0 = CFrame.Angles(0, math.rad(angle), 0) * base
+            end))
+        end, function()
+            bag.clear()
+            restore()
+        end)
+    end
+
+    -- ======================================================================================
+    -- Vehicle fly and vehicle speed
+    -- ======================================================================================
+    do
+        local bag, welds, lastSeat, inCar, up, down = newBag(), {}, nil, false, 0, 0
+        feature("misc_vfly", function()
+            up, down, lastSeat, inCar = 0, 0, nil, false
+            for _, signalName in ipairs({ "InputBegan", "InputEnded" }) do
+                bag.add(UserInputService[signalName]:Connect(function(input)
+                    if typing() then return end
+                    local began = signalName == "InputBegan"
+                    if input.KeyCode == Enum.KeyCode.E then up = began and 1 or 0
+                    elseif input.KeyCode == Enum.KeyCode.Q then down = began and -1 or 0 end
+                end))
+            end
+            bag.add(stepSignal:Connect(function(dt)
+                local _, hum, root = localParts()
+                local seat = hum and hum.SeatPart
+                if not seat then lastSeat, inCar = nil, false return end
+                if seat ~= lastSeat then
+                    lastSeat = seat
+                    local cars = workspace:FindFirstChild("CarContainer")
+                    inCar = cars ~= nil and seat:IsA("VehicleSeat") and seat:IsDescendantOf(cars)
+                    table.clear(welds)
+                    if inCar then
+                        pcall(function()
+                            local wheels = seat.Parent.Parent:FindFirstChild("Wheels")
+                            if wheels then
+                                for _, d in ipairs(wheels:GetDescendants()) do
+                                    if d.Name == "Rotate" and d:IsA("JointInstance") and d.Part0 then
+                                        welds[d] = root.CFrame:ToObjectSpace(d.Part0.CFrame)
+                                    end
+                                end
+                            end
+                        end)
+                    end
+                end
+                if not inCar then return end
+                local cam = Camera()
+                local speed = flag("misc_vfly_speed", 60)
+                local vertical = up + down
+                root.AssemblyLinearVelocity = v3(0, 2.25, 0)
+                if flag("misc_vfly_camera", true) then
+                    local yaw = select(2, cam.CFrame:ToEulerAnglesYXZ())
+                    local move = CFrame.fromEulerAnglesYXZ(0, yaw, 0):VectorToObjectSpace(hum.MoveDirection)
+                    root.CFrame = CFrame.lookAlong(root.Position, cam.CFrame.LookVector) * CFrame.new(v3(move.X, vertical, move.Z) * speed * dt)
+                else
+                    root.CFrame = CFrame.lookAlong(root.Position, cam.CFrame.LookVector) + (hum.MoveDirection + v3(0, vertical, 0)) * speed * dt
+                end
+                if flag("misc_vfly_cap", true) then
+                    capHeight(root, nil, workspace:FindFirstChild("CarContainer"))
+                end
+                for weld, offset in pairs(welds) do
+                    if weld.Part0 then weld.Part0.CFrame = root.CFrame * offset end
+                end
+            end))
+        end, function()
+            bag.clear()
+            table.clear(welds)
+            lastSeat, inCar = nil, false
+        end)
+    end
+
+    do
+        local bag, saved, lastSeat = newBag(), {}, nil
+        feature("misc_vspeed", function()
+            lastSeat = nil
+            bag.add(RunService.Heartbeat:Connect(function()
+                local _, hum = localParts()
+                local seat = hum and hum.SeatPart
+                if not seat then return end
+                if seat ~= lastSeat then
+                    lastSeat = seat
+                    local cars = workspace:FindFirstChild("CarContainer")
+                    if cars and seat:IsDescendantOf(cars) then
+                        local model = seat.Parent and seat.Parent.Parent
+                        for _, d in ipairs((model or seat.Parent):GetDescendants()) do
+                            if d:IsA("VehicleSeat") and not saved[d] then
+                                saved[d] = { speed = d.MaxSpeed, torque = d.Torque }
+                            end
+                        end
+                    end
+                end
+                local value = flag("misc_vspeed_value", 140)
+                for s in pairs(saved) do
+                    if s.Parent then s.MaxSpeed = value s.Torque = 4 end
+                end
+            end))
+        end, function()
+            bag.clear()
+            for s, o in pairs(saved) do
+                pcall(function() s.MaxSpeed = o.speed s.Torque = o.torque end)
+            end
+            table.clear(saved)
+            lastSeat = nil
+        end)
+    end
+
+    -- ======================================================================================
+    -- Combat: aim assist, silent aim (with wallbang), triggerbot and FOV circles
+    -- ======================================================================================
+    ;(function()
+        local rand = Random.new()
+
+        -- selected values of a multi dropdown (array of names or a name-keyed set)
+        local function has(value, key)
+            if type(value) ~= "table" then return value == key end
+            if value[key] == true then return true end
+            for _, selected in pairs(value) do
+                if selected == key then return true end
+            end
+            return false
+        end
+
+        local function keyActive(name)
+            local picker = Options[name]
+            if picker and type(picker.GetState) == "function" then
+                local ok, state = pcall(picker.GetState, picker)
+                if ok then return state == true end
+            end
+            return true
+        end
+
+        local function aimRef()
+            local cam = Camera()
+            if UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+                return cam.ViewportSize / 2
+            end
+            return UserInputService:GetMouseLocation()
+        end
+
+        -- gun functions (found through the game's own input connection, as Vape does) ------
+        local Gun = { shoot = nil, cast = nil }
+
+        local function functionName(fn)
+            local ok, name = pcall(debug.info, fn, "n")
+            return ok and name or nil
+        end
+
+        function Gun.find()
+            if type(getconnections) ~= "function" or type(debug) ~= "table" or type(debug.getupvalue) ~= "function" then
+                return false
+            end
+            local home = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("Home")
+            local area = home and home:FindFirstChild("hud") and home.hud:FindFirstChild("ActionArea")
+            if not area then return false end
+            local ok, list = pcall(getconnections, area.InputBegan)
+            if not ok or type(list) ~= "table" then return false end
+            for _, connection in ipairs(list) do
+                local fn = connection.Function
+                if fn then
+                    local okShoot, shoot = pcall(debug.getupvalue, fn, 2)
+                    if okShoot and type(shoot) == "function" then
+                        local cast
+                        for index = 1, 40 do
+                            local okUp, up = pcall(debug.getupvalue, shoot, index)
+                            if not okUp then break end
+                            if type(up) == "function" and functionName(up) == "castRay" then cast = up break end
+                        end
+                        if not cast then
+                            local okUp, up = pcall(debug.getupvalue, shoot, 16)
+                            if okUp and type(up) == "function" then cast = up end
+                        end
+                        if cast then
+                            Gun.shoot, Gun.cast = shoot, cast
+                            return true
+                        end
+                    end
+                end
+            end
+            return false
+        end
+
+        function Gun.data()
+            if not Gun.shoot then return nil end
+            local ok, data = pcall(debug.getupvalue, Gun.shoot, 10)
+            return ok and type(data) == "table" and data or nil
+        end
+
+        local function readyGun()
+            local tool = equippedGun()
+            if not tool then return false end
+            if tool:GetAttribute("Local_IsShooting") then return false end
+            if (tool:GetAttribute("Local_ReloadSession") or 0) > 0 then return false end
+            return (tool:GetAttribute("Local_CurrentAmmo") or 0) > 0
+        end
+
+        local function fireGun()
+            if Gun.shoot then
+                local obj = { UserInputState = Enum.UserInputState.Begin, UserInputType = Enum.UserInputType.MouseButton1, Position = Vector3.zero }
+                task.spawn(Gun.shoot, obj)
+                obj.UserInputState = Enum.UserInputState.End
+                return
+            end
+            pcall(function()
+                local vim = game:GetService("VirtualInputManager")
+                local m = UserInputService:GetMouseLocation()
+                vim:SendMouseButtonEvent(m.X, m.Y, 0, true, game, 0)
+                task.delay(0.03, function() vim:SendMouseButtonEvent(m.X, m.Y, 0, false, game, 0) end)
+            end)
+        end
+
+        -- target selection ---------------------------------------------------------------
+        local sight = RaycastParams.new()
+        sight.FilterType = Enum.RaycastFilterType.Exclude
+        sight.RespectCanCollide = true
+
+        local function visibleFrom(from, part, char)
+            local list = { Camera() }
+            if LocalPlayer.Character then list[#list + 1] = LocalPlayer.Character end
+            list[#list + 1] = char
+            sight.FilterDescendantsInstances = list
+            return workspace:Raycast(from, part.Position - from, sight) == nil
+        end
+
+        local function pointFlags(prefix)
+            local picker = Options[prefix .. "_points"]
+            local value = picker and picker.Value
+            local head, body = has(value, "Head"), has(value, "Body")
+            if not head and not body then head = true end
+            return head, body
+        end
+
+        -- returns entity, part, screenDistance
+        local function selectTarget(prefix, ref, from, opts)
+            opts = opts or {}
+            local cam = Camera()
+            if not cam then return end
+            local baseFov = flag(prefix .. "_fov", 120)
+            local dynamic = flag(prefix .. "_dynamic", false)
+            local amount = flag(prefix .. "_dynamic_amount", 50) / 100
+            local maxDist = math.min(flag(prefix .. "_max_dist", 1000), opts.limit or math.huge)
+            local priority = flag(prefix .. "_priority", "Closest")
+            local wantHead, wantBody = pointFlags(prefix)
+            local team = flag(prefix .. "_team", false)
+            local ignoreDown = opts.ignoreDown or flag(prefix .. "_ignore_down", false)
+            local wall = flag(prefix .. "_wall", false) and not opts.skipWall
+
+            local bestEntity, bestPart, bestScore, bestDist
+            for _, e in ipairs(otherEntities()) do
+                if (not opts.only or e.Player == opts.only) then
+                    local distance = (e.Root.Position - from).Magnitude
+                    local skip = distance > maxDist
+                    if not skip and team and LocalPlayer.Team ~= nil and e.Player.Team == LocalPlayer.Team then skip = true end
+                    if not skip and ignoreDown and (e.Character:GetAttribute("Tased") or e.Character:GetAttribute("Arrested")) then skip = true end
+                    if not skip then
+                        local radius = baseFov
+                        if dynamic then
+                            local scale = math.clamp(80 / math.max(distance, 5), 0.35, 2.5)
+                            radius = baseFov * (1 + (scale - 1) * amount)
+                        end
+                        local headPart = e.Character:FindFirstChild("Head")
+                        local bodyPart = e.Character:FindFirstChild("UpperTorso") or e.Character:FindFirstChild("Torso") or e.Root
+                        local parts = {}
+                        if wantHead and headPart then parts[#parts + 1] = headPart end
+                        if wantBody and bodyPart then parts[#parts + 1] = bodyPart end
+                        for _, part in ipairs(parts) do
+                            local screen, onScreen = cam:WorldToViewportPoint(part.Position)
+                            if onScreen then
+                                local d = (Vector2.new(screen.X, screen.Y) - ref).Magnitude
+                                if (opts.ignoreFov or d <= radius) and (not wall or visibleFrom(from, part, e.Character)) then
+                                    local score = d
+                                    if priority == "Head" and part ~= headPart then score += 1000 end
+                                    if priority == "Body" and part == headPart then score += 1000 end
+                                    if not bestScore or score < bestScore then
+                                        bestEntity, bestPart, bestScore, bestDist = e, part, score, d
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            return bestEntity, bestPart, bestDist
+        end
+
+        -- FOV circles (Drawing, with an Instance fallback when Drawing is unavailable) ------
+        local function newCircle()
+            local circle, drawing, gui, frame, stroke = {}, nil, nil, nil, nil
+            if Drawing and type(Drawing.new) == "function" then
+                local ok, obj = pcall(Drawing.new, "Circle")
+                if ok and obj then
+                    drawing = obj
+                    table.insert(getgenv().TS_Drawings, obj)
+                end
+            end
+            if not drawing then
+                pcall(function()
+                    gui = Instance.new("ScreenGui")
+                    gui.Name = "TS_FovCircle"
+                    gui.IgnoreGuiInset = true
+                    gui.ResetOnSpawn = false
+                    gui.DisplayOrder = 50
+                    gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+                    frame = Instance.new("Frame")
+                    frame.AnchorPoint = Vector2.new(0.5, 0.5)
+                    frame.BackgroundTransparency = 1
+                    frame.BorderSizePixel = 0
+                    frame.Visible = false
+                    frame.Parent = gui
+                    local corner = Instance.new("UICorner")
+                    corner.CornerRadius = UDim.new(1, 0)
+                    corner.Parent = frame
+                    stroke = Instance.new("UIStroke")
+                    stroke.Parent = frame
+                end)
+            end
+
+            function circle.update(visible, position, radius, color, opacity, thickness, filled)
+                if drawing then
+                    drawing.Visible = visible
+                    if visible then
+                        drawing.Position = position
+                        drawing.Radius = radius
+                        drawing.Color = color
+                        drawing.Transparency = opacity
+                        drawing.Thickness = thickness
+                        drawing.Filled = filled
+                        drawing.NumSides = 64
+                    end
+                elseif frame then
+                    frame.Visible = visible
+                    if visible then
+                        frame.Position = UDim2.fromOffset(position.X, position.Y)
+                        frame.Size = UDim2.fromOffset(radius * 2, radius * 2)
+                        frame.BackgroundColor3 = color
+                        frame.BackgroundTransparency = filled and (1 - opacity * 0.35) or 1
+                        stroke.Color = color
+                        stroke.Thickness = thickness
+                        stroke.Transparency = 1 - opacity
+                    end
+                end
+            end
+            function circle.destroy()
+                if drawing then pcall(function() drawing.Visible = false drawing:Remove() end) drawing = nil end
+                if gui then pcall(function() gui:Destroy() end) gui = nil end
+            end
+            return circle
+        end
+
+        local circles = { aim = newCircle(), silent = newCircle() }
+        local circleFeature = { aim = "Aim_Global_Enabled", silent = "Silent_Global_Enabled" }
+        track(RunService.RenderStepped:Connect(function()
+            local cam = Camera()
+            if not cam then return end
+            local ref = aimRef()
+            for prefix, circle in pairs(circles) do
+                local visible = flag(circleFeature[prefix], false) and flag(prefix .. "_fov_show", false)
+                if visible then
+                    local picker = Options[prefix .. "_fov_color"]
+                    local color = picker and typeof(picker.Value) == "Color3" and picker.Value or Color3.new(1, 1, 1)
+                    local opacity = 1 - (picker and tonumber(picker.Transparency) or 0)
+                    circle.update(true, ref, flag(prefix .. "_fov", 120), color, opacity, flag(prefix .. "_fov_thick", 1), flag(prefix .. "_fov_filled", false))
+                else
+                    circle.update(false)
+                end
+            end
+        end))
+        onUnload(function()
+            for _, circle in pairs(circles) do circle.destroy() end
+        end)
+
+        -- aim assist ---------------------------------------------------------------------
+        do
+            local name = "TS_AimAssist"
+            local lockedPlayer, acquiredAt, lastPlayer = nil, 0, nil
+            local accX, accY, warned = 0, 0, false
+
+            local function valid(player)
+                local char = player and player.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                return hum ~= nil and hum.Health > 0 and char:FindFirstChild("HumanoidRootPart") ~= nil
+            end
+
+            local function step(dt)
+                local cam = Camera()
+                local _, _, root = localParts()
+                if not cam or not root or typing() or not keyActive("Aim_Global_Key") then
+                    lockedPlayer, lastPlayer = nil, nil
+                    accX, accY = 0, 0
+                    return
+                end
+                local ref = aimRef()
+                local opts
+                if flag("aim_lock", false) and lockedPlayer and valid(lockedPlayer) then
+                    opts = { only = lockedPlayer, ignoreFov = true }
+                end
+                local entity, part = selectTarget("aim", ref, cam.CFrame.Position, opts)
+                if not entity then
+                    lockedPlayer, lastPlayer = nil, nil
+                    return
+                end
+                if lastPlayer ~= entity.Player then
+                    lastPlayer = entity.Player
+                    acquiredAt = clock()
+                end
+                if flag("aim_lock", false) then lockedPlayer = entity.Player end
+                local held = clock() - acquiredAt
+                if held < flag("aim_reaction", 0) / 1000 then return end
+
+                local alpha = 1
+                if flag("aim_smooth", true) then
+                    local first, last, inc = flag("aim_smooth_start", 85), flag("aim_smooth_end", 20), flag("aim_smooth_inc", 50)
+                    local smoothing = first > last and math.max(last, first - inc * held) or math.min(last, first + inc * held)
+                    smoothing += (rand:NextNumber() * 2 - 1) * flag("aim_smooth_rand", 5)
+                    smoothing = math.clamp(smoothing, 0, 99)
+                    alpha = 1 - (smoothing / 100) ^ (math.min(dt, 0.1) * 60)
+                end
+
+                local goal = part.Position
+                local method = flag("aim_method", "Camera")
+                if method == "Mouse" and type(mousemoverel) ~= "function" then
+                    if not warned then
+                        warned = true
+                        say("mousemoverel is not available, using the camera instead")
+                    end
+                    method = "Camera"
+                end
+                if method == "Mouse" then
+                    local screen = cam:WorldToViewportPoint(goal)
+                    accX += (screen.X - ref.X) * alpha
+                    accY += (screen.Y - ref.Y) * alpha
+                    local ix = accX >= 0 and math.floor(accX) or math.ceil(accX)
+                    local iy = accY >= 0 and math.floor(accY) or math.ceil(accY)
+                    accX -= ix
+                    accY -= iy
+                    if ix ~= 0 or iy ~= 0 then pcall(mousemoverel, ix, iy) end
+                else
+                    cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(cam.CFrame.Position, goal), alpha)
+                end
+            end
+
+            feature("Aim_Global_Enabled", function()
+                lockedPlayer, lastPlayer, accX, accY = nil, nil, 0, 0
+                RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function(dt)
+                    local ok, err = pcall(step, dt)
+                    if not ok then warnf("aim assist error:", err) end
+                end)
+            end, function()
+                pcall(function() RunService:UnbindFromRenderStep(name) end)
+                lockedPlayer, lastPlayer = nil, nil
+            end)
+        end
+
+        -- wallbang origin scanner (the Vape method; the origin may move about 7 studs) ----
+        local WB = { cache = {}, ray = RaycastParams.new(), overlap = OverlapParams.new() }
+        WB.ray.FilterType = Enum.RaycastFilterType.Exclude
+        WB.overlap.FilterType = Enum.RaycastFilterType.Exclude
+        pcall(function()
+            WB.ray.CollisionGroup = "ClientBullet"
+            WB.overlap.CollisionGroup = "ClientBullet"
+        end)
+        local OFFSETS = {
+            v3(0, 1, 0), v3(1, 0, 0), v3(0.7, -0.5, -0.5), v3(-0.1, -0.8, -0.8), v3(-0.8, -0.5, -0.5), v3(-1, 0, 0),
+            v3(-0.8, 0.4, 0.4), v3(0, 0.7, 0.7), v3(0.7, 0.5, 0.5), v3(1, 0, 0), v3(0.7, 0, -0.8), v3(-0.1, 0, -1),
+            v3(-0.8, 0, -0.8), v3(-1, 0, 0), v3(-0.8, 0, 0.7), v3(0, 0, 1), v3(0.7, 0, 0.7), v3(1, 0, 0),
+            v3(0.7, 0.4, -0.5), v3(-0.1, 0.7, -0.8), v3(-0.8, 0.4, -0.5), v3(-1, -0.1, 0), v3(-0.8, -0.5, 0.4),
+            v3(0, -0.8, 0.7), v3(0.7, -0.6, 0.5), v3(0, -1, 0),
+        }
+
+        function WB.updateIgnore()
+            local list = {}
+            if LocalPlayer.Character then list[#list + 1] = LocalPlayer.Character end
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player.Character then list[#list + 1] = player.Character end
+            end
+            local cars = workspace:FindFirstChild("CarContainer")
+            if cars and flag("gun_vehicle_wallbang", false) then list[#list + 1] = cars end
+            WB.ray.FilterDescendantsInstances = list
+            WB.overlap.FilterDescendantsInstances = list
+        end
+
+        local function freeSpace(position)
+            for _, part in ipairs(workspace:GetPartBoundsInRadius(position, 0, WB.overlap)) do
+                if part.CanCollide and (part:GetClosestPointOnSurface(position) - position).Magnitude <= 0.0001 then
+                    return false
+                end
+            end
+            return true
+        end
+
+        -- returns newOrigin, newHit (newHit is nil when the target position itself is reachable)
+        function WB.scan(origin, target, extra, part, entity)
+            local cached = WB.cache[part]
+            if cached then return cached[1], cached[2] end
+            local hitboxes = {}
+            if freeSpace(target) then
+                if extra and (origin - extra).Magnitude < 7.5 then
+                    WB.cache[part] = { extra }
+                    return extra
+                end
+                table.insert(hitboxes, target)
+            end
+            local flat = Vector3.new(1, 0, 1)
+            local forward = CFrame.lookAt(origin * flat, target * flat).LookVector
+            for _, normal in ipairs(Enum.NormalId:GetEnumItems()) do
+                local offset = Vector3.fromNormalId(normal)
+                if (offset * flat):Dot(-forward) > -0.5 then
+                    local position = entity.Root.Position + offset * 7.4
+                    if freeSpace(position) then table.insert(hitboxes, position) end
+                end
+            end
+            local origins = { origin }
+            for _, offset in ipairs(OFFSETS) do
+                if (offset * flat):Dot(forward) > -0.5 then
+                    local position = origin + offset * 6.5
+                    if freeSpace(position) then table.insert(origins, position) end
+                end
+            end
+            for _, hitbox in ipairs(hitboxes) do
+                for _, position in ipairs(origins) do
+                    if not workspace:Raycast(hitbox, position - hitbox, WB.ray) then
+                        WB.cache[part] = { position, hitbox ~= target and hitbox or nil }
+                        return position, hitbox
+                    end
+                end
+            end
+            return nil
+        end
+
+        -- silent aim ---------------------------------------------------------------------
+        do
+            local bag = newBag()
+            local hookedCast, original = nil, nil
+            local autoNext = 0
+
+            local function silentActive()
+                return flag("Silent_Global_Enabled", false) and keyActive("Silent_Global_Key")
+            end
+
+            local function rewriteStack(origin, newOrigin)
+                if type(debug) ~= "table" or type(debug.getstack) ~= "function" or type(debug.setstack) ~= "function" then return end
+                for level = 2, 6 do
+                    pcall(function()
+                        for index, value in debug.getstack(level) do
+                            if value == origin then debug.setstack(level, index, newOrigin) end
+                        end
+                    end)
+                end
+            end
+
+            local function redirect(...)
+                local origin = ...
+                if typeof(origin) ~= "Vector3" or not silentActive() then return original(...) end
+                if rand:NextNumber(0, 100) > flag("Silent_Global_HitChance", 100) then return original(...) end
+
+                local data = Gun.data()
+                local taser = data and data.Behavior == "Taser"
+                local wallbang = flag("silent_wallbang", false)
+                local entity, part = selectTarget("silent", aimRef(), origin, {
+                    limit = data and tonumber(data.Range) or 1000,
+                    ignoreDown = taser,
+                    skipWall = wallbang,
+                })
+                if not entity then return original(...) end
+
+                local args = table.pack(...)
+                local targetPos = part.Position
+                args[2] = targetPos
+
+                local _, _, myRoot = localParts()
+                if wallbang and myRoot then
+                    WB.updateIgnore()
+                    local blocked
+                    if not WB.cache[part] then blocked = workspace:Raycast(targetPos, origin - targetPos, WB.ray) end
+                    if WB.cache[part] or blocked or workspace:Raycast(origin, targetPos - origin, WB.ray) then
+                        local newOrigin, hit = WB.scan(myRoot.Position, targetPos, blocked and blocked.Position + blocked.Normal * 0.01 or nil, part, entity)
+                        if newOrigin then
+                            rewriteStack(origin, newOrigin)
+                            args[1] = newOrigin
+                            if hit then return part, hit end
+                        elseif flag("silent_wall", false) then
+                            return original(...)
+                        end
+                    end
+                end
+                return original(table.unpack(args, 1, args.n))
+            end
+
+            local function unhook()
+                if hookedCast and original then
+                    pcall(function()
+                        if type(restorefunction) == "function" then restorefunction(hookedCast)
+                        else hookfunction(hookedCast, original) end
+                    end)
+                end
+                hookedCast, original = nil, nil
+            end
+
+            local function install()
+                if not Gun.find() then return false end
+                if hookedCast == Gun.cast then return true end
+                unhook()
+                if type(hookfunction) ~= "function" then return false end
+                local ok, old = pcall(hookfunction, Gun.cast, function(...)
+                    local packed = table.pack(pcall(redirect, ...))
+                    if packed[1] then return table.unpack(packed, 2, packed.n) end
+                    return original(...)
+                end)
+                if not ok or type(old) ~= "function" then return false end
+                hookedCast, original = Gun.cast, old
+                return true
+            end
+
+            feature("Silent_Global_Enabled", function()
+                task.spawn(function()
+                    local tries = 0
+                    while isOn("Silent_Global_Enabled") and not install() do
+                        tries += 1
+                        if tries > 20 then
+                            say("Silent aim could not hook the gun (the executor needs getconnections, debug.getupvalue and hookfunction)")
+                            switchOff("Silent_Global_Enabled")
+                            return
+                        end
+                        task.wait(1)
+                    end
+                end)
+                local lastClear, lastCheck = 0, 0
+                bag.add(RunService.Heartbeat:Connect(function()
+                    local now = clock()
+                    if now - lastClear > 0.15 then
+                        lastClear = now
+                        table.clear(WB.cache)
+                        WB.updateIgnore()
+                    end
+                    if now - lastCheck > 2 then
+                        lastCheck = now
+                        if hookedCast then task.spawn(install) end
+                    end
+                    if flag("silent_autofire", false) and silentActive() and now >= autoNext and not typing() then
+                        autoNext = now + 1 / math.max(flag("silent_autofire_rate", 15), 1)
+                        local _, _, root = localParts()
+                        local cam = Camera()
+                        local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                        if root and cam and head and readyGun() then
+                            local data = Gun.data()
+                            local entity = selectTarget("silent", aimRef(), head.Position, {
+                                limit = data and tonumber(data.Range) or 1000,
+                                ignoreDown = data and data.Behavior == "Taser",
+                                skipWall = flag("silent_wallbang", false),
+                            })
+                            if entity then fireGun() end
+                        end
+                    end
+                end))
+            end, function()
+                bag.clear()
+                unhook()
+            end)
+
+            onUnload(unhook)
+        end
+
+        -- triggerbot ---------------------------------------------------------------------
+        do
+            local bag = newBag()
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            pcall(function() params.CollisionGroup = "ClientBullet" end)
+            local seenSince, nextShot = nil, 0
+            local TORSO = { Torso = true, UpperTorso = true, LowerTorso = true, HumanoidRootPart = true }
+
+            feature("Trigger_Global_Enabled", function()
+                seenSince, nextShot = nil, 0
+                task.spawn(Gun.find)
+                bag.add(RunService.Heartbeat:Connect(function()
+                    local cam = Camera()
+                    local _, _, root = localParts()
+                    if not cam or not root or typing() or not keyActive("Trigger_Global_Key") or not readyGun() then
+                        seenSince = nil
+                        return
+                    end
+                    local ref = aimRef()
+                    local ray = cam:ViewportPointToRay(ref.X, ref.Y)
+                    local list = { cam }
+                    if LocalPlayer.Character then list[#list + 1] = LocalPlayer.Character end
+                    params.FilterDescendantsInstances = list
+                    local result = workspace:Raycast(ray.Origin, ray.Direction * 1500, params)
+                    local model = result and result.Instance:FindFirstAncestorOfClass("Model")
+                    local player = model and Players:GetPlayerFromCharacter(model)
+                    local hum = model and model:FindFirstChildOfClass("Humanoid")
+                    local good = player ~= nil and player ~= LocalPlayer and hum ~= nil and hum.Health > 0
+                    if good and flag("trigger_team", false) and LocalPlayer.Team ~= nil and player.Team == LocalPlayer.Team then good = false end
+                    if good then
+                        local mode = flag("Trigger_Global_HitPart", "Head")
+                        if mode == "Head" then good = result.Instance.Name == "Head"
+                        elseif mode == "Torso" then good = TORSO[result.Instance.Name] == true end
+                    end
+                    if good then
+                        local data = Gun.data()
+                        local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                        local range = data and tonumber(data.Range) or 1000
+                        if head and (result.Position - head.Position).Magnitude > range then good = false end
+                    end
+                    if not good then seenSince = nil return end
+                    local now = clock()
+                    seenSince = seenSince or now
+                    if now - seenSince >= flag("Trigger_Global_Reaction", 0) / 1000 and now >= nextShot then
+                        nextShot = now + flag("Trigger_Global_Delay", 40) / 1000
+                        fireGun()
+                    end
+                end))
+            end, function()
+                bag.clear()
+                seenSince = nil
+            end)
+        end
+    end)()
 
     -- watcher: starts and stops features as their toggles change --------------------------
     track(RunService.Heartbeat:Connect(function()

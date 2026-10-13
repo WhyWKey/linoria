@@ -1089,6 +1089,15 @@ local function relationOf(player)
     if explicit then return explicit end
     return isEnemy(player) and "Enemy" or "Friendly"
 end
+-- Hostile only: an Inmate that is not Hostile is peaceful. This applies whatever team you are on;
+-- Priority players are never treated as peaceful.
+local function isPeaceful(player)
+    if not player or Relations[player.UserId] == "Priority" then return false end
+    local team = player.Team
+    if not team or team.Name ~= "Inmates" then return false end
+    local char = player.Character
+    return not (char and char:GetAttribute("Hostile") == true)
+end
 
 -- Palette of the library's built-in "Perception" theme, applied before the window is built.
 Library.FontColor = Color3.fromRGB(182, 182, 182)
@@ -1309,6 +1318,7 @@ do
     Aim:Toggle({ Name = "Team check", Flag = "aim_team", Default = false })
     Aim:Toggle({ Name = "Wall check", Flag = "aim_wall", Default = false })
     Aim:Toggle({ Name = "Forcefield check", Flag = "aim_ff", Default = false })
+    Aim:Toggle({ Name = "Hostile only (inmates)", Flag = "aim_hostile", Default = false })
     Aim:Toggle({ Name = "Ignore tased / arrested", Flag = "aim_ignore_down", Default = false })
 
     local Smooth = CombatTab:Section({ Name = "Aim smoothing", Side = 1 })
@@ -1326,6 +1336,7 @@ do
     Trigger:Slider({ Name = "Reaction time", Flag = "Trigger_Global_Reaction", Min = 0, Max = 200, Default = 0, Suffix = "ms", Decimals = 1 })
     Trigger:Toggle({ Name = "Team check", Flag = "trigger_team", Default = false })
     Trigger:Toggle({ Name = "Forcefield check", Flag = "trigger_ff", Default = false })
+    Trigger:Toggle({ Name = "Hostile only (inmates)", Flag = "trigger_hostile", Default = false })
 
     -- Silent aim ---------------------------------------------------------------------------
     local Silent = CombatTab:Section({ Name = "Silent aim", Side = 2 })
@@ -1341,6 +1352,7 @@ do
     Silent:Toggle({ Name = "Wallbang", Flag = "silent_wallbang", Default = false })
     Silent:Toggle({ Name = "Wall check", Flag = "silent_wall", Default = false })
     Silent:Toggle({ Name = "Forcefield check", Flag = "silent_ff", Default = false })
+    Silent:Toggle({ Name = "Hostile only (inmates)", Flag = "silent_hostile", Default = false })
     Silent:Toggle({ Name = "Team check", Flag = "silent_team", Default = false })
     Silent:Toggle({ Name = "Ignore tased / arrested", Flag = "silent_ignore_down", Default = false })
     Silent:Toggle({ Name = "Auto fire", Flag = "silent_autofire", Default = false })
@@ -1530,7 +1542,7 @@ do
     EspList:Toggle({ Name = "Arrows", Flag = "esp_arrows", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_arrow_color", Default = WHITE })
     EspList:Toggle({ Name = "Team indicator", Flag = "esp_team_indicator", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_team_color", Default = WHITE })
     EspList:Toggle({ Name = "Enemies only", Flag = "esp_enemies_only", Default = false })
-    EspList:Toggle({ Name = "Guards: hostile inmates only", Flag = "esp_hostile_only", Default = false })
+    EspList:Toggle({ Name = "Hostile only (inmates)", Flag = "esp_hostile_only", Default = false })
     EspList:Toggle({ Name = "Team colors", Flag = "esp_use_team_color", Default = false })
 EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpicker({ Name = "Visible", Flag = "esp_chams_adorn_vis_color", Default = Color3.fromRGB(59, 204, 90), Alpha = 0.35 }):Colorpicker({ Name = "Behind walls", Flag = "esp_chams_adorn_occ_color", Default = Color3.fromRGB(59, 144, 204), Alpha = 0.7 })
 
@@ -2056,14 +2068,10 @@ do
 
     -- Enemies only: not on your team (a Neutral player counts as an enemy); Friendly players are hidden,
     -- Priority players are always shown.
-    -- Guards: hostile inmates only. As a Guard, Inmates that are not Hostile are hidden; Criminals, other
-    -- teams and Priority players stay visible.
+    -- Hostile only: Inmates that are not Hostile are hidden, whichever team you are on. Criminals, Guards
+    -- and Priority players stay visible.
     local function hiddenAsPeaceful(player)
-        if not getFlag("esp_hostile_only", false) or Relations[player.UserId] == "Priority" then return false end
-        local mine, theirs = LocalPlayer.Team, player.Team
-        if not mine or mine.Name ~= "Guards" or not theirs or theirs.Name ~= "Inmates" then return false end
-        local char = player.Character
-        return not (char and char:GetAttribute("Hostile") == true)
+        return getFlag("esp_hostile_only", false) and isPeaceful(player)
     end
     local function teamAllowed(player)
         if player ~= LocalPlayer and getFlag("esp_enemies_only", false) and not isEnemy(player) then return false end
@@ -7221,6 +7229,7 @@ do
             local ignoreDown = opts.ignoreDown or flag(prefix .. "_ignore_down", false)
             local wall = flag(prefix .. "_wall", false) and not opts.skipWall
             local ffCheck = flag(prefix .. "_ff", false)
+            local hostileCheck = flag(prefix .. "_hostile", false)
 
             local bestEntity, bestPart, bestScore, bestDist
             for _, e in ipairs(otherEntities()) do
@@ -7229,6 +7238,7 @@ do
                     local skip = distance > maxDist
                     if not skip and (Relations[e.Player.UserId] == "Friendly" or (team and relationOf(e.Player) == "Friendly")) then skip = true end
                     if not skip and ffCheck and e.Character:FindFirstChildOfClass("ForceField") then skip = true end
+                    if not skip and hostileCheck and isPeaceful(e.Player) then skip = true end
                     if not skip and ignoreDown and (e.Character:GetAttribute("Tased") or e.Character:GetAttribute("Arrested")) then skip = true end
                     if not skip then
                         local radius = baseFov
@@ -7847,6 +7857,7 @@ do
                     local good = player ~= nil and player ~= LocalPlayer and hum ~= nil and hum.Health > 0
                     if good and (Relations[player.UserId] == "Friendly" or (flag("trigger_team", false) and relationOf(player) == "Friendly")) then good = false end
                     if good and flag("trigger_ff", false) and model:FindFirstChildOfClass("ForceField") then good = false end
+                    if good and flag("trigger_hostile", false) and isPeaceful(player) then good = false end
                     if good then
                         local mode = flag("Trigger_Global_HitPart", "Head")
                         if mode == "Head" then good = result.Instance.Name == "Head"

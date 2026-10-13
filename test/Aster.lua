@@ -21,6 +21,13 @@ local Loader = (function()
         getgenv().AsterLoader = self
     end)
 
+    -- The bar starts in the accent colour saved by the last run (theme changes are saved), and switches to the
+    -- live one as soon as the theme is applied.
+    local accent = Color3.fromRGB(102, 137, 148)
+    pcall(function()
+        if isfile and isfile("Aster/loader_accent.txt") then accent = Color3.fromHex(readfile("Aster/loader_accent.txt")) end
+    end)
+
     local built = pcall(function()
         gui = Instance.new("ScreenGui")
         gui.Name = "Aster_Loader"
@@ -81,7 +88,7 @@ local Loader = (function()
 
         fill = Instance.new("Frame")
         fill.Size = UDim2.fromScale(0, 1)
-        fill.BackgroundColor3 = Color3.fromRGB(102, 137, 148)
+        fill.BackgroundColor3 = accent
         fill.BorderSizePixel = 0
         fill.Parent = track
         local fillCorner = Instance.new("UICorner")
@@ -150,7 +157,21 @@ local Loader = (function()
         destroy()
     end
 
+    function self.setAccent(color)
+        accent = color
+        pcall(function() if fill and not self.failed then fill.BackgroundColor3 = color end end)
+    end
+
+    function self.saveAccent(color)
+        pcall(function()
+            if not writefile then return end
+            if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
+            writefile("Aster/loader_accent.txt", color:ToHex())
+        end)
+    end
+
     function self.fail(message)
+        self.failed = true
         if self.closed then return end
         pcall(function()
             statusLabel.Text = "Failed to load: " .. tostring(message):sub(1, 70)
@@ -1138,6 +1159,17 @@ local function toRounding(decimals)
     return math.clamp(math.floor(-math.log10(decimals) + 0.5), 0, 4)
 end
 
+-- Pressing Escape while picking a key clears the keybind (the menu key falls back to its default instead).
+local function escapeUnbinds(flag, fallback)
+    local picker = Options[flag]
+    if not picker then return end
+    picker:OnChanged(function()
+        if picker.Value == "Escape" then
+            pcall(function() picker:SetValue({ fallback, picker.Mode }) end)
+        end
+    end)
+end
+
 local function wrapElement(linoriaObject)
     local element = {}
     function element:Colorpicker(info)
@@ -1165,6 +1197,7 @@ local function wrapElement(linoriaObject)
             NoUI = false,
             SyncToggleState = info.Sync == true, -- the key flips the toggle it is attached to
         })
+        escapeUnbinds(info.Flag, "None")
         return element
     end
     return element
@@ -1458,6 +1491,7 @@ do
     local Protect = MiscPage:Section({ Name = "Protection", Side = 2 })
     Protect:Toggle({ Name = "Anti taze", Flag = "misc_anti_taze", Default = false })
     Protect:Toggle({ Name = "Anti fling", Flag = "misc_anti_fling", Default = false })
+    Protect:Toggle({ Name = "Destroy body on death", Flag = "misc_destroy_body", Default = false })
     Protect:Toggle({ Name = "Anti riot shield", Flag = "misc_anti_riot", Default = false })
     Protect:Toggle({ Name = "Anti kill plane", Flag = "misc_anti_killplane", Default = false })
     Protect:Toggle({ Name = "Anti invisible", Flag = "misc_anti_invis", Default = false })
@@ -1848,6 +1882,7 @@ do
     local MenuGroup = SettingsTab:AddLeftGroupbox("Menu")
     MenuGroup:AddButton("Unload", function() Library:Unload() end)
     MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "RightControl", NoUI = true, Text = "Menu keybind" })
+    escapeUnbinds("MenuKeybind", "RightControl")
     MenuGroup:AddToggle("KeybindMenuOpen", {
         Default = Library.KeybindFrame.Visible,
         Text = "Show keybinds",
@@ -1928,6 +1963,20 @@ do
     SaveManager:SetFolder("Aster/configs")
     SaveManager:BuildConfigSection(SettingsTab)
     ThemeManager:ApplyToTab(SettingsTab)
+    Loader.setAccent(Library.AccentColor)
+    do -- keep the saved loader colour in step with the theme
+        local alive, last = true, Library.AccentColor
+        onUnload(function() alive = false end)
+        task.spawn(function()
+            while alive do
+                task.wait(2)
+                if Library.AccentColor ~= last then
+                    last = Library.AccentColor
+                    Loader.saveAccent(last)
+                end
+            end
+        end)
+    end
 end
 
 do
@@ -2789,6 +2838,23 @@ do
         local result = workspace:Raycast(origin, offset.Unit * (offset.Magnitude + 1), params)
         local model = result and result.Instance:FindFirstAncestorOfClass("Model")
         local victim = model and Players:GetPlayerFromCharacter(model)
+        if not victim then
+            -- Wallbang: the bullet goes through walls the ray above stops at, so look along the same line at
+            -- player characters only. Without this a wallbanged hit never counted and made no sound.
+            local characters = {}
+            for _, other in ipairs(Players:GetPlayers()) do
+                if other ~= LocalPlayer and other.Character then characters[#characters + 1] = other.Character end
+            end
+            if #characters > 0 then
+                local playersOnly = RaycastParams.new()
+                playersOnly.FilterType = Enum.RaycastFilterType.Include
+                playersOnly.FilterDescendantsInstances = characters
+                local through = workspace:Raycast(origin, offset.Unit * (offset.Magnitude + 1), playersOnly)
+                local throughModel = through and through.Instance:FindFirstAncestorOfClass("Model")
+                local throughVictim = throughModel and Players:GetPlayerFromCharacter(throughModel)
+                if throughVictim then result, victim = through, throughVictim end
+            end
+        end
         if not victim or victim == LocalPlayer then return end
 
         local queue = pendingHits[victim]
@@ -5092,6 +5158,41 @@ do
             for prompt in pairs(prompts) do pcall(function() prompt:Destroy() end) end
             table.clear(modified)
             table.clear(prompts)
+        end)
+    end
+
+    -- ======================================================================================
+    -- Destroy body on death: the ragdoll stays in the world after you die and can be flung. Every part is
+    -- moved below FallenPartsDestroyHeight, where the engine removes it, so nothing is left to kick.
+    -- ======================================================================================
+    do
+        local bag = newBag()
+        feature("misc_destroy_body", function()
+            local function watch(char)
+                local hum = char:WaitForChild("Humanoid", 5)
+                if not hum then return end
+                bag.add(hum.Died:Connect(function()
+                    task.spawn(function()
+                        local void = workspace.FallenPartsDestroyHeight - 60
+                        local started = clock()
+                        while clock() - started < 4 and char.Parent do
+                            for _, part in ipairs(char:GetDescendants()) do
+                                if part:IsA("BasePart") then
+                                    part.Anchored = false
+                                    part.AssemblyLinearVelocity = ZERO
+                                    part.AssemblyAngularVelocity = ZERO
+                                    part.CFrame = CFrame.new(part.Position.X, void, part.Position.Z)
+                                end
+                            end
+                            RunService.Heartbeat:Wait()
+                        end
+                    end)
+                end))
+            end
+            if LocalPlayer.Character then task.spawn(watch, LocalPlayer.Character) end
+            bag.add(LocalPlayer.CharacterAdded:Connect(watch))
+        end, function()
+            bag.clear()
         end)
     end
 
@@ -8214,6 +8315,7 @@ end
 Loader.step("Loading config", 0.92)
 pcall(function() SaveManager:LoadAutoloadConfig() end)
 Loader.finish(function()
+    Loader.saveAccent(Library.AccentColor)
     if not Library.Toggled then pcall(function() Library:Toggle() end) end
     Library:Notify("Aster loaded", 4)
 end)

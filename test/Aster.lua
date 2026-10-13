@@ -1671,8 +1671,8 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     heToggle:Colorpicker({ Name = "Color", Flag = "he_color", Default = Color3.fromRGB(255, 81, 0) })
     HitFx:Dropdown({ Name = "Effect", Flag = "he_effect", Items = { "nova", "sparks", "bubble", "orbs", "air", "blood", "glitch", "slash", "cosmic", "crescentslash" }, Default = "nova" })
     HitFx:Dropdown({ Name = "Trigger", Flag = "he_trigger", Items = { "On hit", "On shot" }, Default = "On hit" })
-    HitFx:Slider({ Name = "Size", Flag = "he_size", Min = 0.5, Max = 6, Default = 2, Decimals = 0.1 })
-    HitFx:Slider({ Name = "Duration", Flag = "he_duration", Min = 0.5, Max = 5, Default = 2, Suffix = "s", Decimals = 0.1 })
+    HitFx:Slider({ Name = "Size", Flag = "he_size", Min = 0, Max = 10, Default = 2, Decimals = 0.1 })
+    HitFx:Slider({ Name = "Duration", Flag = "he_duration", Min = 0.1, Max = 10, Default = 2, Suffix = "s", Decimals = 0.1 })
     HitFx:Button({ Name = "Preview effect", Callback = function() Actions.previewHitEffect() end })
 
     local AuraBox = WorldPage:Section({ Name = "Particle aura", Side = 1 })
@@ -5683,291 +5683,494 @@ do
     -- ======================================================================================
     ;(function()
         local Workspace = workspace
+        -- The ten presets below are SillyScripts' own code, copied unchanged except that the colour, size and
+        -- duration they read from its menu come from HE_color, HE_size and HE_duration.
+        local HE_color, HE_size, HE_duration = Color3.fromRGB(255, 81, 0), 2, 2
         local HitEffects = {}
-HitEffects.Presets = {
-	["nova"] = function(position, color, size, duration)
-		local part = Instance.new("Part")
-		part.Position = position
-		part.Anchored = true
-		part.Transparency = 1
-		part.CanCollide = false
-		part.Size = Vector3.one
-		part.Parent = Workspace
-		local colorSeq = ColorSequence.new(color)
-		local pe = Instance.new("ParticleEmitter")
-		pe.Color = colorSeq
-		pe.Lifetime = NumberRange.new(0.5 * duration)
-		pe.LightEmission = 1
-		pe.LockedToPart = true
-		pe.Orientation = Enum.ParticleOrientation.VelocityPerpendicular
-		pe.Rate = 0
-		pe.Size = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0),
-			NumberSequenceKeypoint.new(1, 10 * size),
-		})
-		pe.Speed = NumberRange.new(1.5)
-		pe.Texture = "rbxassetid://1084991215"
-		pe.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1),
-			NumberSequenceKeypoint.new(0.1, 0),
-			NumberSequenceKeypoint.new(0.6, 0),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		pe.ZOffset = 1
-		pe.Parent = part
-		local pe2 = Instance.new("ParticleEmitter")
-		pe2.Color = colorSeq
-		pe2.Lifetime = NumberRange.new(0.5 * duration)
-		pe2.LightEmission = 1
-		pe2.LockedToPart = true
-		pe2.Rate = 0
-		pe2.Size = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0),
-			NumberSequenceKeypoint.new(1, 10 * size),
-		})
-		pe2.Speed = NumberRange.new(0)
-		pe2.Texture = "rbxassetid://1084991215"
-		pe2.Transparency = pe.Transparency
-		pe2.ZOffset = 1
-		pe2.Parent = part
-		pe:Emit(1)
-		pe2:Emit(1)
-		task.delay(duration, function() part:Destroy() end)
-	end,
+        HitEffects.Presets = {
+		["nova"] = function(position)
+			local instance4 = Instance.new("Part")
+			instance4.Position = position
+			instance4.Anchored = true
+			instance4.Transparency = 1
+			instance4.CanCollide = false
+			instance4.Size = Vector3.one
+			instance4.Parent = Workspace
+			local colorSequence = ColorSequence.new(HE_color)
+			local value = HE_size
+			local value2 = HE_duration
+			local instance5 = Instance.new("ParticleEmitter")
+			instance5.Color = colorSequence
+			instance5.Lifetime = NumberRange.new(0.5 * value2)
+			instance5.LightEmission = 1
+			instance5.LockedToPart = true
+			instance5.Orientation = Enum.ParticleOrientation.VelocityPerpendicular
+			instance5.Rate = 0
+			local new = NumberSequenceKeypoint.new
+			instance5.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), new(1, 10 * value) })
+			instance5.Speed = NumberRange.new(1.5)
+			instance5.Texture = "rbxassetid://1084991215"
+			local numberSequence = NumberSequence.new
+			local tbl21 = {}
+			local v6 = NumberSequenceKeypoint.new(0, 1)
+			local v7 = NumberSequenceKeypoint.new(0.1, 0)
+			local v8 = NumberSequenceKeypoint.new(0.6, 0)
+			local new2 = NumberSequenceKeypoint.new
+			tbl21[1] = v6
+			tbl21[2] = v7
+			tbl21[3] = v8
 
-	["sparks"] = function(position, color, size, duration)
-		local part = Instance.new("Part")
-		part.Position = position
-		part.Anchored = true
-		part.Transparency = 1
-		part.CanCollide = false
-		part.Size = Vector3.one
-		part.Parent = Workspace
-		local pe = Instance.new("ParticleEmitter")
-		pe.Color = ColorSequence.new(color)
-		pe.Lifetime = NumberRange.new(0.3 * duration, 0.6 * duration)
-		pe.LightEmission = 1
-		pe.Rate = 0
-		pe.Size = NumberSequence.new(0.15 * size, 0)
-		pe.Speed = NumberRange.new(8, 18)
-		pe.SpreadAngle = Vector2.new(180, 180)
-		pe.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-		pe.Parent = part
-		pe:Emit(math.clamp(math.floor(20 * size), 5, 60))
-		task.delay(duration, function() part:Destroy() end)
-	end,
+			do
+				local values = table.pack(new2(1, 1))
+				table.move(values, 1, values.n, 4, tbl21)
+			end
 
-	["bubble"] = function(position, color, size, duration)
-		local part = Instance.new("Part")
-		part.Position = position
-		part.Anchored = true
-		part.Transparency = 1
-		part.CanCollide = false
-		part.Size = Vector3.one
-		part.Parent = Workspace
-		local pe = Instance.new("ParticleEmitter")
-		pe.Color = ColorSequence.new(color)
-		pe.Lifetime = NumberRange.new(0.8 * duration, 1.2 * duration)
-		pe.Rate = 0
-		pe.Size = NumberSequence.new(0.2 * size, 1.5 * size)
-		pe.Speed = NumberRange.new(1, 3)
-		pe.Texture = "rbxassetid://1084991215"
-		pe.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.2),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		pe.Parent = part
-		pe:Emit(math.clamp(math.floor(8 * size), 3, 25))
-		task.delay(duration, function() part:Destroy() end)
-	end,
+			instance5.Transparency = numberSequence(tbl21)
+			instance5.ZOffset = 1
+			instance5.Parent = instance4
+			local instance6 = Instance.new("ParticleEmitter")
+			instance6.Color = colorSequence
+			instance6.Lifetime = NumberRange.new(0.5 * value2)
+			instance6.LightEmission = 1
+			instance6.LockedToPart = true
+			instance6.Rate = 0
+			local new3 = NumberSequenceKeypoint.new
+			instance6.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), new3(1, 10 * value) })
+			instance6.Speed = NumberRange.new(0)
+			instance6.Texture = "rbxassetid://1084991215"
+			local numberSequence2 = NumberSequence.new
+			local tbl22 = {}
+			local v9 = NumberSequenceKeypoint.new(0, 1)
+			local v10 = NumberSequenceKeypoint.new(0.1, 0)
+			local v11 = NumberSequenceKeypoint.new(0.6, 0)
+			local new4 = NumberSequenceKeypoint.new
+			tbl22[1] = v9
+			tbl22[2] = v10
+			tbl22[3] = v11
 
-	["orbs"] = function(position, color, size, duration)
-		local part = Instance.new("Part")
-		part.Position = position
-		part.Anchored = true
-		part.Transparency = 1
-		part.CanCollide = false
-		part.Size = Vector3.one
-		part.Parent = Workspace
-		local pe = Instance.new("ParticleEmitter")
-		pe.Color = ColorSequence.new(color)
-		pe.Lifetime = NumberRange.new(0.5 * duration, duration)
-		pe.LightEmission = 0.8
-		pe.Rate = 0
-		pe.Size = NumberSequence.new(0.4 * size, 0)
-		pe.Speed = NumberRange.new(2, 6)
-		pe.SpreadAngle = Vector2.new(360, 360)
-		pe.Texture = "rbxassetid://243660364"
-		pe.Parent = part
-		pe:Emit(math.clamp(math.floor(12 * size), 4, 40))
-		task.delay(duration, function() part:Destroy() end)
-	end,
+			do
+				local values = table.pack(new4(1, 1))
+				table.move(values, 1, values.n, 4, tbl22)
+			end
 
-	["air"] = function(position, color, size, duration)
-		local part = Instance.new("Part")
-		part.Position = position
-		part.Anchored = true
-		part.Transparency = 1
-		part.CanCollide = false
-		part.Size = Vector3.one
-		part.Parent = Workspace
-		local pe = Instance.new("ParticleEmitter")
-		pe.Color = ColorSequence.new(color)
-		pe.Lifetime = NumberRange.new(0.4 * duration, 0.7 * duration)
-		pe.Rate = 0
-		pe.Size = NumberSequence.new(1.5 * size, 0)
-		pe.Speed = NumberRange.new(3, 8)
-		pe.SpreadAngle = Vector2.new(50, -50)
-		pe.Rotation = NumberRange.new(-5, 5)
-		pe.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.3),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		pe.Texture = "rbxasset://textures/particles/smoke_main.dds"
-		pe.Parent = part
-		pe:Emit(math.clamp(math.floor(15 * size), 5, 40))
-		task.delay(duration, function() part:Destroy() end)
-	end,
+			instance6.Transparency = numberSequence2(tbl22)
+			instance6.ZOffset = 1
+			instance6.Parent = instance4
+			local instance7 = Instance.new("ParticleEmitter")
+			instance7.Color = colorSequence
+			instance7.Lifetime = NumberRange.new(0.2 * value2, 0.5 * value2)
+			instance7.LockedToPart = true
+			instance7.Orientation = Enum.ParticleOrientation.VelocityParallel
+			instance7.Rate = 0
+			instance7.Rotation = NumberRange.new(-90, 90)
+			local new5 = NumberSequenceKeypoint.new
+			instance7.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1 * value), new5(1, 8.5 * value) })
+			instance7.Speed = NumberRange.new(0.1)
+			instance7.SpreadAngle = Vector2.new(180, 180)
+			instance7.Texture = "http://www.roblox.com/asset/?id=6820680001"
+			local numberSequence3 = NumberSequence.new
+			local tbl23 = {}
+			local v12 = NumberSequenceKeypoint.new(0, 1)
+			local v13 = NumberSequenceKeypoint.new(0.2, 0)
+			local v14 = NumberSequenceKeypoint.new(0.7, 0)
+			local new6 = NumberSequenceKeypoint.new
+			tbl23[1] = v12
+			tbl23[2] = v13
+			tbl23[3] = v14
 
-	["blood"] = function(position, color, size, duration)
-		local part = Instance.new("Part")
-		part.Position = position
-		part.Anchored = true
-		part.Transparency = 1
-		part.CanCollide = false
-		part.Size = Vector3.one
-		part.Parent = Workspace
-		local pe = Instance.new("ParticleEmitter")
-		pe.Color = ColorSequence.new(color)
-		pe.Lifetime = NumberRange.new(0.45 * duration)
-		pe.Rate = 0
-		pe.Size = NumberSequence.new(0.3 * size, 0)
-		pe.Speed = NumberRange.new(4, 12)
-		pe.SpreadAngle = Vector2.new(90, 90)
-		pe.Texture = "rbxassetid://8708637750"
-		pe.Parent = part
-		pe:Emit(math.clamp(math.floor(18 * size), 6, 50))
-		task.delay(duration, function() part:Destroy() end)
-	end,
+			do
+				local values = table.pack(new6(1, 1))
+				table.move(values, 1, values.n, 4, tbl23)
+			end
 
-	["glitch"] = function(position, color, size, duration)
-		local part = Instance.new("Part")
-		part.Position = position
-		part.Anchored = true
-		part.Transparency = 1
-		part.CanCollide = false
-		part.Size = Vector3.one
-		part.Parent = Workspace
-		local pe = Instance.new("ParticleEmitter")
-		pe.Color = ColorSequence.new(color)
-		pe.Lifetime = NumberRange.new(0.45 * duration)
-		pe.Rate = 0
-		pe.RotSpeed = NumberRange.new(-10, 10)
-		pe.FlipbookFramerate = NumberRange.new(40, 40)
-		pe.Rotation = NumberRange.new(-1000, 1000)
-		pe.SpreadAngle = Vector2.new(-1000, 1000)
-		pe.Size = NumberSequence.new(1 * size, 0)
-		pe.Texture = "rbxassetid://8030734851"
-		pe.Parent = part
-		pe:Emit(math.clamp(math.floor(10 * size), 3, 30))
-		task.delay(duration, function() part:Destroy() end)
-	end,
+			instance7.Transparency = numberSequence3(tbl23)
+			instance7.ZOffset = 1.5
+			instance7.Parent = instance4
+			instance5:Emit(1)
+			instance6:Emit(1)
+			instance7:Emit(1)
 
-	["slash"] = function(position, color, size, duration)
-		local part = Instance.new("Part")
-		part.Size = Vector3.one
-		part.Anchored = true
-		part.CanCollide = false
-		part.Transparency = 1
-		part.Position = position
-		part.Parent = Workspace
-		local att = Instance.new("Attachment")
-		att.Parent = part
-		local pe = Instance.new("ParticleEmitter")
-		pe.Color = ColorSequence.new(color)
-		pe.Texture = "rbxassetid://8708637750"
-		pe.Size = NumberSequence.new(9 * size, 16 * size)
-		pe.Lifetime = NumberRange.new(0.16 * duration)
-		pe.Brightness = 5
-		pe.Rate = 0
-		pe.Parent = att
-		pe:Emit(1)
-		local pe2 = Instance.new("ParticleEmitter")
-		pe2.Color = ColorSequence.new(color)
-		pe2.Texture = "rbxassetid://8196169974"
-		pe2.Size = NumberSequence.new(0, 11 * size)
-		pe2.Lifetime = NumberRange.new(0.3 * duration)
-		pe2.Brightness = 5
-		pe2.Rate = 0
-		pe2.Parent = att
-		pe2:Emit(1)
-		task.delay(duration, function() part:Destroy() end)
-	end,
+			task.delay(value2, function()
+				instance4:Destroy()
+			end)
+		end,
+		["sparks"] = function(position)
+			local instance4 = Instance.new("Part")
+			instance4.Position = position
+			instance4.Anchored = true
+			instance4.Transparency = 1
+			instance4.CanCollide = false
+			instance4.Size = Vector3.new(0.01, 0.01, 0.01)
+			instance4.Parent = Workspace
+			local colorSequence = ColorSequence.new(HE_color)
+			local value = HE_size
+			local value2 = HE_duration
+			local instance5 = Instance.new("ParticleEmitter")
+			instance5.Acceleration = Vector3.new(0, -50, 0)
+			instance5.Color = colorSequence
+			instance5.Lifetime = NumberRange.new(0.5 * value2, 1 * value2)
+			instance5.LightEmission = 1
+			instance5.Orientation = Enum.ParticleOrientation.VelocityParallel
+			instance5.Rate = 0
+			local numberSequence = NumberSequence.new
+			local tbl21 = {}
+			local v6 = NumberSequenceKeypoint.new(0, 0.6 * value)
+			local v7 = NumberSequenceKeypoint.new(0.5, 0.6 * value)
+			local new = NumberSequenceKeypoint.new
+			tbl21[1] = v6
+			tbl21[2] = v7
 
-	["cosmic"] = function(position, color, size, duration)
-		local part = Instance.new("Part")
-		part.Size = Vector3.one
-		part.Anchored = true
-		part.CanCollide = false
-		part.Transparency = 1
-		part.Position = position
-		part.Parent = Workspace
-		local att = Instance.new("Attachment")
-		att.Parent = part
-		local pe = Instance.new("ParticleEmitter")
-		pe.Color = ColorSequence.new(color)
-		pe.Lifetime = NumberRange.new(0.2 * duration, 0.4 * duration)
-		pe.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0),
-			NumberSequenceKeypoint.new(0.5, 0.2),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		pe.Speed = NumberRange.new(0.08)
-		pe.RotSpeed = NumberRange.new(800, 1000)
-		pe.Size = NumberSequence.new(2 * size, 0)
-		pe.Texture = "rbxassetid://6035067836"
-		pe.Rate = 0
-		pe.Parent = att
-		pe:Emit(math.clamp(math.floor(8 * size), 3, 25))
-		task.delay(duration, function() part:Destroy() end)
-	end,
+			do
+				local values = table.pack(new(1, 0))
+				table.move(values, 1, values.n, 3, tbl21)
+			end
 
-	["crescentslash"] = function(position, color, size, duration)
-		local part = Instance.new("Part")
-		part.Size = Vector3.one
-		part.Anchored = true
-		part.CanCollide = false
-		part.Transparency = 1
-		part.Position = position
-		part.Parent = Workspace
-		local att = Instance.new("Attachment")
-		att.Parent = part
-		local pe = Instance.new("ParticleEmitter")
-		pe.Lifetime = NumberRange.new(0.16 * duration)
-		pe.Color = ColorSequence.new(color)
-		pe.Brightness = 5
-		pe.Size = NumberSequence.new(9 * size, 16 * size)
-		pe.Texture = "rbxassetid://8708637750"
-		pe.Rate = 0
-		pe.Parent = att
-		pe:Emit(1)
-		local pe2 = Instance.new("ParticleEmitter")
-		pe2.Lifetime = NumberRange.new(0.2 * duration, 0.7 * duration)
-		pe2.Color = ColorSequence.new(color)
-		pe2.Speed = NumberRange.new(90, 140)
-		pe2.Texture = "rbxassetid://8030734851"
-		pe2.Rate = 0
-		pe2.Parent = att
-		pe2:Emit(5)
-		task.delay(duration, function() part:Destroy() end)
-	end,
-}
+			instance5.Size = numberSequence(tbl21)
+			instance5.Speed = NumberRange.new(15, 15)
+			instance5.SpreadAngle = Vector2.new(50, -50)
+			instance5.Texture = "http://www.roblox.com/asset/?id=18540695516"
+			local numberSequence2 = NumberSequence.new
+			local tbl22 = {}
+			local v8 = NumberSequenceKeypoint.new(0, 0)
+			local v9 = NumberSequenceKeypoint.new(0.5, 0)
+			local new2 = NumberSequenceKeypoint.new
+			tbl22[1] = v8
+			tbl22[2] = v9
 
-function HitEffects.Play(position, effectName, color, size, duration)
-	local fn = HitEffects.Presets[string.lower(effectName or "nova")]
-	if not fn or not position then return end
-	fn(position, color or Color3.fromRGB(255, 81, 0), size or 2, duration or 2)
-end
+			do
+				local values = table.pack(new2(1, 1))
+				table.move(values, 1, values.n, 3, tbl22)
+			end
+
+			instance5.Transparency = numberSequence2(tbl22)
+			instance5.Parent = instance4
+			instance5:Emit(30)
+
+			task.delay(value2 + 0.5, function()
+				instance4:Destroy()
+			end)
+		end,
+		["bubble"] = function(position)
+			local instance4 = Instance.new("Part")
+			instance4.Position = position
+			instance4.Anchored = true
+			instance4.Transparency = 1
+			instance4.CanCollide = false
+			instance4.Size = Vector3.new(0.01, 0.01, 0.01)
+			instance4.Parent = Workspace
+			local colorSequence = ColorSequence.new(HE_color)
+			local value = HE_size
+			local value2 = HE_duration
+			local instance5 = Instance.new("ParticleEmitter")
+			instance5.FlipbookMode = Enum.ParticleFlipbookMode.OneShot
+			instance5.Color = colorSequence
+			instance5.LockedToPart = true
+			instance5.Rate = 0
+			instance5.Rotation = NumberRange.new(-5, 5)
+			local numberSequence = NumberSequence.new
+			local tbl21 = {}
+			local v6 = NumberSequenceKeypoint.new(0, 1)
+			local v7 = NumberSequenceKeypoint.new(0.464, 0.76875)
+			local new = NumberSequenceKeypoint.new
+			tbl21[1] = v6
+			tbl21[2] = v7
+
+			do
+				local values = table.pack(new(1, 1))
+				table.move(values, 1, values.n, 3, tbl21)
+			end
+
+			instance5.Transparency = numberSequence(tbl21)
+			instance5.Texture = "rbxassetid://17086075673"
+			instance5.Lifetime = NumberRange.new(0.45 * value2, 0.45 * value2)
+			instance5.LightEmission = 1
+			instance5.Brightness = 5
+			instance5.Speed = NumberRange.new(0, 0)
+			local new2 = NumberSequenceKeypoint.new
+			instance5.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1 * value), new2(1, 6 * value) })
+			instance5.Parent = instance4
+			instance5:Emit(1)
+
+			task.delay(value2, function()
+				instance4:Destroy()
+			end)
+		end,
+		["orbs"] = function(position)
+			local instance4 = Instance.new("Part")
+			instance4.Position = position
+			instance4.Anchored = true
+			instance4.Transparency = 1
+			instance4.CanCollide = false
+			instance4.Size = Vector3.new(0.01, 0.01, 0.01)
+			instance4.Parent = Workspace
+			ColorSequence.new(HE_color)
+			local value = HE_size
+			local value2 = HE_duration
+			local instance5 = Instance.new("ParticleEmitter")
+			instance5.FlipbookMode = Enum.ParticleFlipbookMode.OneShot
+			instance5.RotSpeed = NumberRange.new(-10, 10)
+			instance5.FlipbookFramerate = NumberRange.new(40, 40)
+			instance5.Drag = 1
+			instance5.Rate = 0
+			instance5.Texture = "rbxassetid://15011464541"
+			instance5.Rotation = NumberRange.new(-1000, 1000)
+			local new = NumberSequenceKeypoint.new
+			instance5.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), new(1, 1) })
+			instance5.SpreadAngle = Vector2.new(-1000, 1000)
+			instance5.Lifetime = NumberRange.new(0.45 * value2, 0.45 * value2)
+			instance5.LightEmission = 1
+			instance5.Brightness = 10
+			instance5.FlipbookLayout = Enum.ParticleFlipbookLayout.Grid8x8
+			local new2 = NumberSequenceKeypoint.new
+			instance5.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 5.5 * value), new2(1, 5.5 * value) })
+			instance5.Parent = instance4
+			instance5:Emit(3)
+
+			task.delay(value2, function()
+				instance4:Destroy()
+			end)
+		end,
+		["air"] = function(position)
+			local instance4 = Instance.new("Part")
+			instance4.Position = position
+			instance4.Anchored = true
+			instance4.Transparency = 1
+			instance4.CanCollide = false
+			instance4.Size = Vector3.new(0.01, 0.01, 0.01)
+			instance4.Parent = Workspace
+			ColorSequence.new(HE_color)
+			local value = HE_size
+			local value2 = HE_duration
+			local instance5 = Instance.new("ParticleEmitter")
+			instance5.FlipbookMode = Enum.ParticleFlipbookMode.PingPong
+			instance5.Texture = "rbxassetid://10536350143"
+			instance5.FlipbookFramerate = NumberRange.new(30, 30)
+			instance5.Drag = 4.5
+			instance5.Rate = 0
+			instance5.Speed = NumberRange.new(0, 0)
+			instance5.LightInfluence = 1
+			instance5.Acceleration = Vector3.new(1, 0, 1)
+			instance5.LockedToPart = true
+			instance5.Lifetime = NumberRange.new(1 * value2, 1 * value2)
+			instance5.LightEmission = 1
+			instance5.Brightness = 10
+			instance5.FlipbookLayout = Enum.ParticleFlipbookLayout.Grid8x8
+			local new = NumberSequenceKeypoint.new
+			instance5.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 3 * value), new(1, 3 * value) })
+			instance5.Parent = instance4
+			instance5:Emit(1)
+
+			task.delay(value2 + 0.5, function()
+				instance4:Destroy()
+			end)
+		end,
+		["blood"] = function(position)
+			local instance4 = Instance.new("Part")
+			instance4.Transparency = 1
+			instance4.Size = Vector3.new(2, 2, 2)
+			instance4.Position = position
+			instance4.CanCollide = false
+			instance4.Anchored = true
+			instance4.Parent = Workspace
+			local instance5 = Instance.new("Attachment")
+			instance5.Parent = instance4
+			local colorSequence = ColorSequence.new(HE_color)
+			local value = HE_size
+			local value2 = HE_duration
+			local instance6 = Instance.new("ParticleEmitter")
+			instance6.Acceleration = Vector3.new(0, -75, 0)
+			instance6.Color = colorSequence
+			instance6.Lifetime = NumberRange.new(0.25 * value2, 0.5 * value2)
+			instance6.Orientation = Enum.ParticleOrientation.VelocityParallel
+			instance6.Rate = 0
+			local new = NumberSequenceKeypoint.new
+			instance6.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.125 * value), new(1, 0.25 * value) })
+			instance6.Speed = NumberRange.new(5, 15)
+			instance6.SpreadAngle = Vector2.new(90, 90)
+			instance6.Texture = "rbxassetid://4509687978"
+			local numberSequence = NumberSequence.new
+			local tbl21 = {}
+			local v6 = NumberSequenceKeypoint.new(0, 1)
+			local v7 = NumberSequenceKeypoint.new(0.25, 0)
+			local new2 = NumberSequenceKeypoint.new
+			tbl21[1] = v6
+			tbl21[2] = v7
+
+			do
+				local values = table.pack(new2(1, 1))
+				table.move(values, 1, values.n, 3, tbl21)
+			end
+
+			instance6.Transparency = numberSequence(tbl21)
+			instance6.Parent = instance5
+			instance6:Emit(15)
+
+			task.delay(value2, function()
+				instance4:Destroy()
+			end)
+		end,
+		["glitch"] = function(position)
+			local instance4 = Instance.new("Part")
+			instance4.Transparency = 1
+			instance4.Size = Vector3.one
+			instance4.Position = position
+			instance4.CanCollide = false
+			instance4.Anchored = true
+			instance4.Parent = Workspace
+			local colorSequence = ColorSequence.new(HE_color)
+			local value = HE_size
+			local value2 = HE_duration
+
+			for i = 1, 5 do
+				local instance5 = Instance.new("ParticleEmitter")
+				instance5.Color = colorSequence
+				instance5.Lifetime = NumberRange.new(0.1 * value2)
+				instance5.Rate = 0
+				instance5.Size = NumberSequence.new(0.4 * value)
+				instance5.Texture = "rbxassetid://6888586040"
+				instance5.Parent = instance4
+				instance5:Emit(5)
+			end
+
+			task.delay(value2, function()
+				instance4:Destroy()
+			end)
+		end,
+		["slash"] = function(position)
+			local instance4 = Instance.new("Part")
+			instance4.Size = Vector3.one
+			instance4.Anchored = true
+			instance4.CanCollide = false
+			instance4.Transparency = 1
+			instance4.Position = position
+			instance4.Parent = Workspace
+			local instance5 = Instance.new("Attachment")
+			instance5.Parent = instance4
+			local colorSequence = ColorSequence.new(HE_color)
+			local value = HE_size
+			local value2 = HE_duration
+			local instance6 = Instance.new("ParticleEmitter")
+			instance6.Lifetime = NumberRange.new(0.2 * value2, 0.4 * value2)
+			local numberSequence = NumberSequence.new
+			local tbl21 = {}
+			local v6 = NumberSequenceKeypoint.new(0, 1)
+			local v7 = NumberSequenceKeypoint.new(0.2, 0)
+			local v8 = NumberSequenceKeypoint.new(0.8, 0)
+			local new = NumberSequenceKeypoint.new
+			tbl21[1] = v6
+			tbl21[2] = v7
+			tbl21[3] = v8
+
+			do
+				local values = table.pack(new(1, 1))
+				table.move(values, 1, values.n, 4, tbl21)
+			end
+
+			instance6.Transparency = numberSequence(tbl21)
+			instance6.LightEmission = 10
+			instance6.Color = colorSequence
+			instance6.Speed = NumberRange.new(0.08)
+			instance6.Brightness = 4
+			local numberSequence2 = NumberSequence.new
+			local tbl22 = {}
+			local v9 = NumberSequenceKeypoint.new(0, 0)
+			local v10 = NumberSequenceKeypoint.new(0.4, 8.8 * value)
+			local new2 = NumberSequenceKeypoint.new
+			tbl22[1] = v9
+			tbl22[2] = v10
+
+			do
+				local values = table.pack(new2(1, 11.4 * value))
+				table.move(values, 1, values.n, 3, tbl22)
+			end
+
+			instance6.Size = numberSequence2(tbl22)
+			instance6.Texture = "rbxassetid://12509373457"
+			instance6.RotSpeed = NumberRange.new(800, 1000)
+			instance6.Orientation = Enum.ParticleOrientation.VelocityPerpendicular
+			instance6.Parent = instance5
+			instance6:Emit(1)
+
+			task.delay(value2, function()
+				instance4:Destroy()
+			end)
+		end,
+		["cosmic"] = function(position)
+			local instance4 = Instance.new("Part")
+			instance4.Size = Vector3.one
+			instance4.Anchored = true
+			instance4.CanCollide = false
+			instance4.Transparency = 1
+			instance4.Position = position
+			instance4.Parent = Workspace
+			local instance5 = Instance.new("Attachment")
+			instance5.Parent = instance4
+			local colorSequence = ColorSequence.new(HE_color)
+			local value = HE_size
+			local value2 = HE_duration
+
+			local function fn58(texture, size, arg)
+				local instance6 = Instance.new("ParticleEmitter")
+				instance6.Color = colorSequence
+				instance6.Texture = texture
+				instance6.Size = size
+				instance6.Lifetime = NumberRange.new(arg * value2)
+				instance6.Brightness = 5
+				instance6.Rate = 0
+				instance6.Parent = instance5
+				instance6:Emit(1)
+			end
+
+			fn58("rbxassetid://8708637750", NumberSequence.new(9 * value, 16 * value), 0.16)
+			fn58("rbxassetid://8196169974", NumberSequence.new(0, 11 * value), 0.3)
+
+			task.delay(value2, function()
+				instance4:Destroy()
+			end)
+		end,
+		["crescentslash"] = function(position)
+			local instance4 = Instance.new("Part")
+			instance4.Size = Vector3.one
+			instance4.Anchored = true
+			instance4.CanCollide = false
+			instance4.Transparency = 1
+			instance4.Position = position
+			instance4.Parent = Workspace
+			local instance5 = Instance.new("Attachment")
+			instance5.Parent = instance4
+			local colorSequence = ColorSequence.new(HE_color)
+			local value = HE_size
+			local value2 = HE_duration
+			local instance6 = Instance.new("ParticleEmitter")
+			instance6.Lifetime = NumberRange.new(0.16 * value2)
+			instance6.Color = colorSequence
+			instance6.Brightness = 5
+			instance6.Size = NumberSequence.new(9 * value, 16 * value)
+			instance6.Texture = "rbxassetid://8708637750"
+			instance6.Rate = 0
+			instance6.Parent = instance5
+			instance6:Emit(1)
+			local instance7 = Instance.new("ParticleEmitter")
+			instance7.Lifetime = NumberRange.new(0.2 * value2, 0.7 * value2)
+			instance7.Color = colorSequence
+			instance7.Speed = NumberRange.new(90, 140)
+			instance7.Texture = "rbxassetid://8030734851"
+			instance7.Rate = 0
+			instance7.Parent = instance5
+			instance7:Emit(5)
+
+			task.delay(value2, function()
+				instance4:Destroy()
+			end)
+		end,
+        }
+
+        function HitEffects.Play(position, effectName, color, size, duration)
+            local fn = HitEffects.Presets[string.lower(effectName or "nova")]
+            if not fn or not position then return end
+            HE_color, HE_size, HE_duration = color or Color3.fromRGB(255, 81, 0), size or 2, duration or 2
+            fn(position)
+        end
 
         local function emit(position)
             if typeof(position) ~= "Vector3" then return end
@@ -6100,11 +6303,12 @@ end
                     active[#active + 1] = clone
                 end
             end
+            local strict = flag("pa_source", "angel") == "angel" -- angel keeps SillyScripts' exact matching
             local used, attached = {}, 0
             for _, part in ipairs(model:GetChildren()) do
                 if part:IsA("BasePart") then
                     local match = char:FindFirstChild(part.Name, true)
-                    if not (match and match:IsA("BasePart")) then
+                    if not (match and match:IsA("BasePart")) and not strict then
                         match = nil
                         local alias = ALIAS[part.Name]
                         local other = alias and char:FindFirstChild(alias, true)
@@ -6117,7 +6321,7 @@ end
                     end
                 end
             end
-            if attached == 0 then
+            if attached == 0 and not strict then
                 local root = char:FindFirstChild("HumanoidRootPart")
                 if root then
                     for _, part in ipairs(model:GetChildren()) do

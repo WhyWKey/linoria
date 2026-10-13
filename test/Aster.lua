@@ -1,6 +1,172 @@
-warn("[Aster] 0: executing")
+-- Loader: a blurred backdrop with a centered progress bar and a status line above it. The status line
+-- shows what the script is doing while it loads; when loading ends the bar fills, the blur and the
+-- loader fade out, and the menu opens.
+local Loader = (function()
+    local self = { target = 0, shown = 0, closed = false }
+    local Lighting = game:GetService("Lighting")
+    local RunService = game:GetService("RunService")
+    local gui, blur, dim, statusLabel, fill, percentLabel, titleLabel, track, connection
+    local fade = 0
+
+    local function destroy()
+        self.closed = true
+        if connection then pcall(function() connection:Disconnect() end) connection = nil end
+        if gui then pcall(function() gui:Destroy() end) gui = nil end
+        if blur then pcall(function() blur:Destroy() end) blur = nil end
+    end
+    self.destroy = destroy
+    pcall(function()
+        local old = getgenv().AsterLoader
+        if old and old.destroy then old.destroy() end
+        getgenv().AsterLoader = self
+    end)
+
+    local built = pcall(function()
+        gui = Instance.new("ScreenGui")
+        gui.Name = "Aster_Loader"
+        gui.IgnoreGuiInset = true
+        gui.ResetOnSpawn = false
+        gui.DisplayOrder = 10000
+        gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        local parent
+        pcall(function() if gethui then parent = gethui() end end)
+        if not parent then pcall(function() parent = game:GetService("CoreGui") end) end
+        gui.Parent = parent or game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+
+        blur = Instance.new("BlurEffect")
+        blur.Name = "Aster_LoaderBlur"
+        blur.Size = 0
+        blur.Parent = Lighting
+
+        dim = Instance.new("Frame")
+        dim.Size = UDim2.fromScale(1, 1)
+        dim.BackgroundColor3 = Color3.new(0, 0, 0)
+        dim.BackgroundTransparency = 0.55
+        dim.BorderSizePixel = 0
+        dim.Parent = gui
+
+        local card = Instance.new("Frame")
+        card.AnchorPoint = Vector2.new(0.5, 0.5)
+        card.Position = UDim2.fromScale(0.5, 0.5)
+        card.Size = UDim2.fromOffset(380, 84)
+        card.BackgroundTransparency = 1
+        card.Parent = gui
+
+        local function label(size, y, h, color, font)
+            local l = Instance.new("TextLabel")
+            l.BackgroundTransparency = 1
+            l.Size = UDim2.new(1, 0, 0, h)
+            l.Position = UDim2.fromOffset(0, y)
+            l.Font = font
+            l.TextSize = size
+            l.TextColor3 = color
+            l.Text = ""
+            l.Parent = card
+            return l
+        end
+        titleLabel = label(18, 0, 22, Color3.fromRGB(230, 230, 230), Enum.Font.GothamBold)
+        titleLabel.Text = "ASTER"
+        statusLabel = label(14, 26, 20, Color3.fromRGB(182, 182, 182), Enum.Font.Gotham)
+        statusLabel.Text = "Starting"
+
+        track = Instance.new("Frame")
+        track.Position = UDim2.fromOffset(0, 54)
+        track.Size = UDim2.new(1, 0, 0, 6)
+        track.BackgroundColor3 = Color3.fromRGB(34, 34, 34)
+        track.BorderSizePixel = 0
+        track.Parent = card
+        local trackCorner = Instance.new("UICorner")
+        trackCorner.CornerRadius = UDim.new(1, 0)
+        trackCorner.Parent = track
+
+        fill = Instance.new("Frame")
+        fill.Size = UDim2.fromScale(0, 1)
+        fill.BackgroundColor3 = Color3.fromRGB(102, 137, 148)
+        fill.BorderSizePixel = 0
+        fill.Parent = track
+        local fillCorner = Instance.new("UICorner")
+        fillCorner.CornerRadius = UDim.new(1, 0)
+        fillCorner.Parent = fill
+
+        percentLabel = label(12, 64, 18, Color3.fromRGB(130, 130, 130), Enum.Font.Gotham)
+        percentLabel.Text = "0%"
+
+        connection = RunService.RenderStepped:Connect(function(dt)
+            self.shown += (self.target - self.shown) * math.min(1, dt * 9)
+            if fill then fill.Size = UDim2.fromScale(math.clamp(self.shown, 0, 1), 1) end
+            if percentLabel then percentLabel.Text = math.floor(self.shown * 100 + 0.5) .. "%" end
+            if blur and fade == 0 then blur.Size = math.min(18, blur.Size + dt * 60) end
+        end)
+    end)
+    if not built then destroy() end
+
+    local function setFade(alpha) -- 0 = fully shown, 1 = gone
+        fade = alpha
+        pcall(function()
+            if blur then blur.Size = 18 * (1 - alpha) end
+            if dim then dim.BackgroundTransparency = 0.55 + 0.45 * alpha end
+            for _, l in ipairs({ titleLabel, statusLabel, percentLabel }) do l.TextTransparency = alpha end
+            if track then track.BackgroundTransparency = alpha end
+            if fill then fill.BackgroundTransparency = alpha end
+        end)
+    end
+
+    -- Shows a status line and moves the bar to the given progress (0 to 1). Yields one frame so it draws.
+    function self.step(text, progress)
+        if self.closed then return end
+        self.target = math.max(self.target, progress or self.target)
+        pcall(function() if statusLabel then statusLabel.Text = tostring(text) end end)
+        task.wait()
+    end
+
+    -- Checks the executor functions the script relies on and shows how many exist.
+    function self.verify(progress)
+        local names = { "hookfunction", "getconnections", "isnetworkowner", "mousemoverel", "Drawing", "gethui", "getgenv" }
+        local found = 0
+        for _, name in ipairs(names) do
+            local ok, value = pcall(function() return getgenv()[name] end)
+            if ok and value ~= nil then found += 1 end
+        end
+        local hasDebug = pcall(function() return debug.getupvalue end)
+        if hasDebug then found += 1 end
+        self.step(("Verifying environment (%d/%d)"):format(found, #names + 1), progress)
+    end
+
+    -- Fills the bar, opens the menu through onDone, then fades the loader and the blur out.
+    function self.finish(onDone)
+        if not self.closed then
+            self.step("Ready", 1)
+            local started = os.clock()
+            while self.shown < 0.985 and os.clock() - started < 1.5 and not self.closed do task.wait() end
+            task.wait(0.2)
+        end
+        pcall(onDone)
+        if self.closed then return end
+        local started = os.clock()
+        while os.clock() - started < 0.35 and not self.closed do
+            setFade(math.clamp((os.clock() - started) / 0.35, 0, 1))
+            task.wait()
+        end
+        destroy()
+    end
+
+    function self.fail(message)
+        if self.closed then return end
+        pcall(function()
+            statusLabel.Text = "Failed to load: " .. tostring(message):sub(1, 70)
+            statusLabel.TextColor3 = Color3.fromRGB(255, 110, 110)
+            fill.BackgroundColor3 = Color3.fromRGB(255, 110, 110)
+        end)
+        task.wait(3)
+        destroy()
+    end
+
+    return self
+end)()
+
+Loader.step("Starting", 0.02)
 local __plOk, __plErr = xpcall(function()
-warn("[Aster] 1: inside wrapper")
+Loader.step("Starting session", 0.06)
 -- Clean up anything a previous run of this script left behind.
 if type(getgenv().TS_Connections) == "table" then
     for _, connection in ipairs(getgenv().TS_Connections) do
@@ -28,7 +194,7 @@ if getgenv().Library and type(getgenv().Library.Unload) == "function" then
     pcall(function() getgenv().Library:Unload() end)
 end
 
-warn("[Aster] 2: old run cleaned up")
+Loader.step("Cleaning previous run", 0.12)
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -854,9 +1020,9 @@ local WEATHER_NAMES = { "Snow", "Rain", "Blizzard" }
 
 local LocalPlayer = Players.LocalPlayer
 
-warn("[Aster] loading UI library")
+Loader.verify(0.16)
 local UI_REPO = "https://raw.githubusercontent.com/WhyWKey/linoria/main/"
-warn("[Aster] downloading Library.lua")
+Loader.step("Downloading UI library", 0.22)
 local Library = loadstring(game:HttpGet(UI_REPO .. "Library.lua"))()
 local ThemeManager = loadstring(game:HttpGet(UI_REPO .. "addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(UI_REPO .. "addons/SaveManager.lua"))()
@@ -868,7 +1034,7 @@ pcall(function()
         if picker then picker:SetValueRGB(Color3.fromHex(data.value), tonumber(data.transparency) or 0) end
     end
 end)
-warn("[Aster] library loaded")
+Loader.step("UI library ready", 0.34)
 getgenv().Library = Library
 
 local Options = getgenv().Options
@@ -933,10 +1099,11 @@ Library.OutlineColor = Color3.fromRGB(24, 24, 24)
 Library.AccentColorDark = Library:GetDarkerColor(Library.AccentColor)
 Library:UpdateColorsUsingRegistry()
 
+Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
     Title = "Aster",
     Center = true,
-    AutoShow = true,
+    AutoShow = false, -- the loader opens the menu when it finishes
     MenuFadeTime = 0.2,
     -- Resizing is built into this library: drag the round grip in the bottom-right corner.
     -- Blur and darken are off by default so the game stays visible while you tweak visuals;
@@ -1106,7 +1273,6 @@ end
 -- Pages ---------------------------------------------------------------
 local CombatTab   = Window:Page({ Name = "Combat",  Columns = 2, Subtabs = false })
 local VisualsPage = Window:Page({ Name = "Visuals", Columns = 2, Subtabs = false })
-local LocalPage   = Window:Page({ Name = "Local",   Columns = 2, Subtabs = false })
 local WorldPage   = Window:Page({ Name = "World",   Columns = 2, Subtabs = false })
 
 local PlayersPage  = Window:Page({ Name = "Players", Columns = 2, Subtabs = false })
@@ -1326,7 +1492,7 @@ end
 -- Teleport -------------------------------------------------------------------------------
 do
     local Guns = TeleportPage:Section({ Name = "Get guns", Side = 1 })
-    Guns:Dropdown({ Name = "Weapon", Flag = "tp_weapon", Items = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }, Default = "AK-47" })
+    Guns:Dropdown({ Name = "Weapon", Flag = "tp_weapon", Items = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL", "Revolver" }, Default = "AK-47" })
     Guns:Button({ Name = "Get weapon", Callback = function() Actions.getWeapon(readFlag("tp_weapon", "AK-47")) end })
     Guns:Button({ Name = "Get all weapons", Callback = function() Actions.getAllWeapons() end })
 
@@ -1390,7 +1556,7 @@ EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpic
     AdornGlow:Slider({ Name = "Head size", Flag = "esp_chams_adorn_head_size", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
 
     -- Camera
-    local CamFov = LocalPage:Section({ Name = "Camera", Side = 1 })
+    local CamFov = VisualsPage:Section({ Name = "Camera", Side = 1 })
 CamFov:Toggle({ Name = "FOV changer", Flag = "camera_fov_changer", Default = false })
 CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max = 140, Default = 100, Suffix = "°", Decimals = 1 })
 
@@ -1434,7 +1600,7 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     EnvScreen:Slider({ Name = "Screen blur", Flag = "camera_blur", Min = 0, Max = 20, Default = 0, Decimals = 0.01 })
 
     -- Gun
-    local GunLook, GunChams, GunTracerTab, GunTimingTab = LocalPage:MultiSection({ Sections = { "Viewmodel", "Chams", "Tracers", "Timing" }, Side = 2 })
+    local GunLook, GunChams, GunTracerTab, GunTimingTab = VisualsPage:MultiSection({ Sections = { "Viewmodel", "Chams", "Tracers", "Timing" }, Side = 2 })
 GunLook:Toggle({ Name = "Gun color", Flag = "viewmodel_body_color", Default = false }):Colorpicker({ Name = "Color", Flag = "viewmodel_body_color_value", Default = Color3.fromRGB(202, 161, 13), Alpha = true })
 GunLook:Dropdown({ Name = "Material", Flag = "viewmodel_material_value", Items = { "Default", "ForceField", "Neon", "Glass", "SmoothPlastic", "Plastic" }, Default = "Default" })
 GunLook:Dropdown({ Name = "Forcefield texture", Flag = "viewmodel_texture_value", Items = FORCEFIELD_TEXTURE_NAMES, Default = "Disabled" })
@@ -1450,14 +1616,14 @@ GunTimingTab:Toggle({ Name = "Expand from muzzle", Flag = "tracers_expand", Defa
 GunTimingTab:Slider({ Name = "Expand speed", Flag = "tracers_expand_speed", Min = 4, Max = 40, Default = 18, Decimals = 1 })
 
     -- Body
-    local BodyForce, BodyExtra = LocalPage:MultiSection({ Sections = { "Arms", "Extras" }, Side = 2 })
+    local BodyForce, BodyExtra = VisualsPage:MultiSection({ Sections = { "Arms", "Extras" }, Side = 2 })
 BodyForce:Toggle({ Name = "Forcefield material", Flag = "arm_material", Default = false }):Colorpicker({ Name = "Color", Flag = "arm_material_color", Default = Color3.fromRGB(255, 255, 255), Alpha = true })
 BodyForce:Dropdown({ Name = "Forcefield texture", Flag = "arm_material_texture", Items = FORCEFIELD_TEXTURE_NAMES, Default = "Disabled" })
 BodyExtra:Toggle({ Name = "Disable textures", Flag = "arm_disable_textures", Default = false })
 BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories", Default = false })
 
     -- Self chams (Highlight)
-    local SelfChams = LocalPage:Section({ Name = "Self chams", Side = 2 })
+    local SelfChams = VisualsPage:Section({ Name = "Self chams", Side = 2 })
     SelfChams:Toggle({ Name = "Self chams", Flag = "Self_Chams", Default = false }):Colorpicker({ Name = "Fill", Flag = "Self_ChamsColor1", Default = Color3.fromRGB(80, 160, 255), Alpha = 0.3 }):Colorpicker({ Name = "Outline", Flag = "Self_ChamsColor2", Default = WHITE, Alpha = true })
 
     -- Weather + lightning (left column, under the camera)
@@ -1479,7 +1645,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     WeatherStrike:Slider({ Name = "Interval", Flag = "weather_lightning_interval", Suffix = "s", Min = 1, Max = 15, Default = 4, Decimals = 0.1 })
 
     -- Custom crosshair (right column, under self chams)
-    local CrossMain, CrossOutline, CrossMotion, CrossArms = LocalPage:MultiSection({ Sections = { "Crosshair", "Outline", "Motion", "Arms" }, Side = 1 })
+    local CrossMain, CrossOutline, CrossMotion, CrossArms = VisualsPage:MultiSection({ Sections = { "Crosshair", "Outline", "Motion", "Arms" }, Side = 1 })
     CrossMain:Toggle({ Name = "Crosshair", Flag = "crosshair_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "crosshair_color", Default = WHITE })
     CrossMain:Slider({ Name = "Length", Flag = "crosshair_length", Suffix = " px", Min = 1, Max = 40, Default = 12, Decimals = 1 })
     CrossMain:Slider({ Name = "Thickness", Flag = "crosshair_thickness", Suffix = " px", Min = 1, Max = 8, Default = 2, Decimals = 1 })
@@ -1854,6 +2020,7 @@ do
         return withOverride
     end
 
+    Loader.step("Loading ESP library", 0.56)
     local COINCIDE_ESP_URL = "https://raw.githubusercontent.com/ExtroDevGit/Coincide-UI/refs/heads/main/esp_lib.lua"
     local CoincideESP
     do
@@ -4168,7 +4335,7 @@ do
 end
 
 
-warn("[Aster] misc features")
+Loader.step("Loading misc features", 0.72)
 -- Misc and gun mods -----------------------------------------------------------------
 -- Every feature is registered with feature(flag, start, stop). One Heartbeat watcher starts or
 -- stops it when its toggle changes (this also covers loading a saved config), and unloading
@@ -5584,7 +5751,7 @@ HitEffects.Presets = {
 		pe.Size = NumberSequence.new(0.15 * size, 0)
 		pe.Speed = NumberRange.new(8, 18)
 		pe.SpreadAngle = Vector2.new(180, 180)
-		pe.Texture = "rbxassetid://241625010"
+		pe.Texture = "rbxasset://textures/particles/sparkles_main.dds"
 		pe.Parent = part
 		pe:Emit(math.clamp(math.floor(20 * size), 5, 60))
 		task.delay(duration, function() part:Destroy() end)
@@ -5604,7 +5771,7 @@ HitEffects.Presets = {
 		pe.Rate = 0
 		pe.Size = NumberSequence.new(0.2 * size, 1.5 * size)
 		pe.Speed = NumberRange.new(1, 3)
-		pe.Texture = "rbxassetid://241922033"
+		pe.Texture = "rbxassetid://1084991215"
 		pe.Transparency = NumberSequence.new({
 			NumberSequenceKeypoint.new(0, 0.2),
 			NumberSequenceKeypoint.new(1, 1),
@@ -5656,7 +5823,7 @@ HitEffects.Presets = {
 			NumberSequenceKeypoint.new(0, 0.3),
 			NumberSequenceKeypoint.new(1, 1),
 		})
-		pe.Texture = "rbxassetid://243660424"
+		pe.Texture = "rbxasset://textures/particles/smoke_main.dds"
 		pe.Parent = part
 		pe:Emit(math.clamp(math.floor(15 * size), 5, 40))
 		task.delay(duration, function() part:Destroy() end)
@@ -5677,7 +5844,7 @@ HitEffects.Presets = {
 		pe.Size = NumberSequence.new(0.3 * size, 0)
 		pe.Speed = NumberRange.new(4, 12)
 		pe.SpreadAngle = Vector2.new(90, 90)
-		pe.Texture = "rbxassetid://255265759"
+		pe.Texture = "rbxassetid://8708637750"
 		pe.Parent = part
 		pe:Emit(math.clamp(math.floor(18 * size), 6, 50))
 		task.delay(duration, function() part:Destroy() end)
@@ -5700,7 +5867,7 @@ HitEffects.Presets = {
 		pe.Rotation = NumberRange.new(-1000, 1000)
 		pe.SpreadAngle = Vector2.new(-1000, 1000)
 		pe.Size = NumberSequence.new(1 * size, 0)
-		pe.Texture = "rbxassetid://6760532679"
+		pe.Texture = "rbxassetid://8030734851"
 		pe.Parent = part
 		pe:Emit(math.clamp(math.floor(10 * size), 3, 30))
 		task.delay(duration, function() part:Destroy() end)
@@ -5912,17 +6079,49 @@ end
             local ok, objects = pcall(function() return game:GetObjects(id) end)
             model = ok and objects and objects[1]
             if not model then warnf("particle aura asset could not be loaded") return end
+            -- Same matching as SillyScripts (model part name = character part name). Aura models are often built
+            -- for the other rig type, so R15 names also map onto the R6 body (and back) and a model that matches
+            -- nothing is attached to the root part instead of doing nothing.
+            local ALIAS = {
+                UpperTorso = "Torso", LowerTorso = "Torso",
+                LeftUpperArm = "Left Arm", LeftLowerArm = "Left Arm", LeftHand = "Left Arm",
+                RightUpperArm = "Right Arm", RightLowerArm = "Right Arm", RightHand = "Right Arm",
+                LeftUpperLeg = "Left Leg", LeftLowerLeg = "Left Leg", LeftFoot = "Left Leg",
+                RightUpperLeg = "Right Leg", RightLowerLeg = "Right Leg", RightFoot = "Right Leg",
+                Torso = "UpperTorso", ["Left Arm"] = "LeftUpperArm", ["Right Arm"] = "RightUpperArm",
+                ["Left Leg"] = "LeftUpperLeg", ["Right Leg"] = "RightUpperLeg",
+            }
+            local function attach(part, target)
+                for _, child in ipairs(part:GetChildren()) do
+                    local clone = child:Clone()
+                    clone.Parent = target
+                    tint(clone)
+                    for _, d in ipairs(clone:GetDescendants()) do tint(d) end
+                    active[#active + 1] = clone
+                end
+            end
+            local used, attached = {}, 0
             for _, part in ipairs(model:GetChildren()) do
                 if part:IsA("BasePart") then
                     local match = char:FindFirstChild(part.Name, true)
-                    if match and match:IsA("BasePart") then
-                        for _, child in ipairs(part:GetChildren()) do
-                            local clone = child:Clone()
-                            clone.Parent = match
-                            tint(clone)
-                            for _, d in ipairs(clone:GetDescendants()) do tint(d) end
-                            active[#active + 1] = clone
-                        end
+                    if not (match and match:IsA("BasePart")) then
+                        match = nil
+                        local alias = ALIAS[part.Name]
+                        local other = alias and char:FindFirstChild(alias, true)
+                        if other and other:IsA("BasePart") and not used[other] then match = other end
+                    end
+                    if match then
+                        used[match] = true
+                        attached += 1
+                        attach(part, match)
+                    end
+                end
+            end
+            if attached == 0 then
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    for _, part in ipairs(model:GetChildren()) do
+                        if part:IsA("BasePart") then attach(part, root) end
                     end
                 end
             end
@@ -5968,7 +6167,7 @@ end
             ["M4A1"] = { cframe = CFrame.new(847.68, 100.88, 2229.05), item = "M4A1", keys = { "m4a1", "m4" }, tool = { "M4A1" } },
             ["FAL"] = { cframe = CFrame.new(-902.63, 94.35, 2047.25), item = "FAL", keys = { "fal" }, tool = { "FAL" } },
         }
-        local ORDER = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }
+        local ORDER = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL", "Revolver" }
         local PLACES = {
             ["Yard"] = CFrame.new(780.21, 98, 2470.5),
             ["Academy"] = CFrame.new(795.87, 98.19, 2542.61),
@@ -6025,7 +6224,7 @@ end
             return best
         end
 
-        local function getWeapon(name)
+        local function getWeaponByPickup(name)
             local data = WEAPONS[name]
             if not data then return false end
             if busy then say("Still teleporting, wait a moment") return false end
@@ -6078,6 +6277,189 @@ end
                 say(name .. " was refused by the server" .. ((ok and result == false) and "" or " (no reply)") .. ": wrong team, missing pass or already taken")
             end
             return got
+        end
+
+        -- Weapons come from the game's own giver remote (ReplicatedStorage.Remotes.GiverPressed): free guns are
+        -- TouchGiver models you stand on, the rest are click models. The remote is fired at the giver
+        -- every frame while the character stands at the pickup, then the character goes home on the next render.
+        local CollectionService = game:GetService("CollectionService")
+        local GIVERS = {
+            ["AK-47"] = { method = "touch", stand = CFrame.new(-931.7928, 81.2783, 2039.2554), pivot = v3(-931.7928, 91.2783, 2039.2554), needles = { "ak-47", "ak47" }, tool = { "AK-47", "AK47" } },
+            ["Remington 870"] = { method = "touch", stand = CFrame.new(820.2986, 87.85, 2229.3962), pivot = v3(820.2986, 97.85, 2229.3962), needles = { "remington", "870" }, tool = { "Remington 870" } },
+            ["MP5"] = { method = "touch", stand = CFrame.new(813.6986, 87.85, 2229.3962), pivot = v3(813.6986, 97.85, 2229.3962), needles = { "mp5" }, tool = { "MP5" } },
+            ["M4A1"] = { method = "click", needles = { "m4a1", "m4" }, tool = { "M4A1" } },
+            ["M700"] = { method = "click", needles = { "m700" }, tool = { "M700" } },
+            ["FAL"] = { method = "click", needles = { "fal" }, tool = { "FAL" } },
+            ["Revolver"] = { method = "click", needles = { "revolver" }, tool = { "Revolver" } },
+        }
+
+        local function giverRemote()
+            local storage = game:GetService("ReplicatedStorage")
+            local remotes = storage:FindFirstChild("Remotes")
+            if not remotes then
+                local shared = storage:FindFirstChild("SharedModules")
+                remotes = shared and shared:FindFirstChild("Remotes")
+            end
+            return remotes and remotes:FindFirstChild("GiverPressed")
+        end
+
+        local function nameHas(name, needles)
+            local lowered = string.lower(tostring(name))
+            for _, needle in ipairs(needles) do
+                if lowered:find(needle, 1, true) then return true end
+            end
+            return false
+        end
+
+        local function touchGivers()
+            local list, seen = {}, {}
+            local function add(inst)
+                if inst and not seen[inst] then seen[inst] = true list[#list + 1] = inst end
+            end
+            pcall(function()
+                for _, tag in ipairs({ "Giver", "TouchGiver" }) do
+                    for _, inst in ipairs(CollectionService:GetTagged(tag)) do add(inst) end
+                end
+            end)
+            pcall(function()
+                for _, inst in ipairs(workspace:QueryDescendants("#TouchGiver")) do add(inst) end
+            end)
+            if #list == 0 then
+                for _, inst in ipairs(workspace:GetDescendants()) do
+                    if inst.Name == "TouchGiver" then add(inst) end
+                end
+            end
+            return list
+        end
+
+        local giverCache = {}
+        local function resolveGiver(name, entry)
+            local cached = giverCache[name]
+            if cached and cached.Parent then return cached end
+            local list = touchGivers()
+            local found
+            for _, giver in ipairs(list) do
+                local at = positionOf(giver)
+                if at and (at - entry.pivot).Magnitude < 1.5 then found = giver break end
+            end
+            if not found then
+                local bestDist = math.huge
+                for _, giver in ipairs(list) do
+                    local model = giver:IsA("Model") and giver or giver:FindFirstAncestorOfClass("Model")
+                    local at = positionOf(giver)
+                    if at and (nameHas(giver.Name, entry.needles) or (model and nameHas(model.Name, entry.needles))) then
+                        local dist = (at - entry.pivot).Magnitude
+                        if dist < bestDist then found, bestDist = giver, dist end
+                    end
+                end
+            end
+            if not found then
+                local bestDist = 30
+                for _, giver in ipairs(list) do
+                    local at = positionOf(giver)
+                    if at and (at - entry.stand.Position).Magnitude < bestDist then
+                        found, bestDist = giver, (at - entry.stand.Position).Magnitude
+                    end
+                end
+            end
+            giverCache[name] = found
+            return found
+        end
+
+        local function resolveClickModel(name, entry)
+            local cached = giverCache[name]
+            if cached and cached.Parent then return cached end
+            local best, bestScore = nil, 0
+            for _, inst in ipairs(workspace:GetDescendants()) do
+                local lowered = string.lower(inst.Name)
+                local score = 0
+                for _, needle in ipairs(entry.needles) do
+                    if lowered == needle then score = 100 elseif lowered:find(needle, 1, true) then score = math.max(score, 40) end
+                end
+                if score > 0 then
+                    if inst:FindFirstChildWhichIsA("ClickDetector", true) then score += 25 end
+                    if score > bestScore then best, bestScore = inst, score end
+                end
+            end
+            giverCache[name] = best
+            return best
+        end
+
+        local function pressGiver(remote, target)
+            pcall(function() remote:FireServer(target) end)
+            local model = target:IsA("Model") and target or target:FindFirstAncestorOfClass("Model")
+            if model and model ~= target then pcall(function() remote:FireServer(model) end) end
+            for _, d in ipairs(target:GetDescendants()) do
+                if d:IsA("ClickDetector") and fireclickdetector then pcall(fireclickdetector, d) end
+            end
+        end
+
+        local function grabFromGiver(name, entry)
+            local remote = giverRemote()
+            if not remote then return false end
+            local _, _, root = localParts()
+            if not root then say("You need to be alive") return false end
+            if hasTool(entry.tool) then say("Already have " .. name) return true end
+            local target, stand
+            if entry.method == "touch" then
+                target, stand = resolveGiver(name, entry), entry.stand
+            else
+                target = resolveClickModel(name, entry)
+                local at = target and positionOf(target)
+                stand = at and CFrame.new(at + v3(0, 3, 0))
+            end
+            if not target or not stand then return false end
+
+            busy = true
+            local home = root.CFrame
+            local goHome = flag("tp_return", true)
+            local timeout = entry.method == "touch" and 5 or math.max(flag("tp_time", 0.8), 1.6)
+            local pad = Instance.new("Part")
+            pad.Name = "Aster_GunPad"
+            pad.Size = v3(16, 1, 16)
+            pad.Anchored = true
+            pad.Transparency = 1
+            pad.CFrame = CFrame.new(stand.Position.X, stand.Position.Y - 0.5, stand.Position.Z)
+            pad.Parent = workspace
+
+            local started, got = clock(), false
+            local connection = RunService.Heartbeat:Connect(function()
+                if got or clock() - started > timeout then return end
+                local _, _, current = localParts()
+                if not current then return end
+                current.CFrame = stand
+                pressGiver(remote, target)
+                if goHome then
+                    pcall(function()
+                        RunService:BindToRenderStep("Aster_GotWeapon", 101, function()
+                            local _, _, now = localParts()
+                            if now then now.CFrame = home now.AssemblyLinearVelocity = ZERO end
+                            pcall(function() RunService:UnbindFromRenderStep("Aster_GotWeapon") end)
+                        end)
+                    end)
+                end
+            end)
+            while not got and clock() - started < timeout do
+                task.wait(0.1)
+                if hasTool(entry.tool) then got = true end
+            end
+            connection:Disconnect()
+            pcall(function() RunService:UnbindFromRenderStep("Aster_GotWeapon") end)
+            local _, _, now = localParts()
+            if now and goHome then now.CFrame = home now.AssemblyLinearVelocity = ZERO end
+            task.delay(0.6, function() pcall(function() pad:Destroy() end) end)
+            busy = false
+            if got then say("Got " .. name) end
+            return got
+        end
+
+        local function getWeapon(name)
+            if busy then say("Still teleporting, wait a moment") return false end
+            local entry = GIVERS[name]
+            if entry and grabFromGiver(name, entry) then return true end
+            local ok, result = pcall(getWeaponByPickup, name)
+            if not ok then warnf("weapon pickup failed:", result) return false end
+            return result
         end
 
         Actions.getWeapon = function(name) task.spawn(getWeapon, name) end
@@ -7614,12 +7996,14 @@ end
     end)
 end
 
-pcall(function() warn("[Aster] building done, loading config")
-SaveManager:LoadAutoloadConfig() end)
-Library:Notify("Aster loaded", 4)
-
-warn("[Aster] script finished")
+Loader.step("Loading config", 0.92)
+pcall(function() SaveManager:LoadAutoloadConfig() end)
+Loader.finish(function()
+    if not Library.Toggled then pcall(function() Library:Toggle() end) end
+    Library:Notify("Aster loaded", 4)
+end)
 end, debug.traceback)
 if not __plOk then
     warn("[Aster] FAILED:\n" .. tostring(__plErr))
+    Loader.fail(tostring(__plErr):match("[^\n]+") or "error")
 end

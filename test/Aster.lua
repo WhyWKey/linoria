@@ -1212,6 +1212,7 @@ local function wrapGroup(group, page, side)
         return wrapElement(group:AddToggle(info.Flag, {
             Text = info.Name,
             Default = info.Default == true,
+            Tooltip = info.Tooltip,
             Callback = info.Callback,
         }))
     end
@@ -1227,6 +1228,7 @@ local function wrapGroup(group, page, side)
             Suffix = info.Suffix or "",
             Compact = false,
             HideMax = true,
+            Tooltip = info.Tooltip,
             Callback = info.Callback,
         })
     end
@@ -1239,6 +1241,7 @@ local function wrapGroup(group, page, side)
             Default = info.Default,
             Multi = info.Multi == true,
             AllowNull = info.Default == nil,
+            Tooltip = info.Tooltip,
             Callback = info.Callback,
         })
     end
@@ -1326,6 +1329,8 @@ local ShotEvents = { shot = {}, hit = {}, cast = {} } -- listeners: shot(origin,
 local Actions = {
     previewHitEffect = noop, getWeapon = noop, getAllWeapons = noop, getItem = noop, getPlace = noop,
     kickOnce = noop, fxHook = noop, autoHook = noop, fireAt = function() return false end,
+    sp = { assist = {}, shooter = function(root) return root.Position end, realPos = function(root) return root.Position end },
+    area = function() return "outside" end,
 }
 
 local WHITE = Color3.fromRGB(255, 255, 255)
@@ -1371,6 +1376,27 @@ do
     Trigger:Toggle({ Name = "Forcefield check", Flag = "trigger_ff", Default = false })
     Trigger:Toggle({ Name = "Hostile only (inmates)", Flag = "trigger_hostile", Default = false })
 
+    local Wall = CombatTab:Section({ Name = "Wallbang", Side = 1 })
+    Wall:Toggle({ Name = "Wallbang", Flag = "silent_wallbang", Default = false })
+    Wall:Dropdown({
+        Name = "Method", Flag = "wb_method", Items = { "Vape V4", "awp", "awp v2", "awp v2.1" }, Default = "awp v2",
+        Tooltip = "Vape V4: Vape's origin scan, works best when you stand near a wall.\nawp: scans more origins around you and tries the closest ones first (a bit better than Vape V4).\nawp v2: reaches through more walls (origins up to twice the scan radius) but can be inaccurate sometimes.\nawp v2.1: works out origins along the line to the target, closest first, and only widens the search when it has to.",
+    })
+    Wall:Toggle({ Name = "Use hitbox", Flag = "wb_hitbox", Default = true, Tooltip = "Also aim at points beside the target's body, not only at the part itself" })
+    Wall:Slider({ Name = "Scan radius", Flag = "wb_radius", Min = 1, Max = 10, Default = 6, Suffix = " studs", Decimals = 0.1 })
+
+    local Assist = CombatTab:Section({ Name = "Wallbang assist", Side = 1 })
+    local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Moves the position the server sees up to (or into) the wall in front of your silent aim target, so the wallbang has a better origin. Needs silent aim and wallbang." })
+    assistToggle:Keybind({ Name = "Assist key", Flag = "wb_assist_key", Default = "None", Sync = true })
+    Assist:Dropdown({ Name = "Mode", Flag = "wb_assist_mode", Items = { "Tween", "Teleport" }, Default = "Tween" })
+    Assist:Toggle({ Name = "Inside wall", Flag = "wb_assist_inside", Default = false })
+    Assist:Slider({ Name = "Activation distance", Flag = "wb_assist_dist", Min = 1, Max = 45, Default = 25, Suffix = " studs", Decimals = 1 })
+    Assist:Slider({ Name = "Tween speed", Flag = "wb_assist_speed", Min = 1, Max = 200, Default = 50, Suffix = " studs/s", Decimals = 1 })
+    Assist:Slider({ Name = "Max target distance", Flag = "wb_assist_max", Min = 10, Max = 5000, Default = 200, Suffix = " studs", Decimals = 1 })
+    local assistVisual = Assist:Toggle({ Name = "Visualizer", Flag = "wb_assist_visual", Default = false, Tooltip = "A highlighted copy of your character shows where the server sees you" })
+    assistVisual:Colorpicker({ Name = "Fill", Flag = "wb_assist_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0.6 })
+    assistVisual:Colorpicker({ Name = "Outline", Flag = "wb_assist_line", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
+
     -- Silent aim ---------------------------------------------------------------------------
     local Silent = CombatTab:Section({ Name = "Silent aim", Side = 2 })
     local silentEnabled = Silent:Toggle({ Name = "Enabled", Flag = "Silent_Global_Enabled", Default = false })
@@ -1382,7 +1408,6 @@ do
     Silent:Dropdown({ Name = "Hitscan points", Flag = "silent_points", Items = { "Head", "Body" }, Multi = true, Default = { "Head", "Body" } })
     Silent:Slider({ Name = "Hit chance", Flag = "Silent_Global_HitChance", Min = 1, Max = 100, Default = 100, Suffix = "%", Decimals = 1 })
     Silent:Slider({ Name = "Max distance", Flag = "silent_max_dist", Min = 50, Max = 2000, Default = 1000, Suffix = " studs", Decimals = 1 })
-    Silent:Toggle({ Name = "Wallbang", Flag = "silent_wallbang", Default = false })
     Silent:Toggle({ Name = "Wall check", Flag = "silent_wall", Default = false })
     Silent:Toggle({ Name = "Forcefield check", Flag = "silent_ff", Default = false })
     Silent:Toggle({ Name = "Hostile only (inmates)", Flag = "silent_hostile", Default = false })
@@ -1512,9 +1537,34 @@ do
     Invis:Toggle({ Name = "Move while hidden", Flag = "misc_invis_move", Default = false })
     Invis:Slider({ Name = "Look-up pitch", Flag = "misc_invis_pitch", Min = -90, Max = 90, Default = 90, Suffix = "°", Decimals = 1 })
 
+    local Desync = MiscPage:Section({ Name = "Desync", Side = 2 })
+    Desync:Toggle({ Name = "Desync", Flag = "misc_desync", Default = false, Tooltip = "The server sees you at another position than the one you play at" }):Keybind({ Name = "Desync key", Flag = "misc_desync_key", Default = "None", Sync = true })
+    Desync:Dropdown({
+        Name = "Style", Flag = "misc_desync_style", Items = { "Offset", "Void" }, Default = "Offset",
+        Tooltip = "Offset: the server position sits a fixed height below (or above) you.\nVoid: the server position is far below the map, just above the point where parts are destroyed.",
+    })
+    Desync:Slider({ Name = "Y offset", Flag = "misc_desync_y", Min = -10, Max = 10, Default = -2.5, Suffix = " studs", Decimals = 0.1 })
+    Desync:Toggle({ Name = "Always underground", Flag = "misc_desync_under", Default = false, Tooltip = "Keeps the server position below the floor, also while you jump" })
+    Desync:Toggle({ Name = "Filter structures", Flag = "misc_desync_filter", Default = false, Tooltip = "Looks for the lowest floor under you instead of the first surface (tables, roofs)" })
+    Desync:Slider({ Name = "Follower speed", Flag = "misc_desync_speed", Min = 1, Max = 500, Default = 30, Suffix = " studs/s", Decimals = 1 })
+    local desyncVisual = Desync:Toggle({ Name = "Visualizer", Flag = "misc_desync_visual", Default = false, Tooltip = "A highlighted copy of your character shows where the server sees you" })
+    desyncVisual:Colorpicker({ Name = "Fill", Flag = "misc_desync_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0.6 })
+    desyncVisual:Colorpicker({ Name = "Outline", Flag = "misc_desync_line", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
+    local desyncTracer = Desync:Toggle({ Name = "Tracer", Flag = "misc_desync_tracer", Default = false })
+    desyncTracer:Colorpicker({ Name = "Tracer color", Flag = "misc_desync_tracer_color", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
+
+    local Walk = MiscPage:Section({ Name = "Walk speed", Side = 1 })
+    Walk:Toggle({ Name = "Walk speed", Flag = "misc_walk", Default = false }):Keybind({ Name = "Walk speed key", Flag = "misc_walk_key", Default = "None", Sync = true })
+    Walk:Slider({ Name = "Walk speed", Flag = "misc_walk_value", Min = 16, Max = 200, Default = 16, Suffix = " studs/s", Decimals = 1 })
+    Walk:Toggle({ Name = "No acceleration", Flag = "misc_noaccel", Default = false, Tooltip = "Start and stop at full speed instead of speeding up and sliding" }):Keybind({ Name = "No acceleration key", Flag = "misc_noaccel_key", Default = "None", Sync = true })
+    Walk:Toggle({ Name = "Automatic speed", Flag = "misc_walk_auto", Default = false, Tooltip = "Picks the speed from where you are: inside a building of the prison, in the prison area, or outside the prison" })
+    Walk:Toggle({ Name = "Use custom speed", Flag = "misc_walk_custom", Default = false, Tooltip = "Use the three sliders below. When off, automatic speed uses 32 / 50 / 100." })
+    Walk:Slider({ Name = "Speed inside prison", Flag = "misc_walk_in", Min = 16, Max = 32, Default = 32, Suffix = " studs/s", Decimals = 1 })
+    Walk:Slider({ Name = "Speed in prison area", Flag = "misc_walk_yard", Min = 16, Max = 100, Default = 50, Suffix = " studs/s", Decimals = 1 })
+    Walk:Slider({ Name = "Speed outside prison", Flag = "misc_walk_out", Min = 16, Max = 100, Default = 100, Suffix = " studs/s", Decimals = 1 })
+    Walk:Toggle({ Name = "Notify area changes", Flag = "misc_walk_notify", Default = false, Tooltip = "Shows which area the script thinks you are in" })
+
     local Move = MiscPage:Section({ Name = "Movement", Side = 1 })
-    Move:Toggle({ Name = "Walk speed multiplier", Flag = "misc_walkmult", Default = false }):Keybind({ Name = "Walk multiplier key", Flag = "misc_walkmult_key", Default = "None", Sync = true })
-    Move:Slider({ Name = "Walk multiplier (max 4x)", Flag = "misc_walkmult_value", Min = 1, Max = 4, Default = 1.5, Suffix = "x", Decimals = 0.05 })
     Move:Toggle({ Name = "Jump multiplier", Flag = "misc_jumpmult", Default = false }):Keybind({ Name = "Jump multiplier key", Flag = "misc_jumpmult_key", Default = "None", Sync = true })
     Move:Slider({ Name = "Jump multiplier (max 3x)", Flag = "misc_jumpmult_value", Min = 1, Max = 3, Default = 1.5, Suffix = "x", Decimals = 0.05 })
     Move:Toggle({ Name = "Spinbot", Flag = "misc_spinbot", Default = false }):Keybind({ Name = "Spinbot key", Flag = "misc_spinbot_key", Default = "None", Sync = true })
@@ -6971,15 +7021,118 @@ do
     end
 
     -- ======================================================================================
-    -- Movement: walk and jump multipliers, spinbot
+    -- Walk speed: a fixed speed or an automatic one for the area you are in, and no acceleration.
+    -- Areas: outside the prison compound, in the prison area (open ground inside the fences) and
+    -- inside the prison (anything with a roof over it). The compound is the box around the
+    -- electric fences in workspace.Prison_Fences; a fixed box is used when they cannot be found.
     -- ======================================================================================
     do
         local bag = newBag()
-        feature("misc_walkmult", function()
+        local FALLBACK_MIN, FALLBACK_MAX = v3(690, -50, 2170), v3(1010, 600, 2620)
+        local ANCHOR = v3(850, 100, 2400)
+        local DEFAULT_SPEEDS = { inside = 32, yard = 50, outside = 100 }
+        local SPEED_FLAGS = { inside = "misc_walk_in", yard = "misc_walk_yard", outside = "misc_walk_out" }
+        local AREA_NAMES = { inside = "inside prison", yard = "prison area", outside = "outside prison" }
+        local bounds, boundsAt = nil, -100
+        local roof = RaycastParams.new()
+        roof.FilterType = Enum.RaycastFilterType.Exclude
+        roof.RespectCanCollide = true
+
+        local function extents(part)
+            local cf, s = part.CFrame, part.Size
+            local r, u, l = cf.RightVector, cf.UpVector, cf.LookVector
+            return v3(
+                (math.abs(r.X) * s.X + math.abs(u.X) * s.Y + math.abs(l.X) * s.Z) / 2,
+                (math.abs(r.Y) * s.X + math.abs(u.Y) * s.Y + math.abs(l.Y) * s.Z) / 2,
+                (math.abs(r.Z) * s.X + math.abs(u.Z) * s.Y + math.abs(l.Z) * s.Z) / 2)
+        end
+
+        local function computeBounds()
+            local lo, hi
+            local function grow(part)
+                if (part.Position - ANCHOR).Magnitude > 450 then return end
+                local e = extents(part)
+                local pmin, pmax = part.Position - e, part.Position + e
+                if lo then
+                    lo = v3(math.min(lo.X, pmin.X), math.min(lo.Y, pmin.Y), math.min(lo.Z, pmin.Z))
+                    hi = v3(math.max(hi.X, pmax.X), math.max(hi.Y, pmax.Y), math.max(hi.Z, pmax.Z))
+                else
+                    lo, hi = pmin, pmax
+                end
+            end
+            local fences = workspace:FindFirstChild("Prison_Fences")
+            if fences then
+                local electric = false
+                for _, d in ipairs(fences:GetDescendants()) do
+                    if d:IsA("BasePart") and d:FindFirstChild("TouchInterest") then
+                        grow(d)
+                        electric = true
+                    end
+                end
+                if not electric then
+                    for _, d in ipairs(fences:GetDescendants()) do
+                        if d:IsA("BasePart") then grow(d) end
+                    end
+                end
+            end
+            if lo and hi and (hi.X - lo.X) > 120 and (hi.Z - lo.Z) > 120 then
+                return { lo - v3(8, 0, 8), hi + v3(8, 0, 8), "fences" }
+            end
+            return { FALLBACK_MIN, FALLBACK_MAX, "fixed box" }
+        end
+
+        -- "inside", "yard" or "outside"
+        Actions.area = function(position)
+            local now = clock()
+            if not bounds or now - boundsAt > 30 then
+                bounds, boundsAt = computeBounds(), now
+            end
+            local lo, hi = bounds[1], bounds[2]
+            if position.X < lo.X or position.X > hi.X or position.Z < lo.Z or position.Z > hi.Z then return "outside" end
+            local list = { Camera() }
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player.Character then list[#list + 1] = player.Character end
+            end
+            roof.FilterDescendantsInstances = list
+            local hit = workspace:Raycast(position + v3(0, 2.5, 0), v3(0, 80, 0), roof)
+            if hit and hit.Instance.Transparency < 0.9 then return "inside" end
+            return "yard"
+        end
+        Actions.areaBounds = function()
+            if not bounds then bounds, boundsAt = computeBounds(), clock() end
+            return bounds
+        end
+
+        local areaName, areaAt = "", 0
+        local function currentArea(root)
+            local now = clock()
+            if now - areaAt > 0.25 then
+                areaAt = now
+                local nextArea = Actions.area(root.Position)
+                if nextArea ~= areaName then
+                    areaName = nextArea
+                    if flag("misc_walk_notify", false) then
+                        local custom = flag("misc_walk_custom", false)
+                        local speed = custom and flag(SPEED_FLAGS[nextArea], DEFAULT_SPEEDS[nextArea]) or DEFAULT_SPEEDS[nextArea]
+                        say(string.format("Area: %s (%.0f studs/s, bounds from %s)", AREA_NAMES[nextArea], speed, Actions.areaBounds()[3]))
+                    end
+                end
+            end
+            return areaName
+        end
+
+        feature("misc_walk", function()
+            areaName, areaAt = "", 0
             bag.add(stepSignal:Connect(function()
-                local _, h = localParts()
-                if not h or h.WalkSpeed <= 0.1 then return end
-                h.WalkSpeed = 16 * math.clamp(flag("misc_walkmult_value", 1.5), 1, 4)
+                local _, hum, root = localParts()
+                if not hum or hum.WalkSpeed <= 0.1 then return end
+                local speed = flag("misc_walk_value", 16)
+                if flag("misc_walk_auto", false) then
+                    local area = currentArea(root)
+                    speed = DEFAULT_SPEEDS[area]
+                    if flag("misc_walk_custom", false) then speed = flag(SPEED_FLAGS[area], speed) end
+                end
+                hum.WalkSpeed = speed
             end))
         end, function()
             bag.clear()
@@ -6988,6 +7141,37 @@ do
         end)
     end
 
+    do
+        local bag = newBag()
+        local SKIP_STATES = {
+            [Enum.HumanoidStateType.Climbing] = true, [Enum.HumanoidStateType.Swimming] = true,
+            [Enum.HumanoidStateType.Seated] = true, [Enum.HumanoidStateType.Dead] = true,
+            [Enum.HumanoidStateType.Physics] = true, [Enum.HumanoidStateType.Ragdoll] = true,
+            [Enum.HumanoidStateType.FallingDown] = true, [Enum.HumanoidStateType.PlatformStanding] = true,
+        }
+        feature("misc_noaccel", function()
+            bag.add(stepSignal:Connect(function()
+                local _, hum, root = localParts()
+                if not hum or not root or hum.WalkSpeed <= 0.1 or hum.SeatPart or hum.Sit then return end
+                if SKIP_STATES[hum:GetState()] or hum.FloorMaterial == Enum.Material.Air then return end
+                if isOn("misc_fly") or isOn("misc_speed") or isOn("misc_invis") then return end
+                local velocity = root.AssemblyLinearVelocity
+                local flat = v3(velocity.X, 0, velocity.Z).Magnitude
+                -- something else is pushing you (a fling, an explosion): leave it alone
+                if flat > math.max(hum.WalkSpeed * 1.6, 45) then return end
+                local direction = hum.MoveDirection
+                if direction.Magnitude > 0.05 then
+                    root.AssemblyLinearVelocity = v3(direction.X * hum.WalkSpeed, velocity.Y, direction.Z * hum.WalkSpeed)
+                else
+                    root.AssemblyLinearVelocity = v3(0, velocity.Y, 0)
+                end
+            end))
+        end, function() bag.clear() end)
+    end
+
+    -- ======================================================================================
+    -- Movement: jump multiplier, spinbot
+    -- ======================================================================================
     do
         local bag, original = newBag(), nil
         feature("misc_jumpmult", function()
@@ -7145,6 +7329,297 @@ do
             end
             table.clear(saved)
             lastSeat = nil
+        end)
+    end
+
+    -- ======================================================================================
+    -- Server position: what the server and other players see can differ from where you stand.
+    -- At the end of the physics step the character is moved to the server position (that is what
+    -- gets sent) and at the start of the next frame it is put back (what you see and walk on).
+    -- Desync and wallbang assist both use it. A highlighted copy of your character shows the spot.
+    -- ======================================================================================
+    do
+        local SP = Actions.sp
+        local requests, order = {}, { "assist", "desync" }
+        local engine = newBag()
+        local running = false
+        local applied, realCF = nil, nil
+        local lastSpeed, lastStyle, lastWarn = 100, nil, 0
+        local RESTORE, GHOST = "AsterServerPosRestore", "AsterServerPosGhost"
+        SP.pos = nil
+
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.RespectCanCollide = true
+
+        -- the position you really stand at, even right after the server position was applied
+        function SP.realPos(root)
+            if applied and realCF then return realCF.Position end
+            return root.Position
+        end
+        -- the position shots are measured from: the server position while one is set
+        function SP.shooter(root)
+            return SP.pos or SP.realPos(root)
+        end
+
+        local function picker(name, fallbackColor, fallbackAlpha)
+            local object = Options[name]
+            local color = object and typeof(object.Value) == "Color3" and object.Value or fallbackColor
+            local alpha = object and tonumber(object.Transparency) or fallbackAlpha
+            return color, alpha
+        end
+        function SP.visualStyle(fillFlag, lineFlag, tracerFlag)
+            local fill, fillT = picker(fillFlag, WHITE, 0.6)
+            local line, lineT = picker(lineFlag, WHITE, 0)
+            local style = { fill = fill, fillT = fillT, line = line, lineT = lineT }
+            if tracerFlag then style.tracer, style.tracerT = picker(tracerFlag, WHITE, 0) end
+            return style
+        end
+
+        local function groundBelow(position, lowest)
+            local list = {}
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player.Character then list[#list + 1] = player.Character end
+            end
+            list[#list + 1] = Camera()
+            rayParams.FilterDescendantsInstances = list
+            local hit = workspace:Raycast(position, v3(0, -600, 0), rayParams)
+            if not hit then return nil end
+            local floorY = hit.Position.Y
+            if lowest then
+                for _ = 1, 6 do
+                    local below = workspace:Raycast(v3(position.X, floorY - 0.25, position.Z), v3(0, -600, 0), rayParams)
+                    if not below then break end
+                    floorY = below.Position.Y
+                end
+            end
+            return floorY
+        end
+
+        local function follow(current, goal, speed, dt)
+            local delta = goal - current
+            local distance = delta.Magnitude
+            local step = speed * dt
+            if speed >= 4000 or distance <= step then return goal end
+            return current + delta * (step / distance)
+        end
+
+        -- ghost: a copy of your character parts, moved by the same offset, with a Highlight ----
+        local ghost = { model = nil, highlight = nil, parts = {}, char = nil, count = 0, checked = 0, line = nil }
+
+        local function hideGhost()
+            if ghost.model then ghost.model.Parent = nil end
+            if ghost.line then ghost.line.Visible = false end
+        end
+        local function destroyGhost()
+            if ghost.model then pcall(function() ghost.model:Destroy() end) end
+            ghost.model, ghost.highlight, ghost.char = nil, nil, nil
+            table.clear(ghost.parts)
+            if ghost.line then pcall(function() ghost.line.Visible = false end) end
+        end
+        local function buildGhost(char)
+            destroyGhost()
+            local model = Instance.new("Model")
+            model.Name = "AsterServerPosition"
+            local descendants = char:GetDescendants()
+            for _, d in ipairs(descendants) do
+                if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" and d.Transparency < 0.95 then
+                    local ok, clone = pcall(function() return d:Clone() end)
+                    if ok and clone then
+                        for _, child in ipairs(clone:GetChildren()) do
+                            if not child:IsA("SpecialMesh") then child:Destroy() end
+                        end
+                        clone.Anchored = true
+                        clone.CanCollide = false
+                        clone.CanTouch = false
+                        clone.CanQuery = false
+                        clone.CastShadow = false
+                        clone.Massless = true
+                        clone.Transparency = 0.95
+                        clone.Parent = model
+                        ghost.parts[#ghost.parts + 1] = { d, clone }
+                    end
+                end
+            end
+            local highlight = Instance.new("Highlight")
+            highlight.Adornee = model
+            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            highlight.Parent = model
+            ghost.model, ghost.highlight, ghost.char = model, highlight, char
+            ghost.count, ghost.checked = #descendants, clock()
+        end
+        local function newLine()
+            if not (Drawing and type(Drawing.new) == "function") then return nil end
+            local ok, line = pcall(Drawing.new, "Line")
+            if ok and line then
+                table.insert(getgenv().TS_Drawings, line)
+                return line
+            end
+            return nil
+        end
+
+        local function updateGhost()
+            local style = lastStyle
+            local char, _, root = localParts()
+            local cam = workspace.CurrentCamera
+            if not SP.pos or not style or not root or not cam then
+                hideGhost()
+                return
+            end
+            local now = clock()
+            if ghost.char ~= char or not ghost.model then
+                buildGhost(char)
+            elseif now - ghost.checked > 0.5 then
+                ghost.checked = now
+                if #char:GetDescendants() ~= ghost.count then buildGhost(char) end
+            end
+            if ghost.model.Parent ~= cam then ghost.model.Parent = cam end
+            local shift = SP.pos - root.Position
+            for _, pair in ipairs(ghost.parts) do
+                if pair[1].Parent then pair[2].CFrame = pair[1].CFrame + shift end
+            end
+            local highlight = ghost.highlight
+            highlight.FillColor, highlight.FillTransparency = style.fill, style.fillT
+            highlight.OutlineColor, highlight.OutlineTransparency = style.line, style.lineT
+            if style.tracer then
+                ghost.line = ghost.line or newLine()
+                local line = ghost.line
+                if line then
+                    local a = cam:WorldToViewportPoint(root.Position)
+                    local b = cam:WorldToViewportPoint(SP.pos)
+                    line.Visible = a.Z > 0 and b.Z > 0
+                    line.From = Vector2.new(a.X, a.Y)
+                    line.To = Vector2.new(b.X, b.Y)
+                    line.Color = style.tracer
+                    line.Transparency = 1 - style.tracerT
+                    line.Thickness = 1
+                end
+            elseif ghost.line then
+                ghost.line.Visible = false
+            end
+        end
+
+        -- the engine ---------------------------------------------------------------------
+        local function onHeartbeat(dt)
+            local _, _, root = localParts()
+            if not root or isOn("misc_invis") then
+                SP.pos, applied, realCF = nil, nil, nil
+                return
+            end
+            local real = root.CFrame
+            local realPos = real.Position
+            local goal, speed, style
+            for _, name in ipairs(order) do
+                local fn = requests[name]
+                if fn then
+                    local ok, g, s, v = pcall(fn, root, realPos)
+                    if ok and g then goal, speed, style = g, s or 100, v break end
+                end
+            end
+            if goal then
+                lastSpeed, lastStyle = speed, style
+                SP.pos = follow(SP.pos or realPos, goal, speed, dt)
+            elseif SP.pos then
+                SP.pos = follow(SP.pos, realPos, lastSpeed, dt)
+                if (SP.pos - realPos).Magnitude < 0.05 then SP.pos = nil end
+            end
+            if SP.pos then
+                realCF = real
+                applied = CFrame.new(SP.pos) * (real - realPos)
+                root.CFrame = applied
+            else
+                applied, realCF = nil, nil
+                if next(requests) == nil then SP.stopEngine() end
+            end
+        end
+
+        local function onRestore()
+            if not applied then return end
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            -- something else moved the character in between (a teleport, a respawn): leave that alone
+            if root and realCF and (root.Position - applied.Position).Magnitude < 0.5 then
+                root.CFrame = realCF
+            end
+            applied = nil
+        end
+
+        local function startEngine()
+            if running then return end
+            running = true
+            engine.add(RunService.Heartbeat:Connect(function(dt)
+                local ok, err = pcall(onHeartbeat, dt)
+                if not ok and clock() - lastWarn > 5 then
+                    lastWarn = clock()
+                    warnf("server position:", err)
+                end
+            end))
+            RunService:BindToRenderStep(RESTORE, Enum.RenderPriority.First.Value, function()
+                pcall(onRestore)
+            end)
+            RunService:BindToRenderStep(GHOST, Enum.RenderPriority.Last.Value, function()
+                local ok, err = pcall(updateGhost)
+                if not ok and clock() - lastWarn > 5 then
+                    lastWarn = clock()
+                    warnf("server position ghost:", err)
+                end
+            end)
+        end
+
+        function SP.stopEngine()
+            if not running then return end
+            running = false
+            engine.clear()
+            pcall(function() RunService:UnbindFromRenderStep(RESTORE) end)
+            pcall(function() RunService:UnbindFromRenderStep(GHOST) end)
+            destroyGhost()
+        end
+        -- fn(root, realPosition) returns the position to show the server, the speed to move there
+        -- at (studs per second) and a style table for the ghost (or nil for no ghost)
+        function SP.enable(name, fn)
+            requests[name] = fn
+            startEngine()
+        end
+        -- the server position glides back to yours before the engine stops
+        function SP.disable(name)
+            requests[name] = nil
+        end
+
+        onUnload(function()
+            table.clear(requests)
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if applied and realCF and root then pcall(function() root.CFrame = realCF end) end
+            applied, realCF, SP.pos = nil, nil, nil
+            SP.stopEngine()
+            destroyGhost()
+            if ghost.line then pcall(function() ghost.line:Remove() end) ghost.line = nil end
+        end)
+
+        -- desync -------------------------------------------------------------------------
+        local function desyncRequest(_, realPos)
+            local goal
+            if flag("misc_desync_style", "Offset") == "Void" then
+                local destroyAt = workspace.FallenPartsDestroyHeight
+                if type(destroyAt) ~= "number" or destroyAt ~= destroyAt then destroyAt = -500 end
+                goal = v3(realPos.X, math.min(math.max(destroyAt + 30, -2500), realPos.Y - 10), realPos.Z)
+            else
+                goal = realPos + v3(0, flag("misc_desync_y", -2.5), 0)
+                if flag("misc_desync_under", false) then
+                    local floorY = groundBelow(realPos, flag("misc_desync_filter", false))
+                    if floorY then goal = v3(goal.X, math.min(goal.Y, floorY - 3), goal.Z) end
+                end
+            end
+            local style
+            if flag("misc_desync_visual", false) then
+                style = SP.visualStyle("misc_desync_fill", "misc_desync_line", flag("misc_desync_tracer", false) and "misc_desync_tracer_color" or nil)
+            end
+            return goal, flag("misc_desync_speed", 30), style
+        end
+        feature("misc_desync", function()
+            SP.enable("desync", desyncRequest)
+        end, function()
+            SP.disable("desync")
         end)
     end
 
@@ -7542,8 +8017,8 @@ do
             end)
         end
 
-        -- wallbang (SillyScripts): looks for a shot origin and hit point that have a clear line to the target ----
-        local WB = { cache = {}, ray = RaycastParams.new(), overlap = OverlapParams.new() }
+        -- wallbang: looks for a shot origin and a hit point that have a clear line to the target ----
+        local WB = { cache = {}, ray = RaycastParams.new(), overlap = OverlapParams.new(), history = {}, moved = 0 }
         WB.ray.FilterType = Enum.RaycastFilterType.Exclude
         WB.overlap.FilterType = Enum.RaycastFilterType.Exclude
         pcall(function()
@@ -7593,49 +8068,171 @@ do
 
         local FLAT = Vector3.new(1, 0, 1)
 
-        -- Scan(shooterPos, targetPos, surfacePos, key): returns origin, target. Origins sit 6 and 12 studs
-        -- around and above the shooter, targets are the part itself and spots 6 and 12 studs beside it.
-        function WB.scan(shooterPos, targetPos, surfacePos, key, nocache)
-            if key and not nocache then
-                local cached = WB.cache[key]
-                if cached == false then return nil end
-                if cached then return cached[1], cached[2] end
-            end
+        local function radius()
+            return math.clamp(flag("wb_radius", 6), 1, 10)
+        end
+
+        -- direction from the shooter to the target on the ground plane
+        local function lookFlat(shooterPos, targetPos)
             local flatDelta = (shooterPos - targetPos) * FLAT
-            local look = flatDelta.Magnitude > 0.001 and CFrame.lookAt(shooterPos * FLAT, targetPos * FLAT).LookVector or v3(0, 0, -1)
-            local origins, targets = {}, { targetPos }
-
-            local function push(scale, set)
-                for _, offset in ipairs(set) do
-                    if (offset * FLAT):Dot(look) > -0.5 then origins[#origins + 1] = shooterPos + offset * scale end
-                end
+            if flatDelta.Magnitude > 0.001 then
+                return CFrame.lookAt(shooterPos * FLAT, targetPos * FLAT).LookVector
             end
-            push(6, OFFSETS_NEAR)
-            push(6, OFFSETS_HIGH)
-            push(12, OFFSETS_NEAR)
-            push(12, OFFSETS_HIGH)
+            return v3(0, 0, -1)
+        end
 
+        -- spots beside the target's body on the side that faces the shooter (the server accepts hits a few studs off the body)
+        local function pointsAround(center, look, scales)
+            local list = {}
             for _, normalId in ipairs(Enum.NormalId:GetEnumItems()) do
                 local normal = Vector3.fromNormalId(normalId)
                 if (normal * FLAT):Dot(-look) > -0.5 then
-                    for _, scale in ipairs({ 6, 12 }) do
-                        local position = targetPos + normal * scale
-                        if freeSpace(position) then targets[#targets + 1] = position end
+                    for _, scale in ipairs(scales) do
+                        local position = center + normal * scale
+                        if freeSpace(position) then list[#list + 1] = position end
                     end
                 end
             end
-            if surfacePos then table.insert(origins, 1, surfacePos) end
+            return list
+        end
 
+        -- spots around the shooter that are not behind the shooter
+        local function originsAround(center, look, scales, sets)
+            local list = {}
+            for _, scale in ipairs(scales) do
+                for _, set in ipairs(sets) do
+                    for _, offset in ipairs(set) do
+                        if (offset * FLAT):Dot(look) > -0.5 then list[#list + 1] = center + offset * scale end
+                    end
+                end
+            end
+            return list
+        end
+
+        local function byDistance(list, from)
+            local ranked = {}
+            for index, position in ipairs(list) do ranked[index] = { position, (position - from).Magnitude, index } end
+            table.sort(ranked, function(a, b)
+                if a[2] ~= b[2] then return a[2] < b[2] end
+                return a[3] < b[3]
+            end)
+            for index, entry in ipairs(ranked) do list[index] = entry[1] end
+            return list
+        end
+
+        -- first (target, origin) pair that has a clear line between them
+        local function firstClear(targets, origins)
             for _, target in ipairs(targets) do
                 for _, origin in ipairs(origins) do
                     if not workspace:Raycast(target, origin - target, WB.ray) and freeSpace(origin) then
-                        if key and not nocache then WB.cache[key] = { origin, target } end
                         return origin, target
                     end
                 end
             end
-            if key and not nocache then WB.cache[key] = false end
             return nil
+        end
+
+        local function append(into, list)
+            for _, item in ipairs(list) do into[#into + 1] = item end
+        end
+
+        -- The methods. Each one gets the shooter position, the target part position, the point on the
+        -- wall that blocks the line (or nil), the centre of the target's body and the "use hitbox" setting,
+        -- and returns an origin and a target when it found a line.
+        local METHODS = {}
+
+        -- Vape V4: the wall point if it is close, else origins one radius around you and points 7.4 studs
+        -- around the target's root
+        METHODS["Vape V4"] = function(shooter, target, surface, center, hitbox)
+            local reach = radius() - math.min(WB.moved, 1)
+            local look = lookFlat(shooter, target)
+            local targets = {}
+            if freeSpace(target) then
+                if surface and (shooter - surface).Magnitude < 7.5 then return surface, target end
+                targets[1] = target
+            end
+            if hitbox then append(targets, pointsAround(center, look, { 7.4 })) end
+            local origins = { shooter }
+            for _, position in ipairs(originsAround(shooter, look, { reach }, { OFFSETS_NEAR })) do
+                if freeSpace(position) then origins[#origins + 1] = position end
+            end
+            return firstClear(targets, origins)
+        end
+
+        -- awp: more origins (also straight up), the closest ones first
+        METHODS["awp"] = function(shooter, target, surface, center, hitbox)
+            local reach = radius() - math.min(WB.moved, 1)
+            local look = lookFlat(shooter, target)
+            local origins = originsAround(shooter, look, { reach }, { OFFSETS_NEAR, OFFSETS_HIGH })
+            origins[#origins + 1] = shooter
+            byDistance(origins, shooter)
+            if surface and (surface - shooter).Magnitude <= reach + 1.5 then table.insert(origins, 1, surface) end
+            local targets = { target }
+            if hitbox then append(targets, pointsAround(center, look, { radius() })) end
+            return firstClear(targets, origins)
+        end
+
+        -- awp v2: origins and hit points up to twice the radius away (goes through more walls, less accurate)
+        METHODS["awp v2"] = function(shooter, target, surface, center, hitbox)
+            local reach = radius()
+            local look = lookFlat(shooter, target)
+            local origins = originsAround(shooter, look, { reach, reach * 2 }, { OFFSETS_NEAR, OFFSETS_HIGH })
+            if surface then table.insert(origins, 1, surface) end
+            local targets = { target }
+            if hitbox then append(targets, pointsAround(center, look, { reach, reach * 2 })) end
+            return firstClear(targets, origins)
+        end
+
+        -- awp v2.1: works the origins out from the line to the target. The free spot in front of every wall
+        -- on that line, spots on the line itself and a few beside it are ranked by how far they are from
+        -- you; everything within the radius is tried first, then up to twice the radius.
+        METHODS["awp v2.1"] = function(shooter, target, surface, center, hitbox)
+            local reach = radius()
+            local look = lookFlat(shooter, target)
+            local targets = { target }
+            if hitbox then append(targets, pointsAround(center, look, { reach })) end
+
+            local near, far = {}, {}
+            local function add(position)
+                if #near + #far >= 100 then return end
+                local distance = (position - shooter).Magnitude
+                if distance <= reach then near[#near + 1] = position
+                elseif distance <= reach * 2 then far[#far + 1] = position end
+            end
+
+            add(shooter)
+            if surface then add(surface) end
+
+            local walk = RaycastParams.new()
+            walk.FilterType = Enum.RaycastFilterType.Exclude
+            pcall(function() walk.CollisionGroup = "ClientBullet" end)
+            local skip = table.clone(WB.ray.FilterDescendantsInstances)
+            walk.FilterDescendantsInstances = skip
+            local back = shooter - target
+            local side = back.Magnitude > 0.001 and back.Unit:Cross(v3(0, 1, 0)) or v3(1, 0, 0)
+            side = side.Magnitude > 0.01 and side.Unit or v3(1, 0, 0)
+            for _ = 1, 6 do
+                local hit = workspace:Raycast(target, back, walk)
+                if not hit then break end
+                local front = hit.Position + hit.Normal * 0.05
+                add(front)
+                for _, shift in ipairs({ -3, -1.5, 1.5, 3 }) do add(front + side * shift) end
+                skip[#skip + 1] = hit.Instance
+                walk.FilterDescendantsInstances = skip
+            end
+
+            local toTarget = target - shooter
+            local lineLength = toTarget.Magnitude
+            if lineLength > 0.001 then
+                local unit = toTarget / lineLength
+                for step = 1, math.floor(math.min(reach * 2, lineLength)) do add(shooter + unit * step) end
+            end
+            for _, position in ipairs(originsAround(shooter, look, { reach * 0.5, reach }, { OFFSETS_NEAR })) do add(position) end
+
+            byDistance(near, shooter)
+            byDistance(far, shooter)
+            append(near, far)
+            return firstClear(targets, near)
         end
 
         -- other body parts to try when the aimed part cannot be reached
@@ -7660,17 +8257,23 @@ do
             local blocked = workspace:Raycast(position, origin - position, WB.ray)
             if not blocked and not workspace:Raycast(origin, position - origin, WB.ray) then return "clear" end
 
-            -- 1) origins and targets around the shooter and the target
-            local newOrigin, newTarget = WB.scan(root.Position, position, blocked and (blocked.Position + blocked.Normal * 0.01) or nil, part, true)
+            -- the shooter is where the server sees you (the assist or a desync may have moved it)
+            local shooter = Actions.sp.shooter(root)
+            local anchor = part.Parent and part.Parent:FindFirstChild("HumanoidRootPart")
+            local center = anchor and anchor.Position or position
+            local method = flag("wb_method", "awp v2")
+            local scan = METHODS[method] or METHODS["awp v2"]
 
-            -- 2) ground points along the line to the target
-            if not newOrigin then
-                local delta = position - root.Position
+            local newOrigin, newTarget = scan(shooter, position, blocked and (blocked.Position + blocked.Normal * 0.01) or nil, center, flag("wb_hitbox", true))
+
+            -- the two long reach methods keep looking: ground points along the line, then a column above you
+            if not newOrigin and (method == "awp v2" or method == "awp v2.1") then
+                local delta = position - shooter
                 local dist = delta.Magnitude
                 if dist > 0.5 then
                     local unit = delta.Unit
                     for i = 2, math.min(dist, 160), 2 do
-                        local ground = workspace:Raycast(root.Position + unit * i, v3(0, -50, 0), WB.ray)
+                        local ground = workspace:Raycast(shooter + unit * i, v3(0, -50, 0), WB.ray)
                         if ground then
                             local at = ground.Position + ground.Normal * 0.5
                             if not workspace:Raycast(at, position - at, WB.ray) and freeSpace(at) then
@@ -7680,15 +8283,13 @@ do
                         end
                     end
                 end
-            end
-
-            -- 3) a column straight above the shooter
-            if not newOrigin then
-                for i = 3, 18, 3 do
-                    local at = root.Position + v3(0, i, 0)
-                    if not workspace:Raycast(at, position - at, WB.ray) and freeSpace(at) then
-                        newOrigin, newTarget = at, position
-                        break
+                if not newOrigin then
+                    for i = 3, 18, 3 do
+                        local at = shooter + v3(0, i, 0)
+                        if not workspace:Raycast(at, position - at, WB.ray) and freeSpace(at) then
+                            newOrigin, newTarget = at, position
+                            break
+                        end
                     end
                 end
             end
@@ -7895,6 +8496,13 @@ do
                         table.clear(WB.cache)
                         WB.updateIgnore()
                     end
+                    local _, _, mover = localParts()
+                    if mover then
+                        local history = WB.history
+                        history[#history + 1] = { Actions.sp.realPos(mover), now }
+                        while #history > 1 and now - history[1][2] > 0.1 do table.remove(history, 1) end
+                        WB.moved = (history[#history][1] - history[1][1]).Magnitude
+                    end
                     if flag("silent_autofire", false) and silentActive() and now >= autoNext and not typing() then
                         autoNext = now + 1 / math.max(flag("silent_autofire_rate", 15), 1)
                         local _, _, root = localParts()
@@ -7981,6 +8589,72 @@ do
             end, function()
                 bag.clear()
                 seenSince = nil
+            end)
+        end
+
+        -- wallbang assist: moves the position the server sees up to (or into) the wall in front of the target ----
+        do
+            local bag = newBag()
+            local A = Actions.sp.assist
+            A.goal, A.speed, A.style = nil, 50, nil
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            pcall(function() params.CollisionGroup = "ClientBullet" end)
+            local errors = 0
+
+            local function step()
+                A.goal = nil
+                if not (flag("silent_wallbang", false) and flag("Silent_Global_Enabled", false) and keyActive("Silent_Global_Key")) then return end
+                local char, _, root = localParts()
+                if not char or not root or typing() then return end
+                local head = char:FindFirstChild("Head")
+                local realPos = Actions.sp.realPos(root)
+                local data = Gun.data()
+                local limit = math.min(flag("wb_assist_max", 200), data and tonumber(data.Range) or 1000)
+                local entity, part = selectTarget("silent", aimRef(), head and head.Position or realPos, {
+                    limit = limit,
+                    ignoreDown = data and data.Behavior == "Taser",
+                    skipWall = true,
+                })
+                if not entity then return end
+
+                WB.updateIgnore()
+                params.FilterDescendantsInstances = WB.ray.FilterDescendantsInstances
+                local delta = part.Position - realPos
+                local distance = delta.Magnitude
+                if distance < 2 then return end
+                local hit = workspace:Raycast(realPos, delta, params)
+                if not hit or hit.Distance > flag("wb_assist_dist", 25) then return end
+
+                local unit = delta / distance
+                local point
+                if flag("wb_assist_inside", false) then
+                    point = hit.Position + unit * 1.5
+                else
+                    point = hit.Position - unit * 1.2
+                end
+                A.goal = v3(point.X, realPos.Y + math.clamp(point.Y - realPos.Y, -4, 4), point.Z)
+                A.speed = flag("wb_assist_mode", "Tween") == "Teleport" and 1e9 or flag("wb_assist_speed", 50)
+                A.style = flag("wb_assist_visual", false) and Actions.sp.visualStyle("wb_assist_fill", "wb_assist_line") or nil
+            end
+
+            feature("wb_assist", function()
+                Actions.sp.enable("assist", function()
+                    if not A.goal then return nil end
+                    return A.goal, A.speed, A.style
+                end)
+                task.spawn(Gun.find)
+                bag.add(RunService.RenderStepped:Connect(function()
+                    local ok, err = pcall(step)
+                    if not ok then
+                        errors += 1
+                        if errors <= 3 then warnf("wallbang assist error:", err) end
+                    end
+                end))
+            end, function()
+                bag.clear()
+                A.goal, A.style = nil, nil
+                Actions.sp.disable("assist")
             end)
         end
     end)()

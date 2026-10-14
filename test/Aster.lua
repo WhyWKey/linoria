@@ -1328,7 +1328,7 @@ local TeleportPage = Window:Page({ Name = "Teleport", Columns = 2, Subtabs = fal
 local ShotEvents = { shot = {}, hit = {}, cast = {} } -- listeners: shot(origin, target), hit(player, position), cast(part, position)
 local Actions = {
     previewHitEffect = noop, getWeapon = noop, getAllWeapons = noop, getItem = noop, getPlace = noop,
-    kickOnce = noop, fxHook = noop, autoHook = noop, fireAt = function() return false end,
+    kickOnce = noop, fxHook = noop, autoHook = noop, assistHook = noop, fireAt = function() return false end,
     sp = { assist = {}, shooter = function(root) return root.Position end, realPos = function(root) return root.Position end },
     area = function() return "outside" end,
 }
@@ -1379,23 +1379,45 @@ do
     local Wall = CombatTab:Section({ Name = "Wallbang", Side = 1 })
     Wall:Toggle({ Name = "Wallbang", Flag = "silent_wallbang", Default = false })
     Wall:Dropdown({
-        Name = "Method", Flag = "wb_method", Items = { "Vape V4", "awp", "awp v2", "awp v2.1" }, Default = "awp v2",
-        Tooltip = "Vape V4: Vape's origin scan, works best when you stand near a wall.\nawp: scans more origins around you and tries the closest ones first (a bit better than Vape V4).\nawp v2: reaches through more walls (origins up to twice the scan radius) but can be inaccurate sometimes.\nawp v2.1: works out origins along the line to the target, closest first, and only widens the search when it has to.",
+        Name = "Method", Flag = "wb_method", Items = { "Vape V4", "Aster Origin", "Aster Reach", "Aster Precise" }, Default = "Aster Reach",
+        Tooltip = "Vape V4: Vape's origin scan, works best when you stand near a wall.\nAster Origin: scans more origins around you and tries the closest ones first (a bit better than Vape V4).\nAster Reach: reaches through more walls (origins up to twice the scan radius) but can be inaccurate sometimes.\nAster Precise: works out origins along the line to the target, closest first, and only widens the search when it has to.",
     })
     Wall:Toggle({ Name = "Use hitbox", Flag = "wb_hitbox", Default = true, Tooltip = "Also aim at points beside the target's body, not only at the part itself" })
     Wall:Slider({ Name = "Scan radius", Flag = "wb_radius", Min = 1, Max = 10, Default = 6, Suffix = " studs", Decimals = 0.1 })
 
     local Assist = CombatTab:Section({ Name = "Wallbang assist", Side = 1 })
-    local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Moves the position the server sees up to (or into) the wall in front of your silent aim target, so the wallbang has a better origin. Needs silent aim and wallbang." })
+    local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Works on anyone near your cursor, no silent aim needed. If an enemy is behind a wall, it moves the position the server sees up to (or into) the wall so the shot has a line, and sends the shot at that enemy." })
     assistToggle:Keybind({ Name = "Assist key", Flag = "wb_assist_key", Default = "None", Sync = true })
     Assist:Dropdown({ Name = "Mode", Flag = "wb_assist_mode", Items = { "Tween", "Teleport" }, Default = "Tween" })
     Assist:Toggle({ Name = "Inside wall", Flag = "wb_assist_inside", Default = false })
+    Assist:Toggle({ Name = "Only while firing", Flag = "wb_assist_fire", Default = false, Tooltip = "Only moves while the fire button is held or auto fire is shooting" })
+    Assist:Slider({ Name = "Assist FOV", Flag = "wb_assist_fov", Min = 10, Max = 800, Default = 250, Suffix = "px", Decimals = 1 })
     Assist:Slider({ Name = "Activation distance", Flag = "wb_assist_dist", Min = 1, Max = 45, Default = 25, Suffix = " studs", Decimals = 1 })
     Assist:Slider({ Name = "Tween speed", Flag = "wb_assist_speed", Min = 1, Max = 200, Default = 50, Suffix = " studs/s", Decimals = 1 })
     Assist:Slider({ Name = "Max target distance", Flag = "wb_assist_max", Min = 10, Max = 5000, Default = 200, Suffix = " studs", Decimals = 1 })
     local assistVisual = Assist:Toggle({ Name = "Visualizer", Flag = "wb_assist_visual", Default = false, Tooltip = "A highlighted copy of your character shows where the server sees you" })
     assistVisual:Colorpicker({ Name = "Fill", Flag = "wb_assist_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0.6 })
     assistVisual:Colorpicker({ Name = "Outline", Flag = "wb_assist_line", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
+
+    local Indicator = CombatTab:Section({ Name = "Wallbang indicator", Side = 2 })
+    Indicator:Toggle({ Name = "Wallbang indicator", Flag = "wb_ind", Default = false, Tooltip = "Tells you if an enemy is visible, wallbangable or not wallbangable" })
+    Indicator:Toggle({ Name = "Show on cursor", Flag = "wb_ind_cursor", Default = true })
+    Indicator:Toggle({ Name = "Show on everyone", Flag = "wb_ind_all", Default = false })
+    Indicator:Toggle({ Name = "Always visible", Flag = "wb_ind_always", Default = false, Tooltip = "Also shows a label when there is no enemy near the cursor" })
+    Indicator:Slider({ Name = "Text size", Flag = "wb_ind_size", Min = 10, Max = 28, Default = 14, Decimals = 1 })
+    Indicator:Slider({ Name = "Max distance", Flag = "wb_ind_range", Min = 50, Max = 3000, Default = 1000, Suffix = " studs", Decimals = 1 })
+    Indicator:Label({ Name = "Visible color" }):Colorpicker({ Name = "Visible", Flag = "wb_ind_c_vis", Default = Color3.fromRGB(90, 255, 120) })
+    Indicator:Label({ Name = "Wallbangable color" }):Colorpicker({ Name = "Wallbangable", Flag = "wb_ind_c_wb", Default = Color3.fromRGB(255, 200, 60) })
+    Indicator:Label({ Name = "Blocked color" }):Colorpicker({ Name = "Blocked", Flag = "wb_ind_c_block", Default = Color3.fromRGB(255, 80, 80) })
+
+    local Reload = CombatTab:Section({ Name = "Reload indicator", Side = 2 })
+    Reload:Toggle({ Name = "Reload indicator", Flag = "reload_ind", Default = false, Tooltip = "A progress bar under the cursor while your gun reloads" })
+    Reload:Toggle({ Name = "Show time", Flag = "reload_ind_text", Default = true })
+    Reload:Slider({ Name = "Width", Flag = "reload_ind_w", Min = 40, Max = 300, Default = 120, Suffix = "px", Decimals = 1 })
+    Reload:Slider({ Name = "Height", Flag = "reload_ind_h", Min = 3, Max = 16, Default = 6, Suffix = "px", Decimals = 1 })
+    Reload:Slider({ Name = "Vertical offset", Flag = "reload_ind_y", Min = -300, Max = 300, Default = 40, Suffix = "px", Decimals = 1 })
+    Reload:Label({ Name = "Bar color" }):Colorpicker({ Name = "Bar", Flag = "reload_ind_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
+    Reload:Label({ Name = "Background color" }):Colorpicker({ Name = "Background", Flag = "reload_ind_back", Default = Color3.fromRGB(0, 0, 0), Alpha = 0.5 })
 
     -- Silent aim ---------------------------------------------------------------------------
     local Silent = CombatTab:Section({ Name = "Silent aim", Side = 2 })
@@ -1415,6 +1437,7 @@ do
     Silent:Toggle({ Name = "Ignore tased / arrested", Flag = "silent_ignore_down", Default = false })
     Silent:Toggle({ Name = "Auto fire", Flag = "silent_autofire", Default = false })
     Silent:Slider({ Name = "Auto fire rate", Flag = "silent_autofire_rate", Min = 1, Max = 60, Default = 15, Suffix = " hz", Decimals = 1 })
+    Silent:Toggle({ Name = "Auto fire: skip blocked", Flag = "silent_autofire_check", Default = true, Tooltip = "With wallbang on, auto fire only shoots targets you can see or wallbang" })
 
     -- FOV circles (one per assist) ---------------------------------------------------------
     local FovAim, FovSilent = CombatTab:MultiSection({ Sections = { "Aim FOV", "Silent FOV" }, Side = 2 })
@@ -8144,6 +8167,8 @@ do
         -- wall that blocks the line (or nil), the centre of the target's body and the "use hitbox" setting,
         -- and returns an origin and a target when it found a line.
         local METHODS = {}
+        -- names saved by earlier builds
+        local LEGACY = { ["awp"] = "Aster Origin", ["awp v2"] = "Aster Reach", ["awp v2.1"] = "Aster Precise" }
 
         -- Vape V4: the wall point if it is close, else origins one radius around you and points 7.4 studs
         -- around the target's root
@@ -8163,8 +8188,8 @@ do
             return firstClear(targets, origins)
         end
 
-        -- awp: more origins (also straight up), the closest ones first
-        METHODS["awp"] = function(shooter, target, surface, center, hitbox)
+        -- Aster Origin: more origins (also straight up), the closest ones first
+        METHODS["Aster Origin"] = function(shooter, target, surface, center, hitbox)
             local reach = radius() - math.min(WB.moved, 1)
             local look = lookFlat(shooter, target)
             local origins = originsAround(shooter, look, { reach }, { OFFSETS_NEAR, OFFSETS_HIGH })
@@ -8176,8 +8201,8 @@ do
             return firstClear(targets, origins)
         end
 
-        -- awp v2: origins and hit points up to twice the radius away (goes through more walls, less accurate)
-        METHODS["awp v2"] = function(shooter, target, surface, center, hitbox)
+        -- Aster Reach: origins and hit points up to twice the radius away (goes through more walls, less accurate)
+        METHODS["Aster Reach"] = function(shooter, target, surface, center, hitbox)
             local reach = radius()
             local look = lookFlat(shooter, target)
             local origins = originsAround(shooter, look, { reach, reach * 2 }, { OFFSETS_NEAR, OFFSETS_HIGH })
@@ -8187,10 +8212,10 @@ do
             return firstClear(targets, origins)
         end
 
-        -- awp v2.1: works the origins out from the line to the target. The free spot in front of every wall
+        -- Aster Precise: works the origins out from the line to the target. The free spot in front of every wall
         -- on that line, spots on the line itself and a few beside it are ranked by how far they are from
         -- you; everything within the radius is tried first, then up to twice the radius.
-        METHODS["awp v2.1"] = function(shooter, target, surface, center, hitbox)
+        METHODS["Aster Precise"] = function(shooter, target, surface, center, hitbox)
             local reach = radius()
             local look = lookFlat(shooter, target)
             local targets = { target }
@@ -8252,9 +8277,10 @@ do
         end
 
         -- "clear" when the shot already has a line, "moved", newOrigin, newTarget when a path was found, nil when none
-        local function wallbangPlan(origin, part, root)
+        local function wallbangPlan(origin, part, root, override)
             local position = part.Position
-            local cached = WB.cache[part]
+            local cached
+            if not override then cached = WB.cache[part] end
             if cached == false then return nil end
             if cached then return "moved", cached[1], cached[2] end
 
@@ -8262,16 +8288,16 @@ do
             if not blocked and not workspace:Raycast(origin, position - origin, WB.ray) then return "clear" end
 
             -- the shooter is where the server sees you (the assist or a desync may have moved it)
-            local shooter = Actions.sp.shooter(root)
+            local shooter = override or Actions.sp.shooter(root)
             local anchor = part.Parent and part.Parent:FindFirstChild("HumanoidRootPart")
             local center = anchor and anchor.Position or position
-            local method = flag("wb_method", "awp v2")
-            local scan = METHODS[method] or METHODS["awp v2"]
+            local method = LEGACY[flag("wb_method", "Aster Reach")] or flag("wb_method", "Aster Reach")
+            local scan = METHODS[method] or METHODS["Aster Reach"]
 
             local newOrigin, newTarget = scan(shooter, position, blocked and (blocked.Position + blocked.Normal * 0.01) or nil, center, flag("wb_hitbox", true))
 
             -- the two long reach methods keep looking: ground points along the line, then a column above you
-            if not newOrigin and (method == "awp v2" or method == "awp v2.1") then
+            if not newOrigin and (method == "Aster Reach" or method == "Aster Precise") then
                 local delta = position - shooter
                 local dist = delta.Magnitude
                 if dist > 0.5 then
@@ -8299,18 +8325,39 @@ do
             end
 
             if newOrigin then
-                WB.cache[part] = { newOrigin, newTarget }
+                if not override then WB.cache[part] = { newOrigin, newTarget } end
                 return "moved", newOrigin, newTarget
             end
-            WB.cache[part] = false
+            if not override then WB.cache[part] = false end
             return nil
+        end
+
+        -- refreshes the ignore list and drops the cache now and then (shared by everything that asks)
+        WB.lastTick = 0
+        function WB.tick()
+            local now = clock()
+            if now - WB.lastTick > 0.15 then
+                WB.lastTick = now
+                table.clear(WB.cache)
+                WB.updateIgnore()
+            end
+        end
+
+        -- "visible", "wallbang" or "blocked" for a shot from `origin` at `part`; `shooter` overrides where the server sees you
+        function WB.status(origin, part, shooter)
+            local _, _, root = localParts()
+            if not root or not part or not part.Parent then return "blocked" end
+            local plan = wallbangPlan(origin, part, root, shooter)
+            if plan == "clear" then return "visible" end
+            if plan == "moved" then return "wallbang" end
+            return "blocked"
         end
 
         -- castRay hook: shared by silent aim, hit effects and auto taze ----------------------
         do
             local bag = newBag()
             local hookedCast, original = nil, nil
-            local wants = { silent = false, fx = false, auto = false }
+            local wants = { silent = false, fx = false, auto = false, assist = false }
             local autoNext, loopToken, warnedStack = 0, 0, false
             local lastOrigin, lastNew
 
@@ -8319,7 +8366,7 @@ do
             end
 
             local function anyWanted()
-                return wants.silent or wants.fx or wants.auto
+                return wants.silent or wants.fx or wants.auto or wants.assist
             end
 
             local function redirect(...)
@@ -8332,17 +8379,27 @@ do
                     if clock() < force.expires and force.part.Parent then return force.part, force.pos end
                 end
 
-                if typeof(origin) ~= "Vector3" or not wants.silent or not silentActive() then return original(...) end
-                if rand:NextNumber(0, 100) > flag("Silent_Global_HitChance", 100) then return original(...) end
+                if typeof(origin) ~= "Vector3" then return original(...) end
+                local silentOn = wants.silent and silentActive()
+                -- without silent aim, wallbang assist sends the shot at the target it holds
+                local A = Actions.sp.assist
+                local assisted = not silentOn and wants.assist and A.part ~= nil and A.part.Parent ~= nil and clock() < (A.partUntil or 0)
+                if not silentOn and not assisted then return original(...) end
+                if silentOn and rand:NextNumber(0, 100) > flag("Silent_Global_HitChance", 100) then return original(...) end
 
                 local data = Gun.data()
                 local taser = data and data.Behavior == "Taser"
                 local wallbang = flag("silent_wallbang", false)
-                local entity, part = selectTarget("silent", aimRef(), origin, {
-                    limit = data and tonumber(data.Range) or 1000,
-                    ignoreDown = taser,
-                    skipWall = wallbang,
-                })
+                local entity, part
+                if assisted then
+                    entity, part, wallbang = { Character = A.part.Parent }, A.part, true
+                else
+                    entity, part = selectTarget("silent", aimRef(), origin, {
+                        limit = data and tonumber(data.Range) or 1000,
+                        ignoreDown = taser,
+                        skipWall = wallbang,
+                    })
+                end
                 if not entity then return original(...) end
 
                 local args = table.pack(...)
@@ -8474,6 +8531,10 @@ do
                 wants.fx = on and true or false
                 refresh()
             end
+            Actions.assistHook = function(on)
+                wants.assist = on and true or false
+                refresh()
+            end
             Actions.autoHook = function(on)
                 wants.auto = on and true or false
                 refresh()
@@ -8514,12 +8575,20 @@ do
                         local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
                         if root and cam and head and readyGun() then
                             local data = Gun.data()
-                            local entity = selectTarget("silent", aimRef(), head.Position, {
+                            local entity, part = selectTarget("silent", aimRef(), head.Position, {
                                 limit = data and tonumber(data.Range) or 1000,
                                 ignoreDown = data and data.Behavior == "Taser",
                                 skipWall = flag("silent_wallbang", false),
                             })
-                            if entity then fireGun() end
+                            -- only fire when the target can be hit: in plain sight or through a wall
+                            if entity and part and flag("silent_wallbang", false) and flag("silent_autofire_check", true) then
+                                WB.tick()
+                                if WB.status(head.Position, part) == "blocked" then entity = nil end
+                            end
+                            if entity then
+                                Actions.lastAutoShot = clock()
+                                fireGun()
+                            end
                         end
                     end
                 end))
@@ -8530,11 +8599,11 @@ do
             end)
 
             onUnload(function()
-                wants.silent, wants.fx, wants.auto = false, false, false
+                wants.silent, wants.fx, wants.auto, wants.assist = false, false, false, false
                 loopToken += 1
                 unhook()
                 ShotEvents.hooked = nil
-                Actions.fxHook, Actions.autoHook = noop, noop
+                Actions.fxHook, Actions.autoHook, Actions.assistHook = noop, noop, noop
                 Actions.fireAt = function() return false end
             end)
         end
@@ -8596,50 +8665,86 @@ do
             end)
         end
 
-        -- wallbang assist: moves the position the server sees up to (or into) the wall in front of the target ----
+        -- wallbang assist: moves the position the server sees up to (or into) the wall in front of an enemy near
+        -- your cursor that you cannot hit from where you stand. It does not need silent aim. When it holds a target
+        -- the shot is sent at that target (that is what makes the wallbang happen without silent aim).
         do
             local bag = newBag()
             local A = Actions.sp.assist
-            A.goal, A.speed, A.style = nil, 50, nil
+            A.goal, A.speed, A.style, A.part, A.partUntil = nil, 50, nil, nil, 0
             local params = RaycastParams.new()
             params.FilterType = Enum.RaycastFilterType.Exclude
             pcall(function() params.CollisionGroup = "ClientBullet" end)
-            local errors = 0
+            local nextEval, errors = 0, 0
 
-            local function step()
-                A.goal = nil
-                if not (flag("silent_wallbang", false) and flag("Silent_Global_Enabled", false) and keyActive("Silent_Global_Key")) then return end
+            local function firing()
+                if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then return true end
+                return clock() - (Actions.lastAutoShot or -10) < 0.4
+            end
+
+            -- returns the position to show the server (or nil) and the part that is wallbangable from there
+            local function evaluate()
                 local char, _, root = localParts()
-                if not char or not root or typing() then return end
+                if not char or not root or typing() then return nil end
+                if flag("wb_assist_fire", false) and not firing() then return nil end
+                local cam = Camera()
+                if not cam then return nil end
+                WB.tick()
                 local head = char:FindFirstChild("Head")
                 local realPos = Actions.sp.realPos(root)
-                local data = Gun.data()
-                local limit = math.min(flag("wb_assist_max", 200), data and tonumber(data.Range) or 1000)
-                local entity, part = selectTarget("silent", aimRef(), head and head.Position or realPos, {
-                    limit = limit,
-                    ignoreDown = data and data.Behavior == "Taser",
-                    skipWall = true,
-                })
-                if not entity then return end
+                local headOffset = head and (head.Position - root.Position) or v3(0, 1.5, 0)
+                local origin = realPos + headOffset
+                local ref = aimRef()
+                local fov, maxDist, reach = flag("wb_assist_fov", 250), flag("wb_assist_max", 200), flag("wb_assist_dist", 25)
 
-                WB.updateIgnore()
-                params.FilterDescendantsInstances = WB.ray.FilterDescendantsInstances
-                local delta = part.Position - realPos
-                local distance = delta.Magnitude
-                if distance < 2 then return end
-                local hit = workspace:Raycast(realPos, delta, params)
-                if not hit or hit.Distance > flag("wb_assist_dist", 25) then return end
-
-                local unit = delta / distance
-                local point
-                if flag("wb_assist_inside", false) then
-                    point = hit.Position + unit * 1.5
-                else
-                    point = hit.Position - unit * 1.2
+                local candidates = {}
+                for _, e in ipairs(otherEntities()) do
+                    if Relations[e.Player.UserId] ~= "Friendly" and (e.Root.Position - realPos).Magnitude <= maxDist then
+                        local screen, onScreen = cam:WorldToViewportPoint(e.Head.Position)
+                        if onScreen then
+                            local d = (Vector2.new(screen.X, screen.Y) - ref).Magnitude
+                            if d <= fov then candidates[#candidates + 1] = { e = e, d = d } end
+                        end
+                    end
                 end
-                A.goal = v3(point.X, realPos.Y + math.clamp(point.Y - realPos.Y, -4, 4), point.Z)
-                A.speed = flag("wb_assist_mode", "Tween") == "Teleport" and 1e9 or flag("wb_assist_speed", 50)
-                A.style = flag("wb_assist_visual", false) and Actions.sp.visualStyle("wb_assist_fill", "wb_assist_line") or nil
+                table.sort(candidates, function(a, b) return a.d < b.d end)
+
+                for index = 1, math.min(#candidates, 4) do
+                    local part = candidates[index].e.Head
+                    local status = WB.status(origin, part, realPos)
+                    if status == "visible" then
+                        return nil -- you are aiming at someone you can already hit
+                    elseif status == "wallbang" then
+                        return nil, part -- nothing to move, but the shot can still go through
+                    end
+                    local delta = part.Position - realPos
+                    local distance = delta.Magnitude
+                    if distance >= 2 then
+                        params.FilterDescendantsInstances = WB.ray.FilterDescendantsInstances
+                        local hit = workspace:Raycast(realPos, delta, params)
+                        if hit and hit.Distance <= reach then
+                            local unit = delta / distance
+                            local point = flag("wb_assist_inside", false) and (hit.Position + unit * 1.5) or (hit.Position - unit * 1.2)
+                            local goal = v3(point.X, realPos.Y + math.clamp(point.Y - realPos.Y, -4, 4), point.Z)
+                            -- only worth moving when the shot has a line from there
+                            if WB.status(goal + headOffset, part, goal) ~= "blocked" then return goal, part end
+                        end
+                    end
+                end
+                return nil
+            end
+
+            local function step()
+                local now = clock()
+                if now < nextEval then return end
+                nextEval = now + 0.1
+                local goal, part = evaluate()
+                A.goal = goal
+                if goal then
+                    A.speed = flag("wb_assist_mode", "Tween") == "Teleport" and 1e9 or flag("wb_assist_speed", 50)
+                    A.style = flag("wb_assist_visual", false) and Actions.sp.visualStyle("wb_assist_fill", "wb_assist_line") or nil
+                end
+                if part then A.part, A.partUntil = part, now + 0.35 end
             end
 
             feature("wb_assist", function()
@@ -8647,7 +8752,9 @@ do
                     if not A.goal then return nil end
                     return A.goal, A.speed, A.style
                 end)
+                Actions.assistHook(true)
                 task.spawn(Gun.find)
+                nextEval = 0
                 bag.add(RunService.RenderStepped:Connect(function()
                     local ok, err = pcall(step)
                     if not ok then
@@ -8657,8 +8764,239 @@ do
                 end))
             end, function()
                 bag.clear()
-                A.goal, A.style = nil, nil
+                A.goal, A.style, A.part = nil, nil, nil
+                Actions.assistHook(false)
                 Actions.sp.disable("assist")
+            end)
+        end
+
+        -- indicators: the wallbang state of enemies, and a reload progress bar -------------------------
+        do
+            local function pick(name, fallbackColor, fallbackAlpha)
+                local object = Options[name]
+                local color = object and typeof(object.Value) == "Color3" and object.Value or fallbackColor
+                local alpha = object and tonumber(object.Transparency) or fallbackAlpha
+                return color, alpha
+            end
+            local drawingOk = Drawing ~= nil and type(Drawing.new) == "function"
+            local function newDrawing(kind)
+                if not drawingOk then return nil end
+                local ok, object = pcall(Drawing.new, kind)
+                if ok and object then
+                    table.insert(getgenv().TS_Drawings, object)
+                    return object
+                end
+                return nil
+            end
+            local function discard(object)
+                if object then pcall(function() object.Visible = false object:Remove() end) end
+            end
+
+            -- wallbang indicator ---------------------------------------------------------------
+            local bag = newBag()
+            local cursorText, pool, states, budget, warned = nil, {}, {}, 0, false
+            local LABELS = { visible = "visible", wallbang = "wallbangable", blocked = "not wallbangable" }
+
+            local function stateColor(state)
+                if state == "visible" then return (pick("wb_ind_c_vis", Color3.fromRGB(90, 255, 120), 0)) end
+                if state == "wallbang" then return (pick("wb_ind_c_wb", Color3.fromRGB(255, 200, 60), 0)) end
+                return (pick("wb_ind_c_block", Color3.fromRGB(255, 80, 80), 0))
+            end
+            local function setText(text, content, x, y, size, color)
+                text.Text = content
+                text.Size = size
+                text.Color = color
+                text.Position = Vector2.new(x, y)
+                text.Visible = true
+            end
+            local function hideTexts()
+                if cursorText then cursorText.Visible = false end
+                for _, text in pairs(pool) do text.Visible = false end
+            end
+            local function stateOf(e, origin, now, force)
+                local cached = states[e.Player]
+                if cached and now - cached.t < 0.15 then return cached.s end
+                if not force and budget <= 0 and cached then return cached.s end
+                budget -= 1
+                local state = WB.status(origin, e.Head)
+                states[e.Player] = { s = state, t = now }
+                return state
+            end
+
+            local function indicatorStep()
+                local cam = Camera()
+                local char, _, root = localParts()
+                if not cam or not root then
+                    hideTexts()
+                    return
+                end
+                WB.tick()
+                local now = clock()
+                local head = char:FindFirstChild("Head")
+                local origin = head and head.Position or root.Position
+                local size, range = flag("wb_ind_size", 14), flag("wb_ind_range", 1000)
+                local everyone = flag("wb_ind_all", false)
+                local ref = aimRef()
+                budget = 3
+                local used, best, bestD = {}, nil, nil
+                for _, e in ipairs(otherEntities()) do
+                    if Relations[e.Player.UserId] ~= "Friendly" and (e.Root.Position - root.Position).Magnitude <= range then
+                        local screen, onScreen = cam:WorldToViewportPoint(e.Head.Position)
+                        if onScreen then
+                            local d = (Vector2.new(screen.X, screen.Y) - ref).Magnitude
+                            if not bestD or d < bestD then best, bestD = e, d end
+                            if everyone then
+                                local state = stateOf(e, origin, now, false)
+                                local text = pool[e.Player]
+                                if not text then
+                                    text = newDrawing("Text")
+                                    if text then
+                                        text.Center = true
+                                        text.Outline = true
+                                        pool[e.Player] = text
+                                    end
+                                end
+                                if text then
+                                    setText(text, LABELS[state], screen.X, screen.Y - size * 2.2, size, stateColor(state))
+                                    used[e.Player] = true
+                                end
+                            end
+                        end
+                    end
+                end
+                for player, text in pairs(pool) do
+                    if not used[player] then
+                        text.Visible = false
+                        if not player.Parent then
+                            discard(text)
+                            pool[player] = nil
+                            states[player] = nil
+                        end
+                    end
+                end
+
+                if flag("wb_ind_cursor", true) then
+                    if not cursorText then
+                        cursorText = newDrawing("Text")
+                        if cursorText then cursorText.Outline = true end
+                    end
+                    if cursorText then
+                        if best and bestD <= 250 then
+                            local state = stateOf(best, origin, now, true)
+                            setText(cursorText, LABELS[state], ref.X + 24, ref.Y + 14, size, stateColor(state))
+                        elseif flag("wb_ind_always", false) then
+                            setText(cursorText, "no target", ref.X + 24, ref.Y + 14, size, Color3.fromRGB(180, 180, 180))
+                        else
+                            cursorText.Visible = false
+                        end
+                    end
+                elseif cursorText then
+                    cursorText.Visible = false
+                end
+            end
+
+            feature("wb_ind", function()
+                if not drawingOk then
+                    say("The wallbang indicator needs the Drawing library")
+                    switchOff("wb_ind")
+                    return
+                end
+                bag.add(RunService.RenderStepped:Connect(function()
+                    local ok, err = pcall(indicatorStep)
+                    if not ok and not warned then
+                        warned = true
+                        warnf("wallbang indicator error:", err)
+                    end
+                end))
+            end, function()
+                bag.clear()
+                hideTexts()
+            end)
+
+            -- reload indicator: a progress bar under the cursor while the gun reloads ----------------
+            local reloadBag = newBag()
+            local back, fill, label, reloadWarned = nil, nil, nil, false
+            local RELOAD_FALLBACK = { ["AK-47"] = 2, FAL = 2, M4A1 = 2, M9 = 2, MP5 = 2, ["Remington 870"] = 3.5, Taser = 3.4, M700 = 3, Revolver = 3 }
+
+            local function hideReload()
+                if back then back.Visible = false end
+                if fill then fill.Visible = false end
+                if label then label.Visible = false end
+            end
+
+            local function reloadStep()
+                local tool = equippedGun()
+                local session = tool and tool:GetAttribute("Local_ReloadSession")
+                if type(session) ~= "number" or session <= 0 then
+                    hideReload()
+                    return
+                end
+                local data = Gun.data()
+                local duration = (data and tonumber(data.ReloadTime)) or tonumber(tool:GetAttribute("ReloadTime")) or RELOAD_FALLBACK[tool.Name] or 2.5
+                duration = math.max(duration, 0.1)
+                local elapsed = tick() - session
+                local progress = math.clamp(elapsed / duration, 0, 1)
+                local width, height = flag("reload_ind_w", 120), flag("reload_ind_h", 6)
+                local ref = aimRef()
+                local x, y = ref.X - width / 2, ref.Y + flag("reload_ind_y", 40)
+
+                back = back or newDrawing("Square")
+                fill = fill or newDrawing("Square")
+                if not back or not fill then return end
+                local fillColor, fillAlpha = pick("reload_ind_fill", Color3.fromRGB(255, 255, 255), 0)
+                local backColor, backAlpha = pick("reload_ind_back", Color3.fromRGB(0, 0, 0), 0.5)
+                back.Filled, back.Color, back.Transparency = true, backColor, 1 - backAlpha
+                back.Position, back.Size, back.Visible = Vector2.new(x - 1, y - 1), Vector2.new(width + 2, height + 2), true
+                fill.Filled, fill.Color, fill.Transparency = true, fillColor, 1 - fillAlpha
+                fill.Position, fill.Size, fill.Visible = Vector2.new(x, y), Vector2.new(math.max(width * progress, 0.01), height), true
+
+                if flag("reload_ind_text", true) then
+                    if not label then
+                        label = newDrawing("Text")
+                        if label then
+                            label.Center = true
+                            label.Outline = true
+                            label.Size = 13
+                            label.Color = Color3.fromRGB(255, 255, 255)
+                        end
+                    end
+                    if label then
+                        label.Text = string.format("reloading %.1fs", math.max(duration - elapsed, 0))
+                        label.Position = Vector2.new(ref.X, y + height + 3)
+                        label.Visible = true
+                    end
+                elseif label then
+                    label.Visible = false
+                end
+            end
+
+            feature("reload_ind", function()
+                if not drawingOk then
+                    say("The reload indicator needs the Drawing library")
+                    switchOff("reload_ind")
+                    return
+                end
+                task.spawn(Gun.find)
+                reloadBag.add(RunService.RenderStepped:Connect(function()
+                    local ok, err = pcall(reloadStep)
+                    if not ok and not reloadWarned then
+                        reloadWarned = true
+                        warnf("reload indicator error:", err)
+                    end
+                end))
+            end, function()
+                reloadBag.clear()
+                hideReload()
+            end)
+
+            onUnload(function()
+                for _, text in pairs(pool) do discard(text) end
+                table.clear(pool)
+                discard(cursorText)
+                discard(back)
+                discard(fill)
+                discard(label)
+                cursorText, back, fill, label = nil, nil, nil, nil
             end)
         end
     end)()

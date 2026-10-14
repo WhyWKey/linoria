@@ -1992,13 +1992,16 @@ do
         Callback = function(value) Library.WireframeDrag = value end,
     })
 
-    -- Side mouse buttons (MB4 / MB5) --------------------------------------------
-    -- Roblox does not report these buttons, so they are polled through the executor's iskeypressed
-    -- (Windows virtual keys 0x05 / 0x06). The menu only offers them when that call answers.
+    -- Extra mouse buttons (MB3 middle, MB4 / MB5 side) ----------------------------
+    -- Middle click is a normal Roblox input, so it always works. Roblox does not report the side buttons,
+    -- so those are polled through the executor's iskeypressed (Windows virtual keys 0x05 / 0x06) when it
+    -- answers. Otherwise remap the side button to a keyboard key in the mouse software (see the label).
     do
+        local BUTTONS = { MB3 = true, MB4 = true, MB5 = true }
         local SIDE_CODES = { MB4 = 0x05, MB5 = 0x06 }
-        local keyFn = rawget(getgenv(), "iskeypressed") or rawget(getgenv(), "isKeyPressed")
-        local activeFn = rawget(getgenv(), "isrbxactive") or rawget(getgenv(), "isRbxActive")
+        local env = getgenv()
+        local keyFn = rawget(env, "iskeypressed") or rawget(env, "isKeyPressed")
+        local activeFn = rawget(env, "isrbxactive") or rawget(env, "isRbxActive")
 
         local function rawSide(name)
             if not keyFn then return false end
@@ -2006,16 +2009,16 @@ do
             return ok and down == true
         end
 
+        local sideNote = "iskeypressed is missing"
         local supported = false
         if keyFn then
             local ok, answer = pcall(keyFn, SIDE_CODES.MB4)
             supported = ok and type(answer) == "boolean"
+            sideNote = ok and ("iskeypressed returned " .. typeof(answer)) or "iskeypressed errored"
         end
 
-        local frameCache = { MB4 = false, MB5 = false }
-        local function sideDown(name)
-            return frameCache[name] == true
-        end
+        local frameCache = { MB3 = false, MB4 = false, MB5 = false }
+        local function buttonDown(name) return frameCache[name] == true end
 
         local hooked = setmetatable({}, { __mode = "k" })
         local function hook(picker)
@@ -2024,48 +2027,48 @@ do
             local original = picker.GetState
             picker.GetState = function(self)
                 local key = self.Value
-                if SIDE_CODES[key] then
+                if BUTTONS[key] then
                     if self.Mode == "Always" then return true end
-                    if self.Mode == "Hold" then return sideDown(key) end
+                    if self.Mode == "Hold" then return buttonDown(key) end
                     return self.Toggled == true
                 end
                 return original(self)
             end
         end
 
-        if supported then
-            Library:GiveSignal(RunService.RenderStepped:Connect(function()
-                local focused = true
-                if activeFn then
-                    local ok, active = pcall(activeFn)
-                    focused = not ok or active ~= false
-                end
-                for name in pairs(SIDE_CODES) do
-                    frameCache[name] = focused and rawSide(name)
-                end
-                for _, entry in ipairs(keybindRegistry) do
-                    local picker = Options[entry.flag]
-                    if picker then
-                        hook(picker)
-                        local state = hooked[picker]
-                        local key = picker.Value
-                        if SIDE_CODES[key] then
-                            local down = sideDown(key)
-                            if down ~= state.last then
-                                state.last = down
-                                if down and picker.Mode == "Toggle" then
-                                    picker.Toggled = not picker.Toggled
-                                    pcall(picker.DoClick, picker)
-                                end
-                                pcall(picker.Update, picker)
+        Library:GiveSignal(RunService.RenderStepped:Connect(function()
+            local focused = true
+            if activeFn then
+                local ok, active = pcall(activeFn)
+                focused = not ok or active ~= false
+            end
+            frameCache.MB3 = focused and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton3)
+            if supported then
+                frameCache.MB4 = focused and rawSide("MB4")
+                frameCache.MB5 = focused and rawSide("MB5")
+            end
+            for _, entry in ipairs(keybindRegistry) do
+                local picker = Options[entry.flag]
+                if picker then
+                    hook(picker)
+                    local state = hooked[picker]
+                    local key = picker.Value
+                    if BUTTONS[key] then
+                        local down = buttonDown(key)
+                        if down ~= state.last then
+                            state.last = down
+                            if down and picker.Mode == "Toggle" then
+                                picker.Toggled = not picker.Toggled
+                                pcall(picker.DoClick, picker)
                             end
-                        else
-                            state.last = false
+                            pcall(picker.Update, picker)
                         end
+                    else
+                        state.last = false
                     end
                 end
-            end))
-        end
+            end
+        end))
 
         local names, byName = {}, {}
         for _, entry in ipairs(keybindRegistry) do
@@ -2075,18 +2078,16 @@ do
             table.insert(names, label)
         end
 
-        local SideGroup = SettingsTab:AddLeftGroupbox("Side mouse buttons")
-        if not supported or #names == 0 then
-            SideGroup:AddLabel(#names == 0 and "No keybinds to assign" or "iskeypressed unavailable", true)
-            SideGroup:AddLabel("This executor does not report mouse side buttons.", true)
+        local SideGroup = SettingsTab:AddLeftGroupbox("Extra mouse buttons")
+        if #names == 0 then
+            SideGroup:AddLabel("No keybinds to assign", true)
         else
             local syncing = false
             local chosen = names[1]
             local buttonDropdown
+            local values = supported and { "Off", "MB3", "MB4", "MB5" } or { "Off", "MB3" }
 
-            local function chosenPicker()
-                return Options[byName[chosen]]
-            end
+            local function chosenPicker() return Options[byName[chosen]] end
 
             local function assign(value)
                 local picker = chosenPicker()
@@ -2105,22 +2106,22 @@ do
                     local picker = chosenPicker()
                     if picker and buttonDropdown then
                         syncing = true
-                        buttonDropdown:SetValue(SIDE_CODES[picker.Value] and picker.Value or "Off")
+                        buttonDropdown:SetValue(BUTTONS[picker.Value] and picker.Value or "Off")
                         syncing = false
                     end
                 end,
             })
             SideGroup:AddDropdown("SideBindButton", {
                 Text = "Mouse button",
-                Values = { "Off", "MB4", "MB5" },
+                Values = values,
                 Default = 1,
-                Tooltip = "MB4 is the back side button, MB5 the forward one. Off leaves the key as it is, or clears a side button.",
+                Tooltip = "MB3 is the middle click, MB4 the back side button, MB5 the forward one. Off clears an extra button.",
                 Callback = function(value)
                     if syncing then return end
                     local picker = chosenPicker()
                     if not picker then return end
                     if value == "Off" then
-                        if SIDE_CODES[picker.Value] then assign("None") end
+                        if BUTTONS[picker.Value] then assign("None") end
                     else
                         assign(value)
                     end
@@ -2129,16 +2130,20 @@ do
             buttonDropdown = Options.SideBindButton
 
             local detecting = false
-            SideGroup:AddButton("Detect side button", function()
+            SideGroup:AddButton("Detect button", function()
                 if detecting then return end
                 detecting = true
-                pcall(function() Library:Notify("Press a side mouse button (5 s)", 5) end)
+                pcall(function() Library:Notify("Press a mouse button (5 s)", 5) end)
                 task.spawn(function()
                     local deadline = os.clock() + 5
                     local found
                     while os.clock() < deadline and not found do
-                        for name in pairs(SIDE_CODES) do
-                            if rawSide(name) then found = name break end
+                        if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton3) then
+                            found = "MB3"
+                        elseif supported then
+                            for name in pairs(SIDE_CODES) do
+                                if rawSide(name) then found = name break end
+                            end
                         end
                         task.wait()
                     end
@@ -2147,13 +2152,24 @@ do
                         pcall(function() buttonDropdown:SetValue(found) end)
                         pcall(function() Library:Notify("Bound " .. chosen .. " to " .. found, 3) end)
                     else
-                        pcall(function() Library:Notify("No side button seen", 3) end)
+                        pcall(function() Library:Notify("No button seen", 3) end)
                     end
                 end)
             end)
-            SideGroup:AddLabel("Hold, Toggle and Always modes all work. Config saves the button.", true)
+            SideGroup:AddButton("Check side buttons", function()
+                local report = {}
+                for _, fname in ipairs({ "iskeypressed", "isKeyPressed", "ismouse1pressed", "isrbxactive" }) do
+                    table.insert(report, fname .. "=" .. (rawget(env, fname) and "yes" or "no"))
+                end
+                table.insert(report, supported and "side buttons: ON" or ("side buttons: OFF (" .. sideNote .. ")"))
+                pcall(function() Library:Notify(table.concat(report, " | "), 8) end)
+            end)
+            if supported then
+                SideGroup:AddLabel("MB3 middle, MB4 back, MB5 forward. Hold, Toggle and Always work.", true)
+            else
+                SideGroup:AddLabel("This executor does not report side buttons (" .. sideNote .. "). Middle click works. For a side button, remap it to an unused key (Insert, Home, a numpad key) in your mouse software or AutoHotkey, then bind that key.", true)
+            end
 
-            -- keybinds loaded from a config may already hold MB4/MB5
             for _, entry in ipairs(keybindRegistry) do
                 local picker = Options[entry.flag]
                 if picker then hook(picker) end

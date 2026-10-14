@@ -936,11 +936,83 @@ local SKYBOX_PRESETS = {
     },
 }
 
-local SKYBOX_NAMES = { "Default" }
+SKYBOX_PRESETS["Custom"] = { Custom = true } -- built from the ids typed in the Sky section
+-- Auras taken from the "POF:RE AURA" pack (Creator Store asset 15374038687). The whole pack is one model asset with
+-- a dummy rig per aura, so each entry maps a menu name to the rig's name inside it. Loaded once, on first use.
+local AURA_PACK = {
+    id = 15374038687,
+    rigs = {
+        ["Armageddon"] = "POF:RE AURA ARMAGEDDON",
+        ["Battleship"] = "Battleship",
+        ["Beast"] = "POF:RE AURA  BEAST",
+        ["Bee Swarm"] = "POF:RE AURA BEE SWARM",
+        ["Blue Heat"] = "POF:RE AURA: Blue Heat",
+        ["Blue Lock"] = "POF:RE AURA: Blue Lock",
+        ["Celestial Body"] = "POF:RE AURA  CELESTIAL BODY",
+        ["Chain God"] = "POF:RE AURA: Chain God",
+        ["Cinder"] = "POF:RE AURA CINDER",
+        ["Cloak of Lightning"] = "POF:RE AURA: Cloak of Lightning",
+        ["Cool Vapor"] = "POF:RE AURA COOL VAPOR",
+        ["Crystal determination"] = "POF:RE AURA: Crystal determination",
+        ["Daemon of Cards"] = "POF:RE AURA: Daemon of Cards",
+        ["Deadly Orbital Strike"] = "Deadly Orbital Strike",
+        ["Demonic Drive"] = "POF:RE AURA: Demonic Drive",
+        ["Devil's beam"] = "POF:RE AURA: Devil's beam",
+        ["Fiery Ritual of Hallownest"] = "POF:RE AURA: Fiery Ritual of Hallownest",
+        ["Flame Barrage"] = "Flame Barrage",
+        ["Gravity God"] = "POF:RE AURA: Gravity God",
+        ["Green power"] = "POF:RE AURA: Green power",
+        ["Hanma"] = "POF:RE AURA HANMA",
+        ["Heaven"] = "POF:RE AURA HEAVEN",
+        ["Hellish Orb"] = "POF:RE AURA: Hellish Orb",
+        ["Hellzone Champion"] = "POF:RE AURA: Hellzone Champion",
+        ["High Gravity"] = "POF:RE AURA  HIGH GRAVITY",
+        ["Honoring Flame"] = "POF:RE AURA: Honoring Flame",
+        ["Incognito"] = "POF:RE AURA: Incognito",
+        ["Infinite Reality"] = "Infinite Reality",
+        ["Malware"] = "POF:RE AURA MALWARE",
+        ["Midnight Blues"] = "POF:RE AURA: Midnight Blues",
+        ["MUI"] = "POF:RE AURA MUI",
+        ["Mutants Rage"] = "POF:RE AURA MUTANTS RAGE",
+        ["Nano"] = "POF:RE AURA NANO",
+        ["North Star"] = "North Star",
+        ["North Star (POF)"] = "POF:RE AURA NORTH STAR",
+        ["Omega"] = "POF:RE AURA OMEGA",
+        ["Poison"] = "POF:RE AURA POISON",
+        ["Psychic Orbs"] = "POF:RE AURA: Psychic Orbs",
+        ["Pure Vessel"] = "Pure Vessel",
+        ["Radiance"] = "POF:RE AURA RADIANCE",
+        ["Red King"] = "POF:RE AURA RED KING",
+        ["Red King's Bash"] = "POF:RE AURA: Red King's Bash",
+        ["Red Ring of Death"] = "POF:RE AURA: Red Ring of Death",
+        ["Roar of The Jungle Dragon"] = "POF:RE AURA: Roar of The Jungle Dragon",
+        ["SSJG"] = "POF:RE AURA SSJG By ZironTheDerg",
+        ["Shadow's Wrath"] = "Shadow's Wrath",
+        ["Solar Flare"] = "POF:RE AURA SOLAR FLARE",
+        ["SSJB"] = "POF:RE AURA SSJB",
+        ["Stardust Fragment"] = "POF:RE AURA: Stardust Fragment",
+        ["Street Demon"] = "POF:RE AURA: Street Demon",
+        ["Submission: Wormhole"] = "PoF:Re Aura Submission: Wormhole",
+        ["Summer Lovin'"] = "POF:RE AURA SUMMER LOVIN'",
+        ["Sun Necromancer"] = "POF:RE AURA: Sun Necromancer",
+        ["Super Sonic"] = "POF:RE AURA SUPER SONIC",
+        ["Wano"] = "POF:RE AURA: Wano",
+        ["Wisp"] = "POF:RE AURA  WISP",
+    },
+    items = { "starlight", "heavenly", "ribbon", "sakura", "angel", "wind", "flow", "star" },
+}
+do
+    local names = {}
+    for label in pairs(AURA_PACK.rigs) do table.insert(names, label) end
+    table.sort(names)
+    for _, label in ipairs(names) do table.insert(AURA_PACK.items, label) end
+end
+
+local SKYBOX_NAMES = { "Default", "Custom" }
 do
     local names = {}
     for name in pairs(SKYBOX_PRESETS) do
-        if name ~= "Default" then table.insert(names, name) end
+        if name ~= "Default" and name ~= "Custom" then table.insert(names, name) end
     end
     table.sort(names)
     for _, name in ipairs(names) do table.insert(SKYBOX_NAMES, name) end
@@ -1044,7 +1116,43 @@ local LocalPlayer = Players.LocalPlayer
 Loader.verify(0.16)
 local UI_REPO = "https://raw.githubusercontent.com/WhyWKey/linoria/main/"
 Loader.step("Downloading UI library", 0.22)
-local Library = loadstring(game:HttpGet(UI_REPO .. "Library.lua"))()
+-- Teach the keybind picker the middle and side mouse buttons before the library runs.
+-- Each patch is skipped if the library text changed, so an update upstream cannot break loading.
+local function patchLibrarySource(source)
+    local function swap(find, replace)
+        local first, last = string.find(source, find, 1, true)
+        if first then source = string.sub(source, 1, first - 1) .. replace .. string.sub(source, last + 1) end
+    end
+    -- picking: middle click through the normal input event, side buttons by polling
+    swap("            local Event;\n            Event = InputService.InputBegan:Connect(function(Input)",
+[[            local Event;
+            task.spawn(function()
+                while not Break do
+                    for _, SideKey in ipairs({ 'MB4', 'MB5' }) do
+                        if (not Break) and Library.ButtonDown and Library.ButtonDown(SideKey) then
+                            Break = true;
+                            Picking = false;
+                            DisplayLabel.Text = SideKey;
+                            KeyPicker.Value = SideKey;
+                            Library:SafeCallback(KeyPicker.ChangedCallback, Enum.KeyCode.Unknown);
+                            Library:SafeCallback(KeyPicker.Changed, Enum.KeyCode.Unknown);
+                            Library:AttemptSave();
+                            if Event then Event:Disconnect(); end;
+                        end;
+                    end;
+                    task.wait();
+                end;
+            end);
+            Event = InputService.InputBegan:Connect(function(Input)]])
+    swap("                elseif Input.UserInputType == Enum.UserInputType.MouseButton2 then\n                    Key = 'MB2';",
+         "                elseif Input.UserInputType == Enum.UserInputType.MouseButton2 then\n                    Key = 'MB2';\n                elseif Input.UserInputType == Enum.UserInputType.MouseButton3 then\n                    Key = 'MB3';")
+    -- holding: ask Aster for the button state instead of indexing Enum.KeyCode with 'MB4'
+    swap("                local Key = KeyPicker.Value;\n                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then\n                    return Key == 'MB1' and",
+         "                local Key = KeyPicker.Value;\n                if Key == 'MB3' or Key == 'MB4' or Key == 'MB5' then\n                    return (Library.ButtonDown and Library.ButtonDown(Key)) == true;\n                end;\n                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then\n                    return Key == 'MB1' and")
+    return source
+end
+
+local Library = loadstring(patchLibrarySource(game:HttpGet(UI_REPO .. "Library.lua")))()
 local ThemeManager = loadstring(game:HttpGet(UI_REPO .. "addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(UI_REPO .. "addons/SaveManager.lua"))()
 -- This library never sets HasTransparency on color pickers, so SaveManager reset every alpha
@@ -1684,6 +1792,7 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     local EnvSky, EnvAtmos, EnvBloom, EnvScreen = WorldPage:MultiSection({ Sections = { "Sky", "Atmos", "Bloom", "Screen" }, Side = 1 })
     EnvSky:Toggle({ Name = "Skybox", Flag = "skybox_enabled", Default = false })
     EnvSky:Dropdown({ Name = "Preset", Flag = "skybox_value", Items = SKYBOX_NAMES, Default = SKYBOX_NAMES[1] })
+    EnvSky:Input({ Name = "Custom ids", Flag = "skybox_custom_ids", Default = "", Placeholder = "1 id or link, or 6: up down front back left right" })
     EnvSky:Dropdown({ Name = "Hide parts", Flag = "skybox_disable", Items = { "stars", "sun", "moon" }, Multi = true, Default = { "stars", "sun", "moon" } })
     EnvAtmos:Toggle({ Name = "Atmosphere", Flag = "atmosphere_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "atmosphere_color", Default = WHITE })
     EnvAtmos:Slider({ Name = "Density", Flag = "atmosphere_density", Min = 0, Max = 1, Default = 0.3, Decimals = 0.01 })
@@ -1811,7 +1920,8 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     local AuraBox = WorldPage:Section({ Name = "Particle aura", Side = 1 })
     local auraToggle = AuraBox:Toggle({ Name = "Particle aura", Flag = "pa_enabled", Default = false })
     auraToggle:Colorpicker({ Name = "Color", Flag = "pa_color", Default = Color3.fromRGB(133, 220, 255), Alpha = 0.2 })
-    AuraBox:Dropdown({ Name = "Aura", Flag = "pa_source", Items = { "starlight", "heavenly", "ribbon", "sakura", "angel", "wind", "flow", "star" }, Default = "angel" })
+    AuraBox:Dropdown({ Name = "Aura", Flag = "pa_source", Items = AURA_PACK.items, Default = "angel" })
+    AuraBox:Toggle({ Name = "Keep pack colors", Flag = "pa_pack_original", Default = true, Tooltip = "Pack auras keep their own colors. Turn off to paint them with the color above like the other auras." })
 
     local Avatar = WorldPage:Section({ Name = "Avatar changer", Side = 2 })
     Avatar:Input({ Name = "User", Flag = "spoof_avatar_user", Placeholder = "UserId, username or profile URL" })
@@ -1837,6 +1947,7 @@ do
     KickSection:Toggle({ Name = "Loop fling all", Flag = "misc_kick_all", Default = false })
     KickSection:Toggle({ Name = "Skip players inside the prison", Flag = "misc_kick_filter", Default = false })
     KickSection:Toggle({ Name = "Velocity protection", Flag = "misc_kick_velprot", Default = true })
+    KickSection:Toggle({ Name = "Fling dropped body parts", Flag = "misc_kick_parts", Default = true, Tooltip = "When a player resets or dies, their body parts stay in the world. Those are flung too, one part after another." })
     KickSection:Toggle({ Name = "Move to the car spawner", Flag = "misc_kick_move", Default = true })
     KickSection:Toggle({ Name = "Grab a gun first", Flag = "misc_kick_equip", Default = false })
     KickSection:Label({ Name = "Stand on the car spawner plate first or it will not work. Needs isnetworkowner." })
@@ -1995,7 +2106,7 @@ do
     -- Extra mouse buttons (MB3 middle, MB4 / MB5 side) ----------------------------
     -- Middle click is a normal Roblox input, so it always works. Roblox does not report the side buttons,
     -- so those are polled through the executor's iskeypressed (Windows virtual keys 0x05 / 0x06) when it
-    -- answers. Otherwise remap the side button to a keyboard key in the mouse software (see the label).
+    -- answers. Click a keybind and press the button to bind it; the library is patched at load for that.
     do
         local BUTTONS = { MB3 = true, MB4 = true, MB5 = true }
         local SIDE_CODES = { MB4 = 0x05, MB5 = 0x06 }
@@ -2070,110 +2181,15 @@ do
             end
         end))
 
-        local names, byName = {}, {}
-        for _, entry in ipairs(keybindRegistry) do
-            local label = entry.name
-            if byName[label] then label = label .. " (" .. entry.flag .. ")" end
-            byName[label] = entry.flag
-            table.insert(names, label)
+        -- the library's picker and Hold check read the button state from here
+        Library.ButtonDown = buttonDown
+
+        if not supported then
+            warn("Aster: side mouse buttons unavailable (" .. sideNote .. "); middle click still works")
         end
-
-        local SideGroup = SettingsTab:AddLeftGroupbox("Extra mouse buttons")
-        if #names == 0 then
-            SideGroup:AddLabel("No keybinds to assign", true)
-        else
-            local syncing = false
-            local chosen = names[1]
-            local buttonDropdown
-            local values = supported and { "Off", "MB3", "MB4", "MB5" } or { "Off", "MB3" }
-
-            local function chosenPicker() return Options[byName[chosen]] end
-
-            local function assign(value)
-                local picker = chosenPicker()
-                if not picker then return end
-                hook(picker)
-                pcall(function() picker:SetValue({ value, picker.Mode }) end)
-                pcall(function() Library:AttemptSave() end)
-            end
-
-            SideGroup:AddDropdown("SideBindTarget", {
-                Text = "Keybind",
-                Values = names,
-                Default = 1,
-                Callback = function(value)
-                    chosen = value
-                    local picker = chosenPicker()
-                    if picker and buttonDropdown then
-                        syncing = true
-                        buttonDropdown:SetValue(BUTTONS[picker.Value] and picker.Value or "Off")
-                        syncing = false
-                    end
-                end,
-            })
-            SideGroup:AddDropdown("SideBindButton", {
-                Text = "Mouse button",
-                Values = values,
-                Default = 1,
-                Tooltip = "MB3 is the middle click, MB4 the back side button, MB5 the forward one. Off clears an extra button.",
-                Callback = function(value)
-                    if syncing then return end
-                    local picker = chosenPicker()
-                    if not picker then return end
-                    if value == "Off" then
-                        if BUTTONS[picker.Value] then assign("None") end
-                    else
-                        assign(value)
-                    end
-                end,
-            })
-            buttonDropdown = Options.SideBindButton
-
-            local detecting = false
-            SideGroup:AddButton("Detect button", function()
-                if detecting then return end
-                detecting = true
-                pcall(function() Library:Notify("Press a mouse button (5 s)", 5) end)
-                task.spawn(function()
-                    local deadline = os.clock() + 5
-                    local found
-                    while os.clock() < deadline and not found do
-                        if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton3) then
-                            found = "MB3"
-                        elseif supported then
-                            for name in pairs(SIDE_CODES) do
-                                if rawSide(name) then found = name break end
-                            end
-                        end
-                        task.wait()
-                    end
-                    detecting = false
-                    if found then
-                        pcall(function() buttonDropdown:SetValue(found) end)
-                        pcall(function() Library:Notify("Bound " .. chosen .. " to " .. found, 3) end)
-                    else
-                        pcall(function() Library:Notify("No button seen", 3) end)
-                    end
-                end)
-            end)
-            SideGroup:AddButton("Check side buttons", function()
-                local report = {}
-                for _, fname in ipairs({ "iskeypressed", "isKeyPressed", "ismouse1pressed", "isrbxactive" }) do
-                    table.insert(report, fname .. "=" .. (rawget(env, fname) and "yes" or "no"))
-                end
-                table.insert(report, supported and "side buttons: ON" or ("side buttons: OFF (" .. sideNote .. ")"))
-                pcall(function() Library:Notify(table.concat(report, " | "), 8) end)
-            end)
-            if supported then
-                SideGroup:AddLabel("MB3 middle, MB4 back, MB5 forward. Hold, Toggle and Always work.", true)
-            else
-                SideGroup:AddLabel("This executor does not report side buttons (" .. sideNote .. "). Middle click works. For a side button, remap it to an unused key (Insert, Home, a numpad key) in your mouse software or AutoHotkey, then bind that key.", true)
-            end
-
-            for _, entry in ipairs(keybindRegistry) do
-                local picker = Options[entry.flag]
-                if picker then hook(picker) end
-            end
+        for _, entry in ipairs(keybindRegistry) do
+            local picker = Options[entry.flag]
+            if picker then hook(picker) end
         end
     end
 
@@ -2625,6 +2641,97 @@ do
         Technology = LightingService.Technology,
     }
 
+    -- Custom skybox: ids typed in "Custom ids". One id may be a Creator Store skybox model (its Sky is copied),
+    -- a decal or an image (used on all six faces); six ids are the faces in the order up, down, front, back, left, right.
+    -- Decal ids are converted to their image id. Loading waits until typing stops, then runs once per text.
+    local customSkybox
+    do
+        local FACES = { "SkyboxUp", "SkyboxDn", "SkyboxFt", "SkyboxBk", "SkyboxLf", "SkyboxRt" }
+        local assetCache = {}
+        local built, builtText, seenText, seenSince, loading = nil, nil, nil, 0, false
+
+        local function tell(message)
+            pcall(function() Library:Notify(message, 4) end)
+        end
+
+        -- returns { sky = Sky } or { image = "rbxassetid://..." }
+        local function resolveAsset(id)
+            if assetCache[id] then return assetCache[id] end
+            local result
+            local ok, objects = pcall(function() return game:GetObjects("rbxassetid://" .. id) end)
+            if ok and type(objects) == "table" then
+                for _, object in ipairs(objects) do
+                    if object:IsA("Sky") then result = { sky = object } break end
+                    local nested = object:FindFirstChildWhichIsA("Sky", true)
+                    if nested then result = { sky = nested } break end
+                    if object:IsA("Decal") or object:IsA("Texture") then result = { image = object.Texture } break end
+                    if object:IsA("ImageLabel") or object:IsA("ImageButton") then result = { image = object.Image } break end
+                end
+            end
+            result = result or { image = "rbxassetid://" .. id } -- not an instance asset: assume it is already an image
+            assetCache[id] = result
+            return result
+        end
+
+        local function build(text)
+            local ids = {}
+            for number in string.gmatch(text, "%d+") do table.insert(ids, number) end
+            if #ids == 1 then
+                local asset = resolveAsset(ids[1])
+                local preset = {}
+                if asset.sky then
+                    for _, face in ipairs(FACES) do preset[face] = asset.sky[face] end
+                    preset.StarCount = asset.sky.StarCount
+                    preset.SunAngularSize = asset.sky.SunAngularSize
+                    preset.MoonAngularSize = asset.sky.MoonAngularSize
+                    preset.SunTextureId = asset.sky.SunTextureId
+                    preset.MoonTextureId = asset.sky.MoonTextureId
+                else
+                    for _, face in ipairs(FACES) do preset[face] = asset.image end
+                end
+                return preset
+            elseif #ids == 6 then
+                local preset = {}
+                for index, face in ipairs(FACES) do
+                    local asset = resolveAsset(ids[index])
+                    preset[face] = asset.image or (asset.sky and asset.sky.SkyboxFt) or ("rbxassetid://" .. ids[index])
+                end
+                return preset
+            end
+            return nil, #ids
+        end
+
+        customSkybox = function()
+            local text = tostring(getFlag("skybox_custom_ids", ""))
+            if text ~= seenText then
+                seenText = text
+                seenSince = os.clock()
+            end
+            if text ~= builtText and not loading and os.clock() - seenSince > 0.8 then
+                if text:match("%S") == nil then
+                    built, builtText = nil, text
+                else
+                    loading = true
+                    local requested = text
+                    task.spawn(function()
+                        local ok, preset, count = pcall(build, requested)
+                        builtText = requested
+                        if ok and preset then
+                            built = preset
+                            tell("Custom skybox loaded")
+                        else
+                            built = nil
+                            tell(ok and string.format("Custom skybox needs 1 or 6 ids, got %d", count or 0) or "Custom skybox failed to load")
+                        end
+                        loading = false
+                    end)
+                end
+            end
+            if builtText ~= text then return built end -- still showing the previous skybox while the new one loads
+            return built
+        end
+    end
+
     local function applySkybox()
         local enabled = getFlag("skybox_enabled", false)
         if not enabled then
@@ -2636,6 +2743,13 @@ do
         if preset.KeepOriginal then
             restoreOriginalSky()
             return
+        end
+        if preset.Custom then
+            preset = customSkybox()
+            if not preset then
+                restoreOriginalSky()
+                return
+            end
         end
         captureOriginalSky()
         if not tsSky or not tsSky.Parent then
@@ -6630,7 +6744,7 @@ do
         end
 
         local function signature()
-            return table.concat({ tostring(flag("pa_source", "angel")), tostring(auraColor()), tostring(Options.pa_color and Options.pa_color.Transparency or 0.2) }, "|")
+            return table.concat({ tostring(flag("pa_source", "angel")), tostring(auraColor()), tostring(Options.pa_color and Options.pa_color.Transparency or 0.2), tostring(flag("pa_pack_original", true)) }, "|")
         end
 
         local function clear()
@@ -6658,10 +6772,104 @@ do
             end
         end
 
+        local ALIAS = {
+            UpperTorso = "Torso", LowerTorso = "Torso",
+            LeftUpperArm = "Left Arm", LeftLowerArm = "Left Arm", LeftHand = "Left Arm",
+            RightUpperArm = "Right Arm", RightLowerArm = "Right Arm", RightHand = "Right Arm",
+            LeftUpperLeg = "Left Leg", LeftLowerLeg = "Left Leg", LeftFoot = "Left Leg",
+            RightUpperLeg = "Right Leg", RightLowerLeg = "Right Leg", RightFoot = "Right Leg",
+            Torso = "UpperTorso", ["Left Arm"] = "LeftUpperArm", ["Right Arm"] = "RightUpperArm",
+            ["Left Leg"] = "LeftUpperLeg", ["Right Leg"] = "RightUpperLeg",
+        }
+
+        -- Pack auras: the pack is loaded once and each dummy rig is looked up by name. Every part of the rig that
+        -- carries effects gives its particles, beams and lights to the character part with the same name
+        -- (R6 and R15 names map onto each other); effect parts with no match go onto the root part.
+        local FX_CLASS = { ParticleEmitter = true, Beam = true, Trail = true, PointLight = true, SpotLight = true, SurfaceLight = true, Sparkles = true, Fire = true, Smoke = true }
+        local packRigs
+        local function packRig(rigName)
+            if not packRigs then
+                local ok, objects = pcall(function() return game:GetObjects("rbxassetid://" .. AURA_PACK.id) end)
+                if not ok or type(objects) ~= "table" then return nil end
+                packRigs = {}
+                for _, root in ipairs(objects) do
+                    for _, d in ipairs(root:GetDescendants()) do
+                        if d:IsA("Model") and not packRigs[d.Name] and d:FindFirstChildOfClass("Humanoid") then packRigs[d.Name] = d end
+                    end
+                end
+            end
+            return packRigs[rigName]
+        end
+
+        local function applyPack(char, rigName)
+            local rig = packRig(rigName)
+            if not rig then
+                warnf("particle aura: pack or aura not found:", rigName)
+                pcall(function() Library:Notify("Aura could not be loaded", 4) end)
+                return
+            end
+            local keepColors = flag("pa_pack_original", true)
+            local root = char:FindFirstChild("HumanoidRootPart")
+            local attached = 0
+            for _, part in ipairs(rig:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    local children, any = {}, false
+                    for _, child in ipairs(part:GetChildren()) do
+                        if child:IsA("Attachment") or FX_CLASS[child.ClassName] then
+                            children[#children + 1] = child
+                            if FX_CLASS[child.ClassName] then any = true end
+                            if child:IsA("Attachment") then
+                                for _, d in ipairs(child:GetDescendants()) do
+                                    if FX_CLASS[d.ClassName] then any = true break end
+                                end
+                            end
+                        end
+                    end
+                    if any then
+                        local target = char:FindFirstChild(part.Name, true)
+                        if not (target and target:IsA("BasePart")) then
+                            local alias = ALIAS[part.Name]
+                            target = alias and char:FindFirstChild(alias, true)
+                        end
+                        if not (target and target:IsA("BasePart")) then target = root end
+                        if target then
+                            local map, clones = {}, {}
+                            for _, child in ipairs(children) do
+                                local clone = child:Clone()
+                                for _, d in ipairs(clone:GetDescendants()) do
+                                    if d:IsA("LuaSourceContainer") then d:Destroy() end
+                                end
+                                clone.Parent = target
+                                map[child] = clone
+                                clones[#clones + 1] = clone
+                            end
+                            for _, clone in ipairs(clones) do
+                                if clone:IsA("Beam") or clone:IsA("Trail") then
+                                    pcall(function()
+                                        if clone.Attachment0 and map[clone.Attachment0] then clone.Attachment0 = map[clone.Attachment0] end
+                                        if clone.Attachment1 and map[clone.Attachment1] then clone.Attachment1 = map[clone.Attachment1] end
+                                    end)
+                                end
+                                active[#active + 1] = clone
+                                if not keepColors then
+                                    tint(clone)
+                                    for _, d in ipairs(clone:GetDescendants()) do tint(d) end
+                                end
+                            end
+                            attached += 1
+                        end
+                    end
+                end
+            end
+            if attached == 0 then pcall(function() Library:Notify("That aura had no effects to attach", 4) end) end
+        end
+
         local function apply()
             clear()
             local char = LocalPlayer.Character
             if not char then return end
+            local rigName = AURA_PACK.rigs[flag("pa_source", "angel")]
+            if rigName then return applyPack(char, rigName) end
             local model
             local id = SOURCES[flag("pa_source", "angel")]
             if not id then return end
@@ -6671,18 +6879,13 @@ do
             -- Same matching as SillyScripts (model part name = character part name). Aura models are often built
             -- for the other rig type, so R15 names also map onto the R6 body (and back) and a model that matches
             -- nothing is attached to the root part instead of doing nothing.
-            local ALIAS = {
-                UpperTorso = "Torso", LowerTorso = "Torso",
-                LeftUpperArm = "Left Arm", LeftLowerArm = "Left Arm", LeftHand = "Left Arm",
-                RightUpperArm = "Right Arm", RightLowerArm = "Right Arm", RightHand = "Right Arm",
-                LeftUpperLeg = "Left Leg", LeftLowerLeg = "Left Leg", LeftFoot = "Left Leg",
-                RightUpperLeg = "Right Leg", RightLowerLeg = "Right Leg", RightFoot = "Right Leg",
-                Torso = "UpperTorso", ["Left Arm"] = "LeftUpperArm", ["Right Arm"] = "RightUpperArm",
-                ["Left Leg"] = "LeftUpperLeg", ["Right Leg"] = "RightUpperLeg",
-            }
             local function attach(part, target)
                 for _, child in ipairs(part:GetChildren()) do
+                    if child:IsA("LuaSourceContainer") then continue end -- never copy scripts onto the character
                     local clone = child:Clone()
+                    for _, d in ipairs(clone:GetDescendants()) do
+                        if d:IsA("LuaSourceContainer") then d:Destroy() end
+                    end
                     clone.Parent = target
                     tint(clone)
                     for _, d in ipairs(clone:GetDescendants()) do tint(d) end
@@ -6956,9 +7159,36 @@ do
             return found
         end
 
+        -- The game's own click handler fires GiverPressed with the clicked part's Parent, and only when that
+        -- parent is tagged "Giver" or "TouchGiver". So the tagged model, found by its ToolName attribute, is
+        -- the right argument; the old name scan is only a fallback for a giver that is not tagged.
+        local function taggedGiverFor(entry)
+            local best, bestDist = nil, math.huge
+            local _, _, root = localParts()
+            for _, giver in ipairs(touchGivers()) do
+                local toolName = giver:GetAttribute("ToolName")
+                local match = false
+                if type(toolName) == "string" then
+                    match = nameHas(toolName, entry.needles)
+                end
+                if not match then match = nameHas(giver.Name, entry.needles) end
+                if match then
+                    local at = positionOf(giver)
+                    local dist = (at and root) and (at - root.Position).Magnitude or 1e6
+                    if dist < bestDist then best, bestDist = giver, dist end
+                end
+            end
+            return best
+        end
+
         local function resolveClickModel(name, entry)
             local cached = giverCache[name]
             if cached and cached.Parent then return cached end
+            local tagged = taggedGiverFor(entry)
+            if tagged then
+                giverCache[name] = tagged
+                return tagged
+            end
             local best, bestScore = nil, 0
             for _, inst in ipairs(workspace:GetDescendants()) do
                 local lowered = string.lower(inst.Name)
@@ -6973,6 +7203,25 @@ do
             end
             giverCache[name] = best
             return best
+        end
+
+        -- Why the server would refuse: the giver is limited to some teams and may need a gamepass.
+        local function refusalReason(target)
+            if not target then return "giver not found (walk closer so it loads)" end
+            local model = CollectionService:HasTag(target, "Giver") and target or target.Parent
+            if not model then return "unknown" end
+            local team = LocalPlayer.Team
+            local teamOk = CollectionService:HasTag(model, "Team_Any") or (team and CollectionService:HasTag(model, "Team_" .. team.Name))
+            if not teamOk then
+                local wanted = {}
+                for _, tag in ipairs(CollectionService:GetTags(model)) do
+                    if string.sub(tag, 1, 5) == "Team_" then wanted[#wanted + 1] = string.sub(tag, 6) end
+                end
+                return "wrong team (needs " .. (#wanted > 0 and table.concat(wanted, "/") or "another team") .. ")"
+            end
+            local pass = model:FindFirstChild("premiumType") or (model.Parent and model.Parent:FindFirstChild("premiumType"))
+            if pass then return "needs the " .. tostring(pass.Value) .. " gamepass" end
+            return "refused by the server"
         end
 
         local function pressGiver(remote, target)
@@ -7039,7 +7288,11 @@ do
             if now and goHome then now.CFrame = home now.AssemblyLinearVelocity = ZERO end
             task.delay(0.6, function() pcall(function() pad:Destroy() end) end)
             busy = false
-            if got then say("Got " .. name) end
+            if got then
+                say("Got " .. name)
+            elseif entry.method == "click" then
+                say(name .. " failed: " .. refusalReason(target))
+            end
             return got
         end
 
@@ -9427,10 +9680,39 @@ do
                 and position.Z > PRISON_MIN.Z and position.Z < PRISON_MAX.Z
         end
 
+        -- A player who reset or died leaves their body parts in the world (Head, Torso, arms, legs). Each dead
+        -- player becomes a target whose Root is one of those parts, a different one on every pick.
+        local partTurn = {}
+        local function deadEntities()
+            local list = {}
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local char = player.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health <= 0 then
+                        local parts = {}
+                        for _, child in ipairs(char:GetChildren()) do
+                            if child:IsA("BasePart") and child.Parent then parts[#parts + 1] = child end
+                        end
+                        if #parts > 0 then
+                            table.sort(parts, function(a, b) return a.Name < b.Name end)
+                            local turn = (partTurn[player.UserId] or 0) % #parts + 1
+                            partTurn[player.UserId] = turn
+                            list[#list + 1] = { Player = player, Character = char, Humanoid = hum, Root = parts[turn], Head = char:FindFirstChild("Head"), Dead = true }
+                        end
+                    end
+                end
+            end
+            return list
+        end
+
         local function pickTarget(seat)
             local held = current[seat]
             if held and held.Root.Parent and clock() - (lastFling[held.Player.UserId] or 0) < 0.75 then return held end
             local list = otherEntities()
+            if flag("misc_kick_parts", true) then
+                for _, dead in ipairs(deadEntities()) do list[#list + 1] = dead end
+            end
             table.sort(list, function(a, b) return (lastFling[a.Player.UserId] or 0) < (lastFling[b.Player.UserId] or 0) end)
             local everyone = flag("misc_kick_all", false)
             local only
@@ -9448,7 +9730,7 @@ do
                 if not skip then
                     lastFling[e.Player.UserId] = clock()
                     current[seat] = e
-                    say("Kick exploit: " .. e.Player.Name)
+                    say("Kick exploit: " .. e.Player.Name .. (e.Dead and (" (" .. e.Root.Name .. ")") or ""))
                     return e
                 end
             end

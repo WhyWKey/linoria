@@ -7435,7 +7435,9 @@ do
                         clone.CanQuery = false
                         clone.CastShadow = false
                         clone.Massless = true
-                        clone.Transparency = 0.95
+                        clone.Transparency = 0.99
+                        clone.Material = Enum.Material.SmoothPlastic
+                        clone.Color = Color3.new(1, 1, 1)
                         clone.Parent = model
                         ghost.parts[#ghost.parts + 1] = { d, clone }
                     end

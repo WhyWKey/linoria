@@ -1159,6 +1159,9 @@ local function toRounding(decimals)
     return math.clamp(math.floor(-math.log10(decimals) + 0.5), 0, 4)
 end
 
+-- Every keybind made through the wrapper, so Settings can offer side mouse buttons for it.
+local keybindRegistry = {}
+
 -- Pressing Escape while picking a key clears the keybind (the menu key falls back to its default instead).
 local function escapeUnbinds(flag, fallback)
     local picker = Options[flag]
@@ -1198,6 +1201,7 @@ local function wrapElement(linoriaObject)
             SyncToggleState = info.Sync == true, -- the key flips the toggle it is attached to
         })
         escapeUnbinds(info.Flag, "None")
+        table.insert(keybindRegistry, { flag = info.Flag, name = info.Name or info.Flag })
         return element
     end
     return element
@@ -1321,7 +1325,6 @@ local VisualsPage = Window:Page({ Name = "Visuals", Columns = 2, Subtabs = false
 local WorldPage   = Window:Page({ Name = "World",   Columns = 2, Subtabs = false })
 
 local PlayersPage  = Window:Page({ Name = "Players", Columns = 2, Subtabs = false })
-local SpooferPage  = Window:Page({ Name = "Spoofer", Columns = 2, Subtabs = false })
 local MiscPage     = Window:Page({ Name = "Misc",    Columns = 2, Subtabs = false })
 local MiscActions  = { clearCheats = noop }
 local TeleportPage = Window:Page({ Name = "Teleport", Columns = 2, Subtabs = false })
@@ -1384,6 +1387,8 @@ do
     })
     Wall:Toggle({ Name = "Use hitbox", Flag = "wb_hitbox", Default = true, Tooltip = "Also aim at points beside the target's body, not only at the part itself" })
     Wall:Slider({ Name = "Scan radius", Flag = "wb_radius", Min = 1, Max = 10, Default = 6, Suffix = " studs", Decimals = 0.1 })
+    Wall:Toggle({ Name = "Damage check", Flag = "wb_damage", Default = true, Tooltip = "Only uses a shot origin and hit point that can deal damage: close enough to you and to the target's body, and inside the gun's range. The indicator, auto fire and assist use the same check." })
+    Wall:Slider({ Name = "Max spot distance", Flag = "wb_spot", Min = 5, Max = 20, Default = 7.5, Suffix = " studs", Decimals = 0.1 })
 
     local Assist = CombatTab:Section({ Name = "Wallbang assist", Side = 1 })
     local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Works on anyone near your cursor, no silent aim needed. If an enemy is behind a wall, it moves the position the server sees up to (or into) the wall so the shot has a line, and sends the shot at that enemy." })
@@ -1398,26 +1403,6 @@ do
     local assistVisual = Assist:Toggle({ Name = "Visualizer", Flag = "wb_assist_visual", Default = false, Tooltip = "A highlighted copy of your character shows where the server sees you" })
     assistVisual:Colorpicker({ Name = "Fill", Flag = "wb_assist_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0.6 })
     assistVisual:Colorpicker({ Name = "Outline", Flag = "wb_assist_line", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
-
-    local Indicator = CombatTab:Section({ Name = "Wallbang indicator", Side = 2 })
-    Indicator:Toggle({ Name = "Wallbang indicator", Flag = "wb_ind", Default = false, Tooltip = "Tells you if an enemy is visible, wallbangable or not wallbangable" })
-    Indicator:Toggle({ Name = "Show on cursor", Flag = "wb_ind_cursor", Default = true })
-    Indicator:Toggle({ Name = "Show on everyone", Flag = "wb_ind_all", Default = false })
-    Indicator:Toggle({ Name = "Always visible", Flag = "wb_ind_always", Default = false, Tooltip = "Also shows a label when there is no enemy near the cursor" })
-    Indicator:Slider({ Name = "Text size", Flag = "wb_ind_size", Min = 10, Max = 28, Default = 14, Decimals = 1 })
-    Indicator:Slider({ Name = "Max distance", Flag = "wb_ind_range", Min = 50, Max = 3000, Default = 1000, Suffix = " studs", Decimals = 1 })
-    Indicator:Label({ Name = "Visible color" }):Colorpicker({ Name = "Visible", Flag = "wb_ind_c_vis", Default = Color3.fromRGB(90, 255, 120) })
-    Indicator:Label({ Name = "Wallbangable color" }):Colorpicker({ Name = "Wallbangable", Flag = "wb_ind_c_wb", Default = Color3.fromRGB(255, 200, 60) })
-    Indicator:Label({ Name = "Blocked color" }):Colorpicker({ Name = "Blocked", Flag = "wb_ind_c_block", Default = Color3.fromRGB(255, 80, 80) })
-
-    local Reload = CombatTab:Section({ Name = "Reload indicator", Side = 2 })
-    Reload:Toggle({ Name = "Reload indicator", Flag = "reload_ind", Default = false, Tooltip = "A progress bar under the cursor while your gun reloads" })
-    Reload:Toggle({ Name = "Show time", Flag = "reload_ind_text", Default = true })
-    Reload:Slider({ Name = "Width", Flag = "reload_ind_w", Min = 40, Max = 300, Default = 120, Suffix = "px", Decimals = 1 })
-    Reload:Slider({ Name = "Height", Flag = "reload_ind_h", Min = 3, Max = 16, Default = 6, Suffix = "px", Decimals = 1 })
-    Reload:Slider({ Name = "Vertical offset", Flag = "reload_ind_y", Min = -300, Max = 300, Default = 40, Suffix = "px", Decimals = 1 })
-    Reload:Label({ Name = "Bar color" }):Colorpicker({ Name = "Bar", Flag = "reload_ind_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
-    Reload:Label({ Name = "Background color" }):Colorpicker({ Name = "Background", Flag = "reload_ind_back", Default = Color3.fromRGB(0, 0, 0), Alpha = 0.5 })
 
     -- Silent aim ---------------------------------------------------------------------------
     local Silent = CombatTab:Section({ Name = "Silent aim", Side = 2 })
@@ -1794,16 +1779,41 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     HitFx:Slider({ Name = "Duration", Flag = "he_duration", Min = 0.1, Max = 10, Default = 2, Suffix = "s", Decimals = 0.1 })
     HitFx:Button({ Name = "Preview effect", Callback = function() Actions.previewHitEffect() end })
 
+    local Reload = WorldPage:Section({ Name = "Reload indicator", Side = 2 })
+    Reload:Toggle({ Name = "Reload indicator", Flag = "reload_ind", Default = false, Tooltip = "A progress bar under the cursor while your gun reloads" })
+    Reload:Toggle({ Name = "Show time", Flag = "reload_ind_text", Default = true })
+    Reload:Slider({ Name = "Width", Flag = "reload_ind_w", Min = 40, Max = 300, Default = 120, Suffix = "px", Decimals = 1 })
+    Reload:Slider({ Name = "Height", Flag = "reload_ind_h", Min = 3, Max = 16, Default = 6, Suffix = "px", Decimals = 1 })
+    Reload:Slider({ Name = "Vertical offset", Flag = "reload_ind_y", Min = -300, Max = 300, Default = 40, Suffix = "px", Decimals = 1 })
+    Reload:Label({ Name = "Bar color" }):Colorpicker({ Name = "Bar", Flag = "reload_ind_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
+    Reload:Label({ Name = "Background color" }):Colorpicker({ Name = "Background", Flag = "reload_ind_back", Default = Color3.fromRGB(0, 0, 0), Alpha = 0.5 })
+
+    local Ammo = WorldPage:Section({ Name = "Ammo indicator", Side = 2 })
+    Ammo:Toggle({ Name = "Server bullet count", Flag = "ammo_ind", Default = false, Tooltip = "Shows how many bullets the server says your gun has. It turns yellow when that differs from the count your game shows." })
+    Ammo:Toggle({ Name = "Show local count", Flag = "ammo_ind_local", Default = false, Tooltip = "Also shows the count your own game shows" })
+    Ammo:Slider({ Name = "Text size", Flag = "ammo_ind_size", Min = 10, Max = 32, Default = 16, Decimals = 1 })
+    Ammo:Slider({ Name = "Vertical offset", Flag = "ammo_ind_y", Min = -300, Max = 300, Default = 70, Suffix = "px", Decimals = 1 })
+    Ammo:Label({ Name = "Normal color" }):Colorpicker({ Name = "Normal", Flag = "ammo_ind_c_ok", Default = Color3.fromRGB(255, 255, 255) })
+    Ammo:Label({ Name = "Empty color" }):Colorpicker({ Name = "Empty", Flag = "ammo_ind_c_empty", Default = Color3.fromRGB(255, 80, 80) })
+    Ammo:Label({ Name = "Mismatch color" }):Colorpicker({ Name = "Mismatch", Flag = "ammo_ind_c_diff", Default = Color3.fromRGB(255, 200, 60) })
+
+    local Indicator = WorldPage:Section({ Name = "Wallbang indicator", Side = 2 })
+    Indicator:Toggle({ Name = "Wallbang indicator", Flag = "wb_ind", Default = false, Tooltip = "Tells you if an enemy is visible, wallbangable with the wallbang method you use now (a spot that can deal damage), or not wallbangable" })
+    Indicator:Toggle({ Name = "Show on cursor", Flag = "wb_ind_cursor", Default = true })
+    Indicator:Toggle({ Name = "Show on everyone", Flag = "wb_ind_all", Default = false })
+    Indicator:Toggle({ Name = "Always visible", Flag = "wb_ind_always", Default = false, Tooltip = "Also shows a label when there is no enemy near the cursor" })
+    Indicator:Slider({ Name = "Text size", Flag = "wb_ind_size", Min = 10, Max = 28, Default = 14, Decimals = 1 })
+    Indicator:Slider({ Name = "Max distance", Flag = "wb_ind_range", Min = 50, Max = 3000, Default = 1000, Suffix = " studs", Decimals = 1 })
+    Indicator:Label({ Name = "Visible color" }):Colorpicker({ Name = "Visible", Flag = "wb_ind_c_vis", Default = Color3.fromRGB(90, 255, 120) })
+    Indicator:Label({ Name = "Wallbangable color" }):Colorpicker({ Name = "Wallbangable", Flag = "wb_ind_c_wb", Default = Color3.fromRGB(255, 200, 60) })
+    Indicator:Label({ Name = "Blocked color" }):Colorpicker({ Name = "Blocked", Flag = "wb_ind_c_block", Default = Color3.fromRGB(255, 80, 80) })
+
     local AuraBox = WorldPage:Section({ Name = "Particle aura", Side = 1 })
     local auraToggle = AuraBox:Toggle({ Name = "Particle aura", Flag = "pa_enabled", Default = false })
     auraToggle:Colorpicker({ Name = "Color", Flag = "pa_color", Default = Color3.fromRGB(133, 220, 255), Alpha = 0.2 })
     AuraBox:Dropdown({ Name = "Aura", Flag = "pa_source", Items = { "starlight", "heavenly", "ribbon", "sakura", "angel", "wind", "flow", "star" }, Default = "angel" })
-end
 
-
--- Spoofer
-do
-    local Avatar = SpooferPage:Section({ Name = "Avatar changer", Side = 1 })
+    local Avatar = WorldPage:Section({ Name = "Avatar changer", Side = 2 })
     Avatar:Input({ Name = "User", Flag = "spoof_avatar_user", Placeholder = "UserId, username or profile URL" })
     Avatar:Button({ Name = "Apply avatar", Callback = function()
         task.spawn(function() SpooferActions.apply() end)
@@ -1812,8 +1822,8 @@ do
         task.spawn(function() SpooferActions.reset() end)
     end })
     Avatar:Toggle({ Name = "Re-apply on respawn", Flag = "spoof_avatar_reapply", Default = true })
-
 end
+
 
 -- Players
 do
@@ -1961,6 +1971,15 @@ do
         Text = "Show keybinds",
         Callback = function(value) Library.KeybindFrame.Visible = value end,
     })
+    MenuGroup:AddDropdown("KeybindListMode", {
+        Text = "Keybind list shows",
+        Values = { "All", "Toggled", "Active" },
+        Default = "All",
+        Tooltip = "All: every keybind. Toggled: only keybinds whose feature is switched on. Active: only keybinds held or toggled right now.",
+        Callback = function(value)
+            pcall(function() Library:SetKeybindMode(value) end)
+        end,
+    })
     MenuGroup:AddToggle("ShowWatermark", {
         Text = "Show watermark",
         Default = true,
@@ -1972,6 +1991,175 @@ do
         Tooltip = "Drag the round grip in the bottom-right corner to resize the menu",
         Callback = function(value) Library.WireframeDrag = value end,
     })
+
+    -- Side mouse buttons (MB4 / MB5) --------------------------------------------
+    -- Roblox does not report these buttons, so they are polled through the executor's iskeypressed
+    -- (Windows virtual keys 0x05 / 0x06). The menu only offers them when that call answers.
+    do
+        local SIDE_CODES = { MB4 = 0x05, MB5 = 0x06 }
+        local keyFn = rawget(getgenv(), "iskeypressed") or rawget(getgenv(), "isKeyPressed")
+        local activeFn = rawget(getgenv(), "isrbxactive") or rawget(getgenv(), "isRbxActive")
+
+        local function rawSide(name)
+            if not keyFn then return false end
+            local ok, down = pcall(keyFn, SIDE_CODES[name])
+            return ok and down == true
+        end
+
+        local supported = false
+        if keyFn then
+            local ok, answer = pcall(keyFn, SIDE_CODES.MB4)
+            supported = ok and type(answer) == "boolean"
+        end
+
+        local frameCache = { MB4 = false, MB5 = false }
+        local function sideDown(name)
+            return frameCache[name] == true
+        end
+
+        local hooked = setmetatable({}, { __mode = "k" })
+        local function hook(picker)
+            if hooked[picker] then return end
+            hooked[picker] = { last = false }
+            local original = picker.GetState
+            picker.GetState = function(self)
+                local key = self.Value
+                if SIDE_CODES[key] then
+                    if self.Mode == "Always" then return true end
+                    if self.Mode == "Hold" then return sideDown(key) end
+                    return self.Toggled == true
+                end
+                return original(self)
+            end
+        end
+
+        if supported then
+            Library:GiveSignal(RunService.RenderStepped:Connect(function()
+                local focused = true
+                if activeFn then
+                    local ok, active = pcall(activeFn)
+                    focused = not ok or active ~= false
+                end
+                for name in pairs(SIDE_CODES) do
+                    frameCache[name] = focused and rawSide(name)
+                end
+                for _, entry in ipairs(keybindRegistry) do
+                    local picker = Options[entry.flag]
+                    if picker then
+                        hook(picker)
+                        local state = hooked[picker]
+                        local key = picker.Value
+                        if SIDE_CODES[key] then
+                            local down = sideDown(key)
+                            if down ~= state.last then
+                                state.last = down
+                                if down and picker.Mode == "Toggle" then
+                                    picker.Toggled = not picker.Toggled
+                                    pcall(picker.DoClick, picker)
+                                end
+                                pcall(picker.Update, picker)
+                            end
+                        else
+                            state.last = false
+                        end
+                    end
+                end
+            end))
+        end
+
+        local names, byName = {}, {}
+        for _, entry in ipairs(keybindRegistry) do
+            local label = entry.name
+            if byName[label] then label = label .. " (" .. entry.flag .. ")" end
+            byName[label] = entry.flag
+            table.insert(names, label)
+        end
+
+        local SideGroup = SettingsTab:AddLeftGroupbox("Side mouse buttons")
+        if not supported or #names == 0 then
+            SideGroup:AddLabel(#names == 0 and "No keybinds to assign" or "iskeypressed unavailable", true)
+            SideGroup:AddLabel("This executor does not report mouse side buttons.", true)
+        else
+            local syncing = false
+            local chosen = names[1]
+            local buttonDropdown
+
+            local function chosenPicker()
+                return Options[byName[chosen]]
+            end
+
+            local function assign(value)
+                local picker = chosenPicker()
+                if not picker then return end
+                hook(picker)
+                pcall(function() picker:SetValue({ value, picker.Mode }) end)
+                pcall(function() Library:AttemptSave() end)
+            end
+
+            SideGroup:AddDropdown("SideBindTarget", {
+                Text = "Keybind",
+                Values = names,
+                Default = 1,
+                Callback = function(value)
+                    chosen = value
+                    local picker = chosenPicker()
+                    if picker and buttonDropdown then
+                        syncing = true
+                        buttonDropdown:SetValue(SIDE_CODES[picker.Value] and picker.Value or "Off")
+                        syncing = false
+                    end
+                end,
+            })
+            SideGroup:AddDropdown("SideBindButton", {
+                Text = "Mouse button",
+                Values = { "Off", "MB4", "MB5" },
+                Default = 1,
+                Tooltip = "MB4 is the back side button, MB5 the forward one. Off leaves the key as it is, or clears a side button.",
+                Callback = function(value)
+                    if syncing then return end
+                    local picker = chosenPicker()
+                    if not picker then return end
+                    if value == "Off" then
+                        if SIDE_CODES[picker.Value] then assign("None") end
+                    else
+                        assign(value)
+                    end
+                end,
+            })
+            buttonDropdown = Options.SideBindButton
+
+            local detecting = false
+            SideGroup:AddButton("Detect side button", function()
+                if detecting then return end
+                detecting = true
+                pcall(function() Library:Notify("Press a side mouse button (5 s)", 5) end)
+                task.spawn(function()
+                    local deadline = os.clock() + 5
+                    local found
+                    while os.clock() < deadline and not found do
+                        for name in pairs(SIDE_CODES) do
+                            if rawSide(name) then found = name break end
+                        end
+                        task.wait()
+                    end
+                    detecting = false
+                    if found then
+                        pcall(function() buttonDropdown:SetValue(found) end)
+                        pcall(function() Library:Notify("Bound " .. chosen .. " to " .. found, 3) end)
+                    else
+                        pcall(function() Library:Notify("No side button seen", 3) end)
+                    end
+                end)
+            end)
+            SideGroup:AddLabel("Hold, Toggle and Always modes all work. Config saves the button.", true)
+
+            -- keybinds loaded from a config may already hold MB4/MB5
+            for _, entry in ipairs(keybindRegistry) do
+                local picker = Options[entry.flag]
+                if picker then hook(picker) end
+            end
+        end
+    end
 
     -- Background (blur, darken, keybind list transparency) ---------------------
     local BackgroundGroup = SettingsTab:AddLeftGroupbox("Background")
@@ -8148,10 +8336,22 @@ do
         end
 
         -- first (target, origin) pair that has a clear line between them
+        -- a spot only counts when it can deal damage: the origin close enough to you, the hit point close
+        -- enough to the target's body and the shot inside the gun's range (set by wallbangPlan)
+        WB.filter = nil
+        function WB.accept(origin, target)
+            local f = WB.filter
+            if not f then return true end
+            if (origin - f.shooter).Magnitude > f.spot then return false end
+            if (target - f.center).Magnitude > f.spot then return false end
+            if f.range and (target - origin).Magnitude > f.range then return false end
+            return true
+        end
+
         local function firstClear(targets, origins)
             for _, target in ipairs(targets) do
                 for _, origin in ipairs(origins) do
-                    if not workspace:Raycast(target, origin - target, WB.ray) and freeSpace(origin) then
+                    if WB.accept(origin, target) and not workspace:Raycast(target, origin - target, WB.ray) and freeSpace(origin) then
                         return origin, target
                     end
                 end
@@ -8177,7 +8377,7 @@ do
             local look = lookFlat(shooter, target)
             local targets = {}
             if freeSpace(target) then
-                if surface and (shooter - surface).Magnitude < 7.5 then return surface, target end
+                if surface and (shooter - surface).Magnitude < 7.5 and WB.accept(surface, target) then return surface, target end
                 targets[1] = target
             end
             if hitbox then append(targets, pointsAround(center, look, { 7.4 })) end
@@ -8294,6 +8494,11 @@ do
             local method = LEGACY[flag("wb_method", "Aster Reach")] or flag("wb_method", "Aster Reach")
             local scan = METHODS[method] or METHODS["Aster Reach"]
 
+            local data = Gun.data()
+            WB.filter = flag("wb_damage", true) and {
+                shooter = shooter, center = center, spot = flag("wb_spot", 7.5),
+                range = data and tonumber(data.Range) or nil,
+            } or nil
             local newOrigin, newTarget = scan(shooter, position, blocked and (blocked.Position + blocked.Normal * 0.01) or nil, center, flag("wb_hitbox", true))
 
             -- the two long reach methods keep looking: ground points along the line, then a column above you
@@ -8306,7 +8511,7 @@ do
                         local ground = workspace:Raycast(shooter + unit * i, v3(0, -50, 0), WB.ray)
                         if ground then
                             local at = ground.Position + ground.Normal * 0.5
-                            if not workspace:Raycast(at, position - at, WB.ray) and freeSpace(at) then
+                            if WB.accept(at, position) and not workspace:Raycast(at, position - at, WB.ray) and freeSpace(at) then
                                 newOrigin, newTarget = at, position
                                 break
                             end
@@ -8316,7 +8521,7 @@ do
                 if not newOrigin then
                     for i = 3, 18, 3 do
                         local at = shooter + v3(0, i, 0)
-                        if not workspace:Raycast(at, position - at, WB.ray) and freeSpace(at) then
+                        if WB.accept(at, position) and not workspace:Raycast(at, position - at, WB.ray) and freeSpace(at) then
                             newOrigin, newTarget = at, position
                             break
                         end
@@ -8324,6 +8529,7 @@ do
                 end
             end
 
+            WB.filter = nil
             if newOrigin then
                 if not override then WB.cache[part] = { newOrigin, newTarget } end
                 return "moved", newOrigin, newTarget
@@ -8989,7 +9195,71 @@ do
                 hideReload()
             end)
 
+            -- server bullet count: the CurrentAmmo attribute is the server's count, Local_CurrentAmmo is what your game predicts ----
+            local ammoBag = newBag()
+            local ammoLabel, ammoWarned = nil, false
+            local function ammoStep()
+                local tool = equippedGun()
+                local serverAmmo = tool and tool:GetAttribute("CurrentAmmo")
+                if type(serverAmmo) ~= "number" then
+                    if ammoLabel then ammoLabel.Visible = false end
+                    return
+                end
+                local localAmmo = tool:GetAttribute("Local_CurrentAmmo")
+                local maxAmmo, stored = tool:GetAttribute("MaxAmmo"), tool:GetAttribute("StoredAmmo")
+                local text = "server " .. tostring(serverAmmo)
+                if type(stored) == "number" then
+                    text ..= " | " .. tostring(stored)
+                elseif type(maxAmmo) == "number" then
+                    text ..= "/" .. tostring(maxAmmo)
+                end
+                local mismatch = type(localAmmo) == "number" and localAmmo ~= serverAmmo
+                if flag("ammo_ind_local", false) and type(localAmmo) == "number" then
+                    text ..= "  (local " .. tostring(localAmmo) .. ")"
+                end
+                local color
+                if serverAmmo <= 0 then
+                    color = pick("ammo_ind_c_empty", Color3.fromRGB(255, 80, 80), 0)
+                elseif mismatch then
+                    color = pick("ammo_ind_c_diff", Color3.fromRGB(255, 200, 60), 0)
+                else
+                    color = pick("ammo_ind_c_ok", Color3.fromRGB(255, 255, 255), 0)
+                end
+                if not ammoLabel then
+                    ammoLabel = newDrawing("Text")
+                    if not ammoLabel then return end
+                    ammoLabel.Center = true
+                    ammoLabel.Outline = true
+                end
+                local ref = aimRef()
+                ammoLabel.Text = text
+                ammoLabel.Size = flag("ammo_ind_size", 16)
+                ammoLabel.Color = color
+                ammoLabel.Position = Vector2.new(ref.X, ref.Y + flag("ammo_ind_y", 70))
+                ammoLabel.Visible = true
+            end
+
+            feature("ammo_ind", function()
+                if not drawingOk then
+                    say("The ammo indicator needs the Drawing library")
+                    switchOff("ammo_ind")
+                    return
+                end
+                ammoBag.add(RunService.RenderStepped:Connect(function()
+                    local ok, err = pcall(ammoStep)
+                    if not ok and not ammoWarned then
+                        ammoWarned = true
+                        warnf("ammo indicator error:", err)
+                    end
+                end))
+            end, function()
+                ammoBag.clear()
+                if ammoLabel then ammoLabel.Visible = false end
+            end)
+
             onUnload(function()
+                discard(ammoLabel)
+                ammoLabel = nil
                 for _, text in pairs(pool) do discard(text) end
                 table.clear(pool)
                 discard(cursorText)

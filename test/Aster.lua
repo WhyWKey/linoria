@@ -7435,9 +7435,8 @@ do
                         clone.CanQuery = false
                         clone.CastShadow = false
                         clone.Massless = true
-                        clone.Transparency = 0.99
+                        clone.Transparency = 0 -- rendered like a real character, so the Highlight always draws (same as self chams)
                         clone.Material = Enum.Material.SmoothPlastic
-                        clone.Color = Color3.new(1, 1, 1)
                         clone.Parent = model
                         ghost.parts[#ghost.parts + 1] = { d, clone }
                     end
@@ -7478,7 +7477,10 @@ do
             if ghost.model.Parent ~= cam then ghost.model.Parent = cam end
             local shift = SP.pos - root.Position
             for _, pair in ipairs(ghost.parts) do
-                if pair[1].Parent then pair[2].CFrame = pair[1].CFrame + shift end
+                if pair[1].Parent then
+                    pair[2].CFrame = pair[1].CFrame + shift
+                    pair[2].Color = style.fill
+                end
             end
             local highlight = ghost.highlight
             highlight.FillColor, highlight.FillTransparency = style.fill, style.fillT

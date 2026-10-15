@@ -942,10 +942,14 @@ SKYBOX_PRESETS["Custom"] = { Custom = true } -- built from the ids typed in the 
 local AURA_PACK = {
     id = 15374038687,
     rigs = {
+        -- from the "Auras by dustyblueskys" pack (asset 16039329607): { pack id, rig name }
+        ["Dark Aura"] = { id = 16039329607, rig = "DarkAura" },
+        ["Fire Aura"] = { id = 16039329607, rig = "FireAura" },
+        ["Light Aura"] = { id = 16039329607, rig = "LightAura" },
+        ["Water Aura"] = { id = 16039329607, rig = "WaterAura" },
         ["Armageddon"] = "POF:RE AURA ARMAGEDDON",
         ["Battleship"] = "Battleship",
         ["Beast"] = "POF:RE AURA  BEAST",
-        ["Bee Swarm"] = "POF:RE AURA BEE SWARM",
         ["Blue Heat"] = "POF:RE AURA: Blue Heat",
         ["Blue Lock"] = "POF:RE AURA: Blue Lock",
         ["Celestial Body"] = "POF:RE AURA  CELESTIAL BODY",
@@ -959,7 +963,6 @@ local AURA_PACK = {
         ["Demonic Drive"] = "POF:RE AURA: Demonic Drive",
         ["Devil's beam"] = "POF:RE AURA: Devil's beam",
         ["Fiery Ritual of Hallownest"] = "POF:RE AURA: Fiery Ritual of Hallownest",
-        ["Flame Barrage"] = "Flame Barrage",
         ["Gravity God"] = "POF:RE AURA: Gravity God",
         ["Green power"] = "POF:RE AURA: Green power",
         ["Hanma"] = "POF:RE AURA HANMA",
@@ -970,7 +973,6 @@ local AURA_PACK = {
         ["Honoring Flame"] = "POF:RE AURA: Honoring Flame",
         ["Incognito"] = "POF:RE AURA: Incognito",
         ["Infinite Reality"] = "Infinite Reality",
-        ["Malware"] = "POF:RE AURA MALWARE",
         ["Midnight Blues"] = "POF:RE AURA: Midnight Blues",
         ["MUI"] = "POF:RE AURA MUI",
         ["Mutants Rage"] = "POF:RE AURA MUTANTS RAGE",
@@ -978,7 +980,6 @@ local AURA_PACK = {
         ["North Star"] = "North Star",
         ["North Star (POF)"] = "POF:RE AURA NORTH STAR",
         ["Omega"] = "POF:RE AURA OMEGA",
-        ["Poison"] = "POF:RE AURA POISON",
         ["Psychic Orbs"] = "POF:RE AURA: Psychic Orbs",
         ["Pure Vessel"] = "Pure Vessel",
         ["Radiance"] = "POF:RE AURA RADIANCE",
@@ -1108,7 +1109,102 @@ TRACER_PRESETS["Heartrate"] = thinStyle("rbxassetid://5830549480")
 TRACER_PRESETS["Chain"] = thinStyle("rbxassetid://9632168658")
 TRACER_PRESETS["Glitch"] = thinStyle("rbxassetid://8089467613")
 TRACER_PRESETS["Swirl"] = thinStyle("rbxassetid://5638168605")
+-- Beams from a Creator Store beam pack, used as extra tracer styles: { texture id, texture length, texture speed,
+-- light emission, width in the pack }. The pack draws them 4 studs wide, so widths are scaled down to tracer size.
+local BEAM_PACK = {
+    { 5320460025, 0.1, 1, 1, 4 },
+    { 5259318941, 1, 1, 1, 4 },
+    { 5059545109, 1, 1, 1, 4 },
+    { 5059575678, 1, 1, 1, 4 },
+    { 3517446796, 1, 1, 1, 4 },
+    { 4979919970, 1, 1, 1, 4 },
+    { 5309396574, 1, 1, 1, 4 },
+    { 5319756636, 1, 1, 1, 4 },
+    { 5259392291, 1, 1, 1, 4 },
+    { 5319760646, 1, 1, 1, 4 },
+    { 5059527230, 0.1, 0.1, 1, 4 },
+    { 5697446711, 0.1, -0.5, 0.3, 4 },
+    { 5889857268, 1, 1, 0.3, 4 },
+    { 5889875399, 0.1, 1, 1, 4 },
+    { 5889822396, 0.1, 0.2, 1, 4 },
+    { 5059416965, 1, 1, 1, 4 },
+    { 5319757616, 1, 1, 1, 4 },
+    { 5059556437, 1, 1, 1, 4 },
+    { 5319761683, 0.1, 0.1, 1, 4 },
+    { 5320396964, 1, 1, 1, 4 },
+    { 1134824633, 1, 1, 1, 4 },
+    { 5319765539, 1, 1, 1, 4 },
+    { 5319759478, 1, 1, 1, 4 },
+    { 5259508588, 1, 1, 1, 4 },
+    { 5319763670, 1, 1, 1, 4 },
+    { 241779220, 0.1, 1, 1, 4 },
+    { 5638199267, 1, 1, 1, 4 },
+    { 5319767945, 1, 1, 1, 4 },
+    { 5325351689, 1, 1, 1, 4 },
+    { 5309397437, 1, 1, 1, 4 },
+    { 5309397920, 1, 1, 1, 4 },
+    { 5259350470, 1, 1, 1, 4 },
+    { 5319764523, 1, 1, 1, 4 },
+    { 5320409098, 1, 1, 1, 4 },
+    { 5638169715, 1, 1, 1, 4 },
+    { 5638170046, 1, 1, 1, 4 },
+    { 5319767042, 1, 1, 1, 4 },
+    { 5259455940, 1, 1, 1, 4 },
+    { 5320400553, 1, 1, 1, 4 },
+    { 1274378728, 1, -1, 1, 4 },
+    { 5259486177, 1, 1, 1, 4 },
+    { 123310848, 1, 1, 1, 4 },
+    { 79443127, 1, 1, 1, 4 },
+    { 5889822044, 1, 1, 1, 4 },
+    { 5311020240, 1, 1, 1, 4 },
+    { 5311019692, 1, 1, 1, 4 },
+    { 5311021013, 1, 1, 1, 4 },
+    { 5320395241, 1, 1, 1, 4 },
+    { 5889807991, 1, 1, 1, 4 },
+    { 5320399816, 1, 1, 1, 4 },
+    { 5311021681, 1, 1, 1, 4 },
+    { 5309396094, 1, 1, 1, 4 },
+    { 4975465603, 1, 1, 1, 4 },
+    { 5320412027, 1, 1, 1, 4 },
+    { 5320407484, 1, 1, 1, 4 },
+    { 5320412694, 1, 1, 1, 4 },
+    { 5259529792, 1, 1, 1, 4 },
+    { 457102813, 1, 1, 1, 4 },
+    { 3186190770, 1, 1, 1, 4 },
+    { 5320401463, 1, 1, 1, 4 },
+    { 5259589000, 1, 1, 1, 4 },
+    { 5638167113, 1, 1, 1, 4 },
+    { 5638168890, 1, 1, 1, 4 },
+    { 5638167770, 2.625, 3, 1, 4 },
+    { 5638169137, 1, 1, 1, 4 },
+    { 5320411483, 1, 1, 1, 4 },
+    { 5320395820, 1, 1, 1, 4 },
+    { 5320396458, 1, 1, 1, 4 },
+    { 5320461870, 1, 1, 1, 4 },
+    { 8091475665, 0.625, -0.5, 1, 4 },
+    { 8098345726, 1.25, -0.5, 1, 6 },
+    { 8091408769, 1, -1, 1, 4 },
+    { 5655747881, 0.1, -1, 1, 4 },
+    { 6528210403, 0.1, -0.6, 1, 4 },
+    { 6531295492, 0.1, -0.7, 1, 5 },
+    { 6933783148, 0.1, -0.6, 1, 4 },
+    { 6933806553, 1.125, -0.6, 1, 4 },
+    { 245996148, 0.1, -1, 1, 4 },
+    { 8089421301, 1, -1, 1, 4 },
+    { 8089452023, 1, -1, 1, 4 },
+    { 8089495857, 1, -1, 1, 4 },
+}
+for index, row in ipairs(BEAM_PACK) do
+    local name = string.format("Beam %02d", index)
+    TRACER_PRESETS[name] = {
+        Texture = "rbxassetid://" .. row[1], Brightness = 1,
+        Transparency = NumberSequence.new(0), BaseTransparency = 0,
+        LightEmission = row[4], LightInfluence = 0, Segments = 1, TextureLength = row[2],
+        TextureMode = Enum.TextureMode.Stretch, TextureSpeed = row[3], Width0 = 0.5 * row[5] / 4, Width1 = 0.5 * row[5] / 4, FaceCamera = true,
+    }
+end
 local TRACER_NAMES = { "Obelus", "Lightning", "DNA", "Plain", "Beam", "Bolt", "Trail", "Zigzag", "Heartrate", "Chain", "Glitch", "Swirl" }
+for index = 1, #BEAM_PACK do table.insert(TRACER_NAMES, string.format("Beam %02d", index)) end
 local WEATHER_NAMES = { "Snow", "Rain", "Blizzard" }
 
 local LocalPlayer = Players.LocalPlayer
@@ -1501,7 +1597,8 @@ do
     local Assist = CombatTab:Section({ Name = "Wallbang assist", Side = 1 })
     local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Works on anyone near your cursor, no silent aim needed. If an enemy is behind a wall, it moves the position the server sees up to (or into) the wall so the shot has a line, and sends the shot at that enemy." })
     assistToggle:Keybind({ Name = "Assist key", Flag = "wb_assist_key", Default = "None", Sync = true })
-    Assist:Dropdown({ Name = "Mode", Flag = "wb_assist_mode", Items = { "Tween", "Teleport" }, Default = "Tween" })
+    Assist:Dropdown({ Name = "Move method", Flag = "wb_assist_method", Items = { "Server position", "Velocity" }, Default = "Server position", Tooltip = "Server position: only what the server sees moves (writes the character CFrame). Velocity: you really move there with physics (no CFrame writes) and walls next to you stop colliding on the way, then you return. The visualizer only applies to Server position." })
+    Assist:Dropdown({ Name = "Mode", Flag = "wb_assist_mode", Items = { "Tween", "Teleport" }, Default = "Tween", Tooltip = "Tween moves at the speed below. Teleport jumps (Server position) or moves at 120 studs/s (Velocity)." })
     Assist:Toggle({ Name = "Inside wall", Flag = "wb_assist_inside", Default = false })
     Assist:Toggle({ Name = "Only while firing", Flag = "wb_assist_fire", Default = false, Tooltip = "Only moves while the fire button is held or auto fire is shooting" })
     Assist:Slider({ Name = "Assist FOV", Flag = "wb_assist_fov", Min = 10, Max = 800, Default = 250, Suffix = "px", Decimals = 1 })
@@ -6786,25 +6883,28 @@ do
         -- carries effects gives its particles, beams and lights to the character part with the same name
         -- (R6 and R15 names map onto each other); effect parts with no match go onto the root part.
         local FX_CLASS = { ParticleEmitter = true, Beam = true, Trail = true, PointLight = true, SpotLight = true, SurfaceLight = true, Sparkles = true, Fire = true, Smoke = true }
-        local packRigs
-        local function packRig(rigName)
-            if not packRigs then
-                local ok, objects = pcall(function() return game:GetObjects("rbxassetid://" .. AURA_PACK.id) end)
+        local packRigs = {} -- pack id -> { rig name -> rig model }
+        local function packRig(entry)
+            local id = type(entry) == "table" and entry.id or AURA_PACK.id
+            local rigName = type(entry) == "table" and entry.rig or entry
+            if not packRigs[id] then
+                local ok, objects = pcall(function() return game:GetObjects("rbxassetid://" .. id) end)
                 if not ok or type(objects) ~= "table" then return nil end
-                packRigs = {}
+                local rigs = {}
                 for _, root in ipairs(objects) do
                     for _, d in ipairs(root:GetDescendants()) do
-                        if d:IsA("Model") and not packRigs[d.Name] and d:FindFirstChildOfClass("Humanoid") then packRigs[d.Name] = d end
+                        if d:IsA("Model") and not rigs[d.Name] and d:FindFirstChildOfClass("Humanoid") then rigs[d.Name] = d end
                     end
                 end
+                packRigs[id] = rigs
             end
-            return packRigs[rigName]
+            return packRigs[id][rigName]
         end
 
         local function applyPack(char, rigName)
             local rig = packRig(rigName)
             if not rig then
-                warnf("particle aura: pack or aura not found:", rigName)
+                warnf("particle aura: pack or aura not found:", type(rigName) == "table" and rigName.rig or rigName)
                 pcall(function() Library:Notify("Aura could not be loaded", 4) end)
                 return
             end
@@ -9215,6 +9315,7 @@ do
                 nextEval = now + 0.1
                 local goal, part = evaluate()
                 A.goal = goal
+                if goal then A.goalAt = now end
                 if goal then
                     A.speed = flag("wb_assist_mode", "Tween") == "Teleport" and 1e9 or flag("wb_assist_speed", 50)
                     A.style = flag("wb_assist_visual", false) and Actions.sp.visualStyle("wb_assist_fill", "wb_assist_line") or nil
@@ -9222,11 +9323,93 @@ do
                 if part then A.part, A.partUntil = part, now + 0.35 end
             end
 
+            -- "Velocity" method: no CFrame is written. The character is pushed to the spot with its own velocity,
+            -- parts around it stop colliding while it travels (like Phase in Part mode), and it walks back afterwards.
+            local M = { home = nil, holdUntil = 0, heading = ZERO, modified = {} }
+            local overlap = OverlapParams.new()
+            overlap.FilterType = Enum.RaycastFilterType.Exclude
+
+            local function releaseMoved()
+                for part in pairs(M.modified) do pcall(function() part.CanCollide = true end) end
+                table.clear(M.modified)
+            end
+
+            local function realMove(dt)
+                local _, _, root = localParts()
+                if not root or flag("wb_assist_method", "Server position") ~= "Velocity" then
+                    if M.home or next(M.modified) then
+                        M.home = nil
+                        releaseMoved()
+                    end
+                    return
+                end
+                local now = clock()
+                local wants = A.goal ~= nil and now - (A.goalAt or 0) < 0.4
+                if wants or (M.home and firing()) then M.holdUntil = now + 0.5 end
+                local target
+                if wants then
+                    if not M.home then M.home = root.Position end
+                    target = A.goal
+                elseif M.home and now < M.holdUntil then
+                    target = root.Position
+                elseif M.home then
+                    target = M.home
+                    if (root.Position - M.home).Magnitude < 1.5 then
+                        M.home = nil
+                        M.heading = ZERO
+                        releaseMoved()
+                        root.AssemblyLinearVelocity = ZERO
+                        return
+                    end
+                else
+                    return
+                end
+                local delta = target - root.Position
+                local distance = delta.Magnitude
+                local speed = flag("wb_assist_mode", "Tween") == "Teleport" and 120 or flag("wb_assist_speed", 50)
+                local velocity = ZERO
+                if distance > 0.6 then velocity = delta.Unit * math.min(speed, distance / math.max(dt, 1 / 120)) end
+                M.heading = velocity
+                root.AssemblyLinearVelocity = velocity
+                root.AssemblyAngularVelocity = ZERO
+            end
+
+            local function noclipStep()
+                if not M.home then
+                    if next(M.modified) then releaseMoved() end
+                    return
+                end
+                local char, hum, root = localParts()
+                if not root or not hum then return end
+                local list = { Camera(), char }
+                for _, e in ipairs(otherEntities()) do list[#list + 1] = e.Character end
+                overlap.FilterDescendantsInstances = list
+                local center = root.CFrame + v3(0, 1, 0) + M.heading * 0.12
+                local near = {}
+                for _, part in ipairs(workspace:GetPartBoundsInBox(center, root.Size + v3(7, hum.HipHeight, 7), overlap)) do
+                    near[part] = true
+                    if part.CanCollide then M.modified[part] = true part.CanCollide = false end
+                end
+                for part in pairs(M.modified) do
+                    if not near[part] then M.modified[part] = nil part.CanCollide = true end
+                end
+            end
+
             feature("wb_assist", function()
                 Actions.sp.enable("assist", function()
-                    if not A.goal then return nil end
+                    if not A.goal or flag("wb_assist_method", "Server position") ~= "Server position" then return nil end
                     return A.goal, A.speed, A.style
                 end)
+                bag.add(RunService.Heartbeat:Connect(function(dt)
+                    local ok, err = pcall(realMove, dt)
+                    if not ok then
+                        errors += 1
+                        if errors <= 3 then warnf("wallbang assist move error:", err) end
+                    end
+                end))
+                bag.add(RunService.Stepped:Connect(function()
+                    pcall(noclipStep)
+                end))
                 Actions.assistHook(true)
                 task.spawn(Gun.find)
                 nextEval = 0
@@ -9240,6 +9423,8 @@ do
             end, function()
                 bag.clear()
                 A.goal, A.style, A.part = nil, nil, nil
+                M.home = nil
+                releaseMoved()
                 Actions.assistHook(false)
                 Actions.sp.disable("assist")
             end)

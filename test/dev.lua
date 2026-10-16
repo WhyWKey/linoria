@@ -4748,19 +4748,24 @@ do
         end
 
         local modelCache, cacheOrder, inflight = {}, {}, {}
+        local fetchTiming
         local function cacheKey(uid, rigType, outfitId)
             return (outfitId and ("o" .. tostring(outfitId)) or ("u" .. tostring(uid))) .. ":" .. tostring(rigType)
         end
 
         local function rawFetchModel(uid, rigType, outfitId)
             local desc
+            local started = os.clock()
             local described, result = pcall(function()
                 if outfitId then return Players:GetHumanoidDescriptionFromOutfitId(outfitId) end
                 return Players:GetHumanoidDescriptionFromUserIdAsync(uid)
             end)
             if described then desc = result end
+            fetchTiming = { description = os.clock() - started }
             if described and desc and Players.CreateHumanoidModelFromDescription then
+                local buildStart = os.clock()
                 local ok, built = pcall(function() return Players:CreateHumanoidModelFromDescription(desc, rigType) end)
+                fetchTiming.model = os.clock() - buildStart
                 if ok and built then return built, desc end
             end
             if outfitId then return nil, desc end
@@ -4781,8 +4786,9 @@ do
             end
             if hit then
                 local okClone, copy = pcall(function() return hit.model:Clone() end)
-                if okClone and copy then return copy, hit.desc end
+                if okClone and copy then fetchTiming = { cached = true } return copy, hit.desc end
             end
+            fetchTiming = nil
             inflight[key] = true
             local okFetch, model, desc = pcall(rawFetchModel, uid, rigType, outfitId)
             inflight[key] = nil
@@ -4809,6 +4815,9 @@ do
             if not humanoid then return end
             local key = cacheKey(uid, humanoid.RigType, outfitId)
             if modelCache[key] or inflight[key] then return end
+            local running = 0
+            for _ in pairs(inflight) do running += 1 end
+            if running >= 2 then return end
             task.spawn(function()
                 local ok, model = pcall(fetchModel, uid, humanoid.RigType, outfitId)
                 if ok and model then pcall(function() model:Destroy() end) end
@@ -4839,8 +4848,14 @@ do
             notify("Avatar changer: fetching " .. tostring(uid) .. "...")
             lastUid, lastOutfit = (not outfitId) and uid or nil, outfitId
 
+            local fetchStart = os.clock()
             local model, desc = fetchModel(uid, humanoid.RigType, outfitId)
             currentDesc = desc
+            if fetchTiming and fetchTiming.cached then
+                notify("Avatar changer: loaded from cache")
+            elseif fetchTiming then
+                notify(string.format("Avatar changer: fetched in %.1fs (description %.1fs, model %.1fs)", os.clock() - fetchStart, fetchTiming.description or 0, fetchTiming.model or 0))
+            end
             if not model then
                 if desc then
                     pcall(function()
@@ -5161,7 +5176,18 @@ do
             end
             lbl({ Text = info.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 20), Position = UDim2.new(0, 3, 1, -22), ZIndex = 310, Parent = face })
             local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = tile })
-            hit.MouseEnter:Connect(function() if spoofUi and spoofUi.selectedTile ~= tile then setBorder(tile, "AccentColor") end end)
+            hit.MouseEnter:Connect(function()
+                if spoofUi and spoofUi.selectedTile ~= tile then setBorder(tile, "AccentColor") end
+                if info.kind == "random" then return end
+                local stamp = os.clock()
+                tile:SetAttribute("hover", stamp)
+                task.delay(0.3, function()
+                    if tile.Parent and tile:GetAttribute("hover") == stamp and SpooferActions.prefetch then
+                        if info.kind == "outfit" then SpooferActions.prefetch(nil, info.id) else SpooferActions.prefetch(info.uid) end
+                    end
+                end)
+            end)
+            hit.MouseLeave:Connect(function() tile:SetAttribute("hover", nil) end)
             hit.MouseLeave:Connect(function() if spoofUi and spoofUi.selectedTile ~= tile then setBorder(tile, "Black") end end)
             if info.kind == "random" then
                 hit.MouseButton1Click:Connect(function()

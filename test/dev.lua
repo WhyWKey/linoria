@@ -1128,6 +1128,431 @@ local HIT_SOUNDS = {
     ["TF2"] = "rbxassetid://8255306220",
     ["Windows"] = "rbxassetid://9066167010",
 }
+local PF_GUN_ROWS = {
+    { "AEK-971", "Assault Rifle", "133516371859543" },
+    { "AEK-971 · Suppressor", "Assault Rifle", "99880413055272" },
+    { "AK-103", "Assault Rifle", "17641130148" },
+    { "AK-103 · AK-109", "Assault Rifle", "17641129066" },
+    { "AK-12", "Assault Rifle", "16075127461" },
+    { "AK-12M", "Assault Rifle", "72380614839121" },
+    { "AK-15", "Assault Rifle", "96906485318163" },
+    { "AK-19", "Assault Rifle", "130525871224619" },
+    { "AK-19 · AK-19 CQB", "Assault Rifle", "126849393651841" },
+    { "AK-47", "Assault Rifle", "17602206900" },
+    { "AK-74", "Assault Rifle", "17641130928" },
+    { "AKM", "Assault Rifle", "17641132046" },
+    { "AKM · VPO-209", "Assault Rifle", "17641112324" },
+    { "AN-94", "Assault Rifle", "136364749371284" },
+    { "AN-94 · AN 7.62x39 Conversion", "Assault Rifle", "129109666886625" },
+    { "AS VAL", "Assault Rifle", "16075134535" },
+    { "C7A2", "Assault Rifle", "16075135523" },
+    { "C7A2 · LSW Barrel", "Assault Rifle", "18197112195" },
+    { "F90 MBR", "Assault Rifle", "137686818026616" },
+    { "FAMAS F1", "Assault Rifle", "16075135165" },
+    { "FAMAS G2", "Assault Rifle", "16075135165" },
+    { "GERAT 90", "Assault Rifle", "17353531353" },
+    { "IA2 AR", "Assault Rifle", "86215296083702" },
+    { "K2", "Assault Rifle", "16541359547" },
+    { "K2 · DR-300", "Assault Rifle", "15685938275" },
+    { "L85A2", "Assault Rifle", "16075132271" },
+    { "L85A2 · SA80 .22 LR", "Assault Rifle", "649184310" },
+    { "L85A3", "Assault Rifle", "132262893891624" },
+    { "L85A3 · SA80 .22 LR", "Assault Rifle", "649184310" },
+    { "M16A1", "Assault Rifle", "10661221469" },
+    { "M16A3", "Assault Rifle", "16075129011" },
+    { "M16A4", "Assault Rifle", "16075129011" },
+    { "M231", "Assault Rifle", "16075130491" },
+    { "M38A5", "Assault Rifle", "125120182502765" },
+    { "M41A", "Assault Rifle", "139650941" },
+    { "M41A · U1", "Assault Rifle", "16076219249" },
+    { "MAC-15", "Assault Rifle", "99345281811573" },
+    { "MAC-15 · SD Barrel", "Assault Rifle", "73874264488572" },
+    { "MK16 SOCOM", "Assault Rifle", "16075129748" },
+    { "MK16 SOCOM · SCAR L 9mm Conversion", "Assault Rifle", "14832923200" },
+    { "QBZ-95", "Assault Rifle", "127238187361320" },
+    { "QBZ-97A", "Assault Rifle", "84426766948260" },
+    { "SPEAR LT", "Assault Rifle", "125219258359288" },
+    { "STG-44", "Assault Rifle", "15548676127" },
+    { "STG-527", "Assault Rifle", "16075134155" },
+    { "STG-91", "Assault Rifle", "16075133810" },
+    { "TAR-21", "Assault Rifle", "16075127693" },
+    { "TYPE 20", "Assault Rifle", "15685934472" },
+    { "TYPE 20 · Integral T20", "Assault Rifle", "15685936220" },
+    { "TYPE 88", "Assault Rifle", "17641125514" },
+    { "TYPE 88 · TYPE 58", "Assault Rifle", "17641124317" },
+    { "UAR A1", "Assault Rifle", "16075125338" },
+    { "VHS-D2", "Assault Rifle", "107515274382191" },
+    { "VZ.806", "Assault Rifle", "88786881927780" },
+    { "VZ.806 · Bren 2 7.62x39mm", "Assault Rifle", "140353747399822" },
+    { "VZ.808", "Assault Rifle", "111235738431634" },
+    { "VZ.808 · Integrated BREN3", "Assault Rifle", "79043819917248" },
+    { "XM-ACR", "Assault Rifle", "140183840329940" },
+    { "AK-308", "Battle Rifle", "126464829582837" },
+    { "BELERON ECR", "Battle Rifle", "16075138319" },
+    { "DOOMBOX", "Battle Rifle", "79971257421538" },
+    { "FAL 50.00", "Battle Rifle", "1994296766" },
+    { "FAL 50.63 PARA", "Battle Rifle", "1994296766" },
+    { "GUSTAV 66", "Battle Rifle", "17286165583" },
+    { "HCAR", "Battle Rifle", "14953333758" },
+    { "HENRY 45-70", "Battle Rifle", "16075136171" },
+    { "IA2 BR", "Battle Rifle", "140608936370811" },
+    { "M14", "Battle Rifle", "16075138809" },
+    { "M7 NGSW", "Battle Rifle", "122577844167289" },
+    { "M7 NGSW · SLX Suppressor", "Battle Rifle", "75767196795578" },
+    { "MK17 SOCOM", "Battle Rifle", "16075138391" },
+    { "MK17 SOCOM · SCAR-H 6.8 SPC Conversion", "Battle Rifle", "81450713164891" },
+    { "MK17 ULTRALIGHT", "Battle Rifle", "71123885686095" },
+    { "RM 277", "Battle Rifle", "135306327429253" },
+    { "SHAK-12", "Battle Rifle", "16076219756" },
+    { "SHAK-12 · SHAK-12 Heavy Suppressor", "Battle Rifle", "107044343874268" },
+    { "SHAK-12 · SHAK-12 Light Suppressor", "Battle Rifle", "107044343874268" },
+    { "STG-528", "Battle Rifle", "18998556378" },
+    { "STG-59H", "Battle Rifle", "10634165112" },
+    { "STG-59H · STG-59H (45)", "Battle Rifle", "124943245574408" },
+    { "VZ.806 BR", "Battle Rifle", "78160848265873" },
+    { "1858 CARBINE", "Carbine", "16075140347" },
+    { "AEK-973S", "Carbine", "130045370919248" },
+    { "AK-105", "Carbine", "17663399383" },
+    { "AK-105 · AK-107", "Carbine", "17641126709" },
+    { "AK-12U", "Carbine", "16075139878" },
+    { "AK-12U · PPK-12", "Carbine", "17353528381" },
+    { "AK-9", "Carbine", "16075141534" },
+    { "AK-9 · Integral AK9", "Carbine", "107069650150224" },
+    { "C25", "Carbine", "132885483989237" },
+    { "C8A2", "Carbine", "14773344256" },
+    { "CAN CANNON", "Carbine", "9805582738" },
+    { "EF88", "Carbine", "96232949143296" },
+    { "GROZA-1", "Carbine", "17641119108" },
+    { "GROZA-1 · GROZA-2", "Carbine", "17641117932" },
+    { "GROZA-1 · GROZA-3", "Carbine", "17641116913" },
+    { "GROZA-4", "Carbine", "16075140265" },
+    { "GYROJET CARBINE", "Carbine", "10223145931" },
+    { "HONEY BADGER", "Carbine", "14057273065" },
+    { "HONEY BADGER · Suppressor", "Carbine", "16075159878" },
+    { "JUAN CARBINE", "Carbine", "9715057591" },
+    { "JURY", "Carbine", "174295284" },
+    { "K1A", "Carbine", "16541359547" },
+    { "K1A · MAX-III", "Carbine", "15685938275" },
+    { "KAC SRR", "Carbine", "17286166253" },
+    { "L22A2", "Carbine", "16075132271" },
+    { "L22A2 · SA80 .22 LR", "Carbine", "649184310" },
+    { "M4", "Carbine", "16075141380" },
+    { "M4A1", "Carbine", "16075141380" },
+    { "MG89B", "Carbine", "16075142450" },
+    { "MINI FIX", "Carbine", "88083046833402" },
+    { "MINI FIX · SD Barrel", "Carbine", "91977959476473" },
+    { "MINI FIX · Trash Panda", "Carbine", "91977959476473" },
+    { "MK16 SOCOM SC", "Carbine", "95861431416829" },
+    { "MK16 SOCOM SC · SCAR SC 300 Subsonic", "Carbine", "92179874864338" },
+    { "MK16 SOCOM SC · SCAR SC 5.56", "Carbine", "16075140110" },
+    { "MK16 SOCOM SC · SCAR SC 9mm Conversion", "Carbine", "14832923200" },
+    { "MK16 SOCOM SC · SCAR SC Integral", "Carbine", "92179874864338" },
+    { "MTS-569", "Carbine", "102178239466150" },
+    { "MTS-569 · RSH 12 Gauge", "Carbine", "94354683957648" },
+    { "OTS-126", "Carbine", "9318182121" },
+    { "PDC-45", "Carbine", "83252361639763" },
+    { "PKP DYCHOK", "Carbine", "89257720427533" },
+    { "SA58 OSW", "Carbine", "112559250451577" },
+    { "SALTY WEASLE", "Carbine", "14057273065" },
+    { "SR-3M", "Carbine", "16075141599" },
+    { "SR-3M · Vikhr Suppressor", "Carbine", "16075134535" },
+    { "STG-448", "Carbine", "85130407063434" },
+    { "STG-89C", "Carbine", "16075141468" },
+    { "STG-89C · STG-89SD", "Carbine", "2745088770" },
+    { "STG-91K", "Carbine", "16075133810" },
+    { "UAR A3", "Carbine", "116741780353536" },
+    { "UAR A3 · 7.62x39mm", "Carbine", "77197396401241" },
+    { "VIRTUS", "Carbine", "133574669329887" },
+    { "VIRTUS · Intergrated Barrel", "Carbine", "95925030073626" },
+    { "X95R", "Carbine", "16075127693" },
+    { "BELERON TCR", "DMR", "16075143837" },
+    { "DRAGUNOV SVU", "DMR", "16075144268" },
+    { "JG-90", "DMR", "16075144013" },
+    { "M21", "DMR", "16075142539" },
+    { "M28 GDMR", "DMR", "130327434899933" },
+    { "MK11", "DMR", "9884629368" },
+    { "MK11 · MK11 500 Conversion", "DMR", "17286166835" },
+    { "MK12 SPR", "DMR", "84063148292242" },
+    { "MK20 SSR", "DMR", "9608734973" },
+    { "QBU-88", "DMR", "128514727476738" },
+    { "R-10/22", "DMR", "85263658992614" },
+    { "REGULATOR", "DMR", "125447900947863" },
+    { "SA58 SPR", "DMR", "130940678877691" },
+    { "SAIGA SAR", "DMR", "138788351108723" },
+    { "SAIGA SAR · Saiga 220 Russian Conversion", "DMR", "112964566667452" },
+    { "SAIGA SAR · Saiga 223 Conversion", "DMR", "73984180924372" },
+    { "SAIGA SAR · Saiga 545 Conversion", "DMR", "73984180924372" },
+    { "SAIGA SAR · Saiga 762 Conversion", "DMR", "112964566667452" },
+    { "SKS", "DMR", "16075142638" },
+    { "SVK-12", "DMR", "116215047304534" },
+    { "SVK-12 · SVK-12/12.7", "DMR", "90757301286043" },
+    { "UAR A3M2", "DMR", "116025147552242" },
+    { "VG-98", "DMR", "16075133810" },
+    { "VSS VINTOREZ", "DMR", "16075144150" },
+    { "VSS VINTOREZ · VSS 762 Conv", "DMR", "16075141599" },
+    { "VZ.806 PPS", "DMR", "78160848265873" },
+    { "AEK-999", "LMG", "140357772905535" },
+    { "AK-12BR", "LMG", "16075137959" },
+    { "ChainSAW", "LMG", "13541268422" },
+    { "FALO 50.41", "LMG", "92409444763779" },
+    { "HAMR IAR", "LMG", "10972840437" },
+    { "HAMR IAR · HAMR 9mm Conversion", "LMG", "14832923200" },
+    { "HORNET", "LMG", "13540609737" },
+    { "JUGGUN", "LMG", "13541268422" },
+    { "KORD-R", "LMG", "120390086460620" },
+    { "L86A2 LSW", "LMG", "16075148728" },
+    { "L86A2 LSW · SA80 .22 LR", "LMG", "649184310" },
+    { "LMG BLING", "LMG", "16075142450" },
+    { "LMG BLING · LMG BLING (ALEXANDRITE)", "LMG", "18524992478" },
+    { "LMG BLING · LMG BLING (AMETHYST)", "LMG", "18524992478" },
+    { "LMG BLING · LMG BLING (DIAMOND)", "LMG", "18524992478" },
+    { "LMG BLING · LMG BLING (EMERALD)", "LMG", "18524992478" },
+    { "LMG BLING · LMG BLING (ONYX)", "LMG", "18524992478" },
+    { "LMG BLING · LMG BLING (PAINITE)", "LMG", "18524992478" },
+    { "LMG BLING · LMG BLING (QUARTZ)", "LMG", "18524992478" },
+    { "LMG BLING · LMG BLING (RUBY)", "LMG", "18524994585" },
+    { "LMG BLING · LMG BLING (SAPPHIRE)", "LMG", "18524992478" },
+    { "LMG BLING · LMG BLING (TOPAZ)", "LMG", "18524992478" },
+    { "LSV M/04", "LMG", "9863722067" },
+    { "M1918A2", "LMG", "14953333043" },
+    { "M249 SAW", "LMG", "139956715152920" },
+    { "M27 IAR", "LMG", "94710438614714" },
+    { "M60E6", "LMG", "85789586022651" },
+    { "M60E6 · M60 5.56", "LMG", "93482600213126" },
+    { "MG3KWS", "LMG", "9690610405" },
+    { "MG42", "LMG", "6343876894" },
+    { "MG80", "LMG", "17353523008" },
+    { "MG91", "LMG", "16075133810" },
+    { "MGV-176", "LMG", "13540609737" },
+    { "PKM", "LMG", "137143667469930" },
+    { "PKP PECHENEG", "LMG", "89257720427533" },
+    { "PKP PECHENEG · SHORT BARREL", "LMG", "121576482132283" },
+    { "QJB-95 LSW", "LMG", "72005927783779" },
+    { "REAPR-338", "LMG", "121719251992638" },
+    { "RPK", "LMG", "16075146918" },
+    { "RPK-12", "LMG", "16075147159" },
+    { "RPK-16", "LMG", "110236675347398" },
+    { "RPK-74", "LMG", "16075148535" },
+    { "STONER 96", "LMG", "13541268422" },
+    { "UAR HBAR", "LMG", "16075125338" },
+    { "93R", "Machine Pistols", "16075146698" },
+    { "AEK-919K", "Machine Pistols", "110309837204939" },
+    { "ARM PISTOL", "Machine Pistols", "10473353543" },
+    { "ASMI", "Machine Pistols", "9318180641" },
+    { "AUTO 9", "Machine Pistols", "11301450456" },
+    { "G18C", "Machine Pistols", "16075144842" },
+    { "MAC-11", "Machine Pistols", "86510765054047" },
+    { "MAC-11 · Sionics Suppressor", "Machine Pistols", "17353521724" },
+    { "MICRO UZI", "Machine Pistols", "16075145292" },
+    { "MP1911", "Machine Pistols", "16075146144" },
+    { "PP-2000", "Machine Pistols", "9318182121" },
+    { "SKORPION VZ.61", "Machine Pistols", "10936828672" },
+    { "TEC-9", "Machine Pistols", "16075145504" },
+    { "COILGUN", "Other", "11220430857" },
+    { "COILGUN · e Shotgun Penny Conversion", "Other", "330274138" },
+    { "M79 THUMPER", "Other", "5744456369" },
+    { "OBREZ", "Other", "16075150290" },
+    { "SAIGA-12U", "Other", "16075150185" },
+    { "SAIGA-12U · SAIGA-50U", "Other", "17286167554" },
+    { "SASS 308", "Other", "14773346233" },
+    { "SAWED OFF", "Other", "16075149189" },
+    { "STAKEOUT", "Other", "127823525647306" },
+    { "SUPER SHORTY", "Other", "16075150601" },
+    { "THUNDER", "Other", "70730606737285" },
+    { "sfg 50", "Other", "16075148825" },
+    { "AKS-74U", "PDW", "17641122840" },
+    { "AKS-74U · AK-V", "PDW", "17641121691" },
+    { "AKS-74U · AKMSU", "PDW", "17641120514" },
+    { "BLOCKSON", "PDW", "16075144842" },
+    { "BWC9 A", "PDW", "13540609649" },
+    { "FAL PARA SHORTY", "PDW", "1994296766" },
+    { "FAMAS COMMANDO", "PDW", "70896404265084" },
+    { "FIVE-0", "PDW", "17286162019" },
+    { "FIVE-0 · AR-9", "PDW", "17286163471" },
+    { "FIVE-0 · FOUR-T-5", "PDW", "17286162785" },
+    { "IA2 SMG", "PDW", "105323865822334" },
+    { "K7", "PDW", "16075154790" },
+    { "K7 · K7 5.56x45 Conversion", "PDW", "16076219997" },
+    { "L2A3", "PDW", "16075152091" },
+    { "LUTY · DEFFAULT", "PDW", "102333295501841" },
+    { "LUTY · Integral", "PDW", "130142723315559" },
+    { "M3A1", "PDW", "131385316146612" },
+    { "M3A1 · OSS Suppressor", "PDW", "114519806224862" },
+    { "MAC-31", "PDW", "81426178522956" },
+    { "MAC10", "PDW", "16075154516" },
+    { "MAC10 · Sionics Suppressor", "PDW", "17353521724" },
+    { "MK16 SOCOM CQB", "PDW", "16075140110" },
+    { "MK16 SOCOM CQB · MK17 SOCOM CQB", "PDW", "16075138391" },
+    { "MK16 SOCOM CQB · SCAR PDW 9mm Conversion", "PDW", "14832923200" },
+    { "MP-9", "PDW", "16075145504" },
+    { "MP40", "PDW", "16075151861" },
+    { "P90", "PDW", "17286160893" },
+    { "PDX-45", "PDW", "6342509471" },
+    { "PP-19 BIZON", "PDW", "17286115321" },
+    { "PPSH-41", "PDW", "16075154674" },
+    { "RAMA 1130", "PDW", "6253488888" },
+    { "RATTLER", "PDW", "133574669329887" },
+    { "SMG 633", "PDW", "9864280124" },
+    { "SMX-10", "PDW", "16075151380" },
+    { "SMX-9", "PDW", "16075151751" },
+    { "SMX-9/10", "PDW", "16075154921" },
+    { "SMX-9K", "PDW", "16075151751" },
+    { "SMX-9SD", "PDW", "16075154071" },
+    { "STG-527C", "PDW", "85773849034946" },
+    { "STG-91C", "PDW", "16075133810" },
+    { "TOMMY GUN", "PDW", "16075150705" },
+    { "TYPEWRITER", "PDW", "18625401832" },
+    { "UAR A3 PARA", "PDW", "16075125338" },
+    { "UZI", "PDW", "16075145292" },
+    { "VECTOR 45", "PDW", "16075152939" },
+    { "X46", "PDW", "16075152453" },
+    { "X46 · Loudener", "PDW", "2484694762" },
+    { "X46 · Suppressor", "PDW", "92621306458927" },
+    { "X95 SMG", "PDW", "16075154377" },
+    { "XM-MARS", "PDW", "14241631460" },
+    { "AF2011-A1", "Pistols", "16075146144" },
+    { "ALIEN", "Pistols", "10593486171" },
+    { "AUTOMAG III", "Pistols", "11330587252" },
+    { "AUTOMAG III · AUTOMAG V", "Pistols", "16281996111" },
+    { "BOXY BUSTER", "Pistols", "16075133483" },
+    { "FIVE SEVEN", "Pistols", "3175583137" },
+    { "G1", "Pistols", "72326188551563" },
+    { "G17", "Pistols", "16075144842" },
+    { "G21", "Pistols", "16271566010" },
+    { "G23", "Pistols", "16075156134" },
+    { "G40", "Pistols", "16075155927" },
+    { "G50", "Pistols", "16075156353" },
+    { "GB-22", "Pistols", "16075156481" },
+    { "GB-22 · GB-10", "Pistols", "16076219461" },
+    { "GB-22 · GB-12", "Pistols", "16076220214" },
+    { "GB-22 · GB-50", "Pistols", "16076220436" },
+    { "GI M1", "Pistols", "16075156234" },
+    { "GOLDEN GUN", "Pistols", "18238800579" },
+    { "GRIZZLY", "Pistols", "16075155553" },
+    { "GSH-18", "Pistols", "113781865798446" },
+    { "GSP", "Pistols", "16075156593" },
+    { "GYROJET MARK I", "Pistols", "10223145931" },
+    { "HARDBALLER", "Pistols", "16075156234" },
+    { "IZHEVSK PB", "Pistols", "10384252483" },
+    { "JUAN", "Pistols", "9715057591" },
+    { "KG-99", "Pistols", "82429815921541" },
+    { "LA RATA", "Pistols", "16075156054" },
+    { "M17", "Pistols", "13540609649" },
+    { "M1911A1", "Pistols", "16075146144" },
+    { "M2011", "Pistols", "16075155285" },
+    { "M45A1", "Pistols", "16075155285" },
+    { "M7644", "Pistols", "16075146144" },
+    { "M9", "Pistols", "16075146698" },
+    { "M9 · Osprey Suppressor", "Pistols", "10658576113" },
+    { "MAKAROV PM", "Pistols", "6253270429" },
+    { "RAVEN L5", "Pistols", "16075155685" },
+    { "RAVEN XIX", "Pistols", "16079935327" },
+    { "TOY M1911", "Pistols", "16075142308" },
+    { "U-527/22", "Pistols", "111139013075317" },
+    { "U-527/22 · Integral U416", "Pistols", "130327948202358" },
+    { "ZIP 22", "Pistols", "16075144842" },
+    { "1858 NEW ARMY", "Revolvers", "16075140347" },
+    { "EXECUTIONER", "Revolvers", "2323962833" },
+    { "GOLDHAWK", "Revolvers", "11302551320" },
+    { "GOLDHAWK · BLING SRR", "Revolvers", "16075159623" },
+    { "JUDGE", "Revolvers", "174295284" },
+    { "MATEBA 6", "Revolvers", "2379068310" },
+    { "MATEBA 6 · Mateba 6 .454 Casull", "Revolvers", "16359101420" },
+    { "MP412 REX", "Revolvers", "16075156708" },
+    { "MP412 REX · MONARCH", "Revolvers", "17439816200" },
+    { "RH-44", "Revolvers", "17353530387" },
+    { "RSH-12", "Revolvers", "102178239466150" },
+    { "RSH-12 · RSH 12 Gauge", "Revolvers", "94354683957648" },
+    { "AA-12", "Shotgun", "3175637210" },
+    { "AK-12/76", "Shotgun", "16075156804" },
+    { "AK-12/76 · AK-12/410", "Shotgun", "16076220112" },
+    { "DT11", "Shotgun", "10583207724" },
+    { "DT11 · Integral Suppressor", "Shotgun", "17447183138" },
+    { "E-GUN", "Shotgun", "11220430857" },
+    { "E-GUN · e Shotgun Penny Conversion", "Shotgun", "330274138" },
+    { "GOLDEN SHORTY", "Shotgun", "18224393650" },
+    { "KS-23M", "Shotgun", "10626512117" },
+    { "KSG 12", "Shotgun", "16075157063" },
+    { "M37 12G", "Shotgun", "85511160904221" },
+    { "MODEL 870", "Shotgun", "16075156898" },
+    { "ROPOD SHOTTY", "Shotgun", "6823153536" },
+    { "SAIGA-12", "Shotgun", "16075150185" },
+    { "SAIGA-12 · SAIGA-50", "Shotgun", "17286167554" },
+    { "SCX-12", "Shotgun", "97226408700041" },
+    { "SPAS-12", "Shotgun", "10648390082" },
+    { "STEVENS DB", "Shotgun", "16075149189" },
+    { "TERMINATOR 12G", "Shotgun", "114427878430038" },
+    { "USAS-12", "Shotgun", "9318182796" },
+    { "AWM", "Sniper Rifle", "16075157319" },
+    { "AWS", "Sniper Rifle", "16075159623" },
+    { "BALLISTA", "Sniper Rifle", "85530370083584" },
+    { "BFG 50", "Sniper Rifle", "16075148825" },
+    { "DRAGUNOV SVDS", "Sniper Rifle", "16075159103" },
+    { "DSR-50", "Sniper Rifle", "108947604841287" },
+    { "FT300", "Sniper Rifle", "10155561848" },
+    { "FT300 · FT300 Suppressor", "Sniper Rifle", "10176982939" },
+    { "HECATE II", "Sniper Rifle", "16075158423" },
+    { "INTERVENTION", "Sniper Rifle", "16075159216" },
+    { "K14", "Sniper Rifle", "16075159335" },
+    { "KEK-50", "Sniper Rifle", "81493813404488" },
+    { "LR-3", "Sniper Rifle", "89176477644247" },
+    { "LR-4A", "Sniper Rifle", "89935122863975" },
+    { "M110A1 CSASS", "Sniper Rifle", "119218050539899" },
+    { "M1903", "Sniper Rifle", "10628614745" },
+    { "M1903 · Maxim Silencer", "Sniper Rifle", "10224754854" },
+    { "M82A1", "Sniper Rifle", "14241618991" },
+    { "MODEL 700", "Sniper Rifle", "16075157973" },
+    { "MOSIN NAGANT", "Sniper Rifle", "16075150290" },
+    { "NTW-20", "Sniper Rifle", "10483076439" },
+    { "RAILGUN", "Sniper Rifle", "200901180" },
+    { "RCS-10/22", "Sniper Rifle", "85263658992614" },
+    { "SCOUT RIFLE", "Sniper Rifle", "2694153540" },
+    { "THE FIX", "Sniper Rifle", "105517847477011" },
+    { "THE FIX · PORQ Chop", "Sniper Rifle", "101780535125811" },
+    { "THE FIX · Short Chop", "Sniper Rifle", "101780535125811" },
+    { "TIMBERWOLF", "Sniper Rifle", "82115391293580" },
+    { "TIMBERWOLF · .408 CHEYTAC", "Sniper Rifle", "75184198613740" },
+    { "TIMBERWOLF · Suppressor", "Sniper Rifle", "71912470470734" },
+    { "TRG-42", "Sniper Rifle", "105981600042533" },
+    { "VKS", "Sniper Rifle", "72346124985145" },
+    { "VKS · VKS Suppressor", "Sniper Rifle", "83241328344476" },
+    { "WA2000", "Sniper Rifle", "16075159757" },
+}
+HIT_SOUNDS["PF Hitmarker"] = "rbxassetid://287062939"
+HIT_SOUNDS["PF Killshot"] = { "rbxassetid://898398768", "rbxassetid://898398730", "rbxassetid://898398743" }
+HIT_SOUNDS["PF Headshot kill"] = { "rbxassetid://898398768", "rbxassetid://898398785", "rbxassetid://898398795", "rbxassetid://898398809", "rbxassetid://898398817", "rbxassetid://898398837" }
+local PF_GUN_NAMES, PF_GUN_BY_NAME, PF_GUN_CATEGORY = {}, {}, {}
+for _, row in ipairs(PF_GUN_ROWS) do
+    table.insert(PF_GUN_NAMES, row[1])
+    PF_GUN_BY_NAME[row[1]] = "rbxassetid://" .. row[3]
+    PF_GUN_CATEGORY[row[1]] = row[2]
+end
+
+local FX_WEAPONS = {
+    { key = "ak47", label = "AK-47", tools = { "ak47" }, default = "AK-47" },
+    { key = "m4a1", label = "M4A1", tools = { "m4a1", "m4" }, default = "M4A1" },
+    { key = "mp5", label = "MP5", tools = { "mp5" }, default = "MP-9" },
+    { key = "fal", label = "FAL", tools = { "fal" }, default = "FAL 50.00" },
+    { key = "r870", label = "Remington 870", tools = { "remington870", "r870", "remington" }, default = "MODEL 870" },
+    { key = "m700", label = "M700", tools = { "m700" }, default = "MODEL 700" },
+    { key = "m9", label = "M9", tools = { "m9" }, default = "M9" },
+    { key = "revolver", label = "Revolver", tools = { "revolver" }, default = "JUDGE" },
+}
+
+local function fxPlaySound(entry, volume, pitch, variation)
+    if type(entry) == "table" then entry = entry[math.random(1, #entry)] end
+    if type(entry) ~= "string" or entry == "" then return nil end
+    local sound = Instance.new("Sound")
+    sound.SoundId = entry
+    sound.Volume = tonumber(volume) or 1
+    local speed = tonumber(pitch) or 1
+    if variation and variation > 0 then speed = speed * (1 + (math.random() * 2 - 1) * variation) end
+    sound.PlaybackSpeed = math.max(speed, 0.05)
+    sound.Parent = game:GetService("SoundService")
+    sound:Play()
+    game:GetService("Debris"):AddItem(sound, 8)
+    return sound
+end
 local HIT_SOUND_NAMES = {}
 for name in pairs(HIT_SOUNDS) do table.insert(HIT_SOUND_NAMES, name) end
 table.sort(HIT_SOUND_NAMES)
@@ -1553,6 +1978,7 @@ local function wrapGroup(group, page, side)
     return wrapped
 end
 
+local GroupMeta
 local function wrapPage(tab)
     local page = { load = { 0, 0 } }
     local function pickSide(side)
@@ -1563,6 +1989,7 @@ local function wrapPage(tab)
     function page:Section(info)
         local side = pickSide(info.Side)
         local group = side == 1 and tab:AddLeftGroupbox(info.Name) or tab:AddRightGroupbox(info.Name)
+        GroupMeta = GroupMeta or getmetatable(group)
         return wrapGroup(group, page, side)
     end
 
@@ -1607,6 +2034,7 @@ local Actions = {
 
 local WHITE = Color3.fromRGB(255, 255, 255)
 local BLACK = Color3.fromRGB(0, 0, 0)
+local Fx
 
 do
 
@@ -1711,15 +2139,439 @@ do
     GunMods:Slider({ Name = "Range", Flag = "gun_range", Min = 10, Max = 100000, Default = 1000, Suffix = " studs", Decimals = 1 })
     local Hits = CombatTab:Section({ Name = "Hit feedback", Side = 2 })
     Hits:Toggle({ Name = "Hit notifications", Flag = "World_HitNotify", Default = false })
-    Hits:Toggle({ Name = "Hit sounds", Flag = "World_HitSound", Default = false })
-    Hits:Dropdown({ Name = "Hit sound", Flag = "World_HitSoundId", Items = HIT_SOUND_NAMES, Default = "Gamesense" })
-    Hits:Slider({ Name = "Hit volume", Flag = "World_HitVolume", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
-    Hits:Button({ Name = "Preview sound", Callback = function() if playHitSound then playHitSound() end end })
     Hits:Toggle({ Name = "Bullet impacts", Flag = "World_Impacts", Default = false })
     local Utility = CombatTab:Section({ Name = "Weapon utility", Side = 2 })
     Utility:Toggle({ Name = "Auto reload", Flag = "gun_auto_reload", Default = false })
     Utility:Toggle({ Name = "Auto swap on empty", Flag = "gun_auto_swap", Default = false })
     Utility:Toggle({ Name = "Shoot through vehicles", Flag = "gun_vehicle_wallbang", Default = false })
+end
+
+do
+Fx = { tabs = {}, order = { "SFX", "VFX", "Tracers" }, built = false, size = Vector2.new(600, 740), minSize = Vector2.new(480, 560) }
+for _, name in ipairs(Fx.order) do Fx.tabs[name] = { name = name, subs = {}, subOrder = {} } end
+
+local function fxCreate(class, props, registry)
+    local instance = Library:Create(class, props)
+    if registry then Library:AddToRegistry(instance, registry) end
+    return instance
+end
+
+local function fxLabel(props)
+    props.ZIndex = props.ZIndex or 5
+    return Library:CreateLabel(props)
+end
+
+local function fxBorder(item, colorName)
+    if not (item and item.Parent) then return end
+    item.BorderColor3 = Library[colorName]
+    local entry = Library.RegistryMap and Library.RegistryMap[item]
+    if entry then entry.Properties.BorderColor3 = colorName end
+end
+
+local function fxBackground(item, colorName)
+    if not (item and item.Parent) then return end
+    item.BackgroundColor3 = Library[colorName]
+    local entry = Library.RegistryMap and Library.RegistryMap[item]
+    if entry then entry.Properties.BackgroundColor3 = colorName end
+end
+
+local function fxBevel(parent, z, size, position, order)
+    local outer = fxCreate("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BorderColor3 = Color3.new(0, 0, 0), Size = size, Position = position or UDim2.new(), LayoutOrder = order or 0, ZIndex = z, Parent = parent }, { BorderColor3 = "Black" })
+    local inner = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = z + 1, Parent = outer }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+    Library:Create("UIGradient", {
+        Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)), ColorSequenceKeypoint.new(1, Color3.fromRGB(212, 212, 212)) }),
+        Rotation = 90,
+        Parent = inner,
+    })
+    return outer, inner
+end
+
+local function fxPanel(parent, name, position, size)
+    local outer = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = position, Size = size, ZIndex = 2, Parent = parent }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+    local inner = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 3, Parent = outer }, { BackgroundColor3 = "BackgroundColor" })
+    fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = 4, Parent = inner }, { BackgroundColor3 = "AccentColor" })
+    fxLabel({ Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0, 2), TextSize = Library.FontSize, Text = name, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 4, Parent = inner })
+    return inner
+end
+
+local function fxTabButton(parent, text, order)
+    local width = Library:GetTextBounds(text, Library.Font, Library.FontSize + 2) + 14
+    local frame = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(0, width, 1, 0), LayoutOrder = order, ZIndex = 1, Parent = parent }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+    fxLabel({ Size = UDim2.new(1, 0, 1, -1), Text = text, ZIndex = 1, Parent = frame })
+    local indicator = fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), Visible = false, ZIndex = 4, Parent = frame }, { BackgroundColor3 = "AccentColor" })
+    local hit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 6, Parent = frame })
+    return { frame = frame, indicator = indicator, hit = hit }
+end
+
+local function fxSetActive(button, on)
+    if not button then return end
+    fxBackground(button.frame, on and "MainColor" or "BackgroundColor")
+    button.indicator.Visible = on
+end
+
+local function fxBar(parent, position, size)
+    local outer = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = position, Size = size, ZIndex = 1, Parent = parent }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+    local inner = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Color3.new(0, 0, 0), BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 1, Parent = outer }, { BackgroundColor3 = "BackgroundColor" })
+    return inner
+end
+
+function Fx:Build()
+    if self.built or not Library.ScreenGui then return end
+    self.built = true
+    local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+    local size = Vector2.new(math.min(self.size.X, viewport.X - 20), math.min(self.size.Y, viewport.Y - 20))
+    self.size = size
+    local main = fxCreate("Frame", { Name = "AsterEffects", BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, Position = UDim2.new(0.5, -size.X / 2 + 40, 0.5, -size.Y / 2), Size = UDim2.fromOffset(size.X, size.Y), Visible = false, ZIndex = 1, Parent = Library.ScreenGui })
+    Library:MakeDraggable(main, 25)
+    self.main = main
+    local frame = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 1, Parent = main }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+    fxLabel({ Size = UDim2.new(1, 0, 0, 25), Text = "Effects", TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 1, Parent = frame })
+
+    local tabInner = fxBar(frame, UDim2.new(0, 8, 0, 25), UDim2.new(1, -16, 0, 29))
+    local tabArea = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 4, 0, 4), Size = UDim2.new(1, -8, 1, -8), ZIndex = 1, Parent = tabInner })
+    Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Parent = tabArea })
+    for index, name in ipairs(self.order) do
+        local tab = self.tabs[name]
+        tab.button = fxTabButton(tabArea, name, index)
+        tab.button.hit.MouseButton1Click:Connect(function() self:Select(name) end)
+    end
+
+    local subInner = fxBar(frame, UDim2.new(0, 8, 0, 58), UDim2.new(1, -16, 0, 27))
+    self.subArea = Library:Create("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.new(0, 4, 0, 4), Size = UDim2.new(1, -8, 1, -8), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, TopImage = "", BottomImage = "", ZIndex = 1, Parent = subInner })
+    Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Parent = self.subArea })
+
+    local bodyInner = fxBar(frame, UDim2.new(0, 8, 0, 89), UDim2.new(1, -16, 1, -97))
+    local previewInner = fxPanel(bodyInner, "Preview", UDim2.new(0, 8, 0, 8), UDim2.new(1, -16, 0.45, -12))
+    local settingsInner = fxPanel(bodyInner, "Settings", UDim2.new(0, 8, 0.45, 4), UDim2.new(1, -16, 0.55, -12))
+    self.previewHost = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 4, 0, 22), Size = UDim2.new(1, -8, 1, -26), ZIndex = 4, Parent = previewInner })
+    self.settingsHost = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 4, 0, 22), Size = UDim2.new(1, -8, 1, -26), ZIndex = 3, Parent = settingsInner })
+
+    local grip = fxLabel({ Text = "//", TextSize = 12, Size = UDim2.fromOffset(16, 16), Position = UDim2.new(1, -16, 1, -16), ZIndex = 9, Parent = main })
+    local gripHit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 10, Parent = grip })
+    gripHit.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local from, origin = main.AbsoluteSize, input.Position
+        local move, finish
+        move = UserInputService.InputChanged:Connect(function(change)
+            if change.UserInputType ~= Enum.UserInputType.MouseMovement and change.UserInputType ~= Enum.UserInputType.Touch then return end
+            local cam = workspace.CurrentCamera
+            local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+            local w = math.clamp(from.X + (change.Position.X - origin.X), self.minSize.X, math.max(self.minSize.X, vp.X - 20))
+            local h = math.clamp(from.Y + (change.Position.Y - origin.Y), self.minSize.Y, math.max(self.minSize.Y, vp.Y - 20))
+            main.Size = UDim2.fromOffset(w, h)
+            self.size = Vector2.new(w, h)
+        end)
+        finish = UserInputService.InputEnded:Connect(function(ended)
+            if ended.UserInputType == Enum.UserInputType.MouseButton1 or ended.UserInputType == Enum.UserInputType.Touch then
+                move:Disconnect()
+                finish:Disconnect()
+            end
+        end)
+    end)
+
+    track(RunService.Heartbeat:Connect(function()
+        local toggle = Toggles and Toggles.fx_ui
+        local want = toggle ~= nil and toggle.Value == true and Library.Toggled ~= false
+        if main.Visible ~= want then main.Visible = want end
+    end))
+    onUnload(function()
+        pcall(function() main:Destroy() end)
+        self.main = nil
+    end)
+
+    self:Select("SFX")
+end
+
+function Fx:RefreshSubBar()
+    local tab = self.activeTab
+    if not (tab and self.subArea) then return end
+    for _, child in ipairs(self.subArea:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+    for index, sub in ipairs(tab.subOrder) do
+        sub.button = fxTabButton(self.subArea, sub.name, index)
+        fxSetActive(sub.button, tab.current == sub)
+        sub.button.hit.MouseButton1Click:Connect(function() self:SelectSub(sub) end)
+    end
+end
+
+function Fx:SelectSub(sub)
+    local tab = self.activeTab
+    if not (tab and sub) then return end
+    tab.current = sub
+    for _, other in ipairs(tab.subOrder) do
+        other.preview.Visible = other == sub
+        other.settings.Visible = other == sub
+        fxSetActive(other.button, other == sub)
+    end
+    if not sub.previewBuilt and sub.builder then
+        sub.previewBuilt = true
+        local ok, err = pcall(sub.builder, sub.preview, sub)
+        if not ok then warn("Effects preview failed:", err) end
+    end
+    if sub.onShow then
+        local ok, err = pcall(sub.onShow, sub)
+        if not ok then warn("Effects preview failed:", err) end
+    end
+end
+
+function Fx:Select(tabName)
+    local tab = self.tabs[tabName]
+    if not tab then return end
+    self.activeTab = tab
+    for _, other in pairs(self.tabs) do
+        fxSetActive(other.button, other == tab)
+        for _, sub in ipairs(other.subOrder) do
+            if other ~= tab then
+                sub.preview.Visible = false
+                sub.settings.Visible = false
+            end
+        end
+    end
+    self:RefreshSubBar()
+    self:SelectSub(tab.current or tab.subOrder[1])
+end
+
+function Fx:Sub(tabName, subName)
+    self:Build()
+    local tab = self.tabs[tabName]
+    local existing
+    for _, sub in ipairs(tab.subOrder) do
+        if sub.name == subName then existing = sub break end
+    end
+    if existing then return existing end
+    local sub = { name = subName, tab = tab, sections = 0 }
+    sub.preview = Library:Create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), Visible = false, ClipsDescendants = true, ZIndex = 4, Parent = self.previewHost })
+    sub.settings = fxCreate("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 1, 0), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", Visible = false, ZIndex = 3, Parent = self.settingsHost }, { ScrollBarImageColor3 = "AccentColor" })
+    Library:Create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Center, Parent = sub.settings })
+    Library:Create("UIPadding", { PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 4), Parent = sub.settings })
+    table.insert(tab.subOrder, sub)
+    if tab == self.activeTab then
+        self:RefreshSubBar()
+        if not tab.current then self:SelectSub(sub) end
+    end
+    return sub
+end
+
+function Fx:Preview(tabName, subName, builder, onShow)
+    local sub = self:Sub(tabName, subName)
+    sub.builder = builder
+    sub.onShow = onShow
+    if self.activeTab and self.activeTab.current == sub then self:SelectSub(sub) end
+end
+
+function Fx:Section(tabName, subName, sectionName)
+    local sub = self:Sub(tabName, subName)
+    sub.sections += 1
+    local outer = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, -8, 0, 40), LayoutOrder = sub.sections, ZIndex = 3, Parent = sub.settings }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+    local inner = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 4, Parent = outer }, { BackgroundColor3 = "BackgroundColor" })
+    fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = 5, Parent = inner }, { BackgroundColor3 = "AccentColor" })
+    fxLabel({ Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0, 2), TextSize = Library.FontSize, Text = sectionName, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 5, Parent = inner })
+    local container = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 4, 0, 20), Size = UDim2.new(1, -4, 1, -20), ZIndex = 1, Parent = inner })
+    local layout = Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder, Parent = container })
+    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        outer.Size = UDim2.new(1, -8, 0, layout.AbsoluteContentSize.Y + 24)
+    end)
+    local fake = setmetatable({ Container = container, Resize = function() end }, GroupMeta)
+    fake:AddBlank(3)
+    return wrapGroup(fake, { load = { 0, 0 } }, 1)
+end
+
+local function fxSoundList(initial)
+    local state = { config = initial }
+    local frame = Library:Create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), ZIndex = 5 })
+    state.frame = frame
+    local searchOuter, searchFace = fxBevel(frame, 5, UDim2.new(1, 0, 0, 20), UDim2.fromOffset(0, 0))
+    local clip = Library:Create("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.new(0, 5, 0, 0), Size = UDim2.new(1, -5, 1, 0), ZIndex = 7, Parent = searchFace })
+    local box = Library:Create("TextBox", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 0), Size = UDim2.fromScale(5, 1), Font = Library.Font, PlaceholderColor3 = Color3.fromRGB(190, 190, 190), PlaceholderText = "search sounds...", ClearTextOnFocus = false, Text = "", TextColor3 = Library.FontColor, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8, Parent = clip })
+    Library:AddToRegistry(box, { TextColor3 = "FontColor" })
+    Library:ApplyTextStroke(box)
+    local list = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 1, -24), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = frame }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+    Library:Create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
+    Library:Create("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3), Parent = list })
+
+    local rows = {}
+    local function value(flag, default)
+        local option = flag and Options[flag]
+        if option and option.Value ~= nil then return option.Value end
+        return default
+    end
+    local function play(name)
+        local config = state.config
+        fxPlaySound(config.lookup(name), value(config.volumeFlag, 1), value(config.pitchFlag, 1), value(config.varFlag, 0))
+    end
+
+    for index, name in ipairs(initial.names) do
+        local row = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, 0, 0, 22), LayoutOrder = index, ZIndex = 6, Parent = list }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+        fxLabel({ Text = name, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0.6, -40, 1, 0), Position = UDim2.fromOffset(6, 0), ZIndex = 7, Parent = row })
+        local category = initial.category and initial.category(name)
+        if category then
+            fxLabel({ Text = category, TextSize = 11, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Right, Size = UDim2.new(0.4, -52, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), ZIndex = 7, Parent = row })
+        end
+        local pick = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, -44, 1, 0), ZIndex = 9, Parent = row })
+        local playOuter, playFace = fxBevel(row, 7, UDim2.fromOffset(38, 16), UDim2.new(1, -41, 0.5, -8))
+        playOuter.Visible = false
+        fxLabel({ Text = "Play", TextSize = 11, Size = UDim2.new(1, 0, 1, 0), ZIndex = 9, Parent = playFace })
+        local playHit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 11, Parent = playOuter })
+        local over = 0
+        local function hover(delta)
+            over = math.max(over + delta, 0)
+            playOuter.Visible = over > 0
+        end
+        for _, hit in ipairs({ pick, playHit }) do
+            hit.MouseEnter:Connect(function() hover(1) end)
+            hit.MouseLeave:Connect(function() hover(-1) end)
+        end
+        pick.MouseButton1Click:Connect(function()
+            local option = state.config.flag and Options[state.config.flag]
+            if option then option:SetValue(name) end
+        end)
+        playHit.MouseButton1Click:Connect(function() play(name) end)
+        rows[name] = row
+    end
+
+    local shown
+    local function refresh()
+        local current = value(state.config.flag, nil)
+        if current == shown then return end
+        shown = current
+        for name, row in pairs(rows) do fxBorder(row, name == current and "AccentColor" or "OutlineColor") end
+    end
+    function state.attach(parent, config)
+        state.config = config
+        shown = nil
+        frame.Parent = parent
+        refresh()
+    end
+    box:GetPropertyChangedSignal("Text"):Connect(function()
+        local query = string.lower(box.Text)
+        for name, row in pairs(rows) do
+            row.Visible = query == "" or string.find(string.lower(name), query, 1, true) ~= nil
+        end
+    end)
+    track(RunService.Heartbeat:Connect(function()
+        if frame.Parent and Fx.main and Fx.main.Visible and frame.Parent.Visible then refresh() end
+    end))
+    return state
+end
+
+local function fxTracerPreview(host)
+    local list = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, 0, 1, 0), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = host }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+    Library:Create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
+    Library:Create("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3), Parent = list })
+    local entries = {}
+    for index, name in ipairs(TRACER_NAMES) do
+        local preset = TRACER_PRESETS[name]
+        if preset then
+            local row = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = index, ZIndex = 6, Parent = list }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+            fxLabel({ Text = name, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0, 90, 1, 0), Position = UDim2.fromOffset(6, 0), ZIndex = 7, Parent = row })
+            local lane = Library:Create("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, ClipsDescendants = true, Position = UDim2.fromOffset(100, 3), Size = UDim2.new(1, -106, 1, -6), ZIndex = 7, Parent = row })
+            local strip
+            if preset.Texture ~= "" then
+                strip = Library:Create("ImageLabel", { BackgroundTransparency = 1, Image = preset.Texture, ScaleType = Enum.ScaleType.Stretch, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 6), ImageTransparency = preset.BaseTransparency or 0, ZIndex = 8, Parent = lane })
+            else
+                strip = Library:Create("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 2), ZIndex = 8, Parent = lane })
+            end
+            local gradient = Library:Create("UIGradient", { Parent = strip })
+            local pick = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 10, Parent = row })
+            pick.MouseButton1Click:Connect(function()
+                local option = Options.tracers_style
+                if option then option:SetValue(name) end
+            end)
+            entries[#entries + 1] = { name = name, row = row, strip = strip, gradient = gradient, preset = preset, isImage = preset.Texture ~= "" }
+        end
+    end
+    local lastStamp = 0
+    track(RunService.Heartbeat:Connect(function()
+        local now = os.clock()
+        if now - lastStamp < 0.2 then return end
+        lastStamp = now
+        if not (Fx.main and Fx.main.Visible and host.Visible) then return end
+        local first = Options.tracers_color and Options.tracers_color.Value or Color3.new(1, 1, 1)
+        local second = Options.tracers_color2 and Options.tracers_color2.Value or first
+        local useGradient = Toggles.tracers_gradient and Toggles.tracers_gradient.Value == true
+        local width = Options.tracers_width and Options.tracers_width.Value or 1
+        local selected = Options.tracers_style and Options.tracers_style.Value
+        local sequence = ColorSequence.new(first, useGradient and second or first)
+        for _, entry in ipairs(entries) do
+            entry.gradient.Color = sequence
+            local height = math.clamp(entry.preset.Width0 * width * 12 + 2, 2, 20)
+            entry.strip.Size = UDim2.new(1, 0, 0, height)
+            fxBorder(entry.row, entry.name == selected and "AccentColor" or "OutlineColor")
+        end
+    end))
+end
+
+local function fxNote(text)
+    return function(host)
+        fxLabel({ Text = text, TextWrapped = true, TextSize = Library.FontSize, Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(8, 0), ZIndex = 5, Parent = host })
+    end
+end
+
+Fx:Sub("SFX", "Hit sound")
+Fx:Sub("SFX", "Kill sound")
+for _, weapon in ipairs(FX_WEAPONS) do Fx:Sub("SFX", weapon.label) end
+Fx:Sub("VFX", "Kill effects")
+Fx:Sub("VFX", "Hit effects")
+Fx:Sub("VFX", "Aura effects")
+Fx:Sub("VFX", "Muzzle effects")
+Fx:Sub("Tracers", "Bullet tracers")
+
+do
+    local function soundSection(label, prefix, toggleFlag, idFlag, volumeFlag, pitchFlag, varFlag, defaultSound, previewCallback)
+        local box = Fx:Section("SFX", label, label)
+        box:Toggle({ Name = label .. "s", Flag = toggleFlag, Default = false })
+        box:Dropdown({ Name = label, Flag = idFlag, Items = HIT_SOUND_NAMES, Default = defaultSound })
+        box:Slider({ Name = "Volume", Flag = volumeFlag, Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
+        box:Slider({ Name = "Pitch", Flag = pitchFlag, Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+        box:Slider({ Name = "Pitch variation", Flag = varFlag, Min = 0, Max = 0.5, Default = 0, Decimals = 0.01 })
+        box:Button({ Name = "Preview sound", Callback = previewCallback })
+    end
+    soundSection("Hit sound", "hit", "World_HitSound", "World_HitSoundId", "World_HitVolume", "World_HitPitch", "World_HitPitchVar", "Gamesense", function() if playHitSound then playHitSound() end end)
+    soundSection("Kill sound", "kill", "World_KillSound", "World_KillSoundId", "World_KillVolume", "World_KillPitch", "World_KillPitchVar", "PF Killshot", function()
+        local name = Options.World_KillSoundId and Options.World_KillSoundId.Value
+        fxPlaySound(HIT_SOUNDS[name], Options.World_KillVolume.Value, Options.World_KillPitch.Value, Options.World_KillPitchVar.Value)
+    end)
+
+    local hitConfig = { names = HIT_SOUND_NAMES, lookup = function(name) return HIT_SOUNDS[name] end, flag = "World_HitSoundId", volumeFlag = "World_HitVolume", pitchFlag = "World_HitPitch", varFlag = "World_HitPitchVar" }
+    local killConfig = { names = HIT_SOUND_NAMES, lookup = function(name) return HIT_SOUNDS[name] end, flag = "World_KillSoundId", volumeFlag = "World_KillVolume", pitchFlag = "World_KillPitch", varFlag = "World_KillPitchVar" }
+    local hitList, killList
+    Fx:Preview("SFX", "Hit sound", nil, function(sub)
+        hitList = hitList or fxSoundList(hitConfig)
+        hitList.attach(sub.preview, hitConfig)
+    end)
+    Fx:Preview("SFX", "Kill sound", nil, function(sub)
+        killList = killList or fxSoundList(killConfig)
+        killList.attach(sub.preview, killConfig)
+    end)
+
+    local gunList
+    for _, weapon in ipairs(FX_WEAPONS) do
+        local key = "sfx_" .. weapon.key
+        local config = { names = PF_GUN_NAMES, lookup = function(name) return PF_GUN_BY_NAME[name] end, category = function(name) return PF_GUN_CATEGORY[name] end, flag = key .. "_sound", volumeFlag = key .. "_volume", pitchFlag = key .. "_pitch", varFlag = key .. "_pitchvar" }
+        local box = Fx:Section("SFX", weapon.label, weapon.label .. " sound")
+        box:Toggle({ Name = "Custom " .. weapon.label .. " sound", Flag = key .. "_on", Default = false })
+        box:Dropdown({ Name = "Sound", Flag = key .. "_sound", Items = PF_GUN_NAMES, Default = weapon.default })
+        box:Slider({ Name = "Volume", Flag = key .. "_volume", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
+        box:Slider({ Name = "Pitch", Flag = key .. "_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+        box:Slider({ Name = "Pitch variation", Flag = key .. "_pitchvar", Min = 0, Max = 0.5, Default = 0, Decimals = 0.01 })
+        box:Toggle({ Name = "Mute game shot sound", Flag = key .. "_mute", Default = true })
+        box:Button({ Name = "Preview sound", Callback = function()
+            local name = Options[config.flag] and Options[config.flag].Value
+            fxPlaySound(PF_GUN_BY_NAME[name], Options[config.volumeFlag].Value, Options[config.pitchFlag].Value, Options[config.varFlag].Value)
+        end })
+        Fx:Preview("SFX", weapon.label, nil, function(sub)
+            gunList = gunList or fxSoundList(config)
+            gunList.attach(sub.preview, config)
+        end)
+    end
+
+    Fx:Preview("VFX", "Kill effects", fxNote("Kill effect preview on a dummy is coming next. Pick the effect below and use Preview effect to test it in the world."))
+    Fx:Preview("VFX", "Hit effects", fxNote("Hit effect preview on a dummy is coming next. Pick the effect below and use Preview effect to test it in the world."))
+    Fx:Preview("VFX", "Aura effects", fxNote("Aura preview on a dummy is coming next. Pick the aura below, it shows on your character."))
+    Fx:Preview("VFX", "Muzzle effects", fxNote("Muzzle effects show on the Muzzle part of the tool you hold."))
+    Fx:Preview("Tracers", "Bullet tracers", fxTracerPreview)
+end
 end
 
 end
@@ -1922,6 +2774,9 @@ EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpic
 CamFov:Toggle({ Name = "FOV changer", Flag = "camera_fov_changer", Default = false })
 CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max = 140, Default = 100, Suffix = "°", Decimals = 1 })
 
+    local EffectsBox = WorldPage:Section({ Name = "Effects window", Side = 1 })
+    EffectsBox:Toggle({ Name = "Effects window", Flag = "fx_ui", Default = false, Tooltip = "Opens the window with sounds, visual effects and tracers" })
+
     local LightMain, LightTime, LightFog = WorldPage:MultiSection({ Sections = { "Light", "Time", "Fog" }, Side = 1 })
     LightMain:Toggle({ Name = "Ambient", Flag = "lighting_toggle_Ambient", Default = false }):Colorpicker({ Name = "Color", Flag = "lighting_colorAmbient", Default = WHITE })
     LightMain:Toggle({ Name = "Brightness", Flag = "lighting_toggle_Brightness", Default = false })
@@ -1959,7 +2814,9 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     EnvScreen:Slider({ Name = "Sun rays intensity", Flag = "sunrays_intensity", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
     EnvScreen:Slider({ Name = "Screen blur", Flag = "camera_blur", Min = 0, Max = 20, Default = 0, Decimals = 0.01 })
 
-    local GunLook, GunChams, GunTracerTab, GunTimingTab = VisualsPage:MultiSection({ Sections = { "Viewmodel", "Chams", "Tracers", "Timing" }, Side = 2 })
+    local GunLook, GunChams = VisualsPage:MultiSection({ Sections = { "Viewmodel", "Chams" }, Side = 2 })
+local GunTracerTab = Fx:Section("Tracers", "Bullet tracers", "Tracers")
+local GunTimingTab = Fx:Section("Tracers", "Bullet tracers", "Timing")
 GunLook:Toggle({ Name = "Gun color", Flag = "viewmodel_body_color", Default = false }):Colorpicker({ Name = "Color", Flag = "viewmodel_body_color_value", Default = Color3.fromRGB(202, 161, 13), Alpha = true })
 GunLook:Dropdown({ Name = "Material", Flag = "viewmodel_material_value", Items = { "Default", "ForceField", "Neon", "Glass", "SmoothPlastic", "Plastic" }, Default = "Default" })
 GunLook:Dropdown({ Name = "Forcefield texture", Flag = "viewmodel_texture_value", Items = FORCEFIELD_TEXTURE_NAMES, Default = "Disabled" })
@@ -1967,6 +2824,7 @@ GunLook:Toggle({ Name = "Disable textures", Flag = "viewmodel_disable_textures",
 GunChams:Toggle({ Name = "Gun chams", Flag = "viewmodel_chams", Default = false }):Colorpicker({ Name = "Fill", Flag = "viewmodel_chams_color", Default = Color3.fromRGB(120, 80, 255), Alpha = 0.5 }):Colorpicker({ Name = "Outline", Flag = "viewmodel_chams_color2", Default = WHITE, Alpha = true })
 GunTracerTab:Toggle({ Name = "Bullet tracers", Flag = "tracers_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "tracers_color", Default = WHITE })
 GunTracerTab:Dropdown({ Name = "Style", Flag = "tracers_style", Items = TRACER_NAMES, Default = "Obelus" })
+GunTracerTab:Toggle({ Name = "Gradient", Flag = "tracers_gradient", Default = false }):Colorpicker({ Name = "End color", Flag = "tracers_color2", Default = Color3.fromRGB(255, 80, 80) })
 GunTracerTab:Slider({ Name = "Width", Flag = "tracers_width", Suffix = "x", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
 GunTracerTab:Slider({ Name = "Glow", Flag = "tracers_glow", Min = 1, Max = 10, Default = 1, Decimals = 0.1 })
 GunTimingTab:Slider({ Name = "Visible time", Flag = "tracers_duration", Suffix = "s", Min = 0.1, Max = 5, Default = 0.5, Decimals = 0.1 })
@@ -2020,7 +2878,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     CrossArms:Toggle({ Name = "Left arm", Flag = "crosshair_arm_left", Default = true })
     CrossArms:Toggle({ Name = "Right arm", Flag = "crosshair_arm_right", Default = true })
 
-    local HitFx = WorldPage:Section({ Name = "Hit effects", Side = 2 })
+    local HitFx = Fx:Section("VFX", "Hit effects", "Hit effects")
     local heToggle = HitFx:Toggle({ Name = "Hit effects", Flag = "he_enabled", Default = false })
     heToggle:Colorpicker({ Name = "Color", Flag = "he_color", Default = Color3.fromRGB(255, 81, 0) })
     HitFx:Dropdown({ Name = "Effect", Flag = "he_effect", Items = { "nova", "sparks", "bubble", "orbs", "air", "blood", "glitch", "slash", "cosmic", "crescentslash", "Burst: Mutants Rage", "Burst: Armageddon", "Burst: Solar Flare", "Burst: Heaven", "Burst: Gravity God", "Burst: Red Ring of Death", "Burst: Blue Heat", "Burst: Stardust Fragment", "Burst: Fiery Ritual of Hallownest", "Burst: Midnight Blues", "Burst: Susanoo Arms", "Burst: Atomic", "Burst: Kurama" }, Default = "nova" })
@@ -2029,14 +2887,14 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     HitFx:Slider({ Name = "Duration", Flag = "he_duration", Min = 0.1, Max = 10, Default = 2, Suffix = "s", Decimals = 0.1 })
     HitFx:Button({ Name = "Preview effect", Callback = function() Actions.previewHitEffect() end })
 
-    local KillFx = WorldPage:Section({ Name = "Kill effects", Side = 2 })
+    local KillFx = Fx:Section("VFX", "Kill effects", "Kill effects")
     KillFx:Toggle({ Name = "Kill effects", Flag = "ke_enabled", Default = false, Tooltip = "Plays an effect where a player you shot dies" })
     KillFx:Dropdown({ Name = "Effect", Flag = "ke_effect", Items = { "Stone", "Gold Statue", "Fade", "Ghost", "Shrink", "Blackhole", "Cosmic Strike", "Cyberspace", "Darkheart", "Deleted", "Galactic Pull", "Game Over", "Glitter Bomb", "Heartbreak", "Infinite Portal", "Lightning", "Northern Aurora Burst", "Paper Surprise", "Scorch", "Soul Grasp", "Sparkle", "Stereo", "Tornado", "Tornado Acid", "Tornado Earth", "Tornado Fire", "Tornado Lightning" }, Default = "Darkheart" })
     KillFx:Toggle({ Name = "Body reaction", Flag = "ke_body", Default = true, Tooltip = "Also changes the victim's own body parts where the original effect does (charred stone, shrinking, fading)" })
     KillFx:Slider({ Name = "Duration", Flag = "ke_duration", Min = 1, Max = 8, Default = 4, Suffix = "s", Decimals = 0.1 })
     KillFx:Button({ Name = "Preview effect", Callback = function() Actions.previewKillEffect() end })
 
-    local Muzzle = WorldPage:Section({ Name = "Muzzle effects", Side = 2 })
+    local Muzzle = Fx:Section("VFX", "Muzzle effects", "Muzzle effects")
     Muzzle:Toggle({ Name = "Muzzle effects", Flag = "mz_enabled", Default = false, Tooltip = "Black hole effects on the Muzzle part of the tool you hold" })
     Muzzle:Dropdown({ Name = "Effect", Flag = "mz_effect", Items = { "Blue Black Hole", "Gold Black Hole", "Orange Black Hole", "Purple Black Hole", "Red Black Hole", "White Black Hole" }, Default = "Purple Black Hole" })
     Muzzle:Dropdown({ Name = "Mode", Flag = "mz_mode", Items = { "While equipped", "On shot" }, Default = "While equipped" })
@@ -2087,7 +2945,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     Indicator:Label({ Name = "Wallbangable color" }):Colorpicker({ Name = "Wallbangable", Flag = "wb_ind_c_wb", Default = Color3.fromRGB(255, 200, 60) })
     Indicator:Label({ Name = "Blocked color" }):Colorpicker({ Name = "Blocked", Flag = "wb_ind_c_block", Default = Color3.fromRGB(255, 80, 80) })
 
-    local AuraBox = WorldPage:Section({ Name = "Particle aura", Side = 1 })
+    local AuraBox = Fx:Section("VFX", "Aura effects", "Particle aura")
     local auraToggle = AuraBox:Toggle({ Name = "Particle aura", Flag = "pa_enabled", Default = false })
     auraToggle:Colorpicker({ Name = "Color", Flag = "pa_color", Default = Color3.fromRGB(133, 220, 255), Alpha = 0.2 })
     AuraBox:Dropdown({ Name = "Aura", Flag = "pa_source", Items = AURA_PACK.items, Default = "angel" })
@@ -3301,14 +4159,9 @@ do
     pendingHits = {}
 
     playHitSound = function()
-        local soundId = HIT_SOUNDS[getFlag("World_HitSoundId", "Gamesense")]
-        if not soundId then return end
-        local sound = Instance.new("Sound")
-        sound.SoundId = soundId
-        sound.Volume = getFlag("World_HitVolume", 1)
-        sound.Parent = SoundService
-        sound:Play()
-        Debris:AddItem(sound, 6)
+        local entry = HIT_SOUNDS[getFlag("World_HitSoundId", "Gamesense")]
+        if not entry then return end
+        fxPlaySound(entry, getFlag("World_HitVolume", 1), getFlag("World_HitPitch", 1), getFlag("World_HitPitchVar", 0))
     end
 
     local function onHit(player, damage, killed, position)
@@ -3811,7 +4664,8 @@ do
         local beam = Instance.new("Beam")
         beam.Attachment0 = a0
         beam.Attachment1 = a1
-        beam.Color = ColorSequence.new(getColor("tracers_color", Color3.fromRGB(255, 255, 255)))
+        local tracerColor = getColor("tracers_color", Color3.fromRGB(255, 255, 255))
+        beam.Color = ColorSequence.new(tracerColor, getFlag("tracers_gradient", false) and getColor("tracers_color2", tracerColor) or tracerColor)
         if preset.Texture ~= "" then beam.Texture = preset.Texture end
         beam.Transparency = preset.Transparency
         beam.LightEmission = preset.LightEmission
@@ -5176,15 +6030,24 @@ do
             end
             lbl({ Text = info.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 20), Position = UDim2.new(0, 3, 1, -22), ZIndex = 310, Parent = face })
             local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = tile })
+            local function ask()
+                local current = spoofUi
+                if not current then return end
+                local uid = info.kind ~= "outfit" and info.uid or nil
+                local outfitId = info.kind == "outfit" and info.id or nil
+                if current.thumbsDone then
+                    if SpooferActions.prefetch then SpooferActions.prefetch(uid, outfitId) end
+                else
+                    current.queued = { uid = uid, outfitId = outfitId }
+                end
+            end
             hit.MouseEnter:Connect(function()
                 if spoofUi and spoofUi.selectedTile ~= tile then setBorder(tile, "AccentColor") end
                 if info.kind == "random" then return end
                 local stamp = os.clock()
                 tile:SetAttribute("hover", stamp)
                 task.delay(0.3, function()
-                    if tile.Parent and tile:GetAttribute("hover") == stamp and SpooferActions.prefetch then
-                        if info.kind == "outfit" then SpooferActions.prefetch(nil, info.id) else SpooferActions.prefetch(info.uid) end
-                    end
+                    if tile.Parent and tile:GetAttribute("hover") == stamp then ask() end
                 end)
             end)
             hit.MouseLeave:Connect(function() tile:SetAttribute("hover", nil) end)
@@ -5200,9 +6063,7 @@ do
                 table.insert(ui.pool, { info = info, tile = tile })
                 hit.MouseButton1Click:Connect(function()
                     selectTile(info, tile)
-                    if SpooferActions.prefetch then
-                        if info.kind == "outfit" then SpooferActions.prefetch(nil, info.id) else SpooferActions.prefetch(info.uid) end
-                    end
+                    ask()
                     local now = os.clock()
                     if ui.lastClick and ui.lastClick.tile == tile and now - ui.lastClick.at < 0.5 then
                         task.spawn(function()
@@ -5347,10 +6208,13 @@ do
             Library:Create("UIPadding", { PaddingTop = UDim.new(0, 1), PaddingLeft = UDim.new(0, 1), Parent = chips })
 
             local _, previewBox = panel(body, "Preview", UDim2.fromOffset(8, 98), UDim2.new(1, -16, 1, -174), 304)
-            lbl({ Text = "click again to apply", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(0.38, -8, 0, 14), Position = UDim2.fromOffset(6, 21), ZIndex = 307, Parent = previewBox })
+            local hint = lbl({ Text = "click again to apply", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(0.38, -8, 0, 14), Position = UDim2.fromOffset(6, 21), ZIndex = 307, Parent = previewBox })
             local indicator = Library:Create("TextLabel", { BackgroundTransparency = 1, Font = Library.Font, Text = "", TextSize = 12, TextColor3 = Library.FontColor, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0.62, -10, 0, 14), Position = UDim2.new(0.38, 0, 0, 21), ZIndex = 307, Parent = previewBox })
             Library:ApplyTextStroke(indicator)
-            local grid = lf("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(4, 38), Size = UDim2.new(1, -8, 1, -42), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, ZIndex = 307, Parent = previewBox }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+            local barOuter = lf("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.fromOffset(4, 37), Size = UDim2.new(1, -8, 0, 5), ZIndex = 307, Visible = false, Parent = previewBox }, { BorderColor3 = "Black" })
+            local barBack = lf("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 308, Parent = barOuter }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+            local barFill = lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = 309, Parent = barBack }, { BackgroundColor3 = "AccentColor" })
+            local grid = lf("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(4, 44), Size = UDim2.new(1, -8, 1, -48), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, ZIndex = 307, Parent = previewBox }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
             Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
             Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = grid })
 
@@ -5401,27 +6265,60 @@ do
                 end)
             end)
 
-            spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0 }
+            spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0, thumbsDone = true }
             local owner = spoofUi
             task.spawn(function()
                 while spoofUi == owner do
-                    local top = grid.AbsolutePosition.Y
-                    local bottom = top + grid.AbsoluteSize.Y
-                    local budget = 24
+                    local now = os.clock()
+                    local total, loaded, inflight = 0, 0, 0
+                    local waiting = {}
                     for tile, entry in pairs(owner.lazy) do
                         if not tile.Parent then
                             owner.lazy[tile] = nil
                         else
-                            local y = tile.AbsolutePosition.Y
-                            if y + 104 >= top - 110 and y <= bottom + 110 then
-                                entry.label.Image = entry.image
-                                owner.lazy[tile] = nil
-                                budget -= 1
-                                if budget <= 0 then break end
+                            total += 1
+                            if entry.done then
+                                loaded += 1
+                            elseif entry.at then
+                                if entry.label.IsLoaded or now - entry.at > 8 then
+                                    entry.done = true
+                                    loaded += 1
+                                else
+                                    inflight += 1
+                                end
+                            else
+                                waiting[#waiting + 1] = { tile = tile, entry = entry }
                             end
                         end
                     end
-                    task.wait(0.2)
+                    if #waiting > 0 and inflight < 8 then
+                        local top = grid.AbsolutePosition.Y
+                        local bottom = top + grid.AbsoluteSize.Y
+                        for _, item in ipairs(waiting) do
+                            local y = item.tile.AbsolutePosition.Y
+                            item.rank = ((y + 104 >= top - 110 and y <= bottom + 110) and 0 or 1000000) + item.tile.LayoutOrder
+                        end
+                        table.sort(waiting, function(x, y) return x.rank < y.rank end)
+                        for _, item in ipairs(waiting) do
+                            if inflight >= 8 then break end
+                            item.entry.label.Image = item.entry.image
+                            item.entry.at = now
+                            inflight += 1
+                        end
+                    end
+                    local finished = loaded >= total
+                    barOuter.Visible = not finished
+                    barFill.Size = UDim2.new(total > 0 and loaded / total or 1, 0, 1, 0)
+                    hint.Text = finished and "click again to apply" or string.format("thumbnails %d/%d", loaded, total)
+                    if finished and not owner.thumbsDone then
+                        owner.thumbsDone = true
+                        local queued = owner.queued
+                        owner.queued = nil
+                        if queued and SpooferActions.prefetch then SpooferActions.prefetch(queued.uid, queued.outfitId) end
+                    elseif not finished then
+                        owner.thumbsDone = false
+                    end
+                    task.wait(0.15)
                 end
             end)
             Library:MakeDraggable(main, 25)
@@ -5482,6 +6379,85 @@ do
             for _, entry in pairs(modelCache) do pcall(function() entry.model:Destroy() end) end
             table.clear(modelCache)
             closeSpoofUi()
+        end)
+    end)()
+
+    ;(function()
+        local weaponByTool = {}
+        for _, weapon in ipairs(FX_WEAPONS) do
+            for _, name in ipairs(weapon.tools) do weaponByTool[name] = weapon end
+        end
+        local function normalize(text)
+            return string.lower((string.gsub(tostring(text or ""), "[^%w]", "")))
+        end
+
+        local function onKill()
+            if not getFlag("World_KillSound", false) then return end
+            fxPlaySound(HIT_SOUNDS[getFlag("World_KillSoundId", "PF Killshot")], getFlag("World_KillVolume", 1), getFlag("World_KillPitch", 1), getFlag("World_KillPitchVar", 0))
+        end
+        table.insert(ShotEvents.kill, onKill)
+
+        local muting = { untilTime = 0, tool = nil, origin = nil }
+        local keep = { "reload", "equip", "empty", "click", "pump", "cock", "draw", "pullout" }
+        local function keeps(sound)
+            local name = string.lower(sound.Name)
+            for _, word in ipairs(keep) do
+                if string.find(name, word, 1, true) then return true end
+            end
+            return false
+        end
+
+        local function onShot(origin)
+            local character = LocalPlayer.Character
+            local tool = character and character:FindFirstChildOfClass("Tool")
+            local weapon = tool and weaponByTool[normalize(tool.Name)]
+            if not weapon then return end
+            local key = "sfx_" .. weapon.key
+            if not getFlag(key .. "_on", false) then return end
+            local entry = PF_GUN_BY_NAME[getFlag(key .. "_sound", weapon.default)]
+            if not entry then return end
+            fxPlaySound(entry, getFlag(key .. "_volume", 1), getFlag(key .. "_pitch", 1), getFlag(key .. "_pitchvar", 0))
+            if getFlag(key .. "_mute", true) then
+                muting.untilTime = os.clock() + 0.4
+                muting.tool = tool
+                muting.origin = origin
+            end
+        end
+        table.insert(ShotEvents.shot, onShot)
+
+        track(RunService.Heartbeat:Connect(function()
+            if os.clock() > muting.untilTime then return end
+            local tool = muting.tool
+            if not (tool and tool.Parent) then return end
+            for _, descendant in ipairs(tool:GetDescendants()) do
+                if descendant:IsA("Sound") and descendant.IsPlaying and descendant.TimePosition < 0.35 and not keeps(descendant) then
+                    descendant:Stop()
+                end
+            end
+        end))
+
+        track(workspace.DescendantAdded:Connect(function(descendant)
+            if os.clock() > muting.untilTime or not descendant:IsA("Sound") or keeps(descendant) then return end
+            local character = LocalPlayer.Character
+            local near = false
+            if character and descendant:IsDescendantOf(character) then near = true end
+            if not near and muting.origin then
+                local parent = descendant.Parent
+                if parent and parent:IsA("Attachment") then parent = parent.Parent end
+                if parent and parent:IsA("BasePart") and (parent.Position - muting.origin).Magnitude < 8 then near = true end
+            end
+            if near then
+                descendant.Volume = 0
+                task.defer(function() pcall(function() descendant:Stop() end) end)
+            end
+        end))
+
+        onUnload(function()
+            for _, list in ipairs({ ShotEvents.kill, ShotEvents.shot }) do
+                for index = #list, 1, -1 do
+                    if list[index] == onKill or list[index] == onShot then table.remove(list, index) end
+                end
+            end
         end)
     end)()
 

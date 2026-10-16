@@ -4408,12 +4408,47 @@ do
                 end
             end
 
-            local ok, id = pcall(function() return Players:GetUserIdFromNameAsync(s) end)
+            local needle = s:gsub("^@", "")
+            local nlower = needle:lower()
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower() == nlower or p.DisplayName:lower() == nlower then return p.UserId end
+            end
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower():sub(1, #nlower) == nlower or p.DisplayName:lower():sub(1, #nlower) == nlower then return p.UserId end
+            end
+            local ok, id = pcall(function() return Players:GetUserIdFromNameAsync(needle) end)
             if ok and typeof(id) == "number" and id > 0 then return math.floor(id) end
 
-            if s:sub(1, 1) == "@" then
-                ok, id = pcall(function() return Players:GetUserIdFromNameAsync(s:sub(2)) end)
-                if ok and typeof(id) == "number" and id > 0 then return math.floor(id) end
+            local web = game:GetService("HttpService")
+            local send = (syn and syn.request) or http_request or request
+            if send then
+                for _, host in ipairs({ "users.roproxy.com", "users.roblox.com" }) do
+                    local okReq, reply = pcall(send, {
+                        Url = "https://" .. host .. "/v1/usernames/users",
+                        Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = web:JSONEncode({ usernames = { needle }, excludeBannedUsers = false }),
+                    })
+                    if okReq and type(reply) == "table" and type(reply.Body) == "string" then
+                        local okJson, data = pcall(function() return web:JSONDecode(reply.Body) end)
+                        local first = okJson and type(data) == "table" and type(data.data) == "table" and data.data[1]
+                        if first and tonumber(first.id) then return math.floor(tonumber(first.id)) end
+                    end
+                end
+                for _, host in ipairs({ "users.roproxy.com", "users.roblox.com" }) do
+                    local okReq, reply = pcall(send, { Url = "https://" .. host .. "/v1/users/search?limit=10&keyword=" .. web:UrlEncode(needle), Method = "GET" })
+                    if okReq and type(reply) == "table" and type(reply.Body) == "string" then
+                        local okJson, data = pcall(function() return web:JSONDecode(reply.Body) end)
+                        local list = okJson and type(data) == "table" and data.data
+                        if type(list) == "table" and list[1] then
+                            local pick = list[1]
+                            for _, entry in ipairs(list) do
+                                if type(entry.name) == "string" and entry.name:lower() == nlower then pick = entry break end
+                            end
+                            if tonumber(pick.id) then return math.floor(tonumber(pick.id)) end
+                        end
+                    end
+                end
             end
             return nil
         end
@@ -4712,7 +4747,12 @@ do
             end)
         end
 
-        local function fetchModel(uid, rigType, outfitId)
+        local modelCache, cacheOrder, inflight = {}, {}, {}
+        local function cacheKey(uid, rigType, outfitId)
+            return (outfitId and ("o" .. tostring(outfitId)) or ("u" .. tostring(uid))) .. ":" .. tostring(rigType)
+        end
+
+        local function rawFetchModel(uid, rigType, outfitId)
             local desc
             local described, result = pcall(function()
                 if outfitId then return Players:GetHumanoidDescriptionFromOutfitId(outfitId) end
@@ -4729,6 +4769,50 @@ do
             ok, built = pcall(function() return Players:CreateHumanoidModelFromUserIdAsync(uid) end)
             if ok and built then return built, desc end
             return nil, desc
+        end
+
+        local function fetchModel(uid, rigType, outfitId)
+            local key = cacheKey(uid, rigType, outfitId)
+            local hit = modelCache[key]
+            if not hit and inflight[key] then
+                local started = os.clock()
+                while inflight[key] and os.clock() - started < 25 do task.wait(0.05) end
+                hit = modelCache[key]
+            end
+            if hit then
+                local okClone, copy = pcall(function() return hit.model:Clone() end)
+                if okClone and copy then return copy, hit.desc end
+            end
+            inflight[key] = true
+            local okFetch, model, desc = pcall(rawFetchModel, uid, rigType, outfitId)
+            inflight[key] = nil
+            if not okFetch then return nil, nil end
+            if model then
+                local okClone, copy = pcall(function() return model:Clone() end)
+                if okClone and copy then
+                    modelCache[key] = { model = copy, desc = desc }
+                    cacheOrder[#cacheOrder + 1] = key
+                    while #cacheOrder > 8 do
+                        local old = table.remove(cacheOrder, 1)
+                        local entry = modelCache[old]
+                        modelCache[old] = nil
+                        if entry then pcall(function() entry.model:Destroy() end) end
+                    end
+                end
+            end
+            return model, desc
+        end
+
+        local function prefetchAvatar(uid, outfitId)
+            local char = LocalPlayer.Character
+            local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+            if not humanoid then return end
+            local key = cacheKey(uid, humanoid.RigType, outfitId)
+            if modelCache[key] or inflight[key] then return end
+            task.spawn(function()
+                local ok, model = pcall(fetchModel, uid, humanoid.RigType, outfitId)
+                if ok and model then pcall(function() model:Destroy() end) end
+            end)
         end
 
         local function applyAvatar(rawInput, outfitId)
@@ -5070,7 +5154,8 @@ do
             if not ui then return end
             local tile, face = bevel(ui.grid, 307, UDim2.fromOffset(98, 104), nil, order)
             if image then
-                mk("ImageLabel", { BackgroundTransparency = 1, Image = image, ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -28), Position = UDim2.fromOffset(4, 4), ZIndex = 310, Parent = face })
+                local picture = mk("ImageLabel", { BackgroundTransparency = 1, Image = "", ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -28), Position = UDim2.fromOffset(4, 4), ZIndex = 310, Parent = face })
+                ui.lazy[tile] = { label = picture, image = image }
             else
                 lbl({ Text = "?", TextSize = 34, Size = UDim2.new(1, 0, 1, -22), ZIndex = 310, Parent = face })
             end
@@ -5089,6 +5174,9 @@ do
                 table.insert(ui.pool, { info = info, tile = tile })
                 hit.MouseButton1Click:Connect(function()
                     selectTile(info, tile)
+                    if SpooferActions.prefetch then
+                        if info.kind == "outfit" then SpooferActions.prefetch(nil, info.id) else SpooferActions.prefetch(info.uid) end
+                    end
                     local now = os.clock()
                     if ui.lastClick and ui.lastClick.tile == tile and now - ui.lastClick.at < 0.5 then
                         task.spawn(function()
@@ -5116,9 +5204,11 @@ do
             local thumb = function(kind, id) return string.format("rbxthumb://type=%s&id=%d&w=150&h=150", kind, id) end
             local userTile = addTile({ kind = "user", uid = uid, name = name .. " (now)" }, thumb("Avatar", uid), 1)
             task.spawn(function()
-                local image = userThumb(uid)
+                task.wait(3)
                 local label = userTile and userTile:FindFirstChildWhichIsA("ImageLabel", true)
-                if label and spoofUi and spoofUi.token == token then label.Image = image end
+                if not label or not spoofUi or spoofUi.token ~= token or label.IsLoaded then return end
+                local image = userThumb(uid)
+                if label.Parent and spoofUi and spoofUi.token == token then label.Image = image end
             end)
             addTile({ kind = "random", name = "Random" }, nil, 2)
             local loading = mk("TextLabel", { BackgroundTransparency = 1, Text = "Loading outfits...", TextSize = 12, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 309, Parent = ui.grid })
@@ -5285,7 +5375,29 @@ do
                 end)
             end)
 
-            spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, token = 0 }
+            spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0 }
+            local owner = spoofUi
+            task.spawn(function()
+                while spoofUi == owner do
+                    local top = grid.AbsolutePosition.Y
+                    local bottom = top + grid.AbsoluteSize.Y
+                    local budget = 24
+                    for tile, entry in pairs(owner.lazy) do
+                        if not tile.Parent then
+                            owner.lazy[tile] = nil
+                        else
+                            local y = tile.AbsolutePosition.Y
+                            if y + 104 >= top - 110 and y <= bottom + 110 then
+                                entry.label.Image = entry.image
+                                owner.lazy[tile] = nil
+                                budget -= 1
+                                if budget <= 0 then break end
+                            end
+                        end
+                    end
+                    task.wait(0.2)
+                end
+            end)
             Library:MakeDraggable(main, 25)
             search:GetPropertyChangedSignal("Text"):Connect(refreshChips)
             search.FocusLost:Connect(function(enter)
@@ -5326,6 +5438,7 @@ do
         track(Players.PlayerAdded:Connect(function() if spoofUi then refreshChips() end end))
         track(Players.PlayerRemoving:Connect(function() if spoofUi then task.defer(refreshChips) end end))
 
+        SpooferActions.prefetch = function(uid, outfitId) prefetchAvatar(uid, outfitId) end
         SpooferActions.applyUser = function(uid) return runApply(uid) end
         SpooferActions.applyOutfit = function(outfitId) return runApply(nil, outfitId) end
 
@@ -5339,6 +5452,9 @@ do
         onUnload(function()
             SpooferActions.apply, SpooferActions.reset = noop, noop
             SpooferActions.applyUser, SpooferActions.applyOutfit = noop, noop
+            SpooferActions.prefetch = noop
+            for _, entry in pairs(modelCache) do pcall(function() entry.model:Destroy() end) end
+            table.clear(modelCache)
             closeSpoofUi()
         end)
     end)()

@@ -1344,6 +1344,9 @@ local function patchLibrarySource(source)
     -- holding: ask Aster for the button state instead of indexing Enum.KeyCode with 'MB4'
     swap("                local Key = KeyPicker.Value;\n                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then\n                    return Key == 'MB1' and",
          "                local Key = KeyPicker.Value;\n                if Key == 'MB3' or Key == 'MB4' or Key == 'MB5' then\n                    return (Library.ButtonDown and Library.ButtonDown(Key)) == true;\n                end;\n                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then\n                    return Key == 'MB1' and")
+    -- the menu cursor is drawn above every window, including the avatar spoofer window (ZIndex 300+)
+    swap("Cursor.ZIndex = 100;", "Cursor.ZIndex = 5000;")
+    swap("CursorOutline.ZIndex = 99;", "CursorOutline.ZIndex = 4999;")
     return source
 end
 
@@ -4997,7 +5000,10 @@ do
         -- thumbnails are rbxthumb images and need no HTTP at all.
         -- ------------------------------------------------------------------------------------
         local HttpService = game:GetService("HttpService")
+        local UserInputService = game:GetService("UserInputService")
         local spoofUi -- { main, grid, chips, search, status, tiles, selected, pool, target, token }
+        local spoofSize = Vector2.new(600, 680) -- kept between openings; the corner grip resizes it
+        local SPOOF_MIN = Vector2.new(440, 500)
 
         -- returns data, or nil plus the HTTP status and message of the last failed attempt
         local function httpJson(url)
@@ -5041,37 +5047,51 @@ do
 
         -- list, info. info.kind: "public" (outfits found), "empty" (answered, none), "private" (refused),
         -- "limited" (rate limited) or "unreachable" (no usable answer)
-        local function fetchOutfits(uid)
-            -- RoValra's route: the v2 list (outfitType=1, 50 per page, paginationToken) ...
-            local list, token = {}, nil
+        -- onChunk(freshOutfits, totalSoFar) is called after every page so tiles can appear while the rest loads
+        local function fetchOutfits(uid, onChunk)
+            local seen, list = {}, {}
+            local function take(entries)
+                local fresh = {}
+                for _, entry in ipairs(entries or {}) do
+                    if entry.id and not seen[entry.id] then
+                        seen[entry.id] = true
+                        local outfit = { id = entry.id, name = tostring(entry.name or entry.id) }
+                        list[#list + 1] = outfit
+                        fresh[#fresh + 1] = outfit
+                    end
+                end
+                if #fresh > 0 and onChunk then onChunk(fresh, #list) end
+                return #fresh
+            end
+
+            -- RoValra's route: the v2 list (outfitType=1, 50 per page) followed page by page with paginationToken
             local failed, firstStatus, firstMessage = false, nil, nil
-            for page = 1, 20 do
+            local token
+            for page = 1, 40 do
                 local url = string.format("https://avatar.roblox.com/v2/avatar/users/%d/outfits?outfitType=1&page=1&itemsPerPage=50&isEditable=true", uid)
-                if token then url = url .. "&paginationToken=" .. token end
+                if token then url = url .. "&paginationToken=" .. HttpService:UrlEncode(token) end
                 local data, status, message = httpJson(url)
                 if not data then
                     if page == 1 then failed, firstStatus, firstMessage = true, status, message end
                     break
                 end
-                for _, entry in ipairs(data.data or {}) do
-                    if entry.id then table.insert(list, { id = entry.id, name = tostring(entry.name or entry.id) }) end
-                end
-                token = data.paginationToken
-                if not token or token == "" then break end
+                local added = take(data.data)
+                token = data.paginationToken or data.nextPageCursor or data.nextPageToken
+                if type(token) ~= "string" or token == "" or added == 0 then break end
             end
-            -- ... then the older v1 list if v2 was refused or answered nothing at all
+            -- the older v1 list (page numbers) if v2 was refused or had nothing
+            local source = "v2"
             if failed or #list == 0 then
-                for page = 1, 4 do
+                source = "v1"
+                for page = 1, 40 do
                     local data, status, message = httpJson(string.format("https://avatar.roblox.com/v1/users/%d/outfits?page=%d&itemsPerPage=50&isEditable=true", uid, page))
                     if not data then
                         if page == 1 and failed then firstStatus, firstMessage = firstStatus or status, firstMessage or message end
                         break
                     end
                     failed = false
-                    for _, entry in ipairs(data.data or {}) do
-                        if entry.id then table.insert(list, { id = entry.id, name = tostring(entry.name or entry.id) }) end
-                    end
-                    if #(data.data or {}) < 50 then break end
+                    local added = take(data.data)
+                    if #(data.data or {}) < 50 or added == 0 then break end
                 end
             end
             if failed and #list == 0 then
@@ -5080,7 +5100,7 @@ do
                 if firstStatus == 429 then kind = "limited" end
                 return nil, { kind = kind, status = firstStatus, message = firstMessage }
             end
-            return list, { kind = #list > 0 and "public" or "empty" }
+            return list, { kind = #list > 0 and "public" or "empty", source = source }
         end
 
         -- true / false / nil (unknown): can the inventory of this user be viewed
@@ -5117,15 +5137,47 @@ do
                 props.TextColor3 = props.TextColor3 or Library.FontColor
             end
             if props.BorderColor3 == nil and class ~= "ImageLabel" and class ~= "ScrollingFrame" then props.BorderColor3 = Library.OutlineColor end
-            return Library:Create(class, props)
+            local bgName = props.ThemeBg
+            props.ThemeBg = nil
+            local inst = Library:Create(class, props)
+            -- register with the library so a theme change recolors the window like the menu
+            local map
+            for prop, names in pairs({ BackgroundColor3 = { "MainColor", "BackgroundColor", "AccentColor" }, BorderColor3 = { "OutlineColor", "AccentColor" }, TextColor3 = { "FontColor", "AccentColor" } }) do
+                local value = props[prop]
+                if value ~= nil then
+                    for _, colorName in ipairs(names) do
+                        if Library[colorName] == value then map = map or {} map[prop] = colorName break end
+                    end
+                end
+            end
+            if bgName then map = map or {} map.BackgroundColor3 = bgName end
+            if class == "TextLabel" or class == "TextButton" or class == "TextBox" then map = map or {} map.Font = "Font" end
+            if class == "ScrollingFrame" then map = map or {} map.ScrollBarImageColor3 = "AccentColor" end
+            if map then pcall(function() Library:AddToRegistry(inst, map) end) end
+            return inst
+        end
+
+        local function userThumb(uid)
+            local ok, content = pcall(function()
+                return Players:GetUserThumbnailAsync(uid, Enum.ThumbnailType.AvatarBust, Enum.ThumbnailSize.Size150x150)
+            end)
+            if ok and type(content) == "string" and content ~= "" then return content end
+            return string.format("rbxthumb://type=Avatar&id=%d&w=150&h=150", uid)
         end
 
         local function selectTile(info, tile)
             local ui = spoofUi
             if not ui then return end
-            if ui.selectedTile and ui.selectedTile.Parent then ui.selectedTile.BorderColor3 = Library.OutlineColor end
+            -- the highlight is kept in the library registry so a theme change does not wipe it
+            local function mark(item, colorName)
+                if not (item and item.Parent) then return end
+                item.BorderColor3 = Library[colorName]
+                local entry = Library.RegistryMap and Library.RegistryMap[item]
+                if entry then entry.Properties.BorderColor3 = colorName end
+            end
+            mark(ui.selectedTile, "OutlineColor")
             ui.selected, ui.selectedTile = info, tile
-            if tile then tile.BorderColor3 = Library.AccentColor end
+            mark(tile, "AccentColor")
             ui.status.Text = info and ("Selected: " .. info.name .. (info.kind == "outfit" and "  (outfit)" or "  (current look)")) or "Nothing selected"
         end
 
@@ -5176,11 +5228,26 @@ do
             ui.status.Text = "Showing " .. name
             setIndicator("checking", "checking outfits...")
             local thumb = function(kind, id) return string.format("rbxthumb://type=%s&id=%d&w=150&h=150", kind, id) end
-            addTile({ kind = "user", uid = uid, name = name .. " (now)" }, thumb("Avatar", uid), 1)
+            local userTile = addTile({ kind = "user", uid = uid, name = name .. " (now)" }, thumb("Avatar", uid), 1)
+            task.spawn(function()
+                local image = userThumb(uid)
+                local label = userTile and userTile:FindFirstChildOfClass("ImageLabel")
+                if label and spoofUi and spoofUi.token == token then label.Image = image end
+            end)
             addTile({ kind = "random", name = "Random" }, nil, 2)
             local loading = mk("TextLabel", { BackgroundTransparency = 1, Text = "Loading outfits...", TextSize = 12, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 302, Parent = ui.grid })
             task.spawn(function()
-                local outfits, info = fetchOutfits(uid)
+                local shown = 0
+                local outfits, info = fetchOutfits(uid, function(fresh, total)
+                    if not spoofUi or spoofUi.token ~= token then return end
+                    pcall(function() loading:Destroy() end)
+                    for _, outfit in ipairs(fresh) do
+                        if shown >= 600 then break end -- keeps the grid light if an account has an enormous list
+                        shown += 1
+                        addTile({ kind = "outfit", id = outfit.id, name = outfit.name }, thumb("Outfit", outfit.id), 10 + shown)
+                    end
+                    setIndicator("public", string.format("outfits PUBLIC (%d, loading...)", total))
+                end)
                 local inventory = inventoryVisible(uid)
                 if not spoofUi or spoofUi.token ~= token then return end
                 pcall(function() loading:Destroy() end)
@@ -5203,11 +5270,7 @@ do
                     end
                     return
                 end
-                setIndicator("public", string.format("outfits PUBLIC (%d)", #outfits) .. inventoryText)
-                for index, outfit in ipairs(outfits) do
-                    if not spoofUi or spoofUi.token ~= token then return end
-                    addTile({ kind = "outfit", id = outfit.id, name = outfit.name }, thumb("Outfit", outfit.id), 10 + index)
-                end
+                setIndicator("public", string.format("outfits PUBLIC (%d, %s)", #outfits, tostring(info.source)) .. inventoryText)
             end)
         end
 
@@ -5235,18 +5298,20 @@ do
 
         local function openSpoofUi()
             if spoofUi or not Library.ScreenGui then return end
-            local main = mk("Frame", { Name = "AsterAvatarSpoofer", BackgroundColor3 = Library.BackgroundColor, Size = UDim2.fromOffset(440, 540), Position = UDim2.new(0.5, -220, 0.5, -270), ZIndex = 300, Parent = Library.ScreenGui })
+            local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+            local startSize = Vector2.new(math.clamp(spoofSize.X, SPOOF_MIN.X, math.max(SPOOF_MIN.X, viewport.X - 20)), math.clamp(spoofSize.Y, SPOOF_MIN.Y, math.max(SPOOF_MIN.Y, viewport.Y - 20)))
+            local main = mk("Frame", { Name = "AsterAvatarSpoofer", BackgroundColor3 = Library.BackgroundColor, ThemeBg = "BackgroundColor", Size = UDim2.fromOffset(startSize.X, startSize.Y), Position = UDim2.new(0.5, -startSize.X / 2, 0.5, -startSize.Y / 2), ZIndex = 300, Parent = Library.ScreenGui })
             mk("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = 305, Parent = main })
             mk("TextLabel", { BackgroundTransparency = 1, Text = "Avatar Spoofer", TextSize = Library.FontSize + 2, Size = UDim2.new(1, 0, 0, 26), Position = UDim2.fromOffset(0, 3), ZIndex = 302, Parent = main })
 
             mk("TextLabel", { BackgroundTransparency = 1, Text = "player search", TextXAlignment = Enum.TextXAlignment.Left, TextSize = 11, TextColor3 = Library.FontColor, Size = UDim2.new(1, -16, 0, 14), Position = UDim2.fromOffset(8, 30), ZIndex = 302, Parent = main })
-            local search = mk("TextBox", { Text = "", PlaceholderText = "username, UserId or profile URL, press Enter...", ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, BackgroundColor3 = Library.MainColor, Size = UDim2.new(1, -16, 0, 24), Position = UDim2.fromOffset(8, 46), ZIndex = 302, Parent = main })
+            local search = mk("TextBox", { Text = "", PlaceholderText = "username, UserId, profile URL or outfit:ID, press Enter...", ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, BackgroundColor3 = Library.MainColor, Size = UDim2.new(1, -16, 0, 24), Position = UDim2.fromOffset(8, 46), ZIndex = 302, Parent = main })
             local chips = mk("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderSizePixel = 1, Size = UDim2.new(1, -16, 0, 28), Position = UDim2.fromOffset(8, 74), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 2, ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = 302, Parent = main })
             Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = chips })
 
-            mk("TextLabel", { BackgroundTransparency = 1, Text = "preview  (click to select, again to apply)", TextXAlignment = Enum.TextXAlignment.Left, TextSize = 11, Size = UDim2.new(0.45, -8, 0, 14), Position = UDim2.fromOffset(8, 108), ZIndex = 302, Parent = main })
-            local indicator = mk("TextLabel", { BackgroundTransparency = 1, Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 11, Size = UDim2.new(0.55, -8, 0, 14), Position = UDim2.new(0.45, 0, 0, 108), ZIndex = 302, Parent = main })
-            local grid = mk("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, BorderSizePixel = 1, Size = UDim2.new(1, -16, 1, -214), Position = UDim2.fromOffset(8, 124), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 4, ZIndex = 302, Parent = main })
+            mk("TextLabel", { BackgroundTransparency = 1, Text = "preview (click again to apply)", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 11, Size = UDim2.new(0.38, -8, 0, 14), Position = UDim2.fromOffset(8, 108), ZIndex = 302, Parent = main })
+            local indicator = mk("TextLabel", { BackgroundTransparency = 1, Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 11, Size = UDim2.new(0.62, -10, 0, 14), Position = UDim2.new(0.38, 0, 0, 108), ZIndex = 302, Parent = main })
+            local grid = mk("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, ThemeBg = "BackgroundColor", BorderColor3 = Library.OutlineColor, BorderSizePixel = 1, Size = UDim2.new(1, -16, 1, -214), Position = UDim2.fromOffset(8, 124), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 4, ZIndex = 302, Parent = main })
             Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
             Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = grid })
 
@@ -5266,7 +5331,6 @@ do
                     if info.kind == "outfit" then SpooferActions.applyOutfit(info.id) else SpooferActions.applyUser(info.uid) end
                 end)
             end)
-            main.Size = UDim2.fromOffset(440, 540)
             local function half(text, x, callback)
                 local b = mk("TextButton", { Text = text, AutoButtonColor = false, BackgroundColor3 = Library.MainColor, Size = UDim2.new(0.5, -12, 0, 26), Position = UDim2.new(x, x == 0 and 8 or 4, 1, -32), ZIndex = 302, Parent = main })
                 b.MouseEnter:Connect(function() b.BorderColor3 = Library.AccentColor end)
@@ -5280,12 +5344,42 @@ do
                 closeSpoofUi()
             end)
 
+            local grip = mk("TextButton", { Text = "//", AutoButtonColor = false, BackgroundTransparency = 1, BorderSizePixel = 0, TextSize = 12, Size = UDim2.fromOffset(16, 16), Position = UDim2.new(1, -16, 1, -16), ZIndex = 330, Parent = main })
+            grip.InputBegan:Connect(function(input)
+                if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+                local from, origin = main.AbsoluteSize, input.Position
+                local move, finish
+                move = UserInputService.InputChanged:Connect(function(change)
+                    if change.UserInputType ~= Enum.UserInputType.MouseMovement and change.UserInputType ~= Enum.UserInputType.Touch then return end
+                    local cam = workspace.CurrentCamera
+                    local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+                    local w = math.clamp(from.X + (change.Position.X - origin.X), SPOOF_MIN.X, math.max(SPOOF_MIN.X, vp.X - 20))
+                    local h = math.clamp(from.Y + (change.Position.Y - origin.Y), SPOOF_MIN.Y, math.max(SPOOF_MIN.Y, vp.Y - 20))
+                    main.Size = UDim2.fromOffset(w, h)
+                    spoofSize = Vector2.new(w, h)
+                end)
+                finish = UserInputService.InputEnded:Connect(function(ended)
+                    if ended.UserInputType == Enum.UserInputType.MouseButton1 or ended.UserInputType == Enum.UserInputType.Touch then
+                        move:Disconnect()
+                        finish:Disconnect()
+                    end
+                end)
+            end)
+
             spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, token = 0 }
             Library:MakeDraggable(main, 28)
             search:GetPropertyChangedSignal("Text"):Connect(refreshChips)
             search.FocusLost:Connect(function(enter)
                 if not enter then return end
                 local text = search.Text
+                local outfitId = tonumber(string.match(text, "[Oo]utfits?[:%s/=]*(%d+)"))
+                if outfitId then
+                    -- a pasted outfit id is added as its own tile and selected
+                    local info = { kind = "outfit", id = outfitId, name = "Outfit " .. outfitId }
+                    local tile = addTile(info, string.format("rbxthumb://type=Outfit&id=%d&w=150&h=150", outfitId), 5)
+                    selectTile(info, tile)
+                    return
+                end
                 task.spawn(function()
                     local uid = resolveUserId(text)
                     if not uid then notify("Avatar spoofer: could not find " .. tostring(text)) return end
@@ -5303,6 +5397,11 @@ do
                 if not ok then warn("Avatar spoofer window failed:", err) closeSpoofUi() end
             elseif not wanted and spoofUi then
                 closeSpoofUi()
+            end
+            -- the window follows the menu: hidden while the menu is closed, back (with its state) when it opens
+            if spoofUi then
+                local show = Library.Toggled ~= false
+                if spoofUi.main.Visible ~= show then spoofUi.main.Visible = show end
             end
         end))
         track(Players.PlayerAdded:Connect(function() if spoofUi then refreshChips() end end))

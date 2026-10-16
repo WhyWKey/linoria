@@ -5047,8 +5047,26 @@ do
 
         -- list, info. info.kind: "public" (outfits found), "empty" (answered, none), "private" (refused),
         -- "limited" (rate limited) or "unreachable" (no usable answer)
+        -- httpJson with automatic retries: rate limits (429) back off and try again up to 8 times, other transient
+        -- failures up to 3 times. onWait(attempt, seconds) reports a wait, alive() says whether to keep going.
+        local function httpJsonRetry(url, onWait, alive)
+            local data, status, message
+            for attempt = 1, 8 do
+                data, status, message = httpJson(url)
+                if data then return data, status end
+                local limit = (status == 429) and 8 or 3
+                local retryable = status == nil or status == 429 or status >= 500
+                if not retryable or attempt >= limit or (alive and not alive()) then break end
+                local seconds = math.min(1.5 * attempt, 8)
+                if onWait then onWait(attempt, seconds) end
+                task.wait(seconds)
+                if alive and not alive() then break end
+            end
+            return nil, status, message
+        end
+
         -- onChunk(freshOutfits, totalSoFar) is called after every page so tiles can appear while the rest loads
-        local function fetchOutfits(uid, onChunk)
+        local function fetchOutfits(uid, onChunk, onWait, alive)
             local seen, list = {}, {}
             local function take(entries)
                 local fresh = {}
@@ -5070,7 +5088,8 @@ do
             for page = 1, 40 do
                 local url = string.format("https://avatar.roblox.com/v2/avatar/users/%d/outfits?outfitType=1&page=1&itemsPerPage=50&isEditable=true", uid)
                 if token then url = url .. "&paginationToken=" .. HttpService:UrlEncode(token) end
-                local data, status, message = httpJson(url)
+                if page > 1 then task.wait(0.2) end -- a short pause between pages keeps the rate limit away
+                local data, status, message = httpJsonRetry(url, onWait, alive)
                 if not data then
                     if page == 1 then failed, firstStatus, firstMessage = true, status, message end
                     break
@@ -5084,7 +5103,8 @@ do
             if failed or #list == 0 then
                 source = "v1"
                 for page = 1, 40 do
-                    local data, status, message = httpJson(string.format("https://avatar.roblox.com/v1/users/%d/outfits?page=%d&itemsPerPage=50&isEditable=true", uid, page))
+                    if page > 1 then task.wait(0.2) end
+                    local data, status, message = httpJsonRetry(string.format("https://avatar.roblox.com/v1/users/%d/outfits?page=%d&itemsPerPage=50&isEditable=true", uid, page), onWait, alive)
                     if not data then
                         if page == 1 and failed then firstStatus, firstMessage = firstStatus or status, firstMessage or message end
                         break
@@ -5104,8 +5124,8 @@ do
         end
 
         -- true / false / nil (unknown): can the inventory of this user be viewed
-        local function inventoryVisible(uid)
-            local data = httpJson(string.format("https://inventory.roblox.com/v1/users/%d/can-view-inventory", uid))
+        local function inventoryVisible(uid, onWait, alive)
+            local data = httpJsonRetry(string.format("https://inventory.roblox.com/v1/users/%d/can-view-inventory", uid), onWait, alive)
             if data and type(data.canView) == "boolean" then return data.canView end
             return nil
         end
@@ -5247,8 +5267,12 @@ do
                         addTile({ kind = "outfit", id = outfit.id, name = outfit.name }, thumb("Outfit", outfit.id), 10 + shown)
                     end
                     setIndicator("public", string.format("outfits PUBLIC (%d, loading...)", total))
-                end)
-                local inventory = inventoryVisible(uid)
+                end, function(attempt, seconds)
+                    if spoofUi and spoofUi.token == token then
+                        setIndicator("limited", string.format("rate limited, retrying (%d) in %.1fs...", attempt, seconds))
+                    end
+                end, function() return spoofUi ~= nil and spoofUi.token == token end)
+                local inventory = inventoryVisible(uid, nil, function() return spoofUi ~= nil and spoofUi.token == token end)
                 if not spoofUi or spoofUi.token ~= token then return end
                 pcall(function() loading:Destroy() end)
                 local inventoryText = inventory == nil and "" or (inventory and "   inventory public" or "   inventory private")

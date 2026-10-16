@@ -5176,15 +5176,24 @@ do
             end
             lbl({ Text = info.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 20), Position = UDim2.new(0, 3, 1, -22), ZIndex = 310, Parent = face })
             local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = tile })
+            local function ask()
+                local current = spoofUi
+                if not current then return end
+                local uid = info.kind ~= "outfit" and info.uid or nil
+                local outfitId = info.kind == "outfit" and info.id or nil
+                if current.thumbsDone then
+                    if SpooferActions.prefetch then SpooferActions.prefetch(uid, outfitId) end
+                else
+                    current.queued = { uid = uid, outfitId = outfitId }
+                end
+            end
             hit.MouseEnter:Connect(function()
                 if spoofUi and spoofUi.selectedTile ~= tile then setBorder(tile, "AccentColor") end
                 if info.kind == "random" then return end
                 local stamp = os.clock()
                 tile:SetAttribute("hover", stamp)
                 task.delay(0.3, function()
-                    if tile.Parent and tile:GetAttribute("hover") == stamp and SpooferActions.prefetch then
-                        if info.kind == "outfit" then SpooferActions.prefetch(nil, info.id) else SpooferActions.prefetch(info.uid) end
-                    end
+                    if tile.Parent and tile:GetAttribute("hover") == stamp then ask() end
                 end)
             end)
             hit.MouseLeave:Connect(function() tile:SetAttribute("hover", nil) end)
@@ -5200,9 +5209,7 @@ do
                 table.insert(ui.pool, { info = info, tile = tile })
                 hit.MouseButton1Click:Connect(function()
                     selectTile(info, tile)
-                    if SpooferActions.prefetch then
-                        if info.kind == "outfit" then SpooferActions.prefetch(nil, info.id) else SpooferActions.prefetch(info.uid) end
-                    end
+                    ask()
                     local now = os.clock()
                     if ui.lastClick and ui.lastClick.tile == tile and now - ui.lastClick.at < 0.5 then
                         task.spawn(function()
@@ -5347,10 +5354,13 @@ do
             Library:Create("UIPadding", { PaddingTop = UDim.new(0, 1), PaddingLeft = UDim.new(0, 1), Parent = chips })
 
             local _, previewBox = panel(body, "Preview", UDim2.fromOffset(8, 98), UDim2.new(1, -16, 1, -174), 304)
-            lbl({ Text = "click again to apply", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(0.38, -8, 0, 14), Position = UDim2.fromOffset(6, 21), ZIndex = 307, Parent = previewBox })
+            local hint = lbl({ Text = "click again to apply", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(0.38, -8, 0, 14), Position = UDim2.fromOffset(6, 21), ZIndex = 307, Parent = previewBox })
             local indicator = Library:Create("TextLabel", { BackgroundTransparency = 1, Font = Library.Font, Text = "", TextSize = 12, TextColor3 = Library.FontColor, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0.62, -10, 0, 14), Position = UDim2.new(0.38, 0, 0, 21), ZIndex = 307, Parent = previewBox })
             Library:ApplyTextStroke(indicator)
-            local grid = lf("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(4, 38), Size = UDim2.new(1, -8, 1, -42), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, ZIndex = 307, Parent = previewBox }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+            local barOuter = lf("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.fromOffset(4, 37), Size = UDim2.new(1, -8, 0, 5), ZIndex = 307, Visible = false, Parent = previewBox }, { BorderColor3 = "Black" })
+            local barBack = lf("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 308, Parent = barOuter }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+            local barFill = lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = 309, Parent = barBack }, { BackgroundColor3 = "AccentColor" })
+            local grid = lf("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(4, 44), Size = UDim2.new(1, -8, 1, -48), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, ZIndex = 307, Parent = previewBox }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
             Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
             Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = grid })
 
@@ -5401,27 +5411,60 @@ do
                 end)
             end)
 
-            spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0 }
+            spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0, thumbsDone = true }
             local owner = spoofUi
             task.spawn(function()
                 while spoofUi == owner do
-                    local top = grid.AbsolutePosition.Y
-                    local bottom = top + grid.AbsoluteSize.Y
-                    local budget = 24
+                    local now = os.clock()
+                    local total, loaded, inflight = 0, 0, 0
+                    local waiting = {}
                     for tile, entry in pairs(owner.lazy) do
                         if not tile.Parent then
                             owner.lazy[tile] = nil
                         else
-                            local y = tile.AbsolutePosition.Y
-                            if y + 104 >= top - 110 and y <= bottom + 110 then
-                                entry.label.Image = entry.image
-                                owner.lazy[tile] = nil
-                                budget -= 1
-                                if budget <= 0 then break end
+                            total += 1
+                            if entry.done then
+                                loaded += 1
+                            elseif entry.at then
+                                if entry.label.IsLoaded or now - entry.at > 8 then
+                                    entry.done = true
+                                    loaded += 1
+                                else
+                                    inflight += 1
+                                end
+                            else
+                                waiting[#waiting + 1] = { tile = tile, entry = entry }
                             end
                         end
                     end
-                    task.wait(0.2)
+                    if #waiting > 0 and inflight < 8 then
+                        local top = grid.AbsolutePosition.Y
+                        local bottom = top + grid.AbsoluteSize.Y
+                        for _, item in ipairs(waiting) do
+                            local y = item.tile.AbsolutePosition.Y
+                            item.rank = ((y + 104 >= top - 110 and y <= bottom + 110) and 0 or 1000000) + item.tile.LayoutOrder
+                        end
+                        table.sort(waiting, function(x, y) return x.rank < y.rank end)
+                        for _, item in ipairs(waiting) do
+                            if inflight >= 8 then break end
+                            item.entry.label.Image = item.entry.image
+                            item.entry.at = now
+                            inflight += 1
+                        end
+                    end
+                    local finished = loaded >= total
+                    barOuter.Visible = not finished
+                    barFill.Size = UDim2.new(total > 0 and loaded / total or 1, 0, 1, 0)
+                    hint.Text = finished and "click again to apply" or string.format("thumbnails %d/%d", loaded, total)
+                    if finished and not owner.thumbsDone then
+                        owner.thumbsDone = true
+                        local queued = owner.queued
+                        owner.queued = nil
+                        if queued and SpooferActions.prefetch then SpooferActions.prefetch(queued.uid, queued.outfitId) end
+                    elseif not finished then
+                        owner.thumbsDone = false
+                    end
+                    task.wait(0.15)
                 end
             end)
             Library:MakeDraggable(main, 25)

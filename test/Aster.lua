@@ -1,6 +1,3 @@
--- Loader: a blurred backdrop with a centered progress bar and a status line above it. The status line
--- shows what the script is doing while it loads; when loading ends the bar fills, the blur and the
--- loader fade out, and the menu opens.
 local Loader = (function()
     local self = { target = 0, shown = 0, closed = false }
     local Lighting = game:GetService("Lighting")
@@ -21,8 +18,6 @@ local Loader = (function()
         getgenv().AsterLoader = self
     end)
 
-    -- The bar starts in the accent colour saved by the last run (theme changes are saved), and switches to the
-    -- live one as soon as the theme is applied.
     local accent = Color3.fromRGB(102, 137, 148)
     pcall(function()
         if isfile and isfile("Aster/loader_accent.txt") then accent = Color3.fromHex(readfile("Aster/loader_accent.txt")) end
@@ -107,7 +102,7 @@ local Loader = (function()
     end)
     if not built then destroy() end
 
-    local function setFade(alpha) -- 0 = fully shown, 1 = gone
+    local function setFade(alpha)
         fade = alpha
         pcall(function()
             if blur then blur.Size = 18 * (1 - alpha) end
@@ -118,7 +113,6 @@ local Loader = (function()
         end)
     end
 
-    -- Shows a status line and moves the bar to the given progress (0 to 1). Yields one frame so it draws.
     function self.step(text, progress)
         if self.closed then return end
         self.target = math.max(self.target, progress or self.target)
@@ -126,7 +120,6 @@ local Loader = (function()
         task.wait()
     end
 
-    -- Checks the executor functions the script relies on and shows how many exist.
     function self.verify(progress)
         local names = { "hookfunction", "getconnections", "isnetworkowner", "mousemoverel", "Drawing", "gethui", "getgenv" }
         local found = 0
@@ -139,7 +132,6 @@ local Loader = (function()
         self.step(("Verifying environment (%d/%d)"):format(found, #names + 1), progress)
     end
 
-    -- Fills the bar, opens the menu through onDone, then fades the loader and the blur out.
     function self.finish(onDone)
         if not self.closed then
             self.step("Ready", 1)
@@ -188,7 +180,7 @@ end)()
 Loader.step("Starting", 0.02)
 local __plOk, __plErr = xpcall(function()
 Loader.step("Starting session", 0.06)
--- Clean up anything a previous run of this script left behind.
+
 if type(getgenv().TS_Connections) == "table" then
     for _, connection in ipairs(getgenv().TS_Connections) do
         pcall(function() connection:Disconnect() end)
@@ -220,7 +212,6 @@ local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
--- Skybox presets (asset list credit: larpclaude). "Default" leaves the game's own sky alone.
 local SKYBOX_PRESETS = {
     ["Default"] = { KeepOriginal = true },
     ["Afternoon"] = {
@@ -506,7 +497,7 @@ local SKYBOX_PRESETS = {
         SkyboxLf = "rbxassetid://321136141",
         SkyboxRt = "rbxassetid://321136141",
     },
-    -- Second list (credit: larpClaude)
+
     ["Aesthetic 3"] = {
         StarCount = 500, SunAngularSize = 0, MoonAngularSize = 0,
         SkyboxUp = "rbxassetid://151165227",
@@ -936,17 +927,115 @@ local SKYBOX_PRESETS = {
     },
 }
 
-SKYBOX_PRESETS["Custom"] = { Custom = true } -- built from the ids typed in the Sky section
--- Auras taken from the "POF:RE AURA" pack (Creator Store asset 15374038687). The whole pack is one model asset with
--- a dummy rig per aura, so each entry maps a menu name to the rig's name inside it. Loaded once, on first use.
+SKYBOX_PRESETS["Custom"] = { Custom = true }
+
 local AURA_PACK = {
     id = 15374038687,
     rigs = {
-        -- from the "Auras by dustyblueskys" pack (asset 16039329607): { pack id, rig name }
+
         ["Dark Aura"] = { id = 16039329607, rig = "DarkAura" },
         ["Fire Aura"] = { id = 16039329607, rig = "FireAura" },
         ["Light Aura"] = { id = 16039329607, rig = "LightAura" },
         ["Water Aura"] = { id = 16039329607, rig = "WaterAura" },
+
+        ["Bass"] = { id = 17084658587, rig = "POF:RE AURA: Bass" },
+        ["Aurora Borealis"] = { id = 17084658587, rig = "Aurora Borealis" },
+        ["Corruption (Revised)"] = { id = 17084658587, rig = "Corruption (Revised)" },
+        ["Poison"] = { id = 17084658587, rig = "POF:RE AURA POISON" },
+        ["Coin Rain"] = { id = 17084658587, rig = "POF:RE AURA COIN RAIN" },
+        ["Plague Fumes"] = { id = 17084658587, rig = "POF:RE AURA PLAGUE FUMES" },
+        ["Speed State"] = { id = 17084658587, rig = "POF:RE AURA SPEED STATE" },
+        ["Zodiac"] = { id = 17084658587, rig = "POF:RE AURA ZODIAC" },
+        ["Dutchman"] = { id = 17084658587, rig = "POF:RE AURA DUTCHMAN" },
+        ["Sweetwave"] = { id = 17084658587, rig = "POF:RE AURA SWEETWAVE" },
+        ["Psychic"] = { id = 17084658587, rig = "POF:RE AURA PSYCHIC " },
+        ["Electrical Charge"] = { id = 17084658587, rig = "Electrical Charge" },
+        ["Pure Darkness (REVAMP)"] = { id = 17084658587, rig = "POF:RE AURA Pure Darkness (REVAMP)" },
+        ["Cryogen"] = { id = 17084658587, rig = "POF:RE AURA CRYOGEN" },
+        ["Ultimate Evil"] = { id = 17084658587, rig = "POF:RE AURA ULTIMATE EVIL" },
+        ["Fire Eyes"] = { id = 17084658587, rig = "POF:RE AURA: Fire Eyes" },
+        ["Lunar Eclipse"] = { id = 17084658587, rig = "Lunar Eclipse" },
+        ["Solar Eclipse"] = { id = 17084658587, rig = "Solar Eclipse" },
+        ["Universal Keys"] = { id = 17084658587, rig = "Universal Keys" },
+        ["Infinite Vortex"] = { id = 17084658587, rig = "Infinite Vortex" },
+        ["Crimson Moon"] = { id = 17084658587, rig = "POF:RE AURA: Crimson Moon" },
+        ["Heaven Rings"] = { id = 17084658587, rig = "POF:RE AURA: Heaven Rings" },
+        ["Obsidian Heart"] = { id = 17084658587, rig = "Obsidian Heart" },
+        ["Luipislipophobia [REVAMP]"] = { id = 17084658587, rig = "Luipislipophobia [REVAMP]" },
+        ["Manifestation of Chaos"] = { id = 17084658587, rig = "Manifestation of Chaos" },
+        ["Ultra Ego"] = { id = 17084658587, rig = "POF:RE AURA ULTRA EGO" },
+        ["Avatar"] = { id = 17084658587, rig = "Avatar" },
+        ["Insanity"] = { id = 17084658587, rig = "POF:RE AURA  INSANITY" },
+        ["Corvus"] = { id = 17084658587, rig = "POF:RE AURA  CORVUS" },
+
+        ["Susanoo Arms"] = { id = 106979401006635, rig = "Aura_SusanooArms" },
+        ["Snow Flakes"] = { id = 106979401006635, rig = "Aura_SnowFlakes" },
+        ["Red Wings"] = { id = 106979401006635, rig = "Aura_RedWings" },
+        ["Saiyan"] = { id = 106979401006635, rig = "Aura_Saiyan" },
+        ["Thund"] = { id = 106979401006635, rig = "Aura_Thund" },
+        ["Time Killing A"] = { id = 106979401006635, rig = "Aura_TimeKillingA" },
+        ["Atomic"] = { id = 106979401006635, rig = "Aura_Atomic" },
+        ["Romantic Bloom"] = { id = 106979401006635, rig = "Aura_RomanticBloom" },
+        ["Water Bubble Trio"] = { id = 106979401006635, rig = "Aura_WaterBubbleTrio" },
+        ["Aether"] = { id = 106979401006635, rig = "Aura_Aether" },
+        ["White Wings"] = { id = 106979401006635, rig = "Aura_WhiteWings" },
+        ["Kurama"] = { id = 106979401006635, rig = "Aura Kurama" },
+        ["Red Heart Fire"] = { id = 106979401006635, rig = "Aura_RedHeartFire" },
+        ["Pumpk"] = { id = 106979401006635, rig = "Aura_pumpk" },
+        ["Rainb Flame"] = { id = 106979401006635, rig = "Aura_RainbFlame" },
+        ["Purp"] = { id = 106979401006635, rig = "Aura_Purp" },
+        ["Anon"] = { id = 106979401006635, rig = "Aura_Anon" },
+        ["Binary404"] = { id = 106979401006635, rig = "Aura_Binary404" },
+        ["Blind Obsession"] = { id = 106979401006635, rig = "Aura_BlindObsession" },
+        ["Frozen Bloom"] = { id = 106979401006635, rig = "Aura_FrozenBloom" },
+        ["Flame Crown"] = { id = 106979401006635, rig = "Aura_FlameCrown" },
+        ["Blazing Pink Heart"] = { id = 106979401006635, rig = "Aura_BlazingPinkHeart" },
+        ["Fire Fist"] = { id = 106979401006635, rig = "Aura_FireFist" },
+        ["Dark Roger"] = { id = 106979401006635, rig = "Aura_DarkRoger" },
+
+        ["Ohio Overlord"] = { id = 91974923945606, part = "Ohio Overlord" },
+        ["Mewlight"] = { id = 91974923945606, part = "Mewlight" },
+        ["Sigma Radiant"] = { id = 91974923945606, part = "Sigma Radiant" },
+        ["Ohio Born"] = { id = 91974923945606, part = "Ohio Born" },
+        ["Rizznado"] = { id = 91974923945606, part = "Rizznado" },
+        ["Rizz Rift"] = { id = 91974923945606, part = "Rizz Rift" },
+        ["Ohio Surge"] = { id = 91974923945606, part = "Ohio Surge" },
+        ["Gyatt Forged"] = { id = 91974923945606, part = "Gyatt Forged" },
+        ["Brainrot Incarnate"] = { id = 91974923945606, part = "Brainrot Incarnate" },
+        ["Frozen Rage"] = { id = 91974923945606, part = "Frozen Rage" },
+        ["Rizz Shock"] = { id = 91974923945606, part = "Rizz Shock" },
+        ["Ohio Haze"] = { id = 91974923945606, part = "Ohio Haze" },
+        ["Cyan Rift"] = { id = 91974923945606, part = "Cyan Rift" },
+        ["Aqua Surge"] = { id = 91974923945606, part = "Aqua Surge" },
+        ["Zyzz'ilian"] = { id = 91974923945606, part = "Zyzz'ilian" },
+        ["Bloodrot"] = { id = 91974923945606, part = "Bloodrot" },
+        ["Celestial Override"] = { id = 91974923945606, part = "Celestial Override" },
+        ["Heavenly Static"] = { id = 91974923945606, part = "Heavenly Static" },
+        ["Rizz Infused"] = { id = 91974923945606, part = "Rizz Infused" },
+        ["Brainrotted"] = { id = 91974923945606, part = "Brainrotted" },
+        ["Rizz Sun Core"] = { id = 91974923945606, part = "Rizz Sun Core" },
+        ["Omnipotent Mewer"] = { id = 91974923945606, part = "Omnipotent Mewer" },
+        ["Dunepilled"] = { id = 91974923945606, part = "Dunepilled" },
+        ["Skibidi Touched"] = { id = 91974923945606, part = "Skibidi Touched" },
+        ["Rizz Spark"] = { id = 91974923945606, part = "Rizz Spark" },
+        ["Emerald Overdrive"] = { id = 91974923945606, part = "Emerald Overdrive" },
+        ["Cosmic Mewer"] = { id = 91974923945606, part = "Cosmic Mewer" },
+        ["Sigma Spectrum"] = { id = 91974923945606, part = "Sigma Spectrum" },
+        ["Void Mogger"] = { id = 91974923945606, part = "Void Mogger" },
+        ["Crimson Skibidi Core"] = { id = 91974923945606, part = "Crimson Skibidi Core" },
+        ["Cloutstorm"] = { id = 91974923945606, part = "Cloutstorm" },
+        ["Sigma Avalanche"] = { id = 91974923945606, part = "Sigma Avalanche" },
+        ["Aurizzora"] = { id = 91974923945606, part = "Aurizzora" },
+        ["Ohio Blizzard"] = { id = 91974923945606, part = "Ohio Blizzard" },
+        ["Portalpilled"] = { id = 91974923945606, part = "Portalpilled" },
+        ["Toxicmaxxer"] = { id = 91974923945606, part = "Toxicmaxxer" },
+        ["Molten Menace"] = { id = 91974923945606, part = "Molten Menace" },
+        ["Frost Mogger"] = { id = 91974923945606, part = "Frost Mogger" },
+        ["Sigma Inferno"] = { id = 91974923945606, part = "Sigma Inferno" },
+        ["Frostmaxxer"] = { id = 91974923945606, part = "Frostmaxxer" },
+        ["Skibrrrdi"] = { id = 91974923945606, part = "Skibrrrdi" },
+        ["Rizznova"] = { id = 91974923945606, part = "Rizznova" },
+        ["Emeraldmaxxer"] = { id = 91974923945606, part = "Emeraldmaxxer" },
         ["Armageddon"] = "POF:RE AURA ARMAGEDDON",
         ["Battleship"] = "Battleship",
         ["Beast"] = "POF:RE AURA  BEAST",
@@ -1019,7 +1108,6 @@ do
     for _, name in ipairs(names) do table.insert(SKYBOX_NAMES, name) end
 end
 
--- Hit sounds. Names fill the dropdown, ids are played by playHitSound().
 local HIT_SOUNDS = {
     ["BowHit"] = "rbxassetid://1053296915",
     ["CSGO"] = "rbxassetid://5764885315",
@@ -1043,11 +1131,10 @@ local HIT_SOUNDS = {
 local HIT_SOUND_NAMES = {}
 for name in pairs(HIT_SOUNDS) do table.insert(HIT_SOUND_NAMES, name) end
 table.sort(HIT_SOUND_NAMES)
-local playHitSound -- assigned in the logic section below
+local playHitSound
 local function noop() end
-local SpooferActions = { apply = noop, reset = noop } -- replaced by the avatar changer in the logic section
+local SpooferActions = { apply = noop, reset = noop, applyUser = noop, applyOutfit = noop }
 
--- Forcefield textures: set on MeshParts, they replace the animated forcefield pattern.
 local FORCEFIELD_TEXTURE_NAMES = { "Disabled", "Webbed", "Pixelated", "Swirl", "Shield", "Bubbles", "Matrix", "Honeycomb", "Clouds", "Galaxy", "Stars", "Wires", "Camo", "Hexagon", "Particles", "Triangular", "Wall", "Scanning" }
 local FORCEFIELD_TEXTURES = {
     ["Disabled"] = "",
@@ -1070,7 +1157,6 @@ local FORCEFIELD_TEXTURES = {
     ["Scanning"] = "rbxassetid://5843010904",
 }
 
--- Beam looks for your own bullet tracers. Other players keep the game's tracers.
 local TRACER_PRESETS = {
     ["Obelus"] = {
         Texture = "rbxassetid://2382169232", Brightness = 1.5,
@@ -1091,7 +1177,7 @@ local TRACER_PRESETS = {
         TextureMode = Enum.TextureMode.Wrap, TextureSpeed = 1, Width0 = 0.6, Width1 = 0.6, FaceCamera = true,
     },
 }
--- Styles from the Kicia tracer source: thin textured beams.
+
 local function thinStyle(texture)
     return {
         Texture = texture, Brightness = 1,
@@ -1109,8 +1195,7 @@ TRACER_PRESETS["Heartrate"] = thinStyle("rbxassetid://5830549480")
 TRACER_PRESETS["Chain"] = thinStyle("rbxassetid://9632168658")
 TRACER_PRESETS["Glitch"] = thinStyle("rbxassetid://8089467613")
 TRACER_PRESETS["Swirl"] = thinStyle("rbxassetid://5638168605")
--- Beams from a Creator Store beam pack, used as extra tracer styles: { texture id, texture length, texture speed,
--- light emission, width in the pack }. The pack draws them 4 studs wide, so widths are scaled down to tracer size.
+
 local BEAM_PACK = {
     { 5320460025, 0.1, 1, 1, 4 },
     { 5259318941, 1, 1, 1, 4 },
@@ -1212,14 +1297,13 @@ local LocalPlayer = Players.LocalPlayer
 Loader.verify(0.16)
 local UI_REPO = "https://raw.githubusercontent.com/WhyWKey/linoria/main/"
 Loader.step("Downloading UI library", 0.22)
--- Teach the keybind picker the middle and side mouse buttons before the library runs.
--- Each patch is skipped if the library text changed, so an update upstream cannot break loading.
+
 local function patchLibrarySource(source)
     local function swap(find, replace)
         local first, last = string.find(source, find, 1, true)
         if first then source = string.sub(source, 1, first - 1) .. replace .. string.sub(source, last + 1) end
     end
-    -- picking: middle click through the normal input event, side buttons by polling
+
     swap("            local Event;\n            Event = InputService.InputBegan:Connect(function(Input)",
 [[            local Event;
             task.spawn(function()
@@ -1242,17 +1326,19 @@ local function patchLibrarySource(source)
             Event = InputService.InputBegan:Connect(function(Input)]])
     swap("                elseif Input.UserInputType == Enum.UserInputType.MouseButton2 then\n                    Key = 'MB2';",
          "                elseif Input.UserInputType == Enum.UserInputType.MouseButton2 then\n                    Key = 'MB2';\n                elseif Input.UserInputType == Enum.UserInputType.MouseButton3 then\n                    Key = 'MB3';")
-    -- holding: ask Aster for the button state instead of indexing Enum.KeyCode with 'MB4'
+
     swap("                local Key = KeyPicker.Value;\n                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then\n                    return Key == 'MB1' and",
          "                local Key = KeyPicker.Value;\n                if Key == 'MB3' or Key == 'MB4' or Key == 'MB5' then\n                    return (Library.ButtonDown and Library.ButtonDown(Key)) == true;\n                end;\n                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then\n                    return Key == 'MB1' and")
+
+    swap("Cursor.ZIndex = 100;", "Cursor.ZIndex = 5000;")
+    swap("CursorOutline.ZIndex = 99;", "CursorOutline.ZIndex = 4999;")
     return source
 end
 
 local Library = loadstring(patchLibrarySource(game:HttpGet(UI_REPO .. "Library.lua")))()
 local ThemeManager = loadstring(game:HttpGet(UI_REPO .. "addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(UI_REPO .. "addons/SaveManager.lua"))()
--- This library never sets HasTransparency on color pickers, so SaveManager reset every alpha
--- to 0 when a config loaded. Loading now restores the saved transparency.
+
 pcall(function()
     SaveManager.Parser.ColorPicker.Load = function(idx, data)
         local picker = getgenv().Options and getgenv().Options[idx]
@@ -1265,9 +1351,6 @@ getgenv().Library = Library
 local Options = getgenv().Options
 local Toggles = getgenv().Toggles
 
-
--- One-time cleanup hook. Linoria stores a single OnUnload callback, so every
--- module registers its cleanup here and the callback below runs them all.
 local cleanupTasks = {}
 local function onUnload(fn)
     table.insert(cleanupTasks, fn)
@@ -1287,9 +1370,6 @@ Library:OnUnload(function()
     getgenv().TS_Drawings = {}
 end)
 
--- Linoria keeps values on Toggles[...] / Options[...].
--- Toggle -> boolean, Slider -> number, Dropdown -> string (or {name = true} when Multi),
--- ColorPicker -> Color3, KeyPicker -> key name string.
 local function readFlag(name, default)
     local object = Toggles[name]
     if object == nil then object = Options[name] end
@@ -1297,8 +1377,7 @@ local function readFlag(name, default)
     return object.Value
 end
 
--- Player relationships: a player can be marked Friendly or Priority; everyone else is judged by team.
-local Relations = {} -- [UserId] = "Friendly" | "Priority"
+local Relations = {}
 local function isEnemy(player)
     if not player or player == LocalPlayer then return false end
     local explicit = Relations[player.UserId]
@@ -1307,15 +1386,14 @@ local function isEnemy(player)
     local mine, theirs = LocalPlayer.Team, player.Team
     if not mine or not theirs then return true end
     if mine == theirs then return false end
-    return true -- a Neutral player on either side counts as an enemy
+    return true
 end
 local function relationOf(player)
     local explicit = Relations[player.UserId]
     if explicit then return explicit end
     return isEnemy(player) and "Enemy" or "Friendly"
 end
--- Hostile only: an Inmate that is not Hostile is peaceful. This applies whatever team you are on;
--- Priority players are never treated as peaceful.
+
 local function isPeaceful(player)
     if not player or Relations[player.UserId] == "Priority" then return false end
     local team = player.Team
@@ -1324,7 +1402,6 @@ local function isPeaceful(player)
     return not (char and char:GetAttribute("Hostile") == true)
 end
 
--- Palette of the library's built-in "Perception" theme, applied before the window is built.
 Library.FontColor = Color3.fromRGB(182, 182, 182)
 Library.MainColor = Color3.fromRGB(20, 20, 20)
 Library.BackgroundColor = Color3.fromRGB(23, 23, 23)
@@ -1337,21 +1414,15 @@ Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
     Title = "Aster",
     Center = true,
-    AutoShow = false, -- the loader opens the menu when it finishes
+    AutoShow = false,
     MenuFadeTime = 0.2,
-    -- Resizing is built into this library: drag the round grip in the bottom-right corner.
-    -- Blur and darken are off by default so the game stays visible while you tweak visuals;
-    -- both can be turned on in Settings > Background.
+
     UseBlur = false,
     UseDarken = false,
 })
 
--- Keep the menu above the ESP overlay (player names used to draw over it).
 pcall(function() Library.ScreenGui.DisplayOrder = 100 end)
 
--- ===== Compatibility layer =====================================================
--- The UI below is written as Page / Section / MultiSection / Toggle / Slider calls.
--- This layer maps each of them onto Linoria tabs, groupboxes and tabboxes.
 local function keyName(key)
     local ok, name = pcall(function() return key.Name end)
     if ok and type(name) == "string" then return name end
@@ -1363,10 +1434,8 @@ local function toRounding(decimals)
     return math.clamp(math.floor(-math.log10(decimals) + 0.5), 0, 4)
 end
 
--- Every keybind made through the wrapper, so Settings can offer side mouse buttons for it.
 local keybindRegistry = {}
 
--- Pressing Escape while picking a key clears the keybind (the menu key falls back to its default instead).
 local function escapeUnbinds(flag, fallback)
     local picker = Options[flag]
     if not picker then return end
@@ -1388,7 +1457,7 @@ local function wrapElement(linoriaObject)
             Default = info.Default or Color3.fromRGB(255, 255, 255),
             Title = info.Name or "Color",
         }
-        if info.Alpha then pickerInfo.Transparency = type(info.Alpha) == "number" and info.Alpha or 0 end -- shows the alpha slider; value is Options[flag].Transparency
+        if info.Alpha then pickerInfo.Transparency = type(info.Alpha) == "number" and info.Alpha or 0 end
         linoriaObject:AddColorPicker(info.Flag, pickerInfo)
         return element
     end
@@ -1402,7 +1471,7 @@ local function wrapElement(linoriaObject)
             Mode = info.Mode or "Toggle",
             Text = info.Name or "Keybind",
             NoUI = false,
-            SyncToggleState = info.Sync == true, -- the key flips the toggle it is attached to
+            SyncToggleState = info.Sync == true,
         })
         escapeUnbinds(info.Flag, "None")
         table.insert(keybindRegistry, { flag = info.Flag, name = info.Name or info.Flag })
@@ -1456,8 +1525,7 @@ local function wrapGroup(group, page, side)
 
     function wrapped:Label(info)
         bump()
-        -- Linoria only gives unwrapped labels the colorpicker/keybind addons, so wrap
-        -- (multi-line) only for long plain-text labels.
+
         return wrapElement(group:AddLabel(info.Name, #info.Name > 28))
     end
 
@@ -1466,7 +1534,6 @@ local function wrapGroup(group, page, side)
         group:AddButton(info.Name, info.Callback)
     end
 
-    -- text box; the value is always current (Options[flag].Value), no Enter needed
     function wrapped:Input(info)
         bump()
         group:AddInput(info.Flag, {
@@ -1478,7 +1545,6 @@ local function wrapGroup(group, page, side)
         })
     end
 
-    -- Player picker: Linoria builds and refreshes the player list itself.
     function wrapped:Listbox(info)
         bump()
         group:AddDropdown(info.Flag, { Text = "Player", SpecialType = "Player", AllowNull = true })
@@ -1491,7 +1557,7 @@ local function wrapPage(tab)
     local page = { load = { 0, 0 } }
     local function pickSide(side)
         if side == 1 or side == 2 then return side end
-        return page.load[1] <= page.load[2] and 1 or 2   -- third column: use the emptier side
+        return page.load[1] <= page.load[2] and 1 or 2
     end
 
     function page:Section(info)
@@ -1523,7 +1589,6 @@ function Window:Page(info)
     return wrapPage(LinoriaWindow:AddTab(info.Name))
 end
 
--- Pages ---------------------------------------------------------------
 local CombatTab   = Window:Page({ Name = "Combat",  Columns = 2, Subtabs = false })
 local VisualsPage = Window:Page({ Name = "Visuals", Columns = 2, Subtabs = false })
 local WorldPage   = Window:Page({ Name = "World",   Columns = 2, Subtabs = false })
@@ -1532,9 +1597,9 @@ local PlayersPage  = Window:Page({ Name = "Players", Columns = 2, Subtabs = fals
 local MiscPage     = Window:Page({ Name = "Misc",    Columns = 2, Subtabs = false })
 local MiscActions  = { clearCheats = noop }
 local TeleportPage = Window:Page({ Name = "Teleport", Columns = 2, Subtabs = false })
-local ShotEvents = { shot = {}, hit = {}, cast = {}, kill = {} } -- listeners: shot(origin, target), hit(player, position), cast(part, position), kill(player, position)
+local ShotEvents = { shot = {}, hit = {}, cast = {}, kill = {} }
 local Actions = {
-    previewHitEffect = noop, previewKillEffect = noop, getWeapon = noop, getAllWeapons = noop, getItem = noop, getPlace = noop,
+    previewHitEffect = noop, previewKillEffect = noop, packRig = function() end, getWeapon = noop, getAllWeapons = noop, getItem = noop, getPlace = noop,
     kickOnce = noop, fxHook = noop, autoHook = noop, assistHook = noop, fireAt = function() return false end,
     sp = { assist = {}, shooter = function(root) return root.Position end, realPos = function(root) return root.Position end },
     area = function() return "outside" end,
@@ -1543,11 +1608,10 @@ local Actions = {
 local WHITE = Color3.fromRGB(255, 255, 255)
 local BLACK = Color3.fromRGB(0, 0, 0)
 
--- Combat
 do
--- Combat
+
 do
-    -- Aim assist (camera or mouse) ------------------------------------------------------
+
     local Aim = CombatTab:Section({ Name = "Aim assist", Side = 1 })
     local aimEnabled = Aim:Toggle({ Name = "Enabled", Flag = "Aim_Global_Enabled", Default = false })
     aimEnabled:Keybind({ Name = "Aim key", Flag = "Aim_Global_Key", Default = "MB2", Mode = "Hold" })
@@ -1609,7 +1673,6 @@ do
     assistVisual:Colorpicker({ Name = "Fill", Flag = "wb_assist_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0.6 })
     assistVisual:Colorpicker({ Name = "Outline", Flag = "wb_assist_line", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
 
-    -- Silent aim ---------------------------------------------------------------------------
     local Silent = CombatTab:Section({ Name = "Silent aim", Side = 2 })
     local silentEnabled = Silent:Toggle({ Name = "Enabled", Flag = "Silent_Global_Enabled", Default = false })
     silentEnabled:Keybind({ Name = "Silent key", Flag = "Silent_Global_Key", Default = "None", Mode = "Always" })
@@ -1629,7 +1692,6 @@ do
     Silent:Slider({ Name = "Auto fire rate", Flag = "silent_autofire_rate", Min = 1, Max = 60, Default = 15, Suffix = " hz", Decimals = 1 })
     Silent:Toggle({ Name = "Auto fire: skip blocked", Flag = "silent_autofire_check", Default = true, Tooltip = "With wallbang on, auto fire only shoots targets you can see or wallbang" })
 
-    -- FOV circles (one per assist) ---------------------------------------------------------
     local FovAim, FovSilent = CombatTab:MultiSection({ Sections = { "Aim FOV", "Silent FOV" }, Side = 2 })
     local aimCircle = FovAim:Toggle({ Name = "Show FOV circle", Flag = "aim_fov_show", Default = false })
     aimCircle:Colorpicker({ Name = "Color", Flag = "aim_fov_color", Default = Color3.new(1, 1, 1), Alpha = true })
@@ -1660,12 +1722,10 @@ do
     Utility:Toggle({ Name = "Shoot through vehicles", Flag = "gun_vehicle_wallbang", Default = false })
 end
 
-
 end
 
--- Misc ----------------------------------------------------------------------------------
 do
-    -- Movement: two tabboxes keep the six movement modules compact
+
     local fly, speed, spider = MiscPage:MultiSection({ Sections = { "Fly", "Speed", "Spider" }, Side = 1 })
     fly:Toggle({ Name = "Fly", Flag = "misc_fly", Default = false }):Keybind({ Name = "Fly key", Flag = "misc_fly_key", Default = "None", Sync = true })
     fly:Dropdown({ Name = "Mode", Flag = "misc_fly_mode", Items = { "Velocity", "CFrame" }, Default = "Velocity" })
@@ -1797,8 +1857,6 @@ do
     vSpeed:Slider({ Name = "Max speed", Flag = "misc_vspeed_value", Min = 80, Max = 200, Default = 140, Decimals = 1 })
 end
 
-
--- Teleport -------------------------------------------------------------------------------
 do
     local Guns = TeleportPage:Section({ Name = "Get guns", Side = 1 })
     Guns:Dropdown({ Name = "Weapon", Flag = "tp_weapon", Items = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL", "Revolver" }, Default = "AK-47" })
@@ -1818,10 +1876,8 @@ do
     Places:Button({ Name = "Teleport", Callback = function() Actions.getPlace(readFlag("tp_place", "Yard")) end })
 end
 
--- Visuals (ESP and chams) and World (world, camera, gun, body and self visuals)
 do
-    ---------------- left column ----------------
-    -- ESP list (toggles with their color swatches)
+
     local EspList = VisualsPage:MultiSection({ Sections = { "Players" }, Side = 1 })
     EspList:Toggle({ Name = "Enabled", Flag = "esp_enabled", Default = false })
     EspList:Toggle({ Name = "Name", Flag = "esp_name", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_name_color1", Default = WHITE })
@@ -1843,7 +1899,6 @@ do
     EspList:Toggle({ Name = "Team colors", Flag = "esp_use_team_color", Default = false })
 EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpicker({ Name = "Visible", Flag = "esp_chams_adorn_vis_color", Default = Color3.fromRGB(59, 204, 90), Alpha = 0.35 }):Colorpicker({ Name = "Behind walls", Flag = "esp_chams_adorn_occ_color", Default = Color3.fromRGB(59, 144, 204), Alpha = 0.7 })
 
-    -- ESP settings
     local SetGeneral, SetBox, SetHealth, SetArrows = VisualsPage:MultiSection({ Sections = { "General", "Box", "Health", "Arrows" }, Side = 2 })
     SetGeneral:Toggle({ Name = "Players", Flag = "esp_players", Default = true })
     SetGeneral:Toggle({ Name = "Local player", Flag = "esp_local_player", Default = false })
@@ -1856,7 +1911,6 @@ EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpic
     SetArrows:Slider({ Name = "Size", Flag = "esp_arrow_size", Suffix = " px", Min = 8, Max = 32, Default = 14, Decimals = 1 })
     SetArrows:Slider({ Name = "Orbit radius", Flag = "esp_arrow_orbit", Suffix = " px", Min = 50, Max = 300, Default = 100, Decimals = 1 })
 
-    -- Chams (adornment layers)
     local AdornLayers, AdornGlow = VisualsPage:MultiSection({ Sections = { "Layers", "Glow" }, Side = 2 })
     AdornLayers:Slider({ Name = "Visible thickness", Flag = "esp_chams_adorn_thickness", Min = 0, Max = 0.6, Default = 0.1, Decimals = 0.01 })
     AdornGlow:Toggle({ Name = "Glow", Flag = "esp_chams_adorn_glow", Default = false })
@@ -1864,13 +1918,10 @@ EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpic
     AdornGlow:Toggle({ Name = "Round head", Flag = "esp_chams_adorn_round_head", Default = true })
     AdornGlow:Slider({ Name = "Head size", Flag = "esp_chams_adorn_head_size", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
 
-    -- Camera
     local CamFov = VisualsPage:Section({ Name = "Camera", Side = 1 })
 CamFov:Toggle({ Name = "FOV changer", Flag = "camera_fov_changer", Default = false })
 CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max = 140, Default = 100, Suffix = "°", Decimals = 1 })
 
-    ---------------- right column ----------------
-    -- World lighting
     local LightMain, LightTime, LightFog = WorldPage:MultiSection({ Sections = { "Light", "Time", "Fog" }, Side = 1 })
     LightMain:Toggle({ Name = "Ambient", Flag = "lighting_toggle_Ambient", Default = false }):Colorpicker({ Name = "Color", Flag = "lighting_colorAmbient", Default = WHITE })
     LightMain:Toggle({ Name = "Brightness", Flag = "lighting_toggle_Brightness", Default = false })
@@ -1885,7 +1936,6 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     LightFog:Slider({ Name = "Fog end value", Flag = "lighting_number_FogEnd", Suffix = " stud(s)", Min = 0, Max = 5000, Default = 2500, Decimals = 1 })
     LightFog:Toggle({ Name = "Fog color", Flag = "lighting_toggle_FogColor", Default = false }):Colorpicker({ Name = "Color", Flag = "lighting_colorFogColor", Default = WHITE })
 
-    -- Sky, atmosphere and post effects
     local EnvSky, EnvAtmos, EnvBloom, EnvScreen = WorldPage:MultiSection({ Sections = { "Sky", "Atmos", "Bloom", "Screen" }, Side = 1 })
     EnvSky:Toggle({ Name = "Skybox", Flag = "skybox_enabled", Default = false })
     EnvSky:Dropdown({ Name = "Preset", Flag = "skybox_value", Items = SKYBOX_NAMES, Default = SKYBOX_NAMES[1] })
@@ -1909,7 +1959,6 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     EnvScreen:Slider({ Name = "Sun rays intensity", Flag = "sunrays_intensity", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
     EnvScreen:Slider({ Name = "Screen blur", Flag = "camera_blur", Min = 0, Max = 20, Default = 0, Decimals = 0.01 })
 
-    -- Gun
     local GunLook, GunChams, GunTracerTab, GunTimingTab = VisualsPage:MultiSection({ Sections = { "Viewmodel", "Chams", "Tracers", "Timing" }, Side = 2 })
 GunLook:Toggle({ Name = "Gun color", Flag = "viewmodel_body_color", Default = false }):Colorpicker({ Name = "Color", Flag = "viewmodel_body_color_value", Default = Color3.fromRGB(202, 161, 13), Alpha = true })
 GunLook:Dropdown({ Name = "Material", Flag = "viewmodel_material_value", Items = { "Default", "ForceField", "Neon", "Glass", "SmoothPlastic", "Plastic" }, Default = "Default" })
@@ -1925,18 +1974,15 @@ GunTimingTab:Slider({ Name = "Fade time", Flag = "tracers_fade", Suffix = "s", M
 GunTimingTab:Toggle({ Name = "Expand from muzzle", Flag = "tracers_expand", Default = true })
 GunTimingTab:Slider({ Name = "Expand speed", Flag = "tracers_expand_speed", Min = 4, Max = 40, Default = 18, Decimals = 1 })
 
-    -- Body
     local BodyForce, BodyExtra = VisualsPage:MultiSection({ Sections = { "Arms", "Extras" }, Side = 2 })
 BodyForce:Toggle({ Name = "Forcefield material", Flag = "arm_material", Default = false }):Colorpicker({ Name = "Color", Flag = "arm_material_color", Default = Color3.fromRGB(255, 255, 255), Alpha = true })
 BodyForce:Dropdown({ Name = "Forcefield texture", Flag = "arm_material_texture", Items = FORCEFIELD_TEXTURE_NAMES, Default = "Disabled" })
 BodyExtra:Toggle({ Name = "Disable textures", Flag = "arm_disable_textures", Default = false })
 BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories", Default = false })
 
-    -- Self chams (Highlight)
     local SelfChams = VisualsPage:Section({ Name = "Self chams", Side = 2 })
     SelfChams:Toggle({ Name = "Self chams", Flag = "Self_Chams", Default = false }):Colorpicker({ Name = "Fill", Flag = "Self_ChamsColor1", Default = Color3.fromRGB(80, 160, 255), Alpha = 0.3 }):Colorpicker({ Name = "Outline", Flag = "Self_ChamsColor2", Default = WHITE, Alpha = true })
 
-    -- Weather + lightning (left column, under the camera)
     local WeatherMain, WeatherLook, WeatherWind, WeatherStrike = WorldPage:MultiSection({ Sections = { "Weather", "Look", "Wind", "Strike" }, Side = 1 })
     WeatherMain:Toggle({ Name = "Weather", Flag = "weather_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "weather_color", Default = Color3.fromRGB(200, 200, 220) })
     WeatherMain:Dropdown({ Name = "Preset", Flag = "weather_preset", Items = WEATHER_NAMES, Default = "Rain" })
@@ -1954,7 +2000,6 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     WeatherStrike:Slider({ Name = "Flash", Flag = "weather_lightning_flash", Min = 0, Max = 10, Default = 4, Decimals = 0.1 })
     WeatherStrike:Slider({ Name = "Interval", Flag = "weather_lightning_interval", Suffix = "s", Min = 1, Max = 15, Default = 4, Decimals = 0.1 })
 
-    -- Custom crosshair (right column, under self chams)
     local CrossMain, CrossOutline, CrossMotion, CrossArms = VisualsPage:MultiSection({ Sections = { "Crosshair", "Outline", "Motion", "Arms" }, Side = 1 })
     CrossMain:Toggle({ Name = "Crosshair", Flag = "crosshair_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "crosshair_color", Default = WHITE })
     CrossMain:Slider({ Name = "Length", Flag = "crosshair_length", Suffix = " px", Min = 1, Max = 40, Default = 12, Decimals = 1 })
@@ -1975,11 +2020,10 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     CrossArms:Toggle({ Name = "Left arm", Flag = "crosshair_arm_left", Default = true })
     CrossArms:Toggle({ Name = "Right arm", Flag = "crosshair_arm_right", Default = true })
 
-    -- Hit effects and particle aura -------------------------------------------------------
     local HitFx = WorldPage:Section({ Name = "Hit effects", Side = 2 })
     local heToggle = HitFx:Toggle({ Name = "Hit effects", Flag = "he_enabled", Default = false })
     heToggle:Colorpicker({ Name = "Color", Flag = "he_color", Default = Color3.fromRGB(255, 81, 0) })
-    HitFx:Dropdown({ Name = "Effect", Flag = "he_effect", Items = { "nova", "sparks", "bubble", "orbs", "air", "blood", "glitch", "slash", "cosmic", "crescentslash" }, Default = "nova" })
+    HitFx:Dropdown({ Name = "Effect", Flag = "he_effect", Items = { "nova", "sparks", "bubble", "orbs", "air", "blood", "glitch", "slash", "cosmic", "crescentslash", "Burst: Mutants Rage", "Burst: Armageddon", "Burst: Solar Flare", "Burst: Heaven", "Burst: Gravity God", "Burst: Red Ring of Death", "Burst: Blue Heat", "Burst: Stardust Fragment", "Burst: Fiery Ritual of Hallownest", "Burst: Midnight Blues", "Burst: Susanoo Arms", "Burst: Atomic", "Burst: Kurama" }, Default = "nova" })
     HitFx:Dropdown({ Name = "Trigger", Flag = "he_trigger", Items = { "On hit", "On shot" }, Default = "On hit" })
     HitFx:Slider({ Name = "Size", Flag = "he_size", Min = 0, Max = 10, Default = 2, Decimals = 0.1 })
     HitFx:Slider({ Name = "Duration", Flag = "he_duration", Min = 0.1, Max = 10, Default = 2, Suffix = "s", Decimals = 0.1 })
@@ -1987,9 +2031,32 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
 
     local KillFx = WorldPage:Section({ Name = "Kill effects", Side = 2 })
     KillFx:Toggle({ Name = "Kill effects", Flag = "ke_enabled", Default = false, Tooltip = "Plays an effect where a player you shot dies" })
-    KillFx:Dropdown({ Name = "Effect", Flag = "ke_effect", Items = { "Blackhole", "Cosmic Strike", "Cyberspace", "Darkheart", "Deleted", "Galactic Pull", "Game Over", "Glitter Bomb", "Heartbreak", "Infinite Portal", "Lightning", "Northern Aurora Burst", "Paper Surprise", "Scorch", "Soul Grasp", "Sparkle", "Stereo", "Tornado", "Tornado Acid", "Tornado Earth", "Tornado Fire", "Tornado Lightning" }, Default = "Darkheart" })
+    KillFx:Dropdown({ Name = "Effect", Flag = "ke_effect", Items = { "Stone", "Gold Statue", "Fade", "Ghost", "Shrink", "Blackhole", "Cosmic Strike", "Cyberspace", "Darkheart", "Deleted", "Galactic Pull", "Game Over", "Glitter Bomb", "Heartbreak", "Infinite Portal", "Lightning", "Northern Aurora Burst", "Paper Surprise", "Scorch", "Soul Grasp", "Sparkle", "Stereo", "Tornado", "Tornado Acid", "Tornado Earth", "Tornado Fire", "Tornado Lightning" }, Default = "Darkheart" })
+    KillFx:Toggle({ Name = "Body reaction", Flag = "ke_body", Default = true, Tooltip = "Also changes the victim's own body parts where the original effect does (charred stone, shrinking, fading)" })
     KillFx:Slider({ Name = "Duration", Flag = "ke_duration", Min = 1, Max = 8, Default = 4, Suffix = "s", Decimals = 0.1 })
     KillFx:Button({ Name = "Preview effect", Callback = function() Actions.previewKillEffect() end })
+
+    local Muzzle = WorldPage:Section({ Name = "Muzzle effects", Side = 2 })
+    Muzzle:Toggle({ Name = "Muzzle effects", Flag = "mz_enabled", Default = false, Tooltip = "Black hole effects on the Muzzle part of the tool you hold" })
+    Muzzle:Dropdown({ Name = "Effect", Flag = "mz_effect", Items = { "Blue Black Hole", "Gold Black Hole", "Orange Black Hole", "Purple Black Hole", "Red Black Hole", "White Black Hole" }, Default = "Purple Black Hole" })
+    Muzzle:Dropdown({ Name = "Mode", Flag = "mz_mode", Items = { "While equipped", "On shot" }, Default = "While equipped" })
+    Muzzle:Slider({ Name = "Flash time", Flag = "mz_flash", Min = 0.05, Max = 1.5, Default = 0.25, Suffix = "s", Decimals = 0.05 })
+    Muzzle:Slider({ Name = "Size", Flag = "mz_size", Min = 0.5, Max = 100, Default = 5, Suffix = "%", Decimals = 0.5 })
+    Muzzle:Toggle({ Name = "Custom color", Flag = "mz_custom", Default = false }):Colorpicker({ Name = "Color", Flag = "mz_color", Default = Color3.fromRGB(255, 80, 80) })
+    Muzzle:Slider({ Name = "Transparency", Flag = "mz_alpha", Min = 0, Max = 0.95, Default = 0, Decimals = 0.05 })
+    Muzzle:Slider({ Name = "Offset X", Flag = "mz_x", Min = -5, Max = 5, Default = 0, Suffix = " studs", Decimals = 0.05 })
+    Muzzle:Slider({ Name = "Offset Y", Flag = "mz_y", Min = -5, Max = 5, Default = 0, Suffix = " studs", Decimals = 0.05 })
+    Muzzle:Slider({ Name = "Offset Z", Flag = "mz_z", Min = -5, Max = 5, Default = 0, Suffix = " studs", Decimals = 0.05 })
+    Muzzle:Slider({ Name = "Rotation X", Flag = "mz_rx", Min = -180, Max = 180, Default = 0, Suffix = "°", Decimals = 1 })
+    Muzzle:Slider({ Name = "Rotation Y", Flag = "mz_ry", Min = -180, Max = 180, Default = 0, Suffix = "°", Decimals = 1 })
+    Muzzle:Slider({ Name = "Rotation Z", Flag = "mz_rz", Min = -180, Max = 180, Default = 0, Suffix = "°", Decimals = 1 })
+    Muzzle:Slider({ Name = "Roll", Flag = "mz_roll", Min = -180, Max = 180, Default = 0, Suffix = "°", Decimals = 1, Tooltip = "Spins the particle sprites themselves" })
+    Muzzle:Button({ Name = "Reset position", Callback = function()
+        for _, name in ipairs({ "mz_x", "mz_y", "mz_z", "mz_rx", "mz_ry", "mz_rz", "mz_roll" }) do
+            local option = Options[name]
+            if option and option.SetValue then pcall(function() option:SetValue(0) end) end
+        end
+    end })
 
     local Reload = WorldPage:Section({ Name = "Reload indicator", Side = 2 })
     Reload:Toggle({ Name = "Reload indicator", Flag = "reload_ind", Default = false, Tooltip = "A progress bar under the cursor while your gun reloads" })
@@ -2027,6 +2094,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     AuraBox:Toggle({ Name = "Keep pack colors", Flag = "pa_pack_original", Default = true, Tooltip = "Pack auras keep their own colors. Turn off to paint them with the color above like the other auras." })
 
     local Avatar = WorldPage:Section({ Name = "Avatar changer", Side = 2 })
+    Avatar:Toggle({ Name = "Avatar spoofer window", Flag = "spoof_ui", Default = false, Tooltip = "Opens a window to browse a player's current look and saved outfits" })
     Avatar:Input({ Name = "User", Flag = "spoof_avatar_user", Placeholder = "UserId, username or profile URL" })
     Avatar:Button({ Name = "Apply avatar", Callback = function()
         task.spawn(function() SpooferActions.apply() end)
@@ -2037,10 +2105,8 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     Avatar:Toggle({ Name = "Re-apply on respawn", Flag = "spoof_avatar_reapply", Default = true })
 end
 
-
--- Players
 do
--- Players
+
 do
     local PlayerListSection = PlayersPage:Section({ Name = "Players", Side = 1 })
     local KickSection = PlayersPage:Section({ Name = "Kick exploit", Side = 1 })
@@ -2168,14 +2234,11 @@ do
     end)
 end
 
-
 end
 
--- UI Settings
 do
     local SettingsTab = LinoriaWindow:AddTab("Settings")
 
-    -- Menu --------------------------------------------------------------
     local MenuGroup = SettingsTab:AddLeftGroupbox("Menu")
     MenuGroup:AddButton("Unload", function() Library:Unload() end)
     MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "RightControl", NoUI = true, Text = "Menu keybind" })
@@ -2206,10 +2269,6 @@ do
         Callback = function(value) Library.WireframeDrag = value end,
     })
 
-    -- Extra mouse buttons (MB3 middle, MB4 / MB5 side) ----------------------------
-    -- Middle click is a normal Roblox input, so it always works. Roblox does not report the side buttons,
-    -- so those are polled through the executor's iskeypressed (Windows virtual keys 0x05 / 0x06) when it
-    -- answers. Click a keybind and press the button to bind it; the library is patched at load for that.
     do
         local BUTTONS = { MB3 = true, MB4 = true, MB5 = true }
         local SIDE_CODES = { MB4 = 0x05, MB5 = 0x06 }
@@ -2284,26 +2343,19 @@ do
             end
         end))
 
-        -- the library's picker and Hold check read the button state from here
         Library.ButtonDown = buttonDown
 
-        if not supported then
-            warn("Aster: side mouse buttons unavailable (" .. sideNote .. "); middle click still works")
-        end
         for _, entry in ipairs(keybindRegistry) do
             local picker = Options[entry.flag]
             if picker then hook(picker) end
         end
     end
 
-    -- Background (blur, darken, keybind list transparency) ---------------------
     local BackgroundGroup = SettingsTab:AddLeftGroupbox("Background")
     if Library.AddBlurSlider then Library:AddBlurSlider(BackgroundGroup) end
     if Library.AddDarkenSlider then Library:AddDarkenSlider(BackgroundGroup) end
     if Library.AddKeybindTransparencySlider then Library:AddKeybindTransparencySlider(BackgroundGroup) end
 
-    -- Notifications -------------------------------------------------------------
-    -- Library:ConfigureNotifications needs a table of the settings that changed.
     if Library.NotifyConfig and Library.ConfigureNotifications then
         local config = Library.NotifyConfig
         local function configure(key)
@@ -2360,7 +2412,7 @@ do
     SaveManager:BuildConfigSection(SettingsTab)
     ThemeManager:ApplyToTab(SettingsTab)
     Loader.setAccent(Library.AccentColor)
-    do -- keep the saved loader colour in step with the theme
+    do
         local alive, last = true, Library.AccentColor
         onUnload(function() alive = false end)
         task.spawn(function()
@@ -2416,7 +2468,6 @@ do
         return ok and obj or nil
     end
 
-    
     local fovCircle = newDrawing("Circle")
     if fovCircle then
         fovCircle.Visible = false
@@ -2427,12 +2478,6 @@ do
         fovCircle.Transparency = 1
     end
 
-    
-    
-    -- The ESP library bakes the health gradient colors in when a player's ESP object is
-    -- created and never updates them afterwards, so the Full / Mid / Low HP color pickers
-    -- had no effect. This adds the per-frame update (and lets the gradient work for Top and
-    -- Bottom bars too). If the library changes and the anchors stop matching, it is left as is.
     local function replaceOnce(source, old, new)
         local first, last = string.find(source, old, 1, true)
         if not first then return source, false end
@@ -2447,8 +2492,6 @@ do
         "espObj.HealthGradient.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,hc1),ColorSequenceKeypoint.new(0.5,hc2),ColorSequenceKeypoint.new(1,hc3)}) end;",
     }, " ")
 
-    -- The ESP library decides who to track in ScanDirectories(). This adds a call to a filter
-    -- function (getgenv().TS_ESPFilter, set below) right after its own local-player check.
     local TEAM_FILTER_ANCHOR = "if not ESPConfig.LocalPlayer and player==LocalPlayer then continue end"
     local TEAM_FILTER_HOOK = TEAM_FILTER_ANCHOR .. " if getgenv().TS_ESPFilter and not getgenv().TS_ESPFilter(player) then continue end"
 
@@ -2466,7 +2509,7 @@ do
             warn("Team filter patch skipped: the ESP library changed")
             filtered = patched
         end
-        -- per-player config overrides (colors for highlighted / team colored players)
+
         local withOverride, okFour = replaceOnce(filtered,
             "newTracked[player.Character]={name=player.Name,Cheap=false}",
             "newTracked[player.Character]={name=player.Name,Cheap=false,Config=getgenv().TS_ESPOverride and getgenv().TS_ESPOverride(player) or nil}")
@@ -2508,13 +2551,8 @@ do
         return false
     end
 
-    -- ESP update rate: the library's own maximum.
     local ESP_MAX_FPS = 140
 
-    -- Enemies only: not on your team (a Neutral player counts as an enemy); Friendly players are hidden,
-    -- Priority players are always shown.
-    -- Hostile only: Inmates that are not Hostile are hidden, whichever team you are on. Criminals, Guards
-    -- and Priority players stay visible.
     local function hiddenAsPeaceful(player)
         return getFlag("esp_hostile_only", false) and isPeaceful(player)
     end
@@ -2525,9 +2563,6 @@ do
     end
     getgenv().TS_ESPFilter = teamAllowed
 
-    -- Highlight colors (players marked Friendly or Priority in the Players tab) win over team colors. They recolor the ESP library
-    -- boxes and text through its per-player config overrides, plus the skeleton and the visible
-    -- chams layer here. The behind-walls chams color is never changed.
     local function relationColor(player)
         if player == LocalPlayer then return nil end
         local explicit = Relations[player.UserId]
@@ -2559,8 +2594,6 @@ do
         getgenv().TS_ESPOverride = nil
     end)
 
-    -- The library only rescans its player list every few seconds. Adding and removing a
-    -- throw-away Folder in Workspace marks it dirty, so team changes show up within 0.2s.
     local lastTeamSignature
     local function checkTeamChanges()
         local parts = {}
@@ -2667,13 +2700,13 @@ do
         put("HealthBar.Gradient.Color2", getColor("esp_healthbar_color_middle", Color3.fromRGB(255, 255, 0)))
         put("HealthBar.Gradient.Color3", getColor("esp_healthbar_color_end", Color3.fromRGB(255, 0, 0)))
 
-        put("Skeleton.Enabled", false) -- drawn by this script (see Skeleton ESP below)
+        put("Skeleton.Enabled", false)
         put("Skeleton.Gradient.Enabled", false)
         put("Skeleton.Outline", getFlag("esp_skeleton_outline", true))
         put("Skeleton.OutlineColor", getColor("esp_skeleton_outline_color", Color3.fromRGB(0, 0, 0)))
         put("Skeleton.Color", getColor("esp_skeleton_color", Color3.fromRGB(255, 255, 255)))
 
-        put("Chams.Enabled", false) -- chams are drawn by updateAdornChams below
+        put("Chams.Enabled", false)
 
         if changed then
             CoincideESP:InvalidateCache()
@@ -2684,8 +2717,6 @@ do
         syncCoincideESP()
     end
 
-    
-    
     local function ensureEffect(className, name)
         local effect = LightingService:FindFirstChild(name)
         if not effect or not effect:IsA(className) then
@@ -2744,9 +2775,6 @@ do
         Technology = LightingService.Technology,
     }
 
-    -- Custom skybox: ids typed in "Custom ids". One id may be a Creator Store skybox model (its Sky is copied),
-    -- a decal or an image (used on all six faces); six ids are the faces in the order up, down, front, back, left, right.
-    -- Decal ids are converted to their image id. Loading waits until typing stops, then runs once per text.
     local customSkybox
     do
         local FACES = { "SkyboxUp", "SkyboxDn", "SkyboxFt", "SkyboxBk", "SkyboxLf", "SkyboxRt" }
@@ -2757,7 +2785,6 @@ do
             pcall(function() Library:Notify(message, 4) end)
         end
 
-        -- returns { sky = Sky } or { image = "rbxassetid://..." }
         local function resolveAsset(id)
             if assetCache[id] then return assetCache[id] end
             local result
@@ -2771,7 +2798,7 @@ do
                     if object:IsA("ImageLabel") or object:IsA("ImageButton") then result = { image = object.Image } break end
                 end
             end
-            result = result or { image = "rbxassetid://" .. id } -- not an instance asset: assume it is already an image
+            result = result or { image = "rbxassetid://" .. id }
             assetCache[id] = result
             return result
         end
@@ -2830,7 +2857,7 @@ do
                     end)
                 end
             end
-            if builtText ~= text then return built end -- still showing the previous skybox while the new one loads
+            if builtText ~= text then return built end
             return built
         end
     end
@@ -2874,8 +2901,6 @@ do
         end
     end
 
-    -- A property is only touched while its toggle is on. When the toggle turns
-    -- off, the value the game had at that moment is restored once.
     local lightingApplied = {}
     local lightingRestore = {}
 
@@ -2903,7 +2928,6 @@ do
         applyLightingProp("FogEnd", getFlag("lighting_toggle_FogEnd", false), getFlag("lighting_number_FogEnd", originalLighting.FogEnd))
         applyLightingProp("FogColor", getFlag("lighting_toggle_FogColor", false), getColor("lighting_colorFogColor", originalLighting.FogColor))
 
-        -- No toggle for these two: they only apply while they differ from the game's own value.
         local shadows = getFlag("lighting_bool_GlobalShadows", originalLighting.GlobalShadows)
         pcall(applyLightingProp, "GlobalShadows", shadows ~= originalLighting.GlobalShadows, shadows)
 
@@ -2969,11 +2993,7 @@ do
 
     local updateAdornChams
     ;(function()
-    -- Layered adornment chams ---------------------------------------
-    -- Two box adornments per body part, same idea as the reference script:
-    --   behind-walls layer: AlwaysOnTop, so it shows through geometry
-    --   visible layer: depth tested and slightly thicker, so it only appears
-    --   (and sits around the first layer) while that part is really in view.
+
     local adornFolder = Instance.new("Folder")
     adornFolder.Name = "TS_AdornChams"
     do
@@ -2991,7 +3011,7 @@ do
         adornment.ZIndex = zIndex
         adornment.AdornCullingMode = Enum.AdornCullingMode.Never
         if round then
-            -- A cylinder's length runs along Z; look straight up so it stands like a head.
+
             adornment.CFrame = CFrame.new(Vector3.new(0, 0, 0), Vector3.new(0, 90, 0))
         end
         adornment.Parent = adornFolder
@@ -3010,7 +3030,6 @@ do
         adornData[player] = nil
     end
 
-    -- Radius and height of the round head layer, from the head part and its mesh scale.
     local function headDimensions(head)
         local size = head.Size
         local mesh = head:FindFirstChildOfClass("SpecialMesh")
@@ -3034,8 +3053,7 @@ do
         local visibleTransparency = math.clamp(pickerAlpha("esp_chams_adorn_vis_color", 0.35), 0, 1)
         local thickness = getFlag("esp_chams_adorn_thickness", 0.1)
         local grow = Vector3.new(thickness, thickness, thickness)
-        -- Glow (same idea as the reference): the outer layer also draws through walls,
-        -- and its transparency is divided by the strength so it reads brighter.
+
         local glowOn = getFlag("esp_chams_adorn_glow", false)
         local glowSize = math.max(getFlag("esp_chams_adorn_glow_size", 1.75), 1)
         local roundHead = getFlag("esp_chams_adorn_round_head", true)
@@ -3043,7 +3061,6 @@ do
         local playersOn = getFlag("esp_players", true)
         local localOn = getFlag("esp_local_player", false)
 
-        -- Runs every frame, so properties are only written when a setting or a part size changed.
         local signature = table.concat({
             tostring(behindColor), behindTransparency, tostring(visibleColor), visibleTransparency,
             thickness, tostring(glowOn), glowSize, tostring(roundHead), headScale,
@@ -3133,8 +3150,7 @@ do
     end)()
     local updateSkeletons
     ;(function()
-    -- Skeleton ESP --------------------------------------------------
-    -- Drawn here with Drawing lines (R15 uses the part chain, R6 uses points on the torso and limbs).
+
     local R15_BONES = {
         { "Head", "UpperTorso" }, { "UpperTorso", "LowerTorso" },
         { "UpperTorso", "LeftUpperArm" }, { "LeftUpperArm", "LeftLowerArm" }, { "LeftLowerArm", "LeftHand" },
@@ -3278,16 +3294,11 @@ do
     end)()
     local hitConnections, pendingHits, onLocalShot
     ;(function()
-    -- Hit feedback ---------------------------------------------------
-    -- Only bullets YOU fire count. The tracer hook below calls onLocalShot(origin, target) for
-    -- each of your shots (the origin is your tool's Muzzle). The shot's path is raycast to find
-    -- which player it hits, and that player is marked as "expecting damage from you" for a short
-    -- window. Hit sound and notification fire only when that player's health then drops, so
-    -- damage from anyone else in the server never triggers them.
+
     local HIT_WINDOW = 0.8
     local lastHitNotify = 0
     hitConnections = {}
-    pendingHits = {} -- [player] = { expiry, expiry, ... } (one entry per pellet / bullet)
+    pendingHits = {}
 
     playHitSound = function()
         local soundId = HIT_SOUNDS[getFlag("World_HitSoundId", "Gamesense")]
@@ -3331,13 +3342,11 @@ do
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.FilterDescendantsInstances = ignore
 
-        -- a little past the target so the surface the game found is certainly inside the ray
         local result = workspace:Raycast(origin, offset.Unit * (offset.Magnitude + 1), params)
         local model = result and result.Instance:FindFirstAncestorOfClass("Model")
         local victim = model and Players:GetPlayerFromCharacter(model)
         if not victim then
-            -- Wallbang: the bullet goes through walls the ray above stops at, so look along the same line at
-            -- player characters only. Without this a wallbanged hit never counted and made no sound.
+
             local characters = {}
             for _, other in ipairs(Players:GetPlayers()) do
                 if other ~= LocalPlayer and other.Character then characters[#characters + 1] = other.Character end
@@ -3412,7 +3421,7 @@ do
     end))
 
     end)()
-    -- Unload cleanup -------------------------------------------------
+
     onUnload(function()
         for _, connection in pairs(hitConnections) do
             pcall(function() connection:Disconnect() end)
@@ -3435,11 +3444,8 @@ do
         end
     end)
 
-    -- Local visuals (gun, body, self chams, camera, tracers) -------------------------
-    -- Prison Life keeps the gun as a Tool inside the character and the arms are the
-    -- character's own R6 limbs, so everything below works on those instances.
     local FORCEFIELD = Enum.Material.ForceField
-    local SCOPE_FOV = 30 -- the game forces FOV 15 while scoped; never fight that
+    local SCOPE_FOV = 30
 
     local function getAlpha(name)
         local object = Options[name]
@@ -3452,7 +3458,6 @@ do
         return nil
     end
 
-    -- Original property values, so every change can be undone exactly.
     local saved = setmetatable({}, { __mode = "k" })
     local SAVED_PROPS = {
         { "BasePart", { "Color", "Material", "Transparency" } },
@@ -3500,11 +3505,10 @@ do
         for _, inst in ipairs(root:GetDescendants()) do restoreInstance(inst) end
     end
 
-    -- cfg: color, transparency, material, texture (asset id) and disableTextures
     local function styleInstance(inst, cfg)
         if inst:IsA("BasePart") then
             local data = snapshot(inst)
-            if (data.Transparency or 0) < 1 then -- parts the game hides stay hidden
+            if (data.Transparency or 0) < 1 then
                 setProp(inst, "Color", cfg.color or data.Color)
                 setProp(inst, "Transparency", cfg.transparency or data.Transparency)
                 setProp(inst, "Material", cfg.material or data.Material)
@@ -3527,7 +3531,7 @@ do
             else
                 setProp(inst, "TextureId", data.TextureId)
             end
-        elseif inst:IsA("Decal") then -- also covers Texture
+        elseif inst:IsA("Decal") then
             local data = snapshot(inst)
             setProp(inst, "Transparency", cfg.disableTextures and 1 or data.Transparency)
         elseif inst:IsA("Shirt") then
@@ -3544,7 +3548,7 @@ do
 
     local updateLocalVisuals, updateBlur
     ;(function()
-    -- Gun: the equipped Tool ---------------------------------------------
+
     local function gunConfig()
         local colorOn = getFlag("viewmodel_body_color", false)
         local material = safeEnumMaterial(getFlag("viewmodel_material_value", "Default"))
@@ -3561,7 +3565,6 @@ do
         return cfg
     end
 
-    -- Gun chams: a Highlight on the equipped Tool (fill and outline alpha come from the pickers)
     local gunHighlight
     local function destroyGunHighlight()
         if gunHighlight then
@@ -3580,7 +3583,7 @@ do
             gunHighlight = Instance.new("Highlight")
             gunHighlight.Name = "TS_GunChams"
             gunHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            pcall(function() gunHighlight.Adornee = tool end) -- falls back to highlighting its parent
+            pcall(function() gunHighlight.Adornee = tool end)
             gunHighlight.Parent = tool
         end
         gunHighlight.FillColor = getColor("viewmodel_chams_color", Color3.fromRGB(120, 80, 255))
@@ -3612,7 +3615,6 @@ do
         end
     end
 
-    -- Body: the character without its Tool and accessories ------------------------
     local function isBodyInstance(inst)
         return not inst:FindFirstAncestorOfClass("Tool") and not inst:FindFirstAncestorOfClass("Accessory")
     end
@@ -3622,8 +3624,6 @@ do
         local disable = getFlag("arm_disable_textures", false)
         if not (forceOn or disable) then return nil end
 
-        -- The forcefield sits under shirts and pants, so the clothing templates are
-        -- removed whenever it is on; that way the material always shows.
         local cfg = { disableTextures = disable or forceOn }
         if forceOn then
             cfg.material = FORCEFIELD
@@ -3677,7 +3677,6 @@ do
         end
     end
 
-    -- Self chams (Highlight only) --------------------------------------------
     local selfHighlight
     local function destroySelfHighlight()
         if selfHighlight then
@@ -3712,8 +3711,6 @@ do
         updateSelfChams()
     end
 
-    -- Camera: FOV ---------------------------------------------
-    -- Bound after every other camera script and run every frame, so the values stick.
     local CAMERA_STEP = "TS_Camera"
     pcall(function() RunService:UnbindFromRenderStep(CAMERA_STEP) end)
     local fovOverridden = false
@@ -3779,12 +3776,7 @@ do
     end)()
     local updateTracers
     ;(function()
-    -- Bullet tracers (your own shots only) ---------------------------------------
-    -- The game draws every tracer through SharedModules.GunTracers: your shots come from
-    -- GunController with the equipped tool's Muzzle position as the origin, other players'
-    -- shots come from ClientReplicator. The create* functions are wrapped. A shot whose origin is
-    -- your own Muzzle is reported to the hit feedback above and, when tracers are on, drawn as a
-    -- Beam instead; every other call goes to the original untouched.
+
     local TRACER_FUNCTIONS = { "createBullet", "createSniper", "createTaser" }
     local activeTracers = {}
     local tracerModule
@@ -3831,7 +3823,7 @@ do
         beam.Width0 = preset.Width0 * width
         beam.Width1 = preset.Width1 * width
         beam.FaceCamera = preset.FaceCamera
-        -- glow 1 keeps the preset's brightness; higher values scale it up steeply (10000^((g-1)/20))
+
         pcall(function() beam.Brightness = preset.Brightness * 10000 ^ ((glow - 1) / 20) end)
         beam.Parent = terrain
 
@@ -3844,8 +3836,6 @@ do
         })
     end
 
-    -- Visible for `life` seconds, then fades over `fade`. With "Expand" the far end runs from the
-    -- muzzle to the hit on a damped spring (speed 18, damping 0.7 by default) and overshoots slightly.
     function updateTracers(dt)
         if #activeTracers == 0 then return end
         dt = math.min(dt, 1 / 20)
@@ -3886,7 +3876,6 @@ do
         end)
         if not found or type(module) ~= "table" then return false end
 
-        -- put back anything an earlier run replaced, so wrappers never stack
         local previous = getgenv().TS_TracerOriginals
         if type(previous) == "table" then
             for name, original in pairs(previous) do module[name] = original end
@@ -3910,7 +3899,6 @@ do
         return true
     end
 
-    -- Fallback when the module cannot be required: watch for the game's RayPart and swap it.
     local function watchRayParts()
         local cam = workspace.CurrentCamera
         if not cam then return end
@@ -3946,9 +3934,7 @@ do
     end)()
     local updateCrosshair
     ;(function()
-    -- Custom crosshair -----------------------------------------------------------
-    -- Four bars, each an outline frame with a fill frame inside, laid out around the mouse and
-    -- rotated about it. The bars are horizontal frames turned by 0 / 90 / 180 / -90 degrees.
+
     local ARM_NAMES = { "Top", "Bottom", "Left", "Right" }
     local ARM_DIRECTIONS = { Top = -90, Bottom = 90, Left = 180, Right = 0 }
     local crosshairGui, crosshairContainer
@@ -3966,7 +3952,7 @@ do
         local ok = pcall(function()
             local gui = Instance.new("ScreenGui")
             gui.Name = "TS_Crosshair"
-            gui.DisplayOrder = 90 -- under the menu
+            gui.DisplayOrder = 90
             gui.IgnoreGuiInset = true
             gui.ResetOnSpawn = false
             gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -4080,9 +4066,7 @@ do
     end)()
     local updateWeather
     ;(function()
-    -- Weather + lightning ----------------------------------------------------------
-    -- Particle emitters on an invisible part that follows the camera, plus optional lightning
-    -- strikes around you while the Rain preset is selected.
+
     local WEATHER_SPECS = {
         Snow = {
             { Texture = "rbxasset://textures/particles/smoke_main.dds", TransparencyMax = 0.15, LifetimeMin = 6, LifetimeMax = 9,
@@ -4107,8 +4091,8 @@ do
               RotationMin = 0, RotationMax = 360, RotationSpeedMin = -40, RotationSpeedMax = 40 },
         },
     }
-    local LIGHTNING_RADIUS_MIN = 20   -- strikes land 20-60 studs from you
-    local LIGHTNING_GROUND_DROP = 40  -- used when the ground ray finds nothing
+    local LIGHTNING_RADIUS_MIN = 20
+    local LIGHTNING_GROUND_DROP = 40
     local LIGHTNING_RAY_LENGTH = 1000
     local LIGHTNING_JITTER = 30
     local LIGHTNING_HOLD, LIGHTNING_DISSIPATE = 0.12, 0.35
@@ -4153,8 +4137,7 @@ do
                 NumberSequenceKeypoint.new(1, 1),
             })
             emitter.LockedToPart = false
-            -- Particles are launched out of the emitter's face: the default is the top face, which
-            -- sent them upward before gravity pulled them back. The bottom face makes them fall.
+
             emitter.EmissionDirection = Enum.NormalId.Bottom
             if spec.Orientation then emitter.Orientation = spec.Orientation end
             emitter.Parent = weatherPart
@@ -4164,7 +4147,6 @@ do
         weatherSignature = nil
     end
 
-    -- Writes the emitter settings, but only when one of them changed.
     local function applyWeatherSettings()
         local intensity = getFlag("weather_intensity", 1)
         local speed = getFlag("weather_speed", 1)
@@ -4236,7 +4218,6 @@ do
             beam.Parent = folder
         end
 
-        -- flash at the impact point
         local anchor = Instance.new("Part")
         anchor.Anchored = true
         anchor.CanCollide = false
@@ -4334,22 +4315,16 @@ do
         table.clear(bolts)
     end)
 
-    -- end local visuals
-
     end)()
-    -- Avatar changer (Spoofer tab) -----------------------------------------------------
-    -- Rebuilds YOUR character's look from another user's avatar. It is client side only: you
-    -- see the new look, everyone else still sees your real avatar. R6 limbs (CharacterMesh,
-    -- Korblox) and headless are handled. The Spoofer tab's buttons call SpooferActions.
+
     ;(function()
         local HEADLESS_IDS = { [15093053680] = true, [134082579] = true, [4562128874] = true }
         local KORBLOX_LEFT, KORBLOX_RIGHT = 139607673, 139607718
-        local lastUid
+        local lastUid, lastOutfit
         local busy = false
-        local wornKeys = {} -- accessories already worn in this apply, so the same item is never added twice
-        local currentDesc -- the HumanoidDescription being applied (its scales size accessories)
+        local wornKeys = {}
+        local currentDesc
 
-        -- accessories loaded straight from their asset are unscaled; scale them like the avatar's description
         local function scaleAccessory(copy, factor)
             if math.abs(factor - 1) < 0.01 then return end
             for _, d in ipairs(copy:GetDescendants()) do
@@ -4373,7 +4348,6 @@ do
             return ok and tonumber(value) or 1
         end
 
-        -- identity of an accessory: name + mesh + texture (the same hat from the model and from the description match)
         local function accessoryKey(acc)
             local handle = acc:FindFirstChild("Handle")
             local mesh, texture = "", ""
@@ -4390,7 +4364,6 @@ do
             return string.lower(acc.Name) .. "|" .. mesh .. "|" .. texture
         end
 
-        -- keeps the first copy of every accessory and destroys the rest
         local function dedupeAccessories(char)
             local seen, removed = {}, 0
             for _, child in ipairs(char:GetChildren()) do
@@ -4411,7 +4384,6 @@ do
             Library:Notify(message, 4)
         end
 
-        -- UserId number, username, @username or a profile URL
         local function resolveUserId(input)
             if input == nil then return nil end
             local s = tostring(input):gsub("^%s+", ""):gsub("%s+$", "")
@@ -4436,17 +4408,51 @@ do
                 end
             end
 
-            local ok, id = pcall(function() return Players:GetUserIdFromNameAsync(s) end)
+            local needle = s:gsub("^@", "")
+            local nlower = needle:lower()
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower() == nlower or p.DisplayName:lower() == nlower then return p.UserId end
+            end
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower():sub(1, #nlower) == nlower or p.DisplayName:lower():sub(1, #nlower) == nlower then return p.UserId end
+            end
+            local ok, id = pcall(function() return Players:GetUserIdFromNameAsync(needle) end)
             if ok and typeof(id) == "number" and id > 0 then return math.floor(id) end
 
-            if s:sub(1, 1) == "@" then
-                ok, id = pcall(function() return Players:GetUserIdFromNameAsync(s:sub(2)) end)
-                if ok and typeof(id) == "number" and id > 0 then return math.floor(id) end
+            local web = game:GetService("HttpService")
+            local send = (syn and syn.request) or http_request or request
+            if send then
+                for _, host in ipairs({ "users.roproxy.com", "users.roblox.com" }) do
+                    local okReq, reply = pcall(send, {
+                        Url = "https://" .. host .. "/v1/usernames/users",
+                        Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = web:JSONEncode({ usernames = { needle }, excludeBannedUsers = false }),
+                    })
+                    if okReq and type(reply) == "table" and type(reply.Body) == "string" then
+                        local okJson, data = pcall(function() return web:JSONDecode(reply.Body) end)
+                        local first = okJson and type(data) == "table" and type(data.data) == "table" and data.data[1]
+                        if first and tonumber(first.id) then return math.floor(tonumber(first.id)) end
+                    end
+                end
+                for _, host in ipairs({ "users.roproxy.com", "users.roblox.com" }) do
+                    local okReq, reply = pcall(send, { Url = "https://" .. host .. "/v1/users/search?limit=10&keyword=" .. web:UrlEncode(needle), Method = "GET" })
+                    if okReq and type(reply) == "table" and type(reply.Body) == "string" then
+                        local okJson, data = pcall(function() return web:JSONDecode(reply.Body) end)
+                        local list = okJson and type(data) == "table" and data.data
+                        if type(list) == "table" and list[1] then
+                            local pick = list[1]
+                            for _, entry in ipairs(list) do
+                                if type(entry.name) == "string" and entry.name:lower() == nlower then pick = entry break end
+                            end
+                            if tonumber(pick.id) then return math.floor(tonumber(pick.id)) end
+                        end
+                    end
+                end
             end
             return nil
         end
 
-        -- removes the current look so a new one starts clean
         local function stripAppearance(char)
             if not char then return end
             for _, v in ipairs(char:GetChildren()) do
@@ -4557,7 +4563,6 @@ do
             end)
         end
 
-        -- R6 limbs come from asset ids in the description (CharacterMesh / SpecialMesh / accessories)
         local function applyR6MeshesFromDescription(char, desc)
             if not desc then return 0 end
 
@@ -4621,7 +4626,6 @@ do
                 if assetId > 0 and wearLimbAsset(assetId, entry[2], entry[3]) then count += 1 end
             end
 
-            -- Korblox needs both legs even when only one id is in the description
             local leftId, rightId = 0, 0
             pcall(function() leftId = tonumber(desc.LeftLeg) or 0 end)
             pcall(function() rightId = tonumber(desc.RightLeg) or 0 end)
@@ -4647,9 +4651,7 @@ do
                 end
                 clearFaces()
                 if sourceHead:IsA("MeshPart") then
-                    -- Dynamic head: its face lives in the head mesh and textures. The model's classic
-                    -- "face" decal is the default Roblox face, so it is not copied (it used to stack on
-                    -- top of the dynamic face), and the old head's face is removed.
+
                     pcall(function()
                         local mesh = head:FindFirstChildOfClass("SpecialMesh")
                         if not mesh then
@@ -4666,7 +4668,7 @@ do
                             mesh.Scale = Vector3.new(size.X / native.X, size.Y / native.Y, size.Z / native.Z)
                         end
                     end)
-                    -- the game can add its own face back; sweep again shortly after
+
                     task.delay(0.75, clearFaces)
                     task.delay(2, clearFaces)
                 else
@@ -4687,7 +4689,6 @@ do
             return count
         end
 
-        -- accessories listed in the description that the model did not include; also finds headless
         local function loadAccessoriesFromDescription(char, desc)
             local count, headless = 0, false
             if not desc then return count, headless end
@@ -4746,14 +4747,28 @@ do
             end)
         end
 
-        local function fetchModel(uid, rigType)
+        local modelCache, cacheOrder, inflight = {}, {}, {}
+        local fetchTiming
+        local function cacheKey(uid, rigType, outfitId)
+            return (outfitId and ("o" .. tostring(outfitId)) or ("u" .. tostring(uid))) .. ":" .. tostring(rigType)
+        end
+
+        local function rawFetchModel(uid, rigType, outfitId)
             local desc
-            local described, result = pcall(function() return Players:GetHumanoidDescriptionFromUserIdAsync(uid) end)
+            local started = os.clock()
+            local described, result = pcall(function()
+                if outfitId then return Players:GetHumanoidDescriptionFromOutfitId(outfitId) end
+                return Players:GetHumanoidDescriptionFromUserIdAsync(uid)
+            end)
             if described then desc = result end
+            fetchTiming = { description = os.clock() - started }
             if described and desc and Players.CreateHumanoidModelFromDescription then
+                local buildStart = os.clock()
                 local ok, built = pcall(function() return Players:CreateHumanoidModelFromDescription(desc, rigType) end)
+                fetchTiming.model = os.clock() - buildStart
                 if ok and built then return built, desc end
             end
+            if outfitId then return nil, desc end
             local ok, built = pcall(function() return Players:CreateHumanoidModelFromUserId(uid) end)
             if ok and built then return built, desc end
             ok, built = pcall(function() return Players:CreateHumanoidModelFromUserIdAsync(uid) end)
@@ -4761,7 +4776,55 @@ do
             return nil, desc
         end
 
-        local function applyAvatar(rawInput)
+        local function fetchModel(uid, rigType, outfitId)
+            local key = cacheKey(uid, rigType, outfitId)
+            local hit = modelCache[key]
+            if not hit and inflight[key] then
+                local started = os.clock()
+                while inflight[key] and os.clock() - started < 25 do task.wait(0.05) end
+                hit = modelCache[key]
+            end
+            if hit then
+                local okClone, copy = pcall(function() return hit.model:Clone() end)
+                if okClone and copy then fetchTiming = { cached = true } return copy, hit.desc end
+            end
+            fetchTiming = nil
+            inflight[key] = true
+            local okFetch, model, desc = pcall(rawFetchModel, uid, rigType, outfitId)
+            inflight[key] = nil
+            if not okFetch then return nil, nil end
+            if model then
+                local okClone, copy = pcall(function() return model:Clone() end)
+                if okClone and copy then
+                    modelCache[key] = { model = copy, desc = desc }
+                    cacheOrder[#cacheOrder + 1] = key
+                    while #cacheOrder > 8 do
+                        local old = table.remove(cacheOrder, 1)
+                        local entry = modelCache[old]
+                        modelCache[old] = nil
+                        if entry then pcall(function() entry.model:Destroy() end) end
+                    end
+                end
+            end
+            return model, desc
+        end
+
+        local function prefetchAvatar(uid, outfitId)
+            local char = LocalPlayer.Character
+            local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+            if not humanoid then return end
+            local key = cacheKey(uid, humanoid.RigType, outfitId)
+            if modelCache[key] or inflight[key] then return end
+            local running = 0
+            for _ in pairs(inflight) do running += 1 end
+            if running >= 2 then return end
+            task.spawn(function()
+                local ok, model = pcall(fetchModel, uid, humanoid.RigType, outfitId)
+                if ok and model then pcall(function() model:Destroy() end) end
+            end)
+        end
+
+        local function applyAvatar(rawInput, outfitId)
             local char = LocalPlayer.Character
             local humanoid = char and char:FindFirstChildOfClass("Humanoid")
             if not humanoid then
@@ -4769,12 +4832,12 @@ do
                 return false
             end
 
-            local raw = tostring(rawInput or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            local raw = outfitId and "outfit" or tostring(rawInput or ""):gsub("^%s+", ""):gsub("%s+$", "")
             if raw == "" then
                 notify("Avatar changer: type a UserId, username or profile URL first")
                 return false
             end
-            local uid = resolveUserId(raw)
+            local uid = outfitId and 0 or resolveUserId(raw)
             if not uid then
                 notify("Avatar changer: could not find user " .. raw)
                 return false
@@ -4783,10 +4846,16 @@ do
             stripAppearance(char)
             wornKeys = {}
             notify("Avatar changer: fetching " .. tostring(uid) .. "...")
-            lastUid = uid
+            lastUid, lastOutfit = (not outfitId) and uid or nil, outfitId
 
-            local model, desc = fetchModel(uid, humanoid.RigType)
+            local fetchStart = os.clock()
+            local model, desc = fetchModel(uid, humanoid.RigType, outfitId)
             currentDesc = desc
+            if fetchTiming and fetchTiming.cached then
+                notify("Avatar changer: loaded from cache")
+            elseif fetchTiming then
+                notify(string.format("Avatar changer: fetched in %.1fs (description %.1fs, model %.1fs)", os.clock() - fetchStart, fetchTiming.description or 0, fetchTiming.model or 0))
+            end
             if not model then
                 if desc then
                     pcall(function()
@@ -4801,7 +4870,7 @@ do
                 return false
             end
 
-            stripAppearance(char) -- the fetch yields; make sure nothing came back meanwhile
+            stripAppearance(char)
             wornKeys = {}
             copyClothesAndColors(char, model)
 
@@ -4838,14 +4907,13 @@ do
             return true
         end
 
-        -- one at a time: fetching takes a moment and overlapping changes would fight each other
-        local function runApply(raw)
+        local function runApply(raw, outfitId)
             if busy then
                 notify("Avatar changer: still working on the last one")
                 return false
             end
             busy = true
-            local ok, result = pcall(applyAvatar, raw)
+            local ok, result = pcall(applyAvatar, raw, outfitId)
             busy = false
             if not ok then
                 warn("Avatar changer failed:", result)
@@ -4860,18 +4928,560 @@ do
         end
 
         SpooferActions.reset = function()
-            if runApply(tostring(LocalPlayer.UserId)) then lastUid = nil end
+            if runApply(tostring(LocalPlayer.UserId)) then lastUid, lastOutfit = nil, nil end
         end
 
+        local HttpService = game:GetService("HttpService")
+        local UserInputService = game:GetService("UserInputService")
+        local spoofUi
+        local spoofSize = Vector2.new(600, 680)
+        local SPOOF_MIN = Vector2.new(440, 500)
+
+        local preferOriginal = false
+        local function httpJson(url)
+            local lastStatus, lastMessage
+            local mirror = (string.gsub(url, "roblox%.com", "roproxy.com"))
+            for _, candidate in ipairs(preferOriginal and { url, mirror } or { mirror, url }) do
+                local body, status
+                local send = (syn and syn.request) or http_request or request
+                if send then
+                    local okReq, reply = pcall(send, { Url = candidate, Method = "GET" })
+                    if okReq and type(reply) == "table" then
+                        if type(reply.Body) == "string" and reply.Body ~= "" then body = reply.Body end
+                        status = tonumber(reply.StatusCode)
+                    end
+                end
+                if not body then
+                    local okGet, res = pcall(function() return game:HttpGet(candidate) end)
+                    if okGet and type(res) == "string" and res ~= "" then
+                        body = res
+                    elseif not okGet then
+                        status = status or tonumber(string.match(tostring(res), "(%d%d%d)"))
+                        lastMessage = tostring(res)
+                    end
+                end
+
+                if not body and status and status >= 400 and status < 500 then return nil, status, lastMessage end
+                if body then
+                    local okJson, data = pcall(function() return HttpService:JSONDecode(body) end)
+                    if okJson and type(data) == "table" then
+                        if candidate == url and not data.errors then preferOriginal = true end
+                        if data.errors then
+                            local first = data.errors[1]
+                            lastStatus, lastMessage = status or 400, first and first.message or "error"
+
+                            if lastStatus < 500 then return nil, lastStatus, lastMessage end
+                        else
+                            return data, status
+                        end
+                    end
+                end
+                lastStatus = status or lastStatus
+            end
+            return nil, lastStatus, lastMessage
+        end
+
+        local function httpJsonRetry(url, onWait, alive)
+            local data, status, message
+            for attempt = 1, 8 do
+                data, status, message = httpJson(url)
+                if data then return data, status end
+                local limit = (status == 429) and 4 or 2
+                local retryable = status == nil or status == 429 or status >= 500
+                if not retryable or attempt >= limit or (alive and not alive()) then break end
+                local seconds = (status == 429) and ({ 3, 6, 10 })[attempt] or 1.5
+                if onWait then onWait(attempt, seconds) end
+                task.wait(seconds)
+                if alive and not alive() then break end
+            end
+            return nil, status, message
+        end
+
+        local function fetchOutfits(uid, onChunk, onWait, alive)
+            local seen, list = {}, {}
+            local function take(entries)
+                local fresh = {}
+                for _, entry in ipairs(entries or {}) do
+                    if entry.id and not seen[entry.id] then
+                        seen[entry.id] = true
+                        local outfit = { id = entry.id, name = tostring(entry.name or entry.id) }
+                        list[#list + 1] = outfit
+                        fresh[#fresh + 1] = outfit
+                    end
+                end
+                if #fresh > 0 and onChunk then onChunk(fresh, #list) end
+                return #fresh
+            end
+
+            local failed, firstStatus, firstMessage = false, nil, nil
+            local token
+            local stopped
+            for page = 1, 100 do
+                local url = string.format("https://avatar.roblox.com/v2/avatar/users/%d/outfits?outfitType=1&page=1&itemsPerPage=50&isEditable=true", uid)
+                if token then url = url .. "&paginationToken=" .. token end
+                if page > 1 then task.wait(2) end
+                local data, status, message = httpJsonRetry(url, onWait, alive)
+                if not data then
+                    if page == 1 then failed, firstStatus, firstMessage = true, status, message
+                    else stopped = (status == 429) and "limited" or "error" end
+                    break
+                end
+                local added = take(data.data)
+                token = data.paginationToken or data.nextPageCursor or data.nextPageToken
+                if type(token) ~= "string" or token == "" or added == 0 then break end
+            end
+
+            local source = "v2"
+            if (failed and firstStatus ~= 429) or (not failed and #list == 0) then
+                source = "v1"
+                for page = 1, 40 do
+                    if page > 1 then task.wait(2) end
+                    local data, status, message = httpJsonRetry(string.format("https://avatar.roblox.com/v1/users/%d/outfits?page=%d&itemsPerPage=50&isEditable=true", uid, page), onWait, alive)
+                    if not data then
+                        if page == 1 and failed then firstStatus, firstMessage = firstStatus or status, firstMessage or message end
+                        break
+                    end
+                    failed = false
+                    local added = take(data.data)
+                    if #(data.data or {}) < 50 or added == 0 then break end
+                end
+            end
+            if failed and #list == 0 then
+                local kind = "unreachable"
+                if firstStatus == 401 or firstStatus == 403 or firstStatus == 400 or firstStatus == 404 then kind = "private" end
+                if firstStatus == 429 then kind = "limited" end
+                return nil, { kind = kind, status = firstStatus, message = firstMessage }
+            end
+            return list, { kind = #list > 0 and "public" or "empty", source = source, stopped = stopped }
+        end
+
+        local function inventoryVisible(uid, onWait, alive)
+            local data = httpJsonRetry(string.format("https://inventory.roblox.com/v1/users/%d/can-view-inventory", uid), onWait, alive)
+            if data and type(data.canView) == "boolean" then return data.canView end
+            return nil
+        end
+
+        local INDICATOR_COLORS = {
+            public = Color3.fromRGB(90, 200, 110), empty = Color3.fromRGB(230, 190, 70), private = Color3.fromRGB(225, 85, 85),
+            limited = Color3.fromRGB(230, 150, 60), unreachable = Color3.fromRGB(150, 150, 150), checking = Color3.fromRGB(150, 150, 150),
+        }
+
+        local function setIndicator(kind, text)
+            local ui = spoofUi
+            if not ui or not ui.indicator then return end
+            ui.indicator.Text = "● " .. text
+            ui.indicator.TextColor3 = INDICATOR_COLORS[kind] or INDICATOR_COLORS.unreachable
+        end
+
+        local function closeSpoofUi()
+            if spoofUi then
+                pcall(function() spoofUi.main:Destroy() end)
+                spoofUi = nil
+            end
+        end
+
+        local function mk(class, props)
+            props.ZIndex = props.ZIndex or 301
+            if class == "TextLabel" or class == "TextButton" or class == "TextBox" then
+                props.Font = props.Font or Library.Font
+                props.TextSize = props.TextSize or Library.FontSize
+                props.TextColor3 = props.TextColor3 or Library.FontColor
+            end
+            if props.BorderColor3 == nil and class ~= "ImageLabel" and class ~= "ScrollingFrame" then props.BorderColor3 = Library.OutlineColor end
+            local bgName = props.ThemeBg
+            props.ThemeBg = nil
+            local inst = Library:Create(class, props)
+
+            local map
+            for prop, names in pairs({ BackgroundColor3 = { "MainColor", "BackgroundColor", "AccentColor" }, BorderColor3 = { "OutlineColor", "AccentColor" }, TextColor3 = { "FontColor", "AccentColor" } }) do
+                local value = props[prop]
+                if value ~= nil then
+                    for _, colorName in ipairs(names) do
+                        if Library[colorName] == value then map = map or {} map[prop] = colorName break end
+                    end
+                end
+            end
+            if bgName then map = map or {} map.BackgroundColor3 = bgName end
+            if class == "TextLabel" or class == "TextButton" or class == "TextBox" then map = map or {} map.Font = "Font" end
+            if class == "ScrollingFrame" then map = map or {} map.ScrollBarImageColor3 = "AccentColor" end
+            if map then pcall(function() Library:AddToRegistry(inst, map) end) end
+            return inst
+        end
+
+        local function userThumb(uid)
+            local ok, content = pcall(function()
+                return Players:GetUserThumbnailAsync(uid, Enum.ThumbnailType.AvatarBust, Enum.ThumbnailSize.Size150x150)
+            end)
+            if ok and type(content) == "string" and content ~= "" then return content end
+            return string.format("rbxthumb://type=Avatar&id=%d&w=150&h=150", uid)
+        end
+
+        local TextService = game:GetService("TextService")
+
+        local function lf(class, props, reg)
+            local inst = Library:Create(class, props)
+            if reg then Library:AddToRegistry(inst, reg) end
+            return inst
+        end
+
+        local function lbl(props)
+            props.ZIndex = props.ZIndex or 309
+            return Library:CreateLabel(props)
+        end
+
+        local function bevel(parent, z, size, position, order)
+            local outer = lf("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BorderColor3 = Color3.new(0, 0, 0), Size = size, Position = position or UDim2.new(), LayoutOrder = order or 0, ZIndex = z, Parent = parent }, { BorderColor3 = "Black" })
+            local inner = lf("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = z + 1, Parent = outer }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+            Library:Create("UIGradient", {
+                Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)), ColorSequenceKeypoint.new(1, Color3.fromRGB(212, 212, 212)) }),
+                Rotation = 90,
+                Parent = inner,
+            })
+            return outer, inner
+        end
+
+        local function panel(parent, name, position, size, z)
+            local boxOuter = lf("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = position, Size = size, ZIndex = z, Parent = parent }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+            local boxInner = lf("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = z + 1, Parent = boxOuter }, { BackgroundColor3 = "BackgroundColor" })
+            lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = z + 2, Parent = boxInner }, { BackgroundColor3 = "AccentColor" })
+            lbl({ Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0, 2), TextSize = Library.FontSize, Text = name, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = z + 2, Parent = boxInner })
+            return boxOuter, boxInner
+        end
+
+        local function setBorder(item, colorName)
+            if not (item and item.Parent) then return end
+            item.BorderColor3 = Library[colorName]
+            local entry = Library.RegistryMap and Library.RegistryMap[item]
+            if entry then entry.Properties.BorderColor3 = colorName end
+        end
+
+        local function selectTile(info, tile)
+            local ui = spoofUi
+            if not ui then return end
+            setBorder(ui.selectedTile, "Black")
+            ui.selected, ui.selectedTile = info, tile
+            setBorder(tile, "AccentColor")
+            ui.status.Text = info and ("Selected: " .. info.name .. (info.kind == "outfit" and "  (outfit)" or "  (current look)")) or "Nothing selected"
+        end
+
+        local function addTile(info, image, order)
+            local ui = spoofUi
+            if not ui then return end
+            local tile, face = bevel(ui.grid, 307, UDim2.fromOffset(98, 104), nil, order)
+            if image then
+                local picture = mk("ImageLabel", { BackgroundTransparency = 1, Image = "", ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -28), Position = UDim2.fromOffset(4, 4), ZIndex = 310, Parent = face })
+                ui.lazy[tile] = { label = picture, image = image }
+            else
+                lbl({ Text = "?", TextSize = 34, Size = UDim2.new(1, 0, 1, -22), ZIndex = 310, Parent = face })
+            end
+            lbl({ Text = info.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 20), Position = UDim2.new(0, 3, 1, -22), ZIndex = 310, Parent = face })
+            local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = tile })
+            hit.MouseEnter:Connect(function()
+                if spoofUi and spoofUi.selectedTile ~= tile then setBorder(tile, "AccentColor") end
+                if info.kind == "random" then return end
+                local stamp = os.clock()
+                tile:SetAttribute("hover", stamp)
+                task.delay(0.3, function()
+                    if tile.Parent and tile:GetAttribute("hover") == stamp and SpooferActions.prefetch then
+                        if info.kind == "outfit" then SpooferActions.prefetch(nil, info.id) else SpooferActions.prefetch(info.uid) end
+                    end
+                end)
+            end)
+            hit.MouseLeave:Connect(function() tile:SetAttribute("hover", nil) end)
+            hit.MouseLeave:Connect(function() if spoofUi and spoofUi.selectedTile ~= tile then setBorder(tile, "Black") end end)
+            if info.kind == "random" then
+                hit.MouseButton1Click:Connect(function()
+                    local pool = ui.pool
+                    if #pool == 0 then return end
+                    local pick = pool[math.random(1, #pool)]
+                    selectTile(pick.info, pick.tile)
+                end)
+            else
+                table.insert(ui.pool, { info = info, tile = tile })
+                hit.MouseButton1Click:Connect(function()
+                    selectTile(info, tile)
+                    if SpooferActions.prefetch then
+                        if info.kind == "outfit" then SpooferActions.prefetch(nil, info.id) else SpooferActions.prefetch(info.uid) end
+                    end
+                    local now = os.clock()
+                    if ui.lastClick and ui.lastClick.tile == tile and now - ui.lastClick.at < 0.5 then
+                        task.spawn(function()
+                            if info.kind == "outfit" then SpooferActions.applyOutfit(info.id) else SpooferActions.applyUser(info.uid) end
+                        end)
+                    end
+                    ui.lastClick = { tile = tile, at = now }
+                end)
+            end
+            return tile
+        end
+
+        local function loadTarget(uid, name)
+            local ui = spoofUi
+            if not ui or not uid then return end
+            ui.token += 1
+            local token = ui.token
+            ui.target = { uid = uid, name = name }
+            for _, child in ipairs(ui.grid:GetChildren()) do
+                if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
+            end
+            ui.pool, ui.selected, ui.selectedTile = {}, nil, nil
+            ui.status.Text = "Showing " .. name
+            setIndicator("checking", "checking outfits...")
+            local thumb = function(kind, id) return string.format("rbxthumb://type=%s&id=%d&w=150&h=150", kind, id) end
+            local userTile = addTile({ kind = "user", uid = uid, name = name .. " (now)" }, thumb("Avatar", uid), 1)
+            task.spawn(function()
+                task.wait(3)
+                local label = userTile and userTile:FindFirstChildWhichIsA("ImageLabel", true)
+                if not label or not spoofUi or spoofUi.token ~= token or label.IsLoaded then return end
+                local image = userThumb(uid)
+                if label.Parent and spoofUi and spoofUi.token == token then label.Image = image end
+            end)
+            addTile({ kind = "random", name = "Random" }, nil, 2)
+            local loading = mk("TextLabel", { BackgroundTransparency = 1, Text = "Loading outfits...", TextSize = 12, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 309, Parent = ui.grid })
+            task.spawn(function()
+                local shown = 0
+                local outfits, info = fetchOutfits(uid, function(fresh, total)
+                    if not spoofUi or spoofUi.token ~= token then return end
+                    pcall(function() loading:Destroy() end)
+                    for _, outfit in ipairs(fresh) do
+                        if shown >= 600 then break end
+                        shown += 1
+                        addTile({ kind = "outfit", id = outfit.id, name = outfit.name }, thumb("Outfit", outfit.id), 10 + shown)
+                    end
+                    setIndicator("public", string.format("outfits PUBLIC (%d, loading...)", total))
+                end, function(attempt, seconds)
+                    if spoofUi and spoofUi.token == token then
+                        setIndicator("limited", string.format("rate limited, retrying (%d) in %.1fs...", attempt, seconds))
+                    end
+                end, function() return spoofUi ~= nil and spoofUi.token == token end)
+                local inventory = inventoryVisible(uid, nil, function() return spoofUi ~= nil and spoofUi.token == token end)
+                if not spoofUi or spoofUi.token ~= token then return end
+                pcall(function() loading:Destroy() end)
+                local inventoryText = inventory == nil and "" or (inventory and "   inventory public" or "   inventory private")
+                if not outfits then
+                    local texts = { private = "outfits PRIVATE (HTTP " .. tostring(info.status) .. ")", limited = "rate limited, try again in a moment", unreachable = "outfits unreachable (no HTTP answer)" }
+                    setIndicator(info.kind, (texts[info.kind] or "outfits unavailable") .. inventoryText)
+                    if info.message then warn("Avatar spoofer: outfits request failed:", info.status, info.message) end
+                    mk("TextLabel", { BackgroundTransparency = 1, Text = info.kind == "private" and "Outfits are private" or "Outfits unavailable", TextSize = 12, TextWrapped = true, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 309, Parent = ui.grid })
+                    return
+                end
+                if #outfits == 0 then
+
+                    if inventory == false then
+                        setIndicator("private", "outfits PRIVATE (inventory hidden)")
+                        mk("TextLabel", { BackgroundTransparency = 1, Text = "Outfits are private", TextSize = 12, TextWrapped = true, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 309, Parent = ui.grid })
+                    else
+                        setIndicator("empty", "no saved outfits" .. inventoryText)
+                        mk("TextLabel", { BackgroundTransparency = 1, Text = "No saved outfits", TextSize = 12, TextWrapped = true, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 309, Parent = ui.grid })
+                    end
+                    return
+                end
+                if info.stopped == "limited" then
+                    setIndicator("limited", string.format("limited (%d loaded), select the player again to retry", #outfits) .. inventoryText)
+                elseif info.stopped then
+                    setIndicator("limited", string.format("outfits PUBLIC (%d loaded, a page failed)", #outfits) .. inventoryText)
+                else
+                    setIndicator("public", string.format("outfits PUBLIC (%d, %s)", #outfits, tostring(info.source)) .. inventoryText)
+                end
+            end)
+        end
+
+        local function refreshChips()
+            local ui = spoofUi
+            if not ui then return end
+            for _, child in ipairs(ui.chips:GetChildren()) do
+                if child:IsA("Frame") then child:Destroy() end
+            end
+            local query = string.lower(ui.search.Text or "")
+            local function chip(text, uid, order)
+                local width = TextService:GetTextSize(text, Library.FontSize, Library.Font, Vector2.new(1000, 20)).X + 18
+                local outer, face = bevel(ui.chips, 308, UDim2.fromOffset(width, 20), nil, order)
+                lbl({ Size = UDim2.new(1, 0, 1, 0), TextSize = Library.FontSize, Text = text, ZIndex = 310, Parent = face })
+                local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = outer })
+                Library:OnHighlight(hit, outer, { BorderColor3 = "AccentColor" }, { BorderColor3 = "Black" })
+                hit.MouseButton1Click:Connect(function() loadTarget(uid, text) end)
+            end
+            chip("You", LocalPlayer.UserId, 0)
+            local shown = 0
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and shown < 24
+                    and (query == "" or string.find(string.lower(player.Name), query, 1, true) or string.find(string.lower(player.DisplayName), query, 1, true)) then
+                    shown += 1
+                    chip(player.DisplayName, player.UserId, shown)
+                end
+            end
+        end
+
+        local function openSpoofUi()
+            if spoofUi or not Library.ScreenGui then return end
+            local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+            local startSize = Vector2.new(math.clamp(spoofSize.X, SPOOF_MIN.X, math.max(SPOOF_MIN.X, viewport.X - 20)), math.clamp(spoofSize.Y, SPOOF_MIN.Y, math.max(SPOOF_MIN.Y, viewport.Y - 20)))
+            local main = lf("Frame", { Name = "AsterAvatarSpoofer", BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, Size = UDim2.fromOffset(startSize.X, startSize.Y), Position = UDim2.new(0.5, -startSize.X / 2, 0.5, -startSize.Y / 2), ZIndex = 300, Parent = Library.ScreenGui })
+            local frame = lf("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 301, Parent = main }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+            lbl({ Size = UDim2.new(1, 0, 0, 25), Text = "Avatar Spoofer", TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 302, Parent = frame })
+            local section = lf("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.new(0, 8, 0, 25), Size = UDim2.new(1, -16, 1, -33), ZIndex = 302, Parent = frame }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+            local body = lf("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Color3.new(0, 0, 0), BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 303, Parent = section }, { BackgroundColor3 = "BackgroundColor" })
+
+            local _, playerBox = panel(body, "Player", UDim2.fromOffset(8, 8), UDim2.new(1, -16, 0, 84), 304)
+            local searchOuter, searchFace = bevel(playerBox, 307, UDim2.new(1, -12, 0, 20), UDim2.fromOffset(6, 22))
+            local clip = lf("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.new(0, 5, 0, 0), Size = UDim2.new(1, -5, 1, 0), ZIndex = 309, Parent = searchFace })
+            local search = lf("TextBox", {
+                BackgroundTransparency = 1,
+                Position = UDim2.fromOffset(0, 0),
+                Size = UDim2.fromScale(5, 1),
+                Font = Library.Font,
+                PlaceholderColor3 = Color3.fromRGB(190, 190, 190),
+                PlaceholderText = "username, UserId, profile URL or outfit:ID, press Enter...",
+                ClearTextOnFocus = false,
+                Text = "",
+                TextColor3 = Library.FontColor,
+                TextSize = Library.FontSize,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = 310,
+                Parent = clip,
+            }, { TextColor3 = "FontColor" })
+            Library:ApplyTextStroke(search)
+            Library:OnHighlight(search, searchOuter, { BorderColor3 = "AccentColor" }, { BorderColor3 = "Black" })
+            local chips = lf("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(6, 48), Size = UDim2.new(1, -12, 0, 30), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = 307, Parent = playerBox }, { ScrollBarImageColor3 = "AccentColor" })
+            Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = chips })
+            Library:Create("UIPadding", { PaddingTop = UDim.new(0, 1), PaddingLeft = UDim.new(0, 1), Parent = chips })
+
+            local _, previewBox = panel(body, "Preview", UDim2.fromOffset(8, 98), UDim2.new(1, -16, 1, -174), 304)
+            lbl({ Text = "click again to apply", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(0.38, -8, 0, 14), Position = UDim2.fromOffset(6, 21), ZIndex = 307, Parent = previewBox })
+            local indicator = Library:Create("TextLabel", { BackgroundTransparency = 1, Font = Library.Font, Text = "", TextSize = 12, TextColor3 = Library.FontColor, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0.62, -10, 0, 14), Position = UDim2.new(0.38, 0, 0, 21), ZIndex = 307, Parent = previewBox })
+            Library:ApplyTextStroke(indicator)
+            local grid = lf("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(4, 38), Size = UDim2.new(1, -8, 1, -42), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, ZIndex = 307, Parent = previewBox }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+            Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+            Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = grid })
+
+            local status = lbl({ Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(1, -16, 0, 16), Position = UDim2.new(0, 8, 1, -72), ZIndex = 307, Parent = body })
+            local function button(text, position, size, callback)
+                local outer, face = bevel(body, 307, size, position)
+                lbl({ Size = UDim2.new(1, 0, 1, 0), TextSize = Library.FontSize, Text = text, ZIndex = 309, Parent = face })
+                local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = outer })
+                Library:OnHighlight(hit, outer, { BorderColor3 = "AccentColor" }, { BorderColor3 = "Black" })
+                hit.MouseButton1Click:Connect(callback)
+                return outer
+            end
+            button("Apply selected", UDim2.new(0, 8, 1, -54), UDim2.new(1, -16, 0, 20), function()
+                local ui = spoofUi
+                local info = ui and ui.selected
+                if not info then notify("Avatar spoofer: pick an avatar first") return end
+                task.spawn(function()
+                    if info.kind == "outfit" then SpooferActions.applyOutfit(info.id) else SpooferActions.applyUser(info.uid) end
+                end)
+            end)
+            button("Reset to my avatar", UDim2.new(0, 8, 1, -30), UDim2.new(0.5, -12, 0, 20), function() task.spawn(function() SpooferActions.reset() end) end)
+            button("Close", UDim2.new(0.5, 4, 1, -30), UDim2.new(0.5, -12, 0, 20), function()
+                local toggle = Toggles and Toggles.spoof_ui
+                if toggle and toggle.SetValue then pcall(function() toggle:SetValue(false) end) end
+                closeSpoofUi()
+            end)
+
+            local grip = lbl({ Text = "//", TextSize = 12, Size = UDim2.fromOffset(16, 16), Position = UDim2.new(1, -16, 1, -16), ZIndex = 330, Parent = main })
+            local gripHit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 331, Parent = grip })
+            gripHit.InputBegan:Connect(function(input)
+                if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+                local from, origin = main.AbsoluteSize, input.Position
+                local move, finish
+                move = UserInputService.InputChanged:Connect(function(change)
+                    if change.UserInputType ~= Enum.UserInputType.MouseMovement and change.UserInputType ~= Enum.UserInputType.Touch then return end
+                    local cam = workspace.CurrentCamera
+                    local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+                    local w = math.clamp(from.X + (change.Position.X - origin.X), SPOOF_MIN.X, math.max(SPOOF_MIN.X, vp.X - 20))
+                    local h = math.clamp(from.Y + (change.Position.Y - origin.Y), SPOOF_MIN.Y, math.max(SPOOF_MIN.Y, vp.Y - 20))
+                    main.Size = UDim2.fromOffset(w, h)
+                    spoofSize = Vector2.new(w, h)
+                end)
+                finish = UserInputService.InputEnded:Connect(function(ended)
+                    if ended.UserInputType == Enum.UserInputType.MouseButton1 or ended.UserInputType == Enum.UserInputType.Touch then
+                        move:Disconnect()
+                        finish:Disconnect()
+                    end
+                end)
+            end)
+
+            spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0 }
+            local owner = spoofUi
+            task.spawn(function()
+                while spoofUi == owner do
+                    local top = grid.AbsolutePosition.Y
+                    local bottom = top + grid.AbsoluteSize.Y
+                    local budget = 24
+                    for tile, entry in pairs(owner.lazy) do
+                        if not tile.Parent then
+                            owner.lazy[tile] = nil
+                        else
+                            local y = tile.AbsolutePosition.Y
+                            if y + 104 >= top - 110 and y <= bottom + 110 then
+                                entry.label.Image = entry.image
+                                owner.lazy[tile] = nil
+                                budget -= 1
+                                if budget <= 0 then break end
+                            end
+                        end
+                    end
+                    task.wait(0.2)
+                end
+            end)
+            Library:MakeDraggable(main, 25)
+            search:GetPropertyChangedSignal("Text"):Connect(refreshChips)
+            search.FocusLost:Connect(function(enter)
+                if not enter then return end
+                local text = search.Text
+                local outfitId = tonumber(string.match(text, "[Oo]utfits?[:%s/=]*(%d+)"))
+                if outfitId then
+
+                    local info = { kind = "outfit", id = outfitId, name = "Outfit " .. outfitId }
+                    local tile = addTile(info, string.format("rbxthumb://type=Outfit&id=%d&w=150&h=150", outfitId), 5)
+                    selectTile(info, tile)
+                    return
+                end
+                task.spawn(function()
+                    local uid = resolveUserId(text)
+                    if not uid then notify("Avatar spoofer: could not find " .. tostring(text)) return end
+                    loadTarget(uid, text ~= "" and text or tostring(uid))
+                end)
+            end)
+            refreshChips()
+            loadTarget(LocalPlayer.UserId, "You")
+        end
+
+        track(RunService.Heartbeat:Connect(function()
+            local wanted = getFlag("spoof_ui", false)
+            if wanted and not spoofUi then
+                local ok, err = pcall(openSpoofUi)
+                if not ok then warn("Avatar spoofer window failed:", err) closeSpoofUi() end
+            elseif not wanted and spoofUi then
+                closeSpoofUi()
+            end
+
+            if spoofUi then
+                local show = Library.Toggled ~= false
+                if spoofUi.main.Visible ~= show then spoofUi.main.Visible = show end
+            end
+        end))
+        track(Players.PlayerAdded:Connect(function() if spoofUi then refreshChips() end end))
+        track(Players.PlayerRemoving:Connect(function() if spoofUi then task.defer(refreshChips) end end))
+
+        SpooferActions.prefetch = function(uid, outfitId) prefetchAvatar(uid, outfitId) end
+        SpooferActions.applyUser = function(uid) return runApply(uid) end
+        SpooferActions.applyOutfit = function(outfitId) return runApply(nil, outfitId) end
+
         track(LocalPlayer.CharacterAdded:Connect(function()
-            if not lastUid or not getFlag("spoof_avatar_reapply", true) then return end
+            if not (lastUid or lastOutfit) or not getFlag("spoof_avatar_reapply", true) then return end
             task.delay(1.25, function()
-                if lastUid and getFlag("spoof_avatar_reapply", true) then runApply(lastUid) end
+                if (lastUid or lastOutfit) and getFlag("spoof_avatar_reapply", true) then runApply(lastUid, lastOutfit) end
             end)
         end))
 
         onUnload(function()
             SpooferActions.apply, SpooferActions.reset = noop, noop
+            SpooferActions.applyUser, SpooferActions.applyOutfit = noop, noop
+            SpooferActions.prefetch = noop
+            for _, entry in pairs(modelCache) do pcall(function() entry.model:Destroy() end) end
+            table.clear(modelCache)
+            closeSpoofUi()
         end)
     end)()
 
@@ -4905,12 +5515,8 @@ do
     end))
 end
 
-
 Loader.step("Loading misc features", 0.72)
--- Misc and gun mods -----------------------------------------------------------------
--- Every feature is registered with feature(flag, start, stop). One Heartbeat watcher starts or
--- stops it when its toggle changes (this also covers loading a saved config), and unloading
--- the script stops them all. Everything is off until switched on.
+
 do
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local TeamsService = game:GetService("Teams")
@@ -4923,7 +5529,6 @@ do
     local function warnf(...) warn("[Aster][Misc]", ...) end
     local function say(text) pcall(function() Library:Notify(text, 4) end) end
 
-    -- feature registry -----------------------------------------------------------------
     local features = {}
     local function feature(flagName, start, stop)
         features[#features + 1] = { flag = flagName, start = start, stop = stop or noop, active = false }
@@ -4945,7 +5550,6 @@ do
         if t and t.SetValue then pcall(function() t:SetValue(false) end) end
     end
 
-    -- a small bag of connections that can be dropped together
     local function newBag()
         local bag, list = {}, {}
         function bag.add(connection) list[#list + 1] = connection return connection end
@@ -4958,7 +5562,6 @@ do
 
     local stepSignal = RunService.PreSimulation or RunService.Heartbeat
 
-    -- character helpers --------------------------------------------------------------
     local function localParts()
         local char = LocalPlayer.Character
         if not char then return end
@@ -4989,8 +5592,6 @@ do
         return UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
     end
 
-    -- Several features switch CanQuery off on parts; a reference count keeps them from
-    -- restoring each other's changes.
     local queryHeld = {}
     local function holdQuery(part)
         local entry = queryHeld[part]
@@ -5012,7 +5613,6 @@ do
         return workspace:FindFirstChild("CarContainer") or workspace:WaitForChild("CarContainer", timeout or 5)
     end
 
-    -- Fly and vehicle fly are held to 49.9 studs above the ground (the game's own limit).
     local CAP_HEIGHT = 49.9
     local capRay = RaycastParams.new()
     capRay.FilterType = Enum.RaycastFilterType.Exclude
@@ -5031,7 +5631,6 @@ do
         return level and math.min(level, limit) or level
     end
 
-    -- cheat flags (CheatDetector and AntiInvisible share them) ------------------------------
     local cheatCounts, cheatFlagged = {}, {}
     local function flagCheat(player, kind, limit)
         if not isOn("misc_cheat_detector") or cheatFlagged[player.UserId] then return end
@@ -5044,9 +5643,6 @@ do
         end
     end
 
-    -- ======================================================================================
-    -- Camera phase: Invisicam occlusion keeps the camera from being pushed in by walls
-    -- ======================================================================================
     do
         local bag, original = newBag(), nil
         feature("misc_camera_phase", function()
@@ -5064,9 +5660,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- No jump cooldown: the game's AntiJump script is a token bucket on Humanoid.Jump
-    -- ======================================================================================
     do
         local bag, disabled, token, hooked = newBag(), {}, 0, false
 
@@ -5116,7 +5709,7 @@ do
             token += 1
             if LocalPlayer.Character then attach(LocalPlayer.Character) end
             bag.add(LocalPlayer.CharacterAdded:Connect(attach))
-            -- fallback while the game's script cannot be disabled: jump directly from the ground
+
             bag.add(RunService.Heartbeat:Connect(function()
                 if hooked or typing() or not UserInputService:IsKeyDown(Enum.KeyCode.Space) then return end
                 local _, hum = localParts()
@@ -5136,9 +5729,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Xray: local transparency on map parts
-    -- ======================================================================================
     do
         local bag, modified, token = newBag(), {}, 0
         local appliedAlpha, appliedIgnore = nil, nil
@@ -5213,9 +5803,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Gravity
-    -- ======================================================================================
     do
         local bag, old, changing = newBag(), nil, false
         local function applyWorkspace()
@@ -5249,9 +5836,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Cheat detector
-    -- ======================================================================================
     do
         local bag = newBag()
         local positions, spawned, lastChar = {}, {}, {}
@@ -5280,7 +5864,6 @@ do
             return #include > 0
         end
 
-        -- true when the point is not inside any solid part
         local function pointIsFree(pos)
             for _, part in ipairs(workspace:GetPartBoundsInRadius(pos, 0, overlap)) do
                 if part.CanCollide and (part:GetClosestPointOnSurface(pos) - pos).Magnitude <= 0.0001 then
@@ -5346,9 +5929,6 @@ do
         end
     end
 
-    -- ======================================================================================
-    -- Gun helpers (shared by gun mods and auto reload)
-    -- ======================================================================================
     local function equippedGun()
         local char = LocalPlayer.Character
         local tool = char and char:FindFirstChildOfClass("Tool")
@@ -5368,10 +5948,6 @@ do
         return list
     end
 
-    -- ======================================================================================
-    -- Gun modifications (combat). The game copies a tool's attributes into its gun config at
-    -- equip time, so the attributes are edited and the equipped gun is re-equipped once.
-    -- ======================================================================================
     do
         local bag = newBag()
         local originals = setmetatable({}, { __mode = "k" })
@@ -5439,9 +6015,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Auto reload
-    -- ======================================================================================
     do
         local bag, nextTry = newBag(), 0
         local VirtualInputManager
@@ -5516,9 +6089,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Shoot through vehicles / riot shields (the bullet ray ignores parts with CanQuery off)
-    -- ======================================================================================
     do
         local bag, held, token = newBag(), {}, 0
         local function take(part)
@@ -5571,9 +6141,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Anti kill plane
-    -- ======================================================================================
     do
         local bag = newBag()
         feature("misc_anti_killplane", function()
@@ -5590,9 +6157,6 @@ do
         end, function() bag.clear() end)
     end
 
-    -- ======================================================================================
-    -- Anti fling: car parts stop colliding and touching; seats get their own prompt
-    -- ======================================================================================
     do
         local bag = newBag()
         local modified, prompts, token = {}, {}, 0
@@ -5658,10 +6222,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Destroy body on death: the ragdoll stays in the world after you die and can be flung. Every part is
-    -- moved below FallenPartsDestroyHeight, where the engine removes it, so nothing is left to kick.
-    -- ======================================================================================
     do
         local bag = newBag()
         feature("misc_destroy_body", function()
@@ -5693,9 +6253,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Anti taze
-    -- ======================================================================================
     do
         local bag, disabled, until_ = newBag(), {}, 0
         local lastSpeed, lastJump = 16, 7.2
@@ -5728,7 +6285,7 @@ do
                 task.delay(1.5, hookGame)
             end))
             bag.add(remote.OnClientEvent:Connect(function() until_ = clock() + 4 end))
-            -- keep movement values the taze handler tries to zero out
+
             bag.add(RunService.Heartbeat:Connect(function()
                 local _, hum = localParts()
                 if not hum then return end
@@ -5748,9 +6305,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Anti invisible: other players' animations the game does not use are weighted to zero
-    -- ======================================================================================
     do
         local bag = newBag()
         local known = {}
@@ -5783,7 +6337,7 @@ do
             if not id or known[id] then return end
             local key = tostring(player.UserId) .. ":" .. id
             if verdict[key] == nil then
-                -- animations that ship inside the game, the player's character or their tools are fine
+
                 learn(ReplicatedStorage)
                 learn(player.Character)
                 learn(player:FindFirstChildOfClass("Backpack"))
@@ -5812,8 +6366,7 @@ do
         feature("misc_anti_invis", function()
             for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
             bag.add(Players.PlayerAdded:Connect(hookPlayer))
-            -- loop: every quarter second all players' playing tracks are checked again, so a target
-            -- that resets (new character, new tracks) or re-plays the animation is suppressed again
+
             local acc, cleared = 0, 0
             bag.add(RunService.Heartbeat:Connect(function(dt)
                 acc += dt
@@ -5847,9 +6400,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Melee aura (SillyScripts): fires the same remote the in-game melee tools fire on a hit
-    -- ======================================================================================
     do
         local bag, acc = newBag(), 0
         feature("misc_melee", function()
@@ -5874,13 +6424,9 @@ do
         end, function() bag.clear() end)
     end
 
-    -- ======================================================================================
-    -- Auto arrest and auto taze (guards)
-    -- ======================================================================================
     local arrestUntil = 0
     do
-        -- The handcuffs' own script only accepts: Criminals; Inmates that are Hostile and already Tased;
-        -- Inmates that are not Hostile but Trespassing. Within 7.5 studs and without a forcefield.
+
         local bag, acc, warned = newBag(), 0, false
         local function arrestable(e)
             local char, team = e.Character, e.Player.Team
@@ -5920,7 +6466,7 @@ do
                     local cuffs = pack and pack:FindFirstChild("Handcuffs")
                     if cuffs then
                         hum:EquipTool(cuffs)
-                        arrestUntil = clock() + 0.4 -- let the tool's own script finish equipping
+                        arrestUntil = clock() + 0.4
                     elseif not warned then
                         warned = true
                         say("Auto arrest needs the Handcuffs tool")
@@ -5929,7 +6475,7 @@ do
                 end
 
                 local target = best
-                arrestUntil = clock() + 0.5 -- do not stack invokes while this one is in flight
+                arrestUntil = clock() + 0.5
                 task.spawn(function()
                     local ok, result = pcall(function() return arrest:InvokeServer(target.Player, 1) end)
                     if ok and result then
@@ -5942,8 +6488,7 @@ do
     end
 
     do
-        -- The shot goes through the game's own gun code (castRay is told which part to report), so the
-        -- ammo, animation, tracer and reload all behave normally. Without the gun hook the shot is sent directly.
+
         local bag, acc, cooldown, busy = newBag(), 0, 0, false
         local rayParams = RaycastParams.new()
         rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -5954,7 +6499,6 @@ do
             return workspace:Raycast(fromPos, e.Head.Position - fromPos, rayParams) == nil
         end
 
-        -- guards taze Criminals and Inmates that are Hostile or Trespassing; other teams taze anyone off their team
         local function wanted(e)
             local char, team = e.Character, e.Player.Team
             if LocalPlayer.TeamColor == e.Player.TeamColor then return false end
@@ -5985,7 +6529,7 @@ do
                     if reload == 0 and ammo > 0 then break end
                     if reload == 0 and ammo <= 0 and not kicked then
                         kicked = true
-                        Actions.fireAt(target.Head, target.Head.Position) -- the gun reloads when it is empty
+                        Actions.fireAt(target.Head, target.Head.Position)
                     end
                 end
                 task.wait(0.05)
@@ -6039,10 +6583,7 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Movement
-    -- ======================================================================================
-    do -- Fly
+    do
         local bag, yLevel = newBag(), nil
         feature("misc_fly", function()
             yLevel = nil
@@ -6067,7 +6608,7 @@ do
         end, function() bag.clear() end)
     end
 
-    do -- Speed
+    do
         local bag, savedSpeed = newBag(), nil
         feature("misc_speed", function()
             bag.add(stepSignal:Connect(function(dt)
@@ -6095,7 +6636,7 @@ do
         end)
     end
 
-    do -- High jump
+    do
         local bag = newBag()
         local function grounded(hum)
             local s = hum:GetState()
@@ -6143,7 +6684,7 @@ do
         end, function() bag.clear() end)
     end
 
-    do -- Long jump
+    do
         local bag = newBag()
         feature("misc_longjump", function()
             local enableAt = clock() + 0.1
@@ -6172,7 +6713,7 @@ do
         end, function() bag.clear() end)
     end
 
-    do -- Phase
+    do
         local bag, modified = newBag(), {}
         local overlap = OverlapParams.new()
         local ray = RaycastParams.new()
@@ -6248,7 +6789,7 @@ do
         end)
     end
 
-    do -- Spider
+    do
         local bag, active = newBag(), nil
         local ray = RaycastParams.new()
         ray.FilterType = Enum.RaycastFilterType.Exclude
@@ -6283,14 +6824,9 @@ do
         end)
     end
 
-
-    -- ======================================================================================
-    -- World: hit effects (SillyScripts presets)
-    -- ======================================================================================
     ;(function()
         local Workspace = workspace
-        -- The ten presets below are SillyScripts' own code, copied unchanged except that the colour, size and
-        -- duration they read from its menu come from HE_color, HE_size and HE_duration.
+
         local HE_color, HE_size, HE_duration = Color3.fromRGB(255, 81, 0), 2, 2
         local HitEffects = {}
         HitEffects.Presets = {
@@ -6771,6 +7307,38 @@ do
 		end,
         }
 
+        local BURSTS = { "Mutants Rage", "Armageddon", "Solar Flare", "Heaven", "Gravity God", "Red Ring of Death", "Blue Heat", "Stardust Fragment", "Fiery Ritual of Hallownest", "Midnight Blues", "Susanoo Arms", "Atomic", "Kurama" }
+        local function packBurst(label, position)
+            local entry = AURA_PACK.rigs[label]
+            local get = Actions.packRig
+            if not entry or not get then return end
+            local life = HE_duration
+            task.spawn(function()
+                local rig = get(entry)
+                if not rig then return end
+                local holder = Instance.new("Part")
+                holder.Name = "AsterBurst"
+                holder.Anchored, holder.CanCollide, holder.CanQuery, holder.CanTouch = true, false, false, false
+                holder.Transparency, holder.Size, holder.CFrame = 1, Vector3.new(1, 1, 1), CFrame.new(position)
+                holder.Parent = workspace
+                game:GetService("Debris"):AddItem(holder, life + 4)
+                local used = 0
+                for _, d in ipairs(rig:GetDescendants()) do
+                    if d:IsA("ParticleEmitter") and used < 40 then
+                        used += 1
+                        local copy = d:Clone()
+                        copy.Enabled = false
+                        copy.Parent = holder
+                        local count = d:GetAttribute("EmitCount") or math.clamp(math.ceil(d.Rate * d.Lifetime.Max * 0.5), 3, 14)
+                        pcall(copy.Emit, copy, count)
+                    end
+                end
+            end)
+        end
+        for _, label in ipairs(BURSTS) do
+            HitEffects.Presets["burst: " .. string.lower(label)] = function(position) packBurst(label, position) end
+        end
+
         function HitEffects.Play(position, effectName, color, size, duration)
             local fn = HitEffects.Presets[string.lower(effectName or "nova")]
             if not fn or not position then return end
@@ -6786,8 +7354,6 @@ do
             if not ok then warnf("hit effect failed:", err) end
         end
 
-        -- SillyScripts method: the effect plays from the result of the gun's own castRay, hooked in the
-        -- combat code. "On hit" needs the hit part to belong to a player, "On shot" plays at every shot.
         local function isPlayerPart(part)
             local node = part
             while node and node ~= workspace do
@@ -6806,7 +7372,7 @@ do
             if not flag("he_enabled", false) or typeof(position) ~= "Vector3" then return end
             if flag("he_trigger", "On hit") == "On shot" or (part and isPlayerPart(part)) then emit(position) end
         end)
-        -- without the gun hook the tracer and damage events are used instead
+
         table.insert(ShotEvents.shot, function(_, target)
             if not hooked() and flag("he_enabled", false) and flag("he_trigger", "On hit") == "On shot" then emit(target) end
         end)
@@ -6832,10 +7398,6 @@ do
         end)
     end)()
 
-    -- ======================================================================================
-    -- World: kill effects. The particle-only effects from the visuals dump, rebuilt from data and
-    -- played where a player you shot dies. Meshes, models and animations are not included.
-    -- ======================================================================================
     ;(function()
         local Debris = game:GetService("Debris")
         local KILL_FX = {
@@ -6863,7 +7425,6 @@ do
         	["Soul Grasp"] = {{"Part","particles",{["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",8.95,0.05,8.7}},nil,nil,{{"Attachment","StartEmitAttachment",{},nil,nil,{{"ParticleEmitter","pentagramemit",{["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Texture"]="rbxassetid://12801205601",["Color"]={"CS",{{0,1,0.094118,0.011765},{1,1,0.094118,0.011765}}},["LockedToPart"]=true,["Rate"]=5,["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Transparency"]={"NS",{{0,1,0},{0.026185,0.2125,0.0125},{0.084788,0,0},{0.49693,0,0},{0.90031,0,0},{1,1,0}}},["Speed"]={"NR",0.01,0.01},["Lifetime"]={"NR",0.75,0.75},["LightEmission"]=0.4,["Brightness"]=8.18,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,0,0},{0.1,4.4456,0},{0.2,5.2343,0},{0.3,5.6008,0},{0.4,5.7939,0},{0.5,5.899,0},{0.6,5.9553,0},{0.7,5.9834,0},{0.8,5.9956,0},{0.9,5.9995,0},{1,6,0}}}}},{"ParticleEmitter","flash",{["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Texture"]="rbxassetid://12647757735",["Rate"]=5,["Color"]={"CS",{{0,1,0.17255,0.0078431},{1,1,0.17255,0.0078431}}},["LockedToPart"]=true,["ZOffset"]=0.1,["LightEmission"]=0.4,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Speed"]={"NR",0.01,0.01},["Lifetime"]={"NR",0.25,0.25},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=8.18,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,10,0},{0.1,9.5143,0},{0.2,6.656,0},{0.3,3.7058,0},{0.4,2.2091,0},{0.5,1.317,0},{0.6,0.74652,0},{0.7,0.37936,0},{0.8,0.15444,0},{0.9,0.035733,0},{1,0,0}}}}},{"ParticleEmitter","impactemit",{["Enabled"]=false,["Color"]={"CS",{{0,1,0.11765,0},{1,1,0.11765,0}}},["ZOffset"]=1,["Texture"]="rbxassetid://12409026765",["Rotation"]={"NR",45,45},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Lifetime"]={"NR",0.15,0.15},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["LightEmission"]=1,["Brightness"]=10,["Speed"]={"NR",0.001,0.001},["Size"]={"NS",{{0,10,0},{0.1,9.5143,0},{0.2,6.656,0},{0.3,3.7058,0},{0.4,2.2091,0},{0.5,1.317,0},{0.6,0.74652,0},{0.7,0.37936,0},{0.8,0.15444,0},{0.9,0.035733,0},{1,0,0}}}}},{"ParticleEmitter","glowground",{["Enabled"]=false,["ShapeStyle"]={"E","ParticleEmitterShapeStyle","Surface"},["LightEmission"]=0.42,["Texture"]="rbxassetid://12082081459",["Color"]={"CS",{{0,1,0.11765,0},{1,1,0.11765,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Rate"]=15,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Rotation"]={"NR",90,90},["Transparency"]={"NS",{{0,0,0},{0.086342,0.48067,0},{0.30424,0.9,0},{1,1,0}}},["Speed"]={"NR",0.001,0.001},["Lifetime"]={"NR",1.5,1.5},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=10,["Shape"]={"E","ParticleEmitterShape","Disc"},["Size"]={"NS",{{0,0,0},{0.1,11,0},{0.2,12.07,0},{0.3,12.53,0},{0.4,12.763,0},{0.5,12.886,0},{0.6,12.95,0},{0.7,12.982,0},{0.8,12.995,0},{0.9,12.999,0},{1,13,0}}}}},{"ParticleEmitter","glow",{["Enabled"]=false,["ShapeStyle"]={"E","ParticleEmitterShapeStyle","Surface"},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Color"]={"CS",{{0,1,0.11765,0},{1,1,0.11765,0}}},["Texture"]="rbxassetid://12082081459",["Rate"]=15,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Rotation"]={"NR",90,90},["Transparency"]={"NS",{{0,0,0},{0.086342,0.48067,0},{0.30424,0.9,0},{1,1,0}}},["Speed"]={"NR",0.001,0.001},["Lifetime"]={"NR",1.5,1.5},["LightEmission"]=0.42,["Brightness"]=10,["Shape"]={"E","ParticleEmitterShape","Disc"},["Size"]={"NS",{{0,0,0},{0.1,7.4733,0},{0.2,8.763,0},{0.3,9.3575,0},{0.4,9.6693,0},{0.5,9.8383,0},{0.6,9.9285,0},{0.7,9.9735,0},{0.8,9.993,0},{0.9,9.9992,0},{1,10,0}}}}}}},{"Attachment","AfterStartEnableAttachment",{},nil,nil,{{"ParticleEmitter","pentagramenable",{["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Texture"]="rbxassetid://12801205601",["Color"]={"CS",{{0,1,0.094118,0.011765},{1,1,0.094118,0.011765}}},["LockedToPart"]=true,["Rate"]=5,["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Speed"]={"NR",0.01,0.01},["Lifetime"]={"NR",0.75,0.75},["LightEmission"]=0.4,["Brightness"]=8.18,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,6,0},{1,6,0}}}}},{"ParticleEmitter","crescentsin",{["Color"]={"CS",{{0,1,0.094118,0.011765},{1,1,0.094118,0.011765}}},["Lifetime"]={"NR",0.55,0.85},["Speed"]={"NR",0.01,0.01},["Brightness"]=8.18,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,10,0},{0.1,9.9706,0},{0.2,9.8734,0},{0.3,9.6913,0},{0.4,9.4003,0},{0.5,8.9678,0},{0.6,8.355,0},{0.7,7.5555,0},{0.8,6.7208,0},{0.9,6.1656,0},{1,6,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["RotSpeed"]={"NR",360,720},["LockedToPart"]=true,["Rate"]=25,["Rotation"]={"NR",-1000,1000},["Transparency"]={"NS",{{0,0,0},{0.44514,0.1125,0},{0.65337,0.79375,0},{1,1,0}}},["Texture"]="rbxassetid://12801499270",["LightEmission"]=0.65,["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=5,["EmitDelay"]=0}},{"ParticleEmitter","glowgroundenable",{["ShapeStyle"]={"E","ParticleEmitterShapeStyle","Surface"},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Texture"]="rbxassetid://12082081459",["Color"]={"CS",{{0,1,0.11765,0},{1,1,0.11765,0}}},["Rate"]=25,["ZOffset"]=-0.001,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Rotation"]={"NR",90,90},["Transparency"]={"NS",{{0,1,0},{0.50374,0.60112,0},{1,1,0}}},["Speed"]={"NR",0.001,0.001},["Lifetime"]={"NR",0.45,0.45},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=0,["Shape"]={"E","ParticleEmitterShape","Disc"},["Size"]={"NS",{{0,0,0},{0.1,11,0},{0.2,12.07,0},{0.3,12.53,0},{0.4,12.763,0},{0.5,12.886,0},{0.6,12.95,0},{0.7,12.982,0},{0.8,12.995,0},{0.9,12.999,0},{1,13,0}}}}}}}},1},{"Part","Sphere",{["Color"]={"C3",0.67451,0.30196,0.086275},["Shape"]={"E","PartType","Ball"},["Material"]={"E","Material","Neon"},["CFrame"]={"CF",-1.9e-05,3,0.15001,1,0,0,0,1,0,0,0,1},["Size"]={"V3",1.35,1.35,1.35}},nil,nil,{{"Attachment","suckingAttachment",{},nil,nil,{{"ParticleEmitter","shock",{["Enabled"]=false,["Texture"]="rbxassetid://11114228118",["Rate"]=10,["Size"]={"NS",{{0,9,3},{0.1,8.8191,3},{0.2,8.1761,3},{0.3,6.9218,3},{0.4,5.126,3},{0.5,3.3018,3},{0.6,1.8946,3},{0.7,0.95362,1.8972},{0.8,0.3823,0.75459},{0.9,0.087037,0.16407},{1,1.7764e-15,0}}},["Color"]={"CS",{{0,0,0,0},{1,0,0,0}}},["LockedToPart"]=true,["ZOffset"]=0.1,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["VelocitySpread"]=360,["Transparency"]={"NS",{{0,1,0},{0.50125,0.52247,0},{1,1,0}}},["Speed"]={"NR",0.001,0.001},["Lifetime"]={"NR",0.25,0.35},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Brightness"]=0,["LightEmission"]=-1,["SpreadAngle"]={"V2",360,-360}}},{"ParticleEmitter","vprtex",{["Color"]={"CS",{{0,0,0,0},{1,0,0,0}}},["ZOffset"]=-0.5,["VelocitySpread"]=100,["Lifetime"]={"NR",0.25,0.35},["Speed"]={"NR",0.001,0.001},["Brightness"]=0,["SpreadAngle"]={"V2",100,100},["Enabled"]=false,["RotSpeed"]={"NR",500,500},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.50125,0.23034,0},{1,1,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Texture"]="rbxassetid://11114276571",["Size"]={"NS",{{0,8,0},{0.46259,3.125,0},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}},{"ParticleEmitter","crescentsin",{["Color"]={"CS",{{0,1,0.094118,0.011765},{1,1,0.094118,0.011765}}},["VelocitySpread"]=360,["Lifetime"]={"NR",0.45,0.65},["Speed"]={"NR",0.01,0.01},["Brightness"]=8.18,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",360,-360},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=15,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Texture"]="rbxassetid://12801499270",["Size"]={"NS",{{0,7,2},{0.1,6.8593,2},{0.2,6.3592,2},{0.3,5.3836,2},{0.4,3.9869,2},{0.5,2.5681,2},{0.6,1.4736,1.4736},{0.7,0.7417,0.7417},{0.8,0.29734,0.29734},{0.9,0.067696,0.067696},{1,8.8818e-16,8.8818e-16}}},["LightEmission"]=0.4,["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=5,["EmitDelay"]=0}},{"ParticleEmitter","glow",{["Enabled"]=false,["ShapeStyle"]={"E","ParticleEmitterShapeStyle","Surface"},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Color"]={"CS",{{0,1,0.11765,0},{1,1,0.11765,0}}},["Texture"]="rbxassetid://12082081459",["Rate"]=2,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Rotation"]={"NR",90,90},["Transparency"]={"NS",{{0,1,0},{0.5,0.8764,0},{1,1,0}}},["Speed"]={"NR",0.001,0.001},["Lifetime"]={"NR",0.35,0.35},["LightEmission"]=0.42,["Brightness"]=10,["Shape"]={"E","ParticleEmitterShape","Disc"},["Size"]={"NS",{{0,0,0},{0.1,7.4733,0},{0.2,8.763,0},{0.3,9.3575,0},{0.4,9.6693,0},{0.5,9.8383,0},{0.6,9.9285,0},{0.7,9.9735,0},{0.8,9.993,0},{0.9,9.9992,0},{1,10,0}}}}},{"ParticleEmitter","dark",{["Enabled"]=false,["ShapeStyle"]={"E","ParticleEmitterShapeStyle","Surface"},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Color"]={"CS",{{0,1,0.11765,0},{1,1,0.11765,0}}},["Texture"]="rbxassetid://12082081459",["ZOffset"]=-0.05,["Rate"]=8,["Rotation"]={"NR",90,90},["Transparency"]={"NS",{{0,1,0},{0.298,0.6573,0},{1,1,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Lifetime"]={"NR",0.35,0.35},["Speed"]={"NR",0.001,0.001},["Brightness"]=0,["Shape"]={"E","ParticleEmitterShape","Disc"},["Size"]={"NS",{{0,0,0},{0.1,14.399,0},{0.2,17.18,0},{0.3,18.508,0},{0.4,19.221,0},{0.5,19.615,0},{0.6,19.828,0},{0.7,19.936,0},{0.8,19.983,0},{0.9,19.998,0},{1,20,0}}}}},{"ParticleEmitter","EMITCHARGE",{["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Texture"]="rbxassetid://13069511947",["Rate"]=5,["Color"]={"CS",{{0,1,0.11373,0.031373},{1,1,0.11373,0.031373}}},["ZOffset"]=3,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Speed"]={"NR",0.001,0.001},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Lifetime"]={"NR",0.55,0.55},["LightEmission"]=0.6,["Brightness"]=7.56,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,0,0},{0.1,2.505,0},{0.2,3.0483,0},{0.3,3.3727,0},{0.4,3.5902,0},{0.5,3.7419,0},{0.6,3.8482,0},{0.7,3.9207,0},{0.8,3.967,0},{0.9,3.9922,0},{1,4,0}}}},{["EmitCount"]=2}},{"ParticleEmitter","EMITCHARGE2",{["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Color"]={"CS",{{0,1,0.11373,0.031373},{1,1,0.11373,0.031373}}},["Texture"]="rbxassetid://13087052117",["ZOffset"]=3,["Rate"]=5,["Rotation"]={"NR",45,45},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Lifetime"]={"NR",0.25,0.25},["LightEmission"]=1,["Brightness"]=7.56,["Speed"]={"NR",0.001,0.001},["Size"]={"NS",{{0,0,0},{0.07507,3.388,0},{0.1995,4.8125,0},{0.61507,3.6928,0},{1,3.0625,0}}}}}}},{"Attachment","2",{}},{"Attachment","BeamsAttachment",{["CFrame"]={"CF",0.75,8.55,-5.2,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0.75,8.55,-5.2}},nil,nil,{{"Beam","1",{["FaceCamera"]=true,["Width0"]=5,["CurveSize1"]=-8,["TextureSpeed"]=4,["CurveSize0"]=2,["Segments"]=8,["Texture"]="rbxassetid://11110371162",["Transparency"]={"NS",{{0,1,0},{0.17638,0.9375,0},{0.23466,0.50625,0},{0.39264,0.18125,0},{0.59969,0.2375,0},{1,1,0}}},["Color"]={"CS",{{0,1,0.094118,0.011765},{1,1,0.094118,0.011765}}},["LightEmission"]=0.25,["Brightness"]=8.25,["TextureLength"]=0.625},nil,{["Attachment1"]={2,2},["Attachment0"]={2,3}}},{"Beam","1.1",{["FaceCamera"]=true,["Width0"]=5,["CurveSize1"]=7,["TextureSpeed"]=4,["CurveSize0"]=-3,["Segments"]=8,["Texture"]="rbxassetid://11110371162",["Transparency"]={"NS",{{0,1,0},{0.17638,0.9375,0},{0.23466,0.50625,0},{0.39264,0.18125,0},{0.59969,0.25,0},{1,1,0}}},["Color"]={"CS",{{0,1,0.094118,0.011765},{1,1,0.094118,0.011765}}},["LightEmission"]=0.25,["Brightness"]=8.25,["TextureLength"]=0.625},nil,{["Attachment1"]={2,2},["Attachment0"]={2,4}}},{"Beam","1.2",{["FaceCamera"]=true,["Width0"]=5,["CurveSize1"]=-6,["TextureSpeed"]=4,["CurveSize0"]=-2,["Segments"]=8,["Texture"]="rbxassetid://11110371162",["Transparency"]={"NS",{{0,1,0},{0.17638,0.9375,0},{0.23466,0.50625,0},{0.39264,0.18125,0},{0.59969,0.25,0},{1,1,0}}},["Color"]={"CS",{{0,1,0.094118,0.011765},{1,1,0.094118,0.011765}}},["LightEmission"]=0.25,["Brightness"]=8.25,["TextureLength"]=0.625},nil,{["Attachment1"]={2,7},["Attachment0"]={2,5}}},{"Beam","1.3",{["FaceCamera"]=true,["Width0"]=5,["CurveSize1"]=6,["TextureSpeed"]=4,["CurveSize0"]=3,["Segments"]=8,["Texture"]="rbxassetid://11110371162",["Transparency"]={"NS",{{0,1,0},{0.17638,0.9375,0},{0.23466,0.50625,0},{0.39264,0.18125,0},{0.60123,0.25,0},{1,1,0}}},["Color"]={"CS",{{0,1,0.094118,0.011765},{1,1,0.094118,0.011765}}},["LightEmission"]=0.25,["Brightness"]=8.25,["TextureLength"]=0.625},nil,{["Attachment1"]={2,7},["Attachment0"]={2,6}}},{"Beam","2",{["FaceCamera"]=true,["Width0"]=4,["Color"]={"CS",{{0,0,0,0},{1,0,0,0}}},["TextureSpeed"]=4,["ZOffset"]=0.01,["CurveSize0"]=2,["Segments"]=8,["Transparency"]={"NS",{{0,1,0},{0.17638,0.9375,0},{0.23466,0.50625,0},{0.39264,0.18125,0},{0.59969,0.2375,0},{1,1,0}}},["Texture"]="rbxassetid://11110368524",["CurveSize1"]=-8,["Brightness"]=0,["TextureLength"]=1.5},nil,{["Attachment1"]={2,2},["Attachment0"]={2,3}}},{"Beam","2.1",{["FaceCamera"]=true,["Width0"]=4,["Color"]={"CS",{{0,0,0,0},{1,0,0,0}}},["TextureSpeed"]=4,["ZOffset"]=0.01,["CurveSize0"]=-3,["Segments"]=8,["Transparency"]={"NS",{{0,1,0},{0.17638,0.9375,0},{0.23466,0.50625,0},{0.39264,0.18125,0},{0.60123,0.24375,0},{1,1,0}}},["Texture"]="rbxassetid://11110368524",["CurveSize1"]=7,["Brightness"]=0,["TextureLength"]=1.5},nil,{["Attachment1"]={2,2},["Attachment0"]={2,4}}},{"Beam","2.2",{["FaceCamera"]=true,["Width0"]=4,["Color"]={"CS",{{0,0,0,0},{1,0,0,0}}},["TextureSpeed"]=4,["ZOffset"]=0.01,["CurveSize0"]=-2,["Segments"]=8,["Transparency"]={"NS",{{0,1,0},{0.17638,0.9375,0},{0.23466,0.50625,0},{0.39264,0.18125,0},{0.60123,0.25,0},{1,1,0}}},["Texture"]="rbxassetid://11110368524",["CurveSize1"]=-6,["Brightness"]=0,["TextureLength"]=1.5},nil,{["Attachment1"]={2,7},["Attachment0"]={2,5}}},{"Beam","2.3",{["FaceCamera"]=true,["Width0"]=4,["Color"]={"CS",{{0,0,0,0},{1,0,0,0}}},["TextureSpeed"]=4,["ZOffset"]=0.01,["CurveSize0"]=3,["Segments"]=8,["Transparency"]={"NS",{{0,1,0},{0.17638,0.9375,0},{0.23466,0.50625,0},{0.39264,0.18125,0},{0.59969,0.25,0},{1,1,0}}},["Texture"]="rbxassetid://11110368524",["CurveSize1"]=6,["Brightness"]=0,["TextureLength"]=1.5},nil,{["Attachment1"]={2,7},["Attachment0"]={2,6}}}}},{"Attachment","1.1",{["CFrame"]={"CF",-0.049999,6.1,6,1,0,0,0,1,0,0,0,1},["Position"]={"V3",-0.049999,6.1,6}}},{"Attachment","1.2",{["CFrame"]={"CF",-4.3,-2.9,-4.75,1,0,0,0,1,0,0,0,1},["Position"]={"V3",-4.3,-2.9,-4.75}}},{"Attachment","1.3",{["CFrame"]={"CF",5.5359,-2.75,2.4557,0.9063,0,0.42264,0,1,0,-0.42264,0,0.9063},["Axis"]={"V3",0.9063,0,-0.42264},["Rotation"]={"V3",0,25.002,0},["Position"]={"V3",5.5359,-2.75,2.4557},["Orientation"]={"V3",0,25.002,0}}},{"Attachment","2.2",{["CFrame"]={"CF",0,0,3.8147e-06,0.087131,0,0.9962,0,1,0,-0.9962,0,0.087131},["Axis"]={"V3",0.087131,0,-0.9962},["Rotation"]={"V3",0,85.001,0},["Position"]={"V3",0,0,3.8147e-06},["Orientation"]={"V3",0,85.001,0}}},{"Attachment","finalaura",{},nil,nil,{{"ParticleEmitter","blackaura",{["Color"]={"CS",{{0,1,0.11373,0},{1,1,0.11373,0}}},["Drag"]=9,["ZOffset"]=-1,["VelocitySpread"]=360,["Lifetime"]={"NR",0.35,0.75},["Speed"]={"NR",2,8},["Brightness"]=0,["SpreadAngle"]={"V2",360,-360},["Enabled"]=false,["Acceleration"]={"V3",0,5,0},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",0,180},["Transparency"]={"NS",{{0,0.475,0},{0.29601,0.79375,0},{1,1,0}}},["LightEmission"]=-1,["Texture"]="rbxassetid://11115160312",["Size"]={"NS",{{0,0,3},{0.1,2.3101,3},{0.2,3.4079,3},{0.3,4.1825,3},{0.4,4.7577,3},{0.5,5.1892,3},{0.6,5.5087,3},{0.7,5.7369,3},{0.8,5.8882,3},{0.9,5.9732,3},{1,6,3}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}},{"ParticleEmitter","fireaura",{["Color"]={"CS",{{0,1,0.16471,0},{1,1,0.16471,0}}},["Drag"]=9,["ZOffset"]=1,["VelocitySpread"]=360,["Lifetime"]={"NR",0.45,0.45},["Speed"]={"NR",4,6},["Brightness"]=9.32,["SpreadAngle"]={"V2",360,-360},["Enabled"]=false,["Acceleration"]={"V3",0,3,0},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-180,180},["Transparency"]={"NS",{{0,0,0},{0.34816,0.6625,0},{1,1,0}}},["LightEmission"]=0.3,["Texture"]="rbxassetid://11115266741",["Size"]={"NS",{{0,0,1},{0.1,0.80498,1},{0.2,1.2466,1},{0.3,1.6039,1},{0.4,1.9121,1},{0.5,2.1839,1},{0.6,2.4242,1},{0.7,2.6337,1},{0.8,2.8092,1},{0.9,2.9408,1},{1,3,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}}}}}}},
         }
 
-        -- where each effect is anchored: "floor" (default), "root" (victim's root part) or "body" (every body part)
         local PLACE = {
             Stereo = { "floor", 5.91 }, Blackhole = { "root", 10 }, Heartbreak = { "floor", "half" },
             ["Galactic Pull"] = { "floor", "half" }, Cyberspace = { "root", 0 }, ["Glitter Bomb"] = { "root", 0 },
@@ -6871,6 +7432,123 @@ do
         }
 
         local live = {}
+
+        local TweenService = game:GetService("TweenService")
+        local BODY = {
+            Scorch = { kind = "material", material = Enum.Material.Pebble, color = Color3.fromRGB(61, 63, 71), strip = true },
+            Stone = { kind = "material", material = Enum.Material.Slate, color = Color3.fromRGB(99, 95, 98), strip = true },
+            ["Gold Statue"] = { kind = "material", material = Enum.Material.Glass, color = Color3.fromRGB(255, 196, 64), strip = true },
+            Fade = { kind = "fade", time = 1 },
+            Ghost = { kind = "fade", time = 2.5, start = 0.5 },
+            Shrink = { kind = "shrink", time = 3 },
+            Blackhole = { kind = "pull", time = 4 },
+        }
+        for _, name in ipairs({ "Aurora Burst", "Northern Aurora Burst", "Cosmic Strike", "Deleted", "Game Over", "Glitter Bomb", "Heartbreak", "Paper Surprise", "Soul Grasp", "Stereo", "Cyberspace", "Galactic Pull", "Infinite Portal" }) do
+            BODY[name] = { kind = "vanish" }
+        end
+        for _, name in ipairs({ "Stone", "Gold Statue", "Fade", "Ghost", "Shrink" }) do KILL_FX[name] = KILL_FX[name] or {} end
+
+        local function reactBody(name, character, point)
+            local rule = BODY[name]
+            if not rule or not character or not flag("ke_body", true) then return end
+            local root = character:FindFirstChild("HumanoidRootPart")
+            local list = {}
+            for _, d in ipairs(character:GetDescendants()) do
+                if d:IsA("BasePart") then table.insert(list, d) end
+            end
+            local kind = rule.kind
+            if kind == "material" then
+                for _, d in ipairs(character:GetDescendants()) do
+                    if d:IsA("BasePart") and d ~= root then
+                        pcall(function() d.Material, d.Color = rule.material, rule.color end)
+                    elseif rule.strip and (d:IsA("Clothing") or d:IsA("SurfaceAppearance") or d:IsA("Decal")) then
+                        pcall(function() d:Destroy() end)
+                    end
+                end
+            elseif kind == "vanish" then
+                for _, part in ipairs(list) do
+                    if part ~= root then pcall(function() part.Transparency = 1 end) end
+                end
+                for _, d in ipairs(character:GetDescendants()) do
+                    if d:IsA("Decal") or d:IsA("Texture") then pcall(function() d.Transparency = 1 end) end
+                end
+            elseif kind == "fade" then
+                for _, part in ipairs(list) do
+                    if part ~= root then
+                        pcall(function()
+                            if rule.start then part.Transparency = math.max(part.Transparency, rule.start) end
+                            TweenService:Create(part, TweenInfo.new(rule.time, Enum.EasingStyle.Linear), { Transparency = 1 }):Play()
+                        end)
+                    end
+                end
+            elseif kind == "shrink" or kind == "pull" then
+                local goal = { Size = Vector3.new(0.05, 0.05, 0.05) }
+                for _, part in ipairs(list) do
+                    if part ~= root then
+                        pcall(function()
+                            for _, child in ipairs(part:GetChildren()) do
+                                if child:IsA("SpecialMesh") then child:Destroy() end
+                            end
+                            local to = { Size = goal.Size }
+                            if kind == "pull" and point then
+                                part.Anchored = true
+                                to.Position = point
+                            end
+                            TweenService:Create(part, TweenInfo.new(rule.time, Enum.EasingStyle.Linear), to):Play()
+                            task.delay(rule.time, function() pcall(function() part.Transparency = 1 end) end)
+                        end)
+                    end
+                end
+            end
+        end
+
+        local BODY = {
+            Scorch = { material = "Pebble", color = { 61, 63, 71 } },
+            Lightning = { material = "Pebble", color = { 61, 63, 71 } },
+            Darkheart = { material = "Pebble", color = { 123, 31, 162 } },
+            Cyberspace = { material = "Neon", color = { 255, 255, 255 }, vanish = 1 },
+            Blackhole = { shrink = 4 },
+            Stereo = { vanish = 0.8 }, Deleted = { vanish = 0.6 }, ["Paper Surprise"] = { vanish = 0.8 },
+            ["Glitter Bomb"] = { vanish = 0.8 }, ["Cosmic Strike"] = { vanish = 0.8 }, Heartbreak = { vanish = 0.8 },
+            ["Game Over"] = { vanish = 1 }, ["Galactic Pull"] = { vanish = 1 }, ["Infinite Portal"] = { vanish = 1.5 },
+        }
+
+        local function reactBody(name, character, hole)
+            local rule = BODY[name]
+            if not rule or not character then return end
+            local TweenService = game:GetService("TweenService")
+            local parts = {}
+            for _, d in ipairs(character:GetDescendants()) do
+                if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" then parts[#parts + 1] = d end
+            end
+            if rule.material then
+                local color = Color3.fromRGB(table.unpack(rule.color))
+                for _, p in ipairs(parts) do
+                    p.Material = Enum.Material[rule.material]
+                    p.Color = color
+                end
+            end
+            if rule.shrink then
+                local info = TweenInfo.new(rule.shrink, Enum.EasingStyle.Linear)
+                for _, p in ipairs(parts) do
+                    p.Anchored = true
+                    for _, child in ipairs(p:GetChildren()) do
+                        if child:IsA("SpecialMesh") then child:Destroy() end
+                    end
+                    pcall(function() TweenService:Create(p, info, { Size = Vector3.new(0.1, 0.1, 0.1), Position = hole }):Play() end)
+                end
+                task.delay(rule.shrink, function()
+                    for _, p in ipairs(parts) do pcall(function() p.Transparency = 1 end) end
+                end)
+            end
+            if rule.vanish then
+                task.delay(rule.vanish, function()
+                    for _, p in ipairs(parts) do
+                        pcall(function() TweenService:Create(p, TweenInfo.new(0.6), { Transparency = 1 }):Play() end)
+                    end
+                end)
+            end
+        end
 
         local function decode(v)
             if type(v) ~= "table" then return v end
@@ -6894,7 +7572,6 @@ do
             return nil
         end
 
-        -- tuple = { class, name, props, attrs, refs, kids, invisible }
         local function build(tuple)
             local class, name, props = tuple[1], tuple[2], tuple[3]
             local okNew, inst = pcall(Instance.new, class)
@@ -7030,7 +7707,7 @@ do
                     place(rec, origin)
                     inst.Parent = container
                 elseif mode == "body" and inst:IsA("ParticleEmitter") and character then
-                    -- emitters that belong on the body: clone one onto every part of the victim
+
                     local count = 0
                     for _, part in ipairs(character:GetChildren()) do
                         if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" and count < 18 then
@@ -7058,6 +7735,12 @@ do
             container.Parent = workspace
             fire(container)
             track(container, duration)
+            pcall(reactBody, name, character, base)
+            if character and flag("ke_body", true) then
+                local look = root and root.CFrame.LookVector or Vector3.new(0, 0, -1)
+                local ok, err = pcall(reactBody, name, character, position - look * 5 + Vector3.new(0, 10, 0))
+                if not ok then warnf("kill effect body reaction failed:", err) end
+            end
         end
 
         local function victimCharacter(player)
@@ -7084,9 +7767,211 @@ do
         end)
     end)()
 
-    -- ======================================================================================
-    -- World: particle aura. Effects are cloned from the asset and parented to your parts.
-    -- ======================================================================================
+    ;(function()
+        local MUZZLE_FX = {
+        	["Blue Black Hole"] = {{"Wave2",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,0.294118,0.588235,1},{1,0.294118,0.588235,1}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=50,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,148.537,0},{1,99.619,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Flare",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.294118,0.588235,1},{1,0.294118,0.588235,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=16,RotSpeed={"NR",0,0},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,250,0},{1,250,0}}},Speed={"NR",0.01,0.01},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1847258023",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=-8}},
+        		{"Flare2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.294118,0.588235,1},{1,0.294118,0.588235,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=false,Orientation={"EV","ParticleOrientation",0},Rate=10,RotSpeed={"NR",8000,8000},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,200,0},{1,200,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",360,360},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1075864321",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.296211,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Aura",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.294118,0.588235,1},{1,0.294118,0.588235,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,29.934,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Aura",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.294118,0.588235,1},{1,0.294118,0.588235,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,2},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",100,200},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,44.1487,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084965356",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.75,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.294118,0.588235,1},{1,0.294118,0.588235,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=20,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,98.8713,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.294118,0.588235,1},{1,0.294118,0.588235,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,2},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=20,RotSpeed={"NR",75,150},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,107.448,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084965356",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.75,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"HITPE",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,0.294118,0.588235,1},{1,0.294118,0.588235,1}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=30,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,89.4061,0},{1,58.1735,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="http://www.roblox.com/asset/?id=7015983157",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Aura2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.294118,0.588235,1},{1,0.294118,0.588235,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",5,5},LightEmission=0.8,LightInfluence=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=7.5,RotSpeed={"NR",50,50},Rotation={"NR",-360,360},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,35,0},{1,35,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://6479250779",TimeScale=1,Transparency={"NS",{{0,1,0},{0.4,0.1,0},{0.924107,0.367568,0.0126488},{1,1,0}}},VelocityInheritance=0,ZOffset=1}}},
+        	["Gold Black Hole"] = {{"Wave2",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,1,0.392157,0},{1,1,1,0.784314}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=100,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,148.537,0},{1,99.619,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Flare",{Acceleration={"V3",0,0,0},Brightness=2,Color={"CS",{{0,1,0.588235,0.196078},{1,1,0.588235,0.196078}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=16,RotSpeed={"NR",0,0},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,250,0},{1,250,0}}},Speed={"NR",0.01,0.01},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1847258023",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=-8}},
+        		{"Flare2",{Acceleration={"V3",0,0,0},Brightness=2,Color={"CS",{{0,1,0.392157,0},{1,1,1,0.784314}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=false,Orientation={"EV","ParticleOrientation",0},Rate=10,RotSpeed={"NR",8000,8000},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,200,0},{1,200,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",360,360},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1075864321",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.296211,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.392157,0},{1,1,1,0.784314}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,98.8713,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.392157,0},{1,1,1,0.784314}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,2},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=20,RotSpeed={"NR",75,150},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,107.448,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084965356",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.75,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"HITPE",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,1,0.392157,0},{1,1,1,0.784314}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=30,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,89.4061,0},{1,58.1735,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="http://www.roblox.com/asset/?id=7015983157",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Aura2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.784314,0.392157},{1,1,0.784314,0.392157}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",5,5},LightEmission=0.8,LightInfluence=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=7.5,RotSpeed={"NR",50,50},Rotation={"NR",-360,360},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,35,0},{1,35,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://6479250779",TimeScale=1,Transparency={"NS",{{0,1,0},{0.4,0.1,0},{0.924107,0.367568,0.0126488},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Aura",{Acceleration={"V3",0,0,0},Brightness=0.5,Color={"CS",{{0,1,0.588235,0.196078},{1,1,0.588235,0.196078}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,29.934,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}}},
+        	["Orange Black Hole"] = {{"Wave2",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,1,0.392157,0.196078},{1,1,0.392157,0.196078}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=50,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,148.537,0},{1,99.619,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Flare",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.392157,0.196078},{1,1,0.392157,0.196078}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=16,RotSpeed={"NR",0,0},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,250,0},{1,250,0}}},Speed={"NR",0.01,0.01},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1847258023",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=-8}},
+        		{"Flare2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.392157,0.196078},{1,1,0.392157,0.196078}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=false,Orientation={"EV","ParticleOrientation",0},Rate=10,RotSpeed={"NR",8000,8000},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,200,0},{1,200,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",360,360},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1075864321",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.296211,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Aura",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.392157,0.196078},{1,1,0.392157,0.196078}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,29.934,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Aura",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.392157,0.196078},{1,1,0.392157,0.196078}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,2},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",100,200},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,44.1487,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084965356",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.75,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.392157,0.196078},{1,1,0.392157,0.196078}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=20,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,98.8713,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.392157,0.196078},{1,1,0.392157,0.196078}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,2},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=20,RotSpeed={"NR",75,150},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,107.448,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084965356",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.75,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"HITPE",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,1,0.392157,0.196078},{1,1,0.392157,0.196078}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=30,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,89.4061,0},{1,58.1735,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="http://www.roblox.com/asset/?id=7015983157",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Aura2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.392157,0.196078},{1,1,0.392157,0.196078}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",5,5},LightEmission=0.8,LightInfluence=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=7.5,RotSpeed={"NR",50,50},Rotation={"NR",-360,360},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,35,0},{1,35,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://6479250779",TimeScale=1,Transparency={"NS",{{0,1,0},{0.4,0.1,0},{0.924107,0.367568,0.0126488},{1,1,0}}},VelocityInheritance=0,ZOffset=1}}},
+        	["Purple Black Hole"] = {{"Wave2",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,0.490196,0.294118,1},{1,0.490196,0.294118,1}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=50,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,148.537,0},{1,99.619,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Flare",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.490196,0.294118,1},{1,0.490196,0.294118,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=16,RotSpeed={"NR",0,0},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,250,0},{1,250,0}}},Speed={"NR",0.01,0.01},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1847258023",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=-8}},
+        		{"Flare2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.490196,0.294118,1},{1,0.490196,0.294118,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=false,Orientation={"EV","ParticleOrientation",0},Rate=10,RotSpeed={"NR",8000,8000},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,200,0},{1,200,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",360,360},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1075864321",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.296211,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Aura",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.490196,0.294118,1},{1,0.490196,0.294118,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,29.934,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Aura",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.490196,0.294118,1},{1,0.490196,0.294118,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,2},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",100,200},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,44.1487,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084965356",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.75,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.490196,0.294118,1},{1,0.490196,0.294118,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=20,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,98.8713,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.490196,0.294118,1},{1,0.490196,0.294118,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,2},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=20,RotSpeed={"NR",75,150},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,107.448,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084965356",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.75,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"HITPE",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,0.490196,0.294118,1},{1,0.490196,0.294118,1}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=30,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,89.4061,0},{1,58.1735,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="http://www.roblox.com/asset/?id=7015983157",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Aura2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,0.490196,0.294118,1},{1,0.490196,0.294118,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",5,5},LightEmission=0.8,LightInfluence=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=7.5,RotSpeed={"NR",50,50},Rotation={"NR",-360,360},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,35,0},{1,35,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://6479250779",TimeScale=1,Transparency={"NS",{{0,1,0},{0.4,0.1,0},{0.924107,0.367568,0.0126488},{1,1,0}}},VelocityInheritance=0,ZOffset=1}}},
+        	["Red Black Hole"] = {{"Wave2",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,1,0.294118,0.294118},{1,1,0.294118,0.294118}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=50,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,148.537,0},{1,99.619,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Flare",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0,0},{1,1,0,0}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=16,RotSpeed={"NR",0,0},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,250,0},{1,250,0}}},Speed={"NR",0.01,0.01},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1847258023",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=-8}},
+        		{"Flare2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0,0},{1,1,0,0}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=false,Orientation={"EV","ParticleOrientation",0},Rate=10,RotSpeed={"NR",8000,8000},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,200,0},{1,200,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",360,360},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1075864321",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.296211,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.294118,0.294118},{1,1,0.294118,0.294118}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=20,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,98.8713,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.294118,0.294118},{1,1,0.294118,0.294118}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,2},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=20,RotSpeed={"NR",75,150},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,107.448,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084965356",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.75,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"HITPE",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,1,0.294118,0.294118},{1,1,0.294118,0.294118}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=30,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,89.4061,0},{1,58.1735,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="http://www.roblox.com/asset/?id=7015983157",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Aura2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.294118,0.294118},{1,1,0.294118,0.294118}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",5,5},LightEmission=0.8,LightInfluence=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=7.5,RotSpeed={"NR",50,50},Rotation={"NR",-360,360},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,35,0},{1,35,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://6479250779",TimeScale=1,Transparency={"NS",{{0,1,0},{0.4,0.1,0},{0.924107,0.367568,0.0126488},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Aura",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.294118,0.294118},{1,1,0.294118,0.294118}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,29.934,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Aura",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,0.294118,0.294118},{1,1,0.294118,0.294118}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,2},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",100,200},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,44.1487,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084965356",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.75,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"ParticleEmitter",{Acceleration={"V3",0,0,0},Brightness=0.125,Color={"CS",{{0,1,0.294118,0.294118},{1,1,0.294118,0.294118}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.128,0.128},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=100,RotSpeed={"NR",25,25},Rotation={"NR",-360,360},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,80.1872,0.600144},{1,60.9557,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0.75,0},{1,0.75,0}}},Texture="http://www.roblox.com/asset/?id=7015186994",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1.5}}},
+        	["White Black Hole"] = {{"Wave2",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,1,1,1},{1,1,1,1}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=100,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,148.537,0},{1,99.619,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Flare",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,1,1},{1,1,1,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=16,RotSpeed={"NR",0,0},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,250,0},{1,250,0}}},Speed={"NR",0.01,0.01},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1847258023",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=-8}},
+        		{"Flare2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,1,1},{1,1,1,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1},LightEmission=1,LightInfluence=0,LockedToPart=false,Orientation={"EV","ParticleOrientation",0},Rate=10,RotSpeed={"NR",8000,8000},Rotation={"NR",0,0},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,200,0},{1,200,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",360,360},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1075864321",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.296211,0.9,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=0.5,Color={"CS",{{0,1,1,1},{1,1,1,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,98.8713,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"Wave",{Acceleration={"V3",0,0,0},Brightness=0.5,Color={"CS",{{0,1,1,1},{1,1,1,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,2},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=20,RotSpeed={"NR",75,150},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,107.448,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084965356",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.75,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}},
+        		{"HITPE",{Acceleration={"V3",0,0,0},Brightness=0.25,Color={"CS",{{0,1,1,1},{1,1,1,1}}},Drag=5,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",0.3,0.3},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=30,RotSpeed={"NR",-720,720},Rotation={"NR",-720,720},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,89.4061,0},{1,58.1735,0}}},Speed={"NR",0,1},SpreadAngle={"V2",180,180},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="http://www.roblox.com/asset/?id=7015983157",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.499,0.1,0},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Aura2",{Acceleration={"V3",0,0,0},Brightness=1,Color={"CS",{{0,1,1,1},{1,1,1,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",5,5},LightEmission=0.8,LightInfluence=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=7.5,RotSpeed={"NR",50,50},Rotation={"NR",-360,360},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,35,0},{1,35,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://6479250779",TimeScale=1,Transparency={"NS",{{0,1,0},{0.4,0.1,0},{0.924107,0.367568,0.0126488},{1,1,0}}},VelocityInheritance=0,ZOffset=1}},
+        		{"Aura",{Acceleration={"V3",0,0,0},Brightness=0.5,Color={"CS",{{0,1,1,1},{1,1,1,1}}},Drag=0,EmissionDirection={"EV","NormalId",1},Enabled=true,FlipbookFramerate={"NR",1,1},FlipbookLayout={"EV","ParticleFlipbookLayout",0},FlipbookMode={"EV","ParticleFlipbookMode",0},FlipbookStartRandom=false,Lifetime={"NR",1,1.5},LightEmission=1,LightInfluence=0,LockedToPart=true,Orientation={"EV","ParticleOrientation",0},Rate=50,RotSpeed={"NR",250,500},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",0},ShapeInOut={"EV","ParticleEmitterShapeInOut",0},ShapePartial=1,ShapeStyle={"EV","ParticleEmitterShapeStyle",0},Size={"NS",{{0,29.934,0},{1,1,0}}},Speed={"NR",0,0},SpreadAngle={"V2",0,0},Squash={"NS",{{0,0,0},{1,0,0}}},Texture="rbxassetid://1084996536",TimeScale=0.1,Transparency={"NS",{{0,1,0},{0.5,0.4,0},{1,1,0}}},VelocityInheritance=0,ZOffset=0}}},
+        }
+
+        local ENUM_FOR = {}
+        local bag, built, lastKey, lastMuzzle = newBag(), {}, nil, nil
+        local flashToken = 0
+
+        local function decode(v)
+            if type(v) ~= "table" then return v end
+            local tag = v[1]
+            if tag == "V3" then return Vector3.new(v[2], v[3], v[4]) end
+            if tag == "V2" then return Vector2.new(v[2], v[3]) end
+            if tag == "NR" then return NumberRange.new(v[2], v[3]) end
+            if tag == "EV" then return Enum[v[2]]:FromValue(v[3]) end
+            return nil
+        end
+
+        local function settings()
+            return {
+                effect = flag("mz_effect", "Purple Black Hole"),
+                mode = flag("mz_mode", "While equipped"),
+                scale = flag("mz_size", 5) / 100,
+                alpha = flag("mz_alpha", 0),
+                roll = flag("mz_roll", 0),
+                custom = flag("mz_custom", false),
+                color = (Options.mz_color and typeof(Options.mz_color.Value) == "Color3") and Options.mz_color.Value or Color3.fromRGB(255, 80, 80),
+                x = flag("mz_x", 0), y = flag("mz_y", 0), z = flag("mz_z", 0),
+                rx = flag("mz_rx", 0), ry = flag("mz_ry", 0), rz = flag("mz_rz", 0),
+            }
+        end
+
+        local function keyOf(s)
+            return table.concat({ s.effect, s.mode, s.scale, s.alpha, s.roll, tostring(s.custom), tostring(s.color), s.x, s.y, s.z, s.rx, s.ry, s.rz }, "|")
+        end
+
+        local function heldMuzzle()
+            local char = LocalPlayer.Character
+            local tool = char and char:FindFirstChildOfClass("Tool")
+            if not tool then return nil end
+            local muzzle = tool:FindFirstChild("Muzzle", true)
+            if muzzle and muzzle:IsA("BasePart") then return muzzle end
+            local handle = tool:FindFirstChild("Handle")
+            if handle and handle:IsA("BasePart") then return handle end
+            return nil
+        end
+
+        local function recolor(r, g, b, color)
+            local luma = 0.299 * r + 0.587 * g + 0.114 * b
+            if luma < 0.12 then return Color3.new(r, g, b) end
+            if luma > 0.92 then return color:Lerp(Color3.new(1, 1, 1), 0.5) end
+            return color
+        end
+
+        local function makeEmitter(def, s)
+            local emitter = Instance.new("ParticleEmitter")
+            emitter.Name = def[1]
+            local k = s.scale
+            for key, value in pairs(def[2]) do
+                pcall(function()
+                    if type(value) == "table" and value[1] == "CS" then
+                        local points = {}
+                        for _, p in ipairs(value[2]) do
+                            local c = s.custom and recolor(p[2], p[3], p[4], s.color) or Color3.new(p[2], p[3], p[4])
+                            table.insert(points, ColorSequenceKeypoint.new(p[1], c))
+                        end
+                        emitter.Color = ColorSequence.new(points)
+                    elseif type(value) == "table" and value[1] == "NS" then
+                        local points = {}
+                        for _, p in ipairs(value[2]) do
+                            local v, env = p[2], p[3] or 0
+                            if key == "Size" then v, env = v * k, env * k end
+                            if key == "Transparency" and s.alpha > 0 then v = v + (1 - v) * s.alpha env = 0 end
+                            table.insert(points, NumberSequenceKeypoint.new(p[1], math.clamp(v, key == "Transparency" and 0 or -1e6, key == "Transparency" and 1 or 1e6), env))
+                        end
+                        emitter[key] = NumberSequence.new(points)
+                    elseif key == "Speed" then
+                        emitter.Speed = NumberRange.new(value[2] * k, value[3] * k)
+                    elseif key == "Acceleration" then
+                        emitter.Acceleration = Vector3.new(value[2] * k, value[3] * k, value[4] * k)
+                    elseif key == "Rotation" then
+                        emitter.Rotation = NumberRange.new(value[2] + s.roll, value[3] + s.roll)
+                    else
+                        emitter[key] = decode(value)
+                    end
+                end)
+            end
+            return emitter
+        end
+
+        local function clear()
+            for index = #built, 1, -1 do
+                pcall(function() built[index]:Destroy() end)
+                built[index] = nil
+            end
+        end
+
+        local function setEnabled(on)
+            for _, item in ipairs(built) do
+                if item:IsA("Attachment") then
+                    for _, e in ipairs(item:GetChildren()) do
+                        if e:IsA("ParticleEmitter") then e.Enabled = on end
+                    end
+                end
+            end
+        end
+
+        local function rebuild(muzzle, s)
+            clear()
+            lastMuzzle, lastKey = muzzle, keyOf(s)
+            local defs = MUZZLE_FX[s.effect]
+            if not (muzzle and defs) then return end
+            local attachment = Instance.new("Attachment")
+            attachment.Name = "AsterMuzzleFx"
+            attachment.CFrame = CFrame.new(s.x, s.y, s.z) * CFrame.Angles(math.rad(s.rx), math.rad(s.ry), math.rad(s.rz))
+            for _, def in ipairs(defs) do makeEmitter(def, s).Parent = attachment end
+            attachment.Parent = muzzle
+            built[1] = attachment
+            if s.mode == "On shot" then setEnabled(false) end
+        end
+
+        table.insert(ShotEvents.shot, function()
+            if not isOn("mz_enabled") or flag("mz_mode", "While equipped") ~= "On shot" then return end
+            flashToken += 1
+            local token = flashToken
+            setEnabled(true)
+            task.delay(flag("mz_flash", 0.25), function()
+                if token == flashToken then setEnabled(false) end
+            end)
+        end)
+
+        feature("mz_enabled", function()
+            bag.add(RunService.Heartbeat:Connect(function()
+                local muzzle = heldMuzzle()
+                local s = settings()
+                if muzzle ~= lastMuzzle or keyOf(s) ~= lastKey or (muzzle and not (built[1] and built[1].Parent == muzzle)) then
+                    local ok, err = pcall(rebuild, muzzle, s)
+                    if not ok then warnf("muzzle effect failed:", err) lastKey = keyOf(s) end
+                end
+            end))
+        end, function()
+            bag.clear()
+            clear()
+            lastKey, lastMuzzle = nil, nil
+        end)
+
+        onUnload(function()
+            bag.clear()
+            clear()
+        end)
+    end)()
+
     ;(function()
         local bag, active, busy = newBag(), {}, false
         local SOURCES = {
@@ -7140,39 +8025,45 @@ do
             ["Left Leg"] = "LeftUpperLeg", ["Right Leg"] = "RightUpperLeg",
         }
 
-        -- Pack auras: the pack is loaded once and each dummy rig is looked up by name. Every part of the rig that
-        -- carries effects gives its particles, beams and lights to the character part with the same name
-        -- (R6 and R15 names map onto each other); effect parts with no match go onto the root part.
         local FX_CLASS = { ParticleEmitter = true, Beam = true, Trail = true, PointLight = true, SpotLight = true, SurfaceLight = true, Sparkles = true, Fire = true, Smoke = true }
-        local packRigs = {} -- pack id -> { rig name -> rig model }
+        local packRigs = {}
         local function packRig(entry)
             local id = type(entry) == "table" and entry.id or AURA_PACK.id
             local rigName = type(entry) == "table" and entry.rig or entry
             if not packRigs[id] then
                 local ok, objects = pcall(function() return game:GetObjects("rbxassetid://" .. id) end)
                 if not ok or type(objects) ~= "table" then return nil end
-                local rigs = {}
+                local rigs, loose = {}, {}
                 for _, root in ipairs(objects) do
                     for _, d in ipairs(root:GetDescendants()) do
-                        if d:IsA("Model") and not rigs[d.Name] and d:FindFirstChildOfClass("Humanoid") then rigs[d.Name] = d end
+                        if d:IsA("Model") and not rigs[d.Name] and (d:FindFirstChildOfClass("Humanoid") or d:FindFirstChild("HumanoidRootPart")) then
+                            rigs[d.Name] = d
+                        elseif d:IsA("BasePart") and not loose[d.Name] and d:FindFirstChildWhichIsA("Attachment") then
+                            loose[d.Name] = d
+                        end
                     end
                 end
                 packRigs[id] = rigs
+                packRigs[-id] = loose
             end
+            if type(entry) == "table" and entry.part then return packRigs[-id][entry.part], true end
             return packRigs[id][rigName]
         end
+        Actions.packRig = function(entry) return (packRig(entry)) end
 
         local function applyPack(char, rigName)
-            local rig = packRig(rigName)
+            local rig, isLoose = packRig(rigName)
             if not rig then
-                warnf("particle aura: pack or aura not found:", type(rigName) == "table" and rigName.rig or rigName)
+                warnf("particle aura: pack or aura not found:", type(rigName) == "table" and (rigName.rig or rigName.part) or rigName)
                 pcall(function() Library:Notify("Aura could not be loaded", 4) end)
                 return
             end
             local keepColors = flag("pa_pack_original", true)
             local root = char:FindFirstChild("HumanoidRootPart")
             local attached = 0
-            for _, part in ipairs(rig:GetDescendants()) do
+            local partList = rig:GetDescendants()
+            if isLoose then table.insert(partList, 1, rig) end
+            for _, part in ipairs(partList) do
                 if part:IsA("BasePart") then
                     local children, any = {}, false
                     for _, child in ipairs(part:GetChildren()) do
@@ -7237,12 +8128,10 @@ do
             local ok, objects = pcall(function() return game:GetObjects(id) end)
             model = ok and objects and objects[1]
             if not model then warnf("particle aura asset could not be loaded") return end
-            -- Same matching as SillyScripts (model part name = character part name). Aura models are often built
-            -- for the other rig type, so R15 names also map onto the R6 body (and back) and a model that matches
-            -- nothing is attached to the root part instead of doing nothing.
+
             local function attach(part, target)
                 for _, child in ipairs(part:GetChildren()) do
-                    if child:IsA("LuaSourceContainer") then continue end -- never copy scripts onto the character
+                    if child:IsA("LuaSourceContainer") then continue end
                     local clone = child:Clone()
                     for _, d in ipairs(clone:GetDescendants()) do
                         if d:IsA("LuaSourceContainer") then d:Destroy() end
@@ -7253,7 +8142,7 @@ do
                     active[#active + 1] = clone
                 end
             end
-            local strict = flag("pa_source", "angel") == "angel" -- angel keeps SillyScripts' exact matching
+            local strict = flag("pa_source", "angel") == "angel"
             local used, attached = {}, 0
             for _, part in ipairs(model:GetChildren()) do
                 if part:IsA("BasePart") then
@@ -7306,13 +8195,8 @@ do
         end)
     end)()
 
-    -- ======================================================================================
-    -- Teleport: get guns and items
-    -- ======================================================================================
     ;(function()
-        -- The pickup instances are replaced after someone takes them, and their names carry a number, so the
-        -- pickup is looked up again on every request (by name, then by the cleaned-up name) and the character is
-        -- moved to where that pickup really is. The fixed position is only the fallback.
+
         local WEAPONS = {
             ["AK-47"] = { cframe = CFrame.new(-931.86, 92.2, 2039.39), item = "AK47_7", keys = { "ak47", "ak" }, tool = { "AK-47", "AK47" } },
             ["Remington 870"] = { cframe = CFrame.new(820.45, 100.8, 2229.68), item = "r870_2", keys = { "r870", "remington870", "remington" }, tool = { "Remington 870", "Remington" } },
@@ -7433,9 +8317,6 @@ do
             return got
         end
 
-        -- Weapons come from the game's own giver remote (ReplicatedStorage.Remotes.GiverPressed): free guns are
-        -- TouchGiver models you stand on, the rest are click models. The remote is fired at the giver
-        -- every frame while the character stands at the pickup, then the character goes home on the next render.
         local CollectionService = game:GetService("CollectionService")
         local GIVERS = {
             ["AK-47"] = { method = "touch", stand = CFrame.new(-931.7928, 81.2783, 2039.2554), pivot = v3(-931.7928, 91.2783, 2039.2554), needles = { "ak-47", "ak47" }, tool = { "AK-47", "AK47" } },
@@ -7520,9 +8401,6 @@ do
             return found
         end
 
-        -- The game's own click handler fires GiverPressed with the clicked part's Parent, and only when that
-        -- parent is tagged "Giver" or "TouchGiver". So the tagged model, found by its ToolName attribute, is
-        -- the right argument; the old name scan is only a fallback for a giver that is not tagged.
         local function taggedGiverFor(entry)
             local best, bestDist = nil, math.huge
             local _, _, root = localParts()
@@ -7566,7 +8444,6 @@ do
             return best
         end
 
-        -- Why the server would refuse: the giver is limited to some teams and may need a gamepass.
         local function refusalReason(target)
             if not target then return "giver not found (walk closer so it loads)" end
             local model = CollectionService:HasTag(target, "Giver") and target or target.Parent
@@ -7701,9 +8578,6 @@ do
         end)
     end)()
 
-    -- ======================================================================================
-    -- Fling cars: throws the Squad car at the nearest player (SillyScripts)
-    -- ======================================================================================
     do
         local bag, saved, car = newBag(), {}, nil
         feature("misc_fling_cars", function()
@@ -7749,10 +8623,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Invisibility: animation freeze (SillyScripts). The animation ids come from their build;
-    -- they could not be checked here, so behavior depends on the game still accepting them.
-    -- ======================================================================================
     do
         local bag, animTrack, token = newBag(), nil, 0
         local held, saved, autoRotate, platform = nil, {}, nil, nil
@@ -7765,7 +8635,6 @@ do
             end
         end
 
-        -- put the body back the way it was
         local function letGo()
             for part, value in pairs(saved) do pcall(function() part.CanCollide = value end) end
             table.clear(saved)
@@ -7813,9 +8682,7 @@ do
                 held, autoRotate, platform = nil, nil, nil
                 task.delay(0.8, function() if my == token then start() end end)
             end))
-            -- The frozen pose hangs below the character, so tilting the character to look up puts that
-            -- pose under the map. The body is pinned in place (no velocity, no collisions, no humanoid
-            -- forces) so the physics engine cannot throw it around while it is tilted.
+
             bag.add(stepSignal:Connect(function(dt)
                 if not flag("misc_invis_under", true) then
                     if held then letGo() end
@@ -7861,12 +8728,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Walk speed: a fixed speed or an automatic one for the area you are in, and no acceleration.
-    -- Areas: outside the prison compound, in the prison area (open ground inside the fences) and
-    -- inside the prison (anything with a roof over it). The compound is the box around the
-    -- electric fences in workspace.Prison_Fences; a fixed box is used when they cannot be found.
-    -- ======================================================================================
     do
         local bag = newBag()
         local FALLBACK_MIN, FALLBACK_MAX = v3(690, -50, 2170), v3(1010, 600, 2620)
@@ -7922,7 +8783,6 @@ do
             return { FALLBACK_MIN, FALLBACK_MAX, "fixed box" }
         end
 
-        -- "inside", "yard" or "outside"
         Actions.area = function(position)
             local now = clock()
             if not bounds or now - boundsAt > 30 then
@@ -7998,7 +8858,7 @@ do
                 if isOn("misc_fly") or isOn("misc_speed") or isOn("misc_invis") then return end
                 local velocity = root.AssemblyLinearVelocity
                 local flat = v3(velocity.X, 0, velocity.Z).Magnitude
-                -- something else is pushing you (a fling, an explosion): leave it alone
+
                 if flat > math.max(hum.WalkSpeed * 1.6, 45) then return end
                 local direction = hum.MoveDirection
                 if direction.Magnitude > 0.05 then
@@ -8010,9 +8870,6 @@ do
         end, function() bag.clear() end)
     end
 
-    -- ======================================================================================
-    -- Movement: jump multiplier, spinbot
-    -- ======================================================================================
     do
         local bag, original = newBag(), nil
         feature("misc_jumpmult", function()
@@ -8075,9 +8932,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Vehicle fly and vehicle speed
-    -- ======================================================================================
     do
         local bag, welds, lastSeat, inCar, up, down = newBag(), {}, nil, false, 0, 0
         feature("misc_vfly", function()
@@ -8173,12 +9027,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Server position: what the server and other players see can differ from where you stand.
-    -- At the end of the physics step the character is moved to the server position (that is what
-    -- gets sent) and at the start of the next frame it is put back (what you see and walk on).
-    -- Desync and wallbang assist both use it. A highlighted copy of your character shows the spot.
-    -- ======================================================================================
     do
         local SP = Actions.sp
         local requests, order = {}, { "assist", "desync" }
@@ -8193,12 +9041,11 @@ do
         rayParams.FilterType = Enum.RaycastFilterType.Exclude
         rayParams.RespectCanCollide = true
 
-        -- the position you really stand at, even right after the server position was applied
         function SP.realPos(root)
             if applied and realCF then return realCF.Position end
             return root.Position
         end
-        -- the position shots are measured from: the server position while one is set
+
         function SP.shooter(root)
             return SP.pos or SP.realPos(root)
         end
@@ -8245,7 +9092,6 @@ do
             return current + delta * (step / distance)
         end
 
-        -- ghost: a copy of your character parts, moved by the same offset, with a Highlight ----
         local ghost = { model = nil, highlight = nil, parts = {}, char = nil, count = 0, checked = 0, line = nil }
 
         local function hideGhost()
@@ -8276,7 +9122,7 @@ do
                         clone.CanQuery = false
                         clone.CastShadow = false
                         clone.Massless = true
-                        clone.Transparency = 0 -- rendered like a real character, so the Highlight always draws (same as self chams)
+                        clone.Transparency = 0
                         clone.Material = Enum.Material.SmoothPlastic
                         clone.Parent = model
                         ghost.parts[#ghost.parts + 1] = { d, clone }
@@ -8344,7 +9190,6 @@ do
             end
         end
 
-        -- the engine ---------------------------------------------------------------------
         local function onHeartbeat(dt)
             local _, _, root = localParts()
             if not root or isOn("misc_invis") then
@@ -8382,7 +9227,7 @@ do
             if not applied then return end
             local char = LocalPlayer.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
-            -- something else moved the character in between (a teleport, a respawn): leave that alone
+
             if root and realCF and (root.Position - applied.Position).Magnitude < 0.5 then
                 root.CFrame = realCF
             end
@@ -8419,13 +9264,12 @@ do
             pcall(function() RunService:UnbindFromRenderStep(GHOST) end)
             destroyGhost()
         end
-        -- fn(root, realPosition) returns the position to show the server, the speed to move there
-        -- at (studs per second) and a style table for the ghost (or nil for no ghost)
+
         function SP.enable(name, fn)
             requests[name] = fn
             startEngine()
         end
-        -- the server position glides back to yours before the engine stops
+
         function SP.disable(name)
             requests[name] = nil
         end
@@ -8441,7 +9285,6 @@ do
             if ghost.line then pcall(function() ghost.line:Remove() end) ghost.line = nil end
         end)
 
-        -- desync -------------------------------------------------------------------------
         local function desyncRequest(_, realPos)
             local goal
             if flag("misc_desync_style", "Offset") == "Void" then
@@ -8468,13 +9311,9 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Combat: aim assist, silent aim (with wallbang), triggerbot and FOV circles
-    -- ======================================================================================
     ;(function()
         local rand = Random.new()
 
-        -- selected values of a multi dropdown (array of names or a name-keyed set)
         local function has(value, key)
             if type(value) ~= "table" then return value == key end
             if value[key] == true then return true end
@@ -8501,7 +9340,6 @@ do
             return UserInputService:GetMouseLocation()
         end
 
-        -- gun functions (found through the game's own input connection, as Vape does) ------
         local Gun = { shoot = nil, cast = nil }
 
         local function functionName(fn)
@@ -8550,7 +9388,6 @@ do
             return ok2 and tostring(src) or ""
         end
 
-        -- SillyScripts finds castRay by name and source in the garbage collector
         local function findCastByGc()
             local function accept(fn)
                 if type(fn) ~= "function" then return false end
@@ -8614,7 +9451,6 @@ do
             end)
         end
 
-        -- target selection ---------------------------------------------------------------
         local sight = RaycastParams.new()
         sight.FilterType = Enum.RaycastFilterType.Exclude
         sight.RespectCanCollide = true
@@ -8635,7 +9471,6 @@ do
             return head, body
         end
 
-        -- returns entity, part, screenDistance
         local function selectTarget(prefix, ref, from, opts)
             opts = opts or {}
             local cam = Camera()
@@ -8693,7 +9528,6 @@ do
             return bestEntity, bestPart, bestDist
         end
 
-        -- FOV circles (Drawing, with an Instance fallback when Drawing is unavailable) ------
         local function newCircle()
             local circle, drawing, gui, frame, stroke = {}, nil, nil, nil, nil
             if Drawing and type(Drawing.new) == "function" then
@@ -8779,7 +9613,6 @@ do
             for _, circle in pairs(circles) do circle.destroy() end
         end)
 
-        -- aim assist ---------------------------------------------------------------------
         do
             local name = "TS_AimAssist"
             local lockedPlayer, acquiredAt, lastPlayer = nil, 0, nil
@@ -8862,7 +9695,6 @@ do
             end)
         end
 
-        -- wallbang: looks for a shot origin and a hit point that have a clear line to the target ----
         local WB = { cache = {}, ray = RaycastParams.new(), overlap = OverlapParams.new(), history = {}, moved = 0 }
         WB.ray.FilterType = Enum.RaycastFilterType.Exclude
         WB.overlap.FilterType = Enum.RaycastFilterType.Exclude
@@ -8917,7 +9749,6 @@ do
             return math.clamp(flag("wb_radius", 6), 1, 10)
         end
 
-        -- direction from the shooter to the target on the ground plane
         local function lookFlat(shooterPos, targetPos)
             local flatDelta = (shooterPos - targetPos) * FLAT
             if flatDelta.Magnitude > 0.001 then
@@ -8926,7 +9757,6 @@ do
             return v3(0, 0, -1)
         end
 
-        -- spots beside the target's body on the side that faces the shooter (the server accepts hits a few studs off the body)
         local function pointsAround(center, look, scales)
             local list = {}
             for _, normalId in ipairs(Enum.NormalId:GetEnumItems()) do
@@ -8941,7 +9771,6 @@ do
             return list
         end
 
-        -- spots around the shooter that are not behind the shooter
         local function originsAround(center, look, scales, sets)
             local list = {}
             for _, scale in ipairs(scales) do
@@ -8965,9 +9794,6 @@ do
             return list
         end
 
-        -- first (target, origin) pair that has a clear line between them
-        -- a spot only counts when it can deal damage: the origin close enough to you, the hit point close
-        -- enough to the target's body and the shot inside the gun's range (set by wallbangPlan)
         WB.filter = nil
         function WB.accept(origin, target)
             local f = WB.filter
@@ -8993,15 +9819,10 @@ do
             for _, item in ipairs(list) do into[#into + 1] = item end
         end
 
-        -- The methods. Each one gets the shooter position, the target part position, the point on the
-        -- wall that blocks the line (or nil), the centre of the target's body and the "use hitbox" setting,
-        -- and returns an origin and a target when it found a line.
         local METHODS = {}
-        -- names saved by earlier builds
+
         local LEGACY = { ["awp"] = "Aster Origin", ["awp v2"] = "Aster Reach", ["awp v2.1"] = "Aster Precise" }
 
-        -- Vape V4: the wall point if it is close, else origins one radius around you and points 7.4 studs
-        -- around the target's root
         METHODS["Vape V4"] = function(shooter, target, surface, center, hitbox)
             local reach = radius() - math.min(WB.moved, 1)
             local look = lookFlat(shooter, target)
@@ -9018,7 +9839,6 @@ do
             return firstClear(targets, origins)
         end
 
-        -- Aster Origin: more origins (also straight up), the closest ones first
         METHODS["Aster Origin"] = function(shooter, target, surface, center, hitbox)
             local reach = radius() - math.min(WB.moved, 1)
             local look = lookFlat(shooter, target)
@@ -9031,7 +9851,6 @@ do
             return firstClear(targets, origins)
         end
 
-        -- Aster Reach: origins and hit points up to twice the radius away (goes through more walls, less accurate)
         METHODS["Aster Reach"] = function(shooter, target, surface, center, hitbox)
             local reach = radius()
             local look = lookFlat(shooter, target)
@@ -9042,9 +9861,6 @@ do
             return firstClear(targets, origins)
         end
 
-        -- Aster Precise: works the origins out from the line to the target. The free spot in front of every wall
-        -- on that line, spots on the line itself and a few beside it are ranked by how far they are from
-        -- you; everything within the radius is tried first, then up to twice the radius.
         METHODS["Aster Precise"] = function(shooter, target, surface, center, hitbox)
             local reach = radius()
             local look = lookFlat(shooter, target)
@@ -9094,7 +9910,6 @@ do
             return firstClear(targets, near)
         end
 
-        -- other body parts to try when the aimed part cannot be reached
         local ALT_PARTS = { "Head", "UpperTorso", "Torso", "LowerTorso", "HumanoidRootPart", "LeftUpperArm", "RightUpperArm",
             "Left Arm", "Right Arm", "LeftUpperLeg", "RightUpperLeg", "Left Leg", "Right Leg" }
         local function altParts(char, except)
@@ -9106,7 +9921,6 @@ do
             return list
         end
 
-        -- "clear" when the shot already has a line, "moved", newOrigin, newTarget when a path was found, nil when none
         local function wallbangPlan(origin, part, root, override)
             local position = part.Position
             local cached
@@ -9117,7 +9931,6 @@ do
             local blocked = workspace:Raycast(position, origin - position, WB.ray)
             if not blocked and not workspace:Raycast(origin, position - origin, WB.ray) then return "clear" end
 
-            -- the shooter is where the server sees you (the assist or a desync may have moved it)
             local shooter = override or Actions.sp.shooter(root)
             local anchor = part.Parent and part.Parent:FindFirstChild("HumanoidRootPart")
             local center = anchor and anchor.Position or position
@@ -9131,7 +9944,6 @@ do
             } or nil
             local newOrigin, newTarget = scan(shooter, position, blocked and (blocked.Position + blocked.Normal * 0.01) or nil, center, flag("wb_hitbox", true))
 
-            -- the two long reach methods keep looking: ground points along the line, then a column above you
             if not newOrigin and (method == "Aster Reach" or method == "Aster Precise") then
                 local delta = position - shooter
                 local dist = delta.Magnitude
@@ -9168,7 +9980,6 @@ do
             return nil
         end
 
-        -- refreshes the ignore list and drops the cache now and then (shared by everything that asks)
         WB.lastTick = 0
         function WB.tick()
             local now = clock()
@@ -9179,7 +9990,6 @@ do
             end
         end
 
-        -- "visible", "wallbang" or "blocked" for a shot from `origin` at `part`; `shooter` overrides where the server sees you
         function WB.status(origin, part, shooter)
             local _, _, root = localParts()
             if not root or not part or not part.Parent then return "blocked" end
@@ -9189,7 +9999,6 @@ do
             return "blocked"
         end
 
-        -- castRay hook: shared by silent aim, hit effects and auto taze ----------------------
         do
             local bag = newBag()
             local hookedCast, original = nil, nil
@@ -9208,7 +10017,6 @@ do
             local function redirect(...)
                 local origin = ...
 
-                -- a shot the script asked for (auto taze): report the chosen part directly
                 local force = Gun.force
                 if force then
                     Gun.force = nil
@@ -9217,7 +10025,7 @@ do
 
                 if typeof(origin) ~= "Vector3" then return original(...) end
                 local silentOn = wants.silent and silentActive()
-                -- without silent aim, wallbang assist sends the shot at the target it holds
+
                 local A = Actions.sp.assist
                 local assisted = not silentOn and wants.assist and A.part ~= nil and A.part.Parent ~= nil and clock() < (A.partUntil or 0)
                 if not silentOn and not assisted then return original(...) end
@@ -9275,8 +10083,6 @@ do
                     results = table.pack(original(...))
                 end
 
-                -- the gun controller sends its own copy of the origin to the server, so the register that
-                -- holds it is rewritten (found by the function it belongs to, like SillyScripts does)
                 local fromPos, toPos = lastOrigin, lastNew
                 if fromPos and toPos and type(debug) == "table" and type(debug.getstack) == "function" and type(debug.setstack) == "function" then
                     local replaced = 0
@@ -9336,7 +10142,6 @@ do
                 return true
             end
 
-            -- keeps the hook in place while anything wants it, and puts the original back when nothing does
             local function refresh()
                 loopToken += 1
                 local mine = loopToken
@@ -9375,7 +10180,7 @@ do
                 wants.auto = on and true or false
                 refresh()
             end
-            -- fire the equipped gun through the game's own code, with castRay reporting `part`
+
             Actions.fireAt = function(part, position)
                 if not part or not part.Parent then return false end
                 if not hookedCast then
@@ -9416,7 +10221,7 @@ do
                                 ignoreDown = data and data.Behavior == "Taser",
                                 skipWall = flag("silent_wallbang", false),
                             })
-                            -- only fire when the target can be hit: in plain sight or through a wall
+
                             if entity and part and flag("silent_wallbang", false) and flag("silent_autofire_check", true) then
                                 WB.tick()
                                 if WB.status(head.Position, part) == "blocked" then entity = nil end
@@ -9444,7 +10249,6 @@ do
             end)
         end
 
-        -- triggerbot ---------------------------------------------------------------------
         do
             local bag = newBag()
             local params = RaycastParams.new()
@@ -9501,9 +10305,6 @@ do
             end)
         end
 
-        -- wallbang assist: moves the position the server sees up to (or into) the wall in front of an enemy near
-        -- your cursor that you cannot hit from where you stand. It does not need silent aim. When it holds a target
-        -- the shot is sent at that target (that is what makes the wallbang happen without silent aim).
         do
             local bag = newBag()
             local A = Actions.sp.assist
@@ -9518,7 +10319,6 @@ do
                 return clock() - (Actions.lastAutoShot or -10) < 0.4
             end
 
-            -- returns the position to show the server (or nil) and the part that is wallbangable from there
             local function evaluate()
                 local char, _, root = localParts()
                 if not char or not root or typing() then return nil end
@@ -9549,9 +10349,9 @@ do
                     local part = candidates[index].e.Head
                     local status = WB.status(origin, part, realPos)
                     if status == "visible" then
-                        return nil -- you are aiming at someone you can already hit
+                        return nil
                     elseif status == "wallbang" then
-                        return nil, part -- nothing to move, but the shot can still go through
+                        return nil, part
                     end
                     local delta = part.Position - realPos
                     local distance = delta.Magnitude
@@ -9562,7 +10362,7 @@ do
                             local unit = delta / distance
                             local point = flag("wb_assist_inside", false) and (hit.Position + unit * 1.5) or (hit.Position - unit * 1.2)
                             local goal = v3(point.X, realPos.Y + math.clamp(point.Y - realPos.Y, -4, 4), point.Z)
-                            -- only worth moving when the shot has a line from there
+
                             if WB.status(goal + headOffset, part, goal) ~= "blocked" then return goal, part end
                         end
                     end
@@ -9584,8 +10384,6 @@ do
                 if part then A.part, A.partUntil = part, now + 0.35 end
             end
 
-            -- "Velocity" method: no CFrame is written. The character is pushed to the spot with its own velocity,
-            -- parts around it stop colliding while it travels (like Phase in Part mode), and it walks back afterwards.
             local M = { home = nil, holdUntil = 0, heading = ZERO, modified = {} }
             local overlap = OverlapParams.new()
             overlap.FilterType = Enum.RaycastFilterType.Exclude
@@ -9691,7 +10489,6 @@ do
             end)
         end
 
-        -- indicators: the wallbang state of enemies, and a reload progress bar -------------------------
         do
             local function pick(name, fallbackColor, fallbackAlpha)
                 local object = Options[name]
@@ -9713,7 +10510,6 @@ do
                 if object then pcall(function() object.Visible = false object:Remove() end) end
             end
 
-            -- wallbang indicator ---------------------------------------------------------------
             local bag = newBag()
             local cursorText, pool, states, budget, warned = nil, {}, {}, 0, false
             local LABELS = { visible = "visible", wallbang = "wallbangable", blocked = "not wallbangable" }
@@ -9834,7 +10630,6 @@ do
                 hideTexts()
             end)
 
-            -- reload indicator: a progress bar under the cursor while the gun reloads ----------------
             local reloadBag = newBag()
             local back, fill, label, reloadWarned = nil, nil, nil, false
             local RELOAD_FALLBACK = { ["AK-47"] = 2, FAL = 2, M4A1 = 2, M9 = 2, MP5 = 2, ["Remington 870"] = 3.5, Taser = 3.4, M700 = 3, Revolver = 3 }
@@ -9910,7 +10705,6 @@ do
                 hideReload()
             end)
 
-            -- server bullet count: the CurrentAmmo attribute is the server's count, Local_CurrentAmmo is what your game predicts ----
             local ammoBag = newBag()
             local ammoLabel, ammoWarned = nil, false
             local function ammoStep()
@@ -9986,11 +10780,6 @@ do
         end
     end)()
 
-
-    -- ======================================================================================
-    -- Disabler: turns off the game's CanCollide listener on your Head so Phase (Character
-    -- mode) is not caught. Humanoid spoofer: writes a fake state to the network replication.
-    -- ======================================================================================
     do
         local bag, disabled = newBag(), nil
         local function disable(char)
@@ -10022,9 +10811,6 @@ do
         end)
     end
 
-    -- ======================================================================================
-    -- Infinite jump and click teleport
-    -- ======================================================================================
     do
         local bag = newBag()
         feature("misc_infjump", function()
@@ -10062,10 +10848,6 @@ do
         end, function() bag.clear() end)
     end
 
-    -- ======================================================================================
-    -- Shot fallback for hit sounds, notifications and hit effects: when the tracer hook did not
-    -- report a shot, the drop in the gun's ammo is used to detect it instead.
-    -- ======================================================================================
     ;(function()
         local lastTool, lastAmmo
         local params = RaycastParams.new()
@@ -10093,7 +10875,7 @@ do
             if tool and type(ammo) == "number" and type(lastAmmo) == "number" and ammo < lastAmmo then
                 local stamp = clock()
                 task.delay(0.12, function()
-                    if (ShotEvents.last or 0) >= stamp - 0.1 then return end -- the tracer hook already reported it
+                    if (ShotEvents.last or 0) >= stamp - 0.1 then return end
                     local fire = ShotEvents.fire
                     local cam = Camera()
                     if not fire or not cam then return end
@@ -10107,11 +10889,6 @@ do
         end))
     end)()
 
-    -- ======================================================================================
-    -- Kick exploit (Vape): throws vehicles you own the physics of at other players. It needs
-    -- isnetworkowner and sethiddenproperty. The controls live in the Players tab:
-    -- fling the selected player once, loop the selected player, or loop everyone.
-    -- ======================================================================================
     do
         local bag = newBag()
         local didClick, lastFling, current = {}, {}, setmetatable({}, { __mode = "k" })
@@ -10126,8 +10903,6 @@ do
                 and position.Z > PRISON_MIN.Z and position.Z < PRISON_MAX.Z
         end
 
-        -- A player who reset or died leaves their body parts in the world (Head, Torso, arms, legs). Each dead
-        -- player becomes a target whose Root is one of those parts, a different one on every pick.
         local partTurn = {}
         local function deadEntities()
             local list = {}
@@ -10212,7 +10987,6 @@ do
                 local _, hum, root = localParts()
                 if not root then return end
 
-                -- velocity protection: the flung cars must not carry you away with them
                 if flag("misc_kick_velprot", true) and not hum.SeatPart and root.AssemblyLinearVelocity.Magnitude > 120 then
                     root.AssemblyLinearVelocity = ZERO
                     root.AssemblyAngularVelocity = ZERO
@@ -10311,7 +11085,6 @@ do
         feature("misc_kick_sel", acquire, release)
         feature("misc_kick_all", acquire, release)
 
-        -- the button: fling the selected player for a few seconds
         Actions.kickOnce = function()
             if not Players:FindFirstChild(flag("Player_Selected", "")) then say("Select a player first") return end
             local running = onceUntil > clock()
@@ -10329,7 +11102,6 @@ do
         end)
     end
 
-    -- watcher: starts and stops features as their toggles change --------------------------
     track(RunService.Heartbeat:Connect(function()
         for _, f in ipairs(features) do
             setActive(f, readFlag(f.flag, false) == true)

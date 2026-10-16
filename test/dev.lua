@@ -4838,11 +4838,11 @@ do
         local spoofSize = Vector2.new(600, 680)
         local SPOOF_MIN = Vector2.new(440, 500)
 
-        local useMirror = false
+        local preferOriginal = false
         local function httpJson(url)
             local lastStatus, lastMessage
             local mirror = (string.gsub(url, "roblox%.com", "roproxy.com"))
-            for _, candidate in ipairs(useMirror and { mirror } or { url, mirror }) do
+            for _, candidate in ipairs(preferOriginal and { url, mirror } or { mirror, url }) do
                 local body, status
                 local send = (syn and syn.request) or http_request or request
                 if send then
@@ -4866,7 +4866,7 @@ do
                 if body then
                     local okJson, data = pcall(function() return HttpService:JSONDecode(body) end)
                     if okJson and type(data) == "table" then
-                        if candidate == mirror and not data.errors then useMirror = true end
+                        if candidate == url and not data.errors then preferOriginal = true end
                         if data.errors then
                             local first = data.errors[1]
                             lastStatus, lastMessage = status or 400, first and first.message or "error"
@@ -4919,8 +4919,8 @@ do
             local stopped
             for page = 1, 100 do
                 local url = string.format("https://avatar.roblox.com/v2/avatar/users/%d/outfits?outfitType=1&page=1&itemsPerPage=50&isEditable=true", uid)
-                if token then url = url .. "&paginationToken=" .. HttpService:UrlEncode(token) end
-                if page > 1 then task.wait(0.5) end
+                if token then url = url .. "&paginationToken=" .. token end
+                if page > 1 then task.wait(2) end
                 local data, status, message = httpJsonRetry(url, onWait, alive)
                 if not data then
                     if page == 1 then failed, firstStatus, firstMessage = true, status, message
@@ -4936,7 +4936,7 @@ do
             if (failed and firstStatus ~= 429) or (not failed and #list == 0) then
                 source = "v1"
                 for page = 1, 40 do
-                    if page > 1 then task.wait(0.5) end
+                    if page > 1 then task.wait(2) end
                     local data, status, message = httpJsonRetry(string.format("https://avatar.roblox.com/v1/users/%d/outfits?page=%d&itemsPerPage=50&isEditable=true", uid, page), onWait, alive)
                     if not data then
                         if page == 1 and failed then firstStatus, firstMessage = firstStatus or status, firstMessage or message end
@@ -5017,34 +5017,69 @@ do
             return string.format("rbxthumb://type=Avatar&id=%d&w=150&h=150", uid)
         end
 
+        local TextService = game:GetService("TextService")
+
+        local function lf(class, props, reg)
+            local inst = Library:Create(class, props)
+            if reg then Library:AddToRegistry(inst, reg) end
+            return inst
+        end
+
+        local function lbl(props)
+            props.ZIndex = props.ZIndex or 309
+            return Library:CreateLabel(props)
+        end
+
+        local function bevel(parent, z, size, position, order)
+            local outer = lf("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BorderColor3 = Color3.new(0, 0, 0), Size = size, Position = position or UDim2.new(), LayoutOrder = order or 0, ZIndex = z, Parent = parent }, { BorderColor3 = "Black" })
+            local inner = lf("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = z + 1, Parent = outer }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+            Library:Create("UIGradient", {
+                Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)), ColorSequenceKeypoint.new(1, Color3.fromRGB(212, 212, 212)) }),
+                Rotation = 90,
+                Parent = inner,
+            })
+            return outer, inner
+        end
+
+        local function panel(parent, name, position, size, z)
+            local boxOuter = lf("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = position, Size = size, ZIndex = z, Parent = parent }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+            local boxInner = lf("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = z + 1, Parent = boxOuter }, { BackgroundColor3 = "BackgroundColor" })
+            lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = z + 2, Parent = boxInner }, { BackgroundColor3 = "AccentColor" })
+            lbl({ Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0, 2), TextSize = Library.FontSize, Text = name, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = z + 2, Parent = boxInner })
+            return boxOuter, boxInner
+        end
+
+        local function setBorder(item, colorName)
+            if not (item and item.Parent) then return end
+            item.BorderColor3 = Library[colorName]
+            local entry = Library.RegistryMap and Library.RegistryMap[item]
+            if entry then entry.Properties.BorderColor3 = colorName end
+        end
+
         local function selectTile(info, tile)
             local ui = spoofUi
             if not ui then return end
-
-            local function mark(item, colorName)
-                if not (item and item.Parent) then return end
-                item.BorderColor3 = Library[colorName]
-                local entry = Library.RegistryMap and Library.RegistryMap[item]
-                if entry then entry.Properties.BorderColor3 = colorName end
-            end
-            mark(ui.selectedTile, "OutlineColor")
+            setBorder(ui.selectedTile, "Black")
             ui.selected, ui.selectedTile = info, tile
-            mark(tile, "AccentColor")
+            setBorder(tile, "AccentColor")
             ui.status.Text = info and ("Selected: " .. info.name .. (info.kind == "outfit" and "  (outfit)" or "  (current look)")) or "Nothing selected"
         end
 
         local function addTile(info, image, order)
             local ui = spoofUi
             if not ui then return end
-            local tile = mk("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, LayoutOrder = order, ZIndex = 302, Parent = ui.grid })
+            local tile, face = bevel(ui.grid, 307, UDim2.fromOffset(98, 104), nil, order)
             if image then
-                mk("ImageLabel", { BackgroundTransparency = 1, Image = image, ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -28), Position = UDim2.fromOffset(4, 4), ZIndex = 303, Parent = tile })
+                mk("ImageLabel", { BackgroundTransparency = 1, Image = image, ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -28), Position = UDim2.fromOffset(4, 4), ZIndex = 310, Parent = face })
             else
-                mk("TextLabel", { BackgroundTransparency = 1, Text = "?", TextSize = 34, Size = UDim2.new(1, 0, 1, -22), ZIndex = 303, Parent = tile })
+                lbl({ Text = "?", TextSize = 34, Size = UDim2.new(1, 0, 1, -22), ZIndex = 310, Parent = face })
             end
-            mk("TextLabel", { BackgroundTransparency = 1, Text = info.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 20), Position = UDim2.new(0, 3, 1, -22), ZIndex = 303, Parent = tile })
+            lbl({ Text = info.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 20), Position = UDim2.new(0, 3, 1, -22), ZIndex = 310, Parent = face })
+            local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = tile })
+            hit.MouseEnter:Connect(function() if spoofUi and spoofUi.selectedTile ~= tile then setBorder(tile, "AccentColor") end end)
+            hit.MouseLeave:Connect(function() if spoofUi and spoofUi.selectedTile ~= tile then setBorder(tile, "Black") end end)
             if info.kind == "random" then
-                tile.MouseButton1Click:Connect(function()
+                hit.MouseButton1Click:Connect(function()
                     local pool = ui.pool
                     if #pool == 0 then return end
                     local pick = pool[math.random(1, #pool)]
@@ -5052,9 +5087,8 @@ do
                 end)
             else
                 table.insert(ui.pool, { info = info, tile = tile })
-                tile.MouseButton1Click:Connect(function() selectTile(info, tile) end)
-                tile.MouseButton1Click:Connect(function()
-
+                hit.MouseButton1Click:Connect(function()
+                    selectTile(info, tile)
                     local now = os.clock()
                     if ui.lastClick and ui.lastClick.tile == tile and now - ui.lastClick.at < 0.5 then
                         task.spawn(function()
@@ -5074,7 +5108,7 @@ do
             local token = ui.token
             ui.target = { uid = uid, name = name }
             for _, child in ipairs(ui.grid:GetChildren()) do
-                if child:IsA("GuiButton") or child:IsA("TextLabel") then child:Destroy() end
+                if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
             end
             ui.pool, ui.selected, ui.selectedTile = {}, nil, nil
             ui.status.Text = "Showing " .. name
@@ -5083,11 +5117,11 @@ do
             local userTile = addTile({ kind = "user", uid = uid, name = name .. " (now)" }, thumb("Avatar", uid), 1)
             task.spawn(function()
                 local image = userThumb(uid)
-                local label = userTile and userTile:FindFirstChildOfClass("ImageLabel")
+                local label = userTile and userTile:FindFirstChildWhichIsA("ImageLabel", true)
                 if label and spoofUi and spoofUi.token == token then label.Image = image end
             end)
             addTile({ kind = "random", name = "Random" }, nil, 2)
-            local loading = mk("TextLabel", { BackgroundTransparency = 1, Text = "Loading outfits...", TextSize = 12, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 302, Parent = ui.grid })
+            local loading = mk("TextLabel", { BackgroundTransparency = 1, Text = "Loading outfits...", TextSize = 12, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 309, Parent = ui.grid })
             task.spawn(function()
                 local shown = 0
                 local outfits, info = fetchOutfits(uid, function(fresh, total)
@@ -5112,17 +5146,17 @@ do
                     local texts = { private = "outfits PRIVATE (HTTP " .. tostring(info.status) .. ")", limited = "rate limited, try again in a moment", unreachable = "outfits unreachable (no HTTP answer)" }
                     setIndicator(info.kind, (texts[info.kind] or "outfits unavailable") .. inventoryText)
                     if info.message then warn("Avatar spoofer: outfits request failed:", info.status, info.message) end
-                    mk("TextLabel", { BackgroundTransparency = 1, Text = info.kind == "private" and "Outfits are private" or "Outfits unavailable", TextSize = 12, TextWrapped = true, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 302, Parent = ui.grid })
+                    mk("TextLabel", { BackgroundTransparency = 1, Text = info.kind == "private" and "Outfits are private" or "Outfits unavailable", TextSize = 12, TextWrapped = true, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 309, Parent = ui.grid })
                     return
                 end
                 if #outfits == 0 then
 
                     if inventory == false then
                         setIndicator("private", "outfits PRIVATE (inventory hidden)")
-                        mk("TextLabel", { BackgroundTransparency = 1, Text = "Outfits are private", TextSize = 12, TextWrapped = true, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 302, Parent = ui.grid })
+                        mk("TextLabel", { BackgroundTransparency = 1, Text = "Outfits are private", TextSize = 12, TextWrapped = true, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 309, Parent = ui.grid })
                     else
                         setIndicator("empty", "no saved outfits" .. inventoryText)
-                        mk("TextLabel", { BackgroundTransparency = 1, Text = "No saved outfits", TextSize = 12, TextWrapped = true, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 302, Parent = ui.grid })
+                        mk("TextLabel", { BackgroundTransparency = 1, Text = "No saved outfits", TextSize = 12, TextWrapped = true, LayoutOrder = 3, Size = UDim2.fromOffset(100, 104), ZIndex = 309, Parent = ui.grid })
                     end
                     return
                 end
@@ -5140,12 +5174,16 @@ do
             local ui = spoofUi
             if not ui then return end
             for _, child in ipairs(ui.chips:GetChildren()) do
-                if child:IsA("TextButton") then child:Destroy() end
+                if child:IsA("Frame") then child:Destroy() end
             end
             local query = string.lower(ui.search.Text or "")
             local function chip(text, uid, order)
-                local button = mk("TextButton", { Text = " " .. text .. " ", AutoButtonColor = false, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = Library.MainColor, LayoutOrder = order, ZIndex = 303, Parent = ui.chips })
-                button.MouseButton1Click:Connect(function() loadTarget(uid, text) end)
+                local width = TextService:GetTextSize(text, Library.FontSize, Library.Font, Vector2.new(1000, 20)).X + 18
+                local outer, face = bevel(ui.chips, 308, UDim2.fromOffset(width, 20), nil, order)
+                lbl({ Size = UDim2.new(1, 0, 1, 0), TextSize = Library.FontSize, Text = text, ZIndex = 310, Parent = face })
+                local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = outer })
+                Library:OnHighlight(hit, outer, { BorderColor3 = "AccentColor" }, { BorderColor3 = "Black" })
+                hit.MouseButton1Click:Connect(function() loadTarget(uid, text) end)
             end
             chip("You", LocalPlayer.UserId, 0)
             local shown = 0
@@ -5162,30 +5200,54 @@ do
             if spoofUi or not Library.ScreenGui then return end
             local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
             local startSize = Vector2.new(math.clamp(spoofSize.X, SPOOF_MIN.X, math.max(SPOOF_MIN.X, viewport.X - 20)), math.clamp(spoofSize.Y, SPOOF_MIN.Y, math.max(SPOOF_MIN.Y, viewport.Y - 20)))
-            local main = mk("Frame", { Name = "AsterAvatarSpoofer", BackgroundColor3 = Library.BackgroundColor, ThemeBg = "BackgroundColor", Size = UDim2.fromOffset(startSize.X, startSize.Y), Position = UDim2.new(0.5, -startSize.X / 2, 0.5, -startSize.Y / 2), ZIndex = 300, Parent = Library.ScreenGui })
-            mk("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = 305, Parent = main })
-            mk("TextLabel", { BackgroundTransparency = 1, Text = "Avatar Spoofer", TextSize = Library.FontSize + 2, Size = UDim2.new(1, 0, 0, 26), Position = UDim2.fromOffset(0, 3), ZIndex = 302, Parent = main })
+            local main = lf("Frame", { Name = "AsterAvatarSpoofer", BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, Size = UDim2.fromOffset(startSize.X, startSize.Y), Position = UDim2.new(0.5, -startSize.X / 2, 0.5, -startSize.Y / 2), ZIndex = 300, Parent = Library.ScreenGui })
+            local frame = lf("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 301, Parent = main }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+            lbl({ Size = UDim2.new(1, 0, 0, 25), Text = "Avatar Spoofer", TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 302, Parent = frame })
+            local section = lf("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.new(0, 8, 0, 25), Size = UDim2.new(1, -16, 1, -33), ZIndex = 302, Parent = frame }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+            local body = lf("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Color3.new(0, 0, 0), BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 303, Parent = section }, { BackgroundColor3 = "BackgroundColor" })
 
-            mk("TextLabel", { BackgroundTransparency = 1, Text = "player search", TextXAlignment = Enum.TextXAlignment.Left, TextSize = 11, TextColor3 = Library.FontColor, Size = UDim2.new(1, -16, 0, 14), Position = UDim2.fromOffset(8, 30), ZIndex = 302, Parent = main })
-            local search = mk("TextBox", { Text = "", PlaceholderText = "username, UserId, profile URL or outfit:ID, press Enter...", ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, BackgroundColor3 = Library.MainColor, Size = UDim2.new(1, -16, 0, 24), Position = UDim2.fromOffset(8, 46), ZIndex = 302, Parent = main })
-            local chips = mk("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderSizePixel = 1, Size = UDim2.new(1, -16, 0, 28), Position = UDim2.fromOffset(8, 74), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 2, ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = 302, Parent = main })
+            local _, playerBox = panel(body, "Player", UDim2.fromOffset(8, 8), UDim2.new(1, -16, 0, 84), 304)
+            local searchOuter, searchFace = bevel(playerBox, 307, UDim2.new(1, -12, 0, 20), UDim2.fromOffset(6, 22))
+            local clip = lf("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.new(0, 5, 0, 0), Size = UDim2.new(1, -5, 1, 0), ZIndex = 309, Parent = searchFace })
+            local search = lf("TextBox", {
+                BackgroundTransparency = 1,
+                Position = UDim2.fromOffset(0, 0),
+                Size = UDim2.fromScale(5, 1),
+                Font = Library.Font,
+                PlaceholderColor3 = Color3.fromRGB(190, 190, 190),
+                PlaceholderText = "username, UserId, profile URL or outfit:ID, press Enter...",
+                ClearTextOnFocus = false,
+                Text = "",
+                TextColor3 = Library.FontColor,
+                TextSize = Library.FontSize,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = 310,
+                Parent = clip,
+            }, { TextColor3 = "FontColor" })
+            Library:ApplyTextStroke(search)
+            Library:OnHighlight(search, searchOuter, { BorderColor3 = "AccentColor" }, { BorderColor3 = "Black" })
+            local chips = lf("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(6, 48), Size = UDim2.new(1, -12, 0, 30), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = 307, Parent = playerBox }, { ScrollBarImageColor3 = "AccentColor" })
             Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = chips })
+            Library:Create("UIPadding", { PaddingTop = UDim.new(0, 1), PaddingLeft = UDim.new(0, 1), Parent = chips })
 
-            mk("TextLabel", { BackgroundTransparency = 1, Text = "preview (click again to apply)", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 11, Size = UDim2.new(0.38, -8, 0, 14), Position = UDim2.fromOffset(8, 108), ZIndex = 302, Parent = main })
-            local indicator = mk("TextLabel", { BackgroundTransparency = 1, Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 11, Size = UDim2.new(0.62, -10, 0, 14), Position = UDim2.new(0.38, 0, 0, 108), ZIndex = 302, Parent = main })
-            local grid = mk("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, ThemeBg = "BackgroundColor", BorderColor3 = Library.OutlineColor, BorderSizePixel = 1, Size = UDim2.new(1, -16, 1, -214), Position = UDim2.fromOffset(8, 124), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 4, ZIndex = 302, Parent = main })
+            local _, previewBox = panel(body, "Preview", UDim2.fromOffset(8, 98), UDim2.new(1, -16, 1, -174), 304)
+            lbl({ Text = "click again to apply", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(0.38, -8, 0, 14), Position = UDim2.fromOffset(6, 21), ZIndex = 307, Parent = previewBox })
+            local indicator = Library:Create("TextLabel", { BackgroundTransparency = 1, Font = Library.Font, Text = "", TextSize = 12, TextColor3 = Library.FontColor, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0.62, -10, 0, 14), Position = UDim2.new(0.38, 0, 0, 21), ZIndex = 307, Parent = previewBox })
+            Library:ApplyTextStroke(indicator)
+            local grid = lf("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(4, 38), Size = UDim2.new(1, -8, 1, -42), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, ZIndex = 307, Parent = previewBox }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
             Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
             Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = grid })
 
-            local status = mk("TextLabel", { BackgroundTransparency = 1, Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(1, -16, 0, 18), Position = UDim2.new(0, 8, 1, -84), ZIndex = 302, Parent = main })
-            local function button(text, x, w, y, callback)
-                local b = mk("TextButton", { Text = text, AutoButtonColor = false, BackgroundColor3 = Library.MainColor, Size = UDim2.new(w, -16, 0, 26), Position = UDim2.new(x, 8, 1, y), ZIndex = 302, Parent = main })
-                b.MouseEnter:Connect(function() b.BorderColor3 = Library.AccentColor end)
-                b.MouseLeave:Connect(function() b.BorderColor3 = Library.OutlineColor end)
-                b.MouseButton1Click:Connect(callback)
-                return b
+            local status = lbl({ Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(1, -16, 0, 16), Position = UDim2.new(0, 8, 1, -72), ZIndex = 307, Parent = body })
+            local function button(text, position, size, callback)
+                local outer, face = bevel(body, 307, size, position)
+                lbl({ Size = UDim2.new(1, 0, 1, 0), TextSize = Library.FontSize, Text = text, ZIndex = 309, Parent = face })
+                local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = outer })
+                Library:OnHighlight(hit, outer, { BorderColor3 = "AccentColor" }, { BorderColor3 = "Black" })
+                hit.MouseButton1Click:Connect(callback)
+                return outer
             end
-            button("Apply selected", 0, 1, -62, function()
+            button("Apply selected", UDim2.new(0, 8, 1, -54), UDim2.new(1, -16, 0, 20), function()
                 local ui = spoofUi
                 local info = ui and ui.selected
                 if not info then notify("Avatar spoofer: pick an avatar first") return end
@@ -5193,21 +5255,16 @@ do
                     if info.kind == "outfit" then SpooferActions.applyOutfit(info.id) else SpooferActions.applyUser(info.uid) end
                 end)
             end)
-            local function half(text, x, callback)
-                local b = mk("TextButton", { Text = text, AutoButtonColor = false, BackgroundColor3 = Library.MainColor, Size = UDim2.new(0.5, -12, 0, 26), Position = UDim2.new(x, x == 0 and 8 or 4, 1, -32), ZIndex = 302, Parent = main })
-                b.MouseEnter:Connect(function() b.BorderColor3 = Library.AccentColor end)
-                b.MouseLeave:Connect(function() b.BorderColor3 = Library.OutlineColor end)
-                b.MouseButton1Click:Connect(callback)
-            end
-            half("Reset to my avatar", 0, function() task.spawn(function() SpooferActions.reset() end) end)
-            half("Close", 0.5, function()
+            button("Reset to my avatar", UDim2.new(0, 8, 1, -30), UDim2.new(0.5, -12, 0, 20), function() task.spawn(function() SpooferActions.reset() end) end)
+            button("Close", UDim2.new(0.5, 4, 1, -30), UDim2.new(0.5, -12, 0, 20), function()
                 local toggle = Toggles and Toggles.spoof_ui
                 if toggle and toggle.SetValue then pcall(function() toggle:SetValue(false) end) end
                 closeSpoofUi()
             end)
 
-            local grip = mk("TextButton", { Text = "//", AutoButtonColor = false, BackgroundTransparency = 1, BorderSizePixel = 0, TextSize = 12, Size = UDim2.fromOffset(16, 16), Position = UDim2.new(1, -16, 1, -16), ZIndex = 330, Parent = main })
-            grip.InputBegan:Connect(function(input)
+            local grip = lbl({ Text = "//", TextSize = 12, Size = UDim2.fromOffset(16, 16), Position = UDim2.new(1, -16, 1, -16), ZIndex = 330, Parent = main })
+            local gripHit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 331, Parent = grip })
+            gripHit.InputBegan:Connect(function(input)
                 if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
                 local from, origin = main.AbsoluteSize, input.Position
                 local move, finish
@@ -5229,7 +5286,7 @@ do
             end)
 
             spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, token = 0 }
-            Library:MakeDraggable(main, 28)
+            Library:MakeDraggable(main, 25)
             search:GetPropertyChangedSignal("Text"):Connect(refreshChips)
             search.FocusLost:Connect(function(enter)
                 if not enter then return end

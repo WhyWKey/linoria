@@ -1861,6 +1861,80 @@ pcall(function()
         if picker then picker:SetValueRGB(Color3.fromHex(data.value), tonumber(data.transparency) or 0) end
     end
 end)
+do
+    local Http = game:GetService("HttpService")
+    local cfg = { pending = {} }
+    getgenv().AsterCfg = cfg
+
+    function cfg.on(idx, default)
+        local toggle = getgenv().Toggles and getgenv().Toggles[idx]
+        if toggle then return toggle.Value == true end
+        local entry = cfg.pending[idx]
+        if entry and type(entry.value) == "boolean" then return entry.value end
+        return default
+    end
+
+    function cfg.color(idx)
+        local picker = getgenv().Options and getgenv().Options[idx]
+        if picker and typeof(picker.Value) == "Color3" then return picker.Value end
+        local entry = cfg.pending[idx]
+        if entry and type(entry.value) == "string" then
+            local ok, color = pcall(Color3.fromHex, entry.value)
+            if ok then return color end
+        end
+        return nil
+    end
+
+    function cfg.apply(prefix)
+        local toggles, options = getgenv().Toggles or {}, getgenv().Options or {}
+        for idx, entry in pairs(cfg.pending) do
+            if string.sub(idx, 1, #prefix) == prefix and (toggles[idx] or options[idx]) then
+                cfg.pending[idx] = nil
+                local parser = SaveManager.Parser[entry.type]
+                if parser then
+                    task.spawn(function() pcall(parser.Load, idx, entry) end)
+                end
+            end
+        end
+    end
+
+    local originalLoad, originalSave = SaveManager.Load, SaveManager.Save
+
+    function SaveManager:Load(name)
+        local ok, message = originalLoad(self, name)
+        if ok then
+            pcall(function()
+                local decoded = Http:JSONDecode(readfile(self.Folder .. "/settings/" .. name .. ".json"))
+                local toggles, options = getgenv().Toggles or {}, getgenv().Options or {}
+                for _, entry in ipairs(decoded.objects) do
+                    local idx = entry.idx
+                    if idx and not self.Ignore[idx] and not toggles[idx] and not options[idx] then
+                        cfg.pending[idx] = entry
+                    end
+                end
+            end)
+        end
+        return ok, message
+    end
+
+    function SaveManager:Save(name)
+        local ok, message = originalSave(self, name)
+        if ok and next(cfg.pending) then
+            pcall(function()
+                local path = self.Folder .. "/settings/" .. name .. ".json"
+                local data = Http:JSONDecode(readfile(path))
+                local present = {}
+                for _, entry in ipairs(data.objects) do present[entry.idx] = true end
+                for idx, entry in pairs(cfg.pending) do
+                    if not present[idx] then table.insert(data.objects, entry) end
+                end
+                writefile(path, Http:JSONEncode(data))
+            end)
+        end
+        return ok, message
+    end
+end
+
 Loader.step("UI library ready", 0.34)
 getgenv().Library = Library
 
@@ -2701,6 +2775,317 @@ local function fxSkyPreview(host)
     end))
 end
 
+local FxAtmo = { selected = nil, saved = {}, rebuild = nil }
+local ATMO_PATH = "Aster/atmosphere.json"
+do
+    local ok, data = pcall(function()
+        if isfile and readfile and isfile(ATMO_PATH) then
+            return game:GetService("HttpService"):JSONDecode(readfile(ATMO_PATH))
+        end
+    end)
+    if ok and type(data) == "table" and type(data.assets) == "table" then
+        for _, entry in ipairs(data.assets) do
+            if type(entry) == "table" and type(entry.id) == "number" then
+                table.insert(FxAtmo.saved, { id = entry.id, name = type(entry.name) == "string" and entry.name or ("Asset " .. entry.id) })
+            end
+        end
+    end
+end
+
+local function fxAtmoSave()
+    if not writefile then return end
+    pcall(function()
+        if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
+        writefile(ATMO_PATH, game:GetService("HttpService"):JSONEncode({ assets = FxAtmo.saved }))
+    end)
+end
+
+local function fxAtmoTell(message)
+    pcall(function() Library:Notify(message, 5) end)
+end
+
+local function fxSet(flag, value)
+    local toggle = Toggles[flag]
+    if toggle then
+        toggle:SetValue(value)
+        return
+    end
+    local option = Options[flag]
+    if not option then return end
+    if typeof(value) == "Color3" then
+        if option.SetValueRGB then option:SetValueRGB(value, option.Transparency or 0) end
+    else
+        option:SetValue(value)
+    end
+end
+
+local function fxPart(flag)
+    local toggle = Toggles[flag]
+    return not toggle or toggle.Value ~= false
+end
+
+local C = Color3.fromRGB
+local ATMO_ORDER = { "Night", "Sunset", "Foggy Morning", "Neon Night", "Winter", "Inferno", "Dreamy Pink", "Deep Space" }
+local ATMO_PRESETS = {
+    ["Night"] = { sky = "Night", ambient = C(20, 24, 40), outer = C(30, 36, 60), clock = 0, atmos = { C(60, 70, 110), C(20, 25, 50), 0.35, 1.5, 0, 0.2 }, bloom = { 0.5, 24, 0.9 }, cc = { C(200, 210, 255), -0.1, 0.1, 0 } },
+    ["Sunset"] = { sky = "Sunset", ambient = C(120, 80, 70), outer = C(190, 120, 90), clock = 17.8, atmos = { C(255, 170, 120), C(255, 120, 80), 0.3, 1.8, 2, 0.3 }, bloom = { 0.6, 30, 0.85 }, cc = { C(255, 225, 200), 0.2, 0.05, 0 }, rays = 0.35 },
+    ["Foggy Morning"] = { sky = "Cloudy", ambient = C(150, 155, 165), outer = C(170, 175, 185), clock = 7, atmos = { C(200, 205, 215), C(180, 185, 195), 0.55, 4, 0, 0 }, bloom = { 0.2, 24, 1 }, cc = { C(235, 238, 245), -0.25, 0, 0 } },
+    ["Neon Night"] = { sky = "Purple Night", ambient = C(60, 30, 90), outer = C(90, 40, 130), clock = 0, atmos = { C(140, 60, 200), C(60, 20, 120), 0.3, 2, 1, 0.25 }, bloom = { 1.2, 40, 0.7 }, cc = { C(255, 200, 255), 0.35, 0.15, 0 } },
+    ["Winter"] = { sky = "Winter", ambient = C(150, 170, 200), outer = C(190, 210, 235), clock = 12, atmos = { C(210, 225, 245), C(170, 190, 220), 0.4, 2.5, 0, 0 }, bloom = { 0.4, 24, 0.95 }, cc = { C(225, 240, 255), -0.1, 0, 0 } },
+    ["Inferno"] = { sky = "Hell", ambient = C(110, 30, 20), outer = C(160, 50, 30), clock = 18, atmos = { C(255, 90, 40), C(160, 30, 10), 0.4, 2.5, 3, 0.2 }, bloom = { 1, 36, 0.8 }, cc = { C(255, 190, 170), 0.3, 0.2, 0 } },
+    ["Dreamy Pink"] = { sky = "Pink Clouds", ambient = C(200, 150, 170), outer = C(230, 180, 200), clock = 16.5, atmos = { C(255, 200, 220), C(240, 150, 190), 0.25, 1, 1.5, 0.3 }, bloom = { 0.7, 32, 0.85 }, cc = { C(255, 230, 240), 0.15, 0, 0 } },
+    ["Deep Space"] = { sky = "Galaxy", ambient = C(30, 30, 50), outer = C(40, 40, 70), clock = 0, bloom = { 0.8, 30, 0.9 }, cc = { C(220, 225, 255), 0.1, 0.1, 0 } },
+}
+
+local function fxApplyPreset(preset)
+    if fxPart("atmo_part_sky") and preset.sky then
+        fxSet("skybox_value", preset.sky)
+        fxSet("skybox_enabled", true)
+    end
+    if fxPart("atmo_part_light") then
+        fxSet("lighting_toggle_Ambient", true)
+        fxSet("lighting_colorAmbient", preset.ambient)
+        fxSet("lighting_colorOutdoorAmbient", preset.outer)
+        if preset.clock then
+            fxSet("lighting_toggle_ClockTime", true)
+            fxSet("lighting_number_ClockTime", preset.clock)
+        end
+    end
+    if fxPart("atmo_part_atmos") then
+        local atmos = preset.atmos
+        if atmos then
+            fxSet("atmosphere_enabled", true)
+            fxSet("atmosphere_color", atmos[1])
+            fxSet("atmosphere_decay", atmos[2])
+            fxSet("atmosphere_density", atmos[3])
+            fxSet("atmosphere_haze", atmos[4])
+            fxSet("atmosphere_glare", atmos[5])
+            fxSet("atmosphere_offset", atmos[6])
+        else
+            fxSet("atmosphere_enabled", false)
+        end
+    end
+    if fxPart("atmo_part_post") then
+        local bloom, cc = preset.bloom, preset.cc
+        fxSet("bloom_enabled", bloom ~= nil)
+        if bloom then
+            fxSet("bloom_intensity", bloom[1])
+            fxSet("bloom_size", bloom[2])
+            fxSet("bloom_threshold", bloom[3])
+        end
+        fxSet("color_correction_enabled", cc ~= nil)
+        if cc then
+            fxSet("color_correction_tint", cc[1])
+            fxSet("color_correction_saturation", cc[2])
+            fxSet("color_correction_contrast", cc[3])
+            fxSet("color_correction_brightness", cc[4])
+        end
+        fxSet("sunrays_enabled", preset.rays ~= nil)
+        if preset.rays then fxSet("sunrays_intensity", preset.rays) end
+    end
+end
+
+local function fxApplyAsset(id)
+    fxAtmoTell("Loading asset " .. id .. "...")
+    task.spawn(function()
+        local ok, objects = pcall(function() return game:GetObjects("rbxassetid://" .. id) end)
+        if not ok or type(objects) ~= "table" or #objects == 0 then
+            fxAtmoTell("Asset " .. id .. " could not be loaded (private, removed or not a model)")
+            return
+        end
+        local found = {}
+        local wanted = { Sky = "sky", Atmosphere = "atmos", BloomEffect = "bloom", ColorCorrectionEffect = "cc", SunRaysEffect = "rays" }
+        for _, root in ipairs(objects) do
+            local list = root:GetDescendants()
+            table.insert(list, 1, root)
+            for _, item in ipairs(list) do
+                local key = wanted[item.ClassName]
+                if key and not found[key] then found[key] = item end
+            end
+        end
+        local applied = {}
+        if found.sky and fxPart("atmo_part_sky") then
+            fxSet("skybox_custom_ids", tostring(id))
+            fxSet("skybox_value", "Custom")
+            fxSet("skybox_enabled", true)
+            table.insert(applied, "sky")
+        end
+        if found.atmos and fxPart("atmo_part_atmos") then
+            local a = found.atmos
+            fxSet("atmosphere_enabled", true)
+            fxSet("atmosphere_color", a.Color)
+            fxSet("atmosphere_decay", a.Decay)
+            fxSet("atmosphere_density", a.Density)
+            fxSet("atmosphere_haze", a.Haze)
+            fxSet("atmosphere_glare", a.Glare)
+            fxSet("atmosphere_offset", a.Offset)
+            table.insert(applied, "atmosphere")
+        end
+        if fxPart("atmo_part_post") then
+            if found.bloom then
+                fxSet("bloom_enabled", true)
+                fxSet("bloom_intensity", found.bloom.Intensity)
+                fxSet("bloom_size", found.bloom.Size)
+                fxSet("bloom_threshold", found.bloom.Threshold)
+                table.insert(applied, "bloom")
+            end
+            if found.cc then
+                fxSet("color_correction_enabled", true)
+                fxSet("color_correction_tint", found.cc.TintColor)
+                fxSet("color_correction_saturation", found.cc.Saturation)
+                fxSet("color_correction_contrast", found.cc.Contrast)
+                fxSet("color_correction_brightness", found.cc.Brightness)
+                table.insert(applied, "color correction")
+            end
+            if found.rays then
+                fxSet("sunrays_enabled", true)
+                fxSet("sunrays_intensity", found.rays.Intensity)
+                table.insert(applied, "sun rays")
+            end
+        end
+        for _, root in ipairs(objects) do pcall(function() root:Destroy() end) end
+        if #applied == 0 then
+            fxAtmoTell("Asset " .. id .. " has no sky, atmosphere or post effects to apply")
+        else
+            fxAtmoTell("Applied from asset " .. id .. ": " .. table.concat(applied, ", "))
+        end
+    end)
+end
+
+function FxAtmo.apply(item)
+    if not item then
+        fxAtmoTell("Pick a preset or asset first")
+        return
+    end
+    if item.kind == "preset" then
+        fxApplyPreset(ATMO_PRESETS[item.name])
+        fxAtmoTell("Applied preset " .. item.name)
+    else
+        fxApplyAsset(item.id)
+    end
+end
+
+function FxAtmo.reset()
+    for _, flag in ipairs({ "skybox_enabled", "atmosphere_enabled", "bloom_enabled", "color_correction_enabled", "sunrays_enabled", "lighting_toggle_Ambient", "lighting_toggle_ClockTime" }) do
+        fxSet(flag, false)
+    end
+    fxAtmoTell("Sky, atmosphere and post effects turned off")
+end
+
+local function fxAtmoParseId(text)
+    text = tostring(text or "")
+    local id = string.match(text, "store/asset/(%d+)") or string.match(text, "assetId=(%d+)") or string.match(text, "(%d%d%d%d+)")
+    return tonumber(id)
+end
+
+local function fxAtmoName(entry, after)
+    task.spawn(function()
+        local ok, info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(entry.id) end)
+        if ok and type(info) == "table" and type(info.Name) == "string" then
+            entry.name = info.Name
+            if after then after() end
+        end
+    end)
+end
+
+function FxAtmo.add()
+    local id = fxAtmoParseId(Options.atmo_asset and Options.atmo_asset.Value)
+    if not id then
+        fxAtmoTell("Paste a Creator Store link or an asset id first")
+        return
+    end
+    for _, entry in ipairs(FxAtmo.saved) do
+        if entry.id == id then
+            fxAtmoTell("That asset is already saved")
+            return
+        end
+    end
+    local entry = { id = id, name = "Asset " .. id }
+    table.insert(FxAtmo.saved, entry)
+    fxAtmoSave()
+    if FxAtmo.rebuild then FxAtmo.rebuild() end
+    fxAtmoName(entry, function()
+        fxAtmoSave()
+        if FxAtmo.rebuild then FxAtmo.rebuild() end
+    end)
+end
+
+function FxAtmo.remove()
+    local item = FxAtmo.selected
+    if not (item and item.saved) then
+        fxAtmoTell("Select one of your saved assets first")
+        return
+    end
+    for index, entry in ipairs(FxAtmo.saved) do
+        if entry.id == item.id then
+            table.remove(FxAtmo.saved, index)
+            break
+        end
+    end
+    FxAtmo.selected = nil
+    fxAtmoSave()
+    if FxAtmo.rebuild then FxAtmo.rebuild() end
+end
+
+local function fxAtmoPreview(host)
+    local grid = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, 0, 1, 0), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = host }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+    Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+    Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = grid })
+    local tiles = {}
+    local lastClick
+
+    local function paintSelection()
+        for _, entry in ipairs(tiles) do
+            fxBorder(entry.outer, FxAtmo.selected and FxAtmo.selected.key == entry.item.key and "AccentColor" or "Black")
+        end
+    end
+
+    local function rebuild()
+        for _, child in ipairs(grid:GetChildren()) do
+            if child:IsA("Frame") then child:Destroy() end
+        end
+        table.clear(tiles)
+        local order = 0
+        local function add(item, label)
+            order += 1
+            local outer, face = fxBevel(grid, 6, UDim2.fromOffset(98, 104), nil, order)
+            if item.kind == "preset" then
+                local swatch = fxCreate("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, Position = UDim2.fromOffset(4, 4), Size = UDim2.new(1, -8, 1, -28), ZIndex = 8, Parent = face })
+                Library:Create("UIGradient", { Color = ColorSequence.new(item.top, item.bottom), Rotation = 90, Parent = swatch })
+            else
+                Library:Create("ImageLabel", { BackgroundTransparency = 1, Image = string.format("rbxthumb://type=Asset&id=%d&w=150&h=150", item.id), ScaleType = Enum.ScaleType.Fit, Position = UDim2.fromOffset(4, 4), Size = UDim2.new(1, -8, 1, -28), ZIndex = 8, Parent = face })
+            end
+            fxLabel({ Text = label, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 20), Position = UDim2.new(0, 3, 1, -22), ZIndex = 9, Parent = face })
+            local hit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 12, Parent = outer })
+            hit.MouseButton1Click:Connect(function()
+                FxAtmo.selected = item
+                paintSelection()
+                local now = os.clock()
+                if lastClick and lastClick.key == item.key and now - lastClick.at < 0.5 then FxAtmo.apply(item) end
+                lastClick = { key = item.key, at = now }
+            end)
+            hit.MouseEnter:Connect(function()
+                if not (FxAtmo.selected and FxAtmo.selected.key == item.key) then fxBorder(outer, "AccentColor") end
+            end)
+            hit.MouseLeave:Connect(function()
+                if not (FxAtmo.selected and FxAtmo.selected.key == item.key) then fxBorder(outer, "Black") end
+            end)
+            tiles[#tiles + 1] = { item = item, outer = outer }
+        end
+        for _, name in ipairs(ATMO_ORDER) do
+            local preset = ATMO_PRESETS[name]
+            local top = preset.atmos and preset.atmos[1] or preset.outer
+            add({ kind = "preset", key = "p:" .. name, name = name, top = top, bottom = preset.ambient }, name)
+        end
+        for _, entry in ipairs(FxAtmo.saved) do
+            add({ kind = "asset", key = "s:" .. entry.id, id = entry.id, name = entry.name, saved = true }, entry.name)
+        end
+        paintSelection()
+    end
+    FxAtmo.rebuild = rebuild
+    rebuild()
+end
+
 local function fxNote(text)
     return function(host)
         fxLabel({ Text = text, TextWrapped = true, TextSize = Library.FontSize, Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(8, 0), ZIndex = 5, Parent = host })
@@ -2716,6 +3101,7 @@ Fx:Sub("VFX", "Aura effects")
 Fx:Sub("VFX", "Muzzle effects")
 Fx:Sub("Tracers", "Bullet tracers")
 Fx:Sub("Sky", "Skyboxes")
+Fx:Sub("Sky", "Atmosphere")
 
 do
     local function soundSection(label, prefix, toggleFlag, idFlag, volumeFlag, pitchFlag, varFlag, defaultSound, previewCallback)
@@ -2789,6 +3175,20 @@ do
     end)
     Fx:Preview("Tracers", "Bullet tracers", fxTracerPreview)
     Fx:Preview("Sky", "Skyboxes", fxSkyPreview)
+    Fx:Preview("Sky", "Atmosphere", fxAtmoPreview)
+
+    local atmoApply = Fx:Section("Sky", "Atmosphere", "Presets")
+    atmoApply:Toggle({ Name = "Apply sky", Flag = "atmo_part_sky", Default = true })
+    atmoApply:Toggle({ Name = "Apply lighting", Flag = "atmo_part_light", Default = true })
+    atmoApply:Toggle({ Name = "Apply atmosphere", Flag = "atmo_part_atmos", Default = true })
+    atmoApply:Toggle({ Name = "Apply post effects", Flag = "atmo_part_post", Default = true })
+    atmoApply:Button({ Name = "Apply selected", Callback = function() FxAtmo.apply(FxAtmo.selected) end })
+    atmoApply:Button({ Name = "Turn everything off", Callback = function() FxAtmo.reset() end })
+
+    local atmoStore = Fx:Section("Sky", "Atmosphere", "Creator Store")
+    atmoStore:Input({ Name = "Asset link or id", Flag = "atmo_asset", Default = "", Placeholder = "create.roblox.com/store/asset/123..." })
+    atmoStore:Button({ Name = "Save asset", Callback = function() FxAtmo.add() end })
+    atmoStore:Button({ Name = "Remove selected asset", Callback = function() FxAtmo.remove() end })
 
     local killSections, lastKill, lastCheck = {}, nil, 0
     track(RunService.Heartbeat:Connect(function()
@@ -2807,6 +3207,7 @@ do
                     local prefix = "kec_" .. fxKey(current) .. "_" .. fxKey(emitter.name)
                     section:Toggle({ Name = emitter.name, Flag = prefix .. "_on", Default = false }):Colorpicker({ Name = emitter.name, Flag = prefix .. "_c", Default = emitter.color })
                 end
+                getgenv().AsterCfg.apply("kec_" .. fxKey(current) .. "_")
                 killSections[current] = section
             else
                 killSections[current] = false
@@ -2835,6 +3236,7 @@ do
                         local prefix = "pac_" .. fxKey(current) .. "_" .. fxKey(emitter.name)
                         section:Toggle({ Name = emitter.name, Flag = prefix .. "_on", Default = false }):Colorpicker({ Name = emitter.name, Flag = prefix .. "_c", Default = emitter.color })
                     end
+                    getgenv().AsterCfg.apply("pac_" .. fxKey(current) .. "_")
                     auraSections[current] = section
                 else
                     auraSections[current] = false
@@ -6082,6 +6484,66 @@ do
         local spoofSize = Vector2.new(600, 680)
         local SPOOF_MIN = Vector2.new(440, 500)
 
+        local store = { recent = {}, favorites = {} }
+        local STORE_PATH = "Aster/spoofer.json"
+        do
+            local ok, data = pcall(function()
+                if isfile and readfile and isfile(STORE_PATH) then
+                    return game:GetService("HttpService"):JSONDecode(readfile(STORE_PATH))
+                end
+            end)
+            if ok and type(data) == "table" then
+                if type(data.recent) == "table" then store.recent = data.recent end
+                if type(data.favorites) == "table" then store.favorites = data.favorites end
+            end
+        end
+
+        local function storeSave()
+            if not writefile then return end
+            pcall(function()
+                if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
+                writefile(STORE_PATH, game:GetService("HttpService"):JSONEncode(store))
+            end)
+        end
+
+        local function favoriteIndex(info)
+            for index, entry in ipairs(store.favorites) do
+                if entry.kind == info.kind and ((info.kind == "outfit" and entry.id == info.id) or (info.kind ~= "outfit" and entry.uid == info.uid)) then
+                    return index
+                end
+            end
+            return nil
+        end
+
+        local function toggleFavorite(info)
+            local index = favoriteIndex(info)
+            if index then
+                table.remove(store.favorites, index)
+            else
+                table.insert(store.favorites, { kind = info.kind, id = info.id, uid = info.uid, name = info.name })
+            end
+            storeSave()
+            return index == nil
+        end
+
+        local function recordRecent(uid, name)
+            for index = #store.recent, 1, -1 do
+                if store.recent[index].uid == uid then table.remove(store.recent, index) end
+            end
+            table.insert(store.recent, 1, { uid = uid, name = name })
+            while #store.recent > 15 do table.remove(store.recent) end
+            storeSave()
+        end
+
+        local function removeRecent(uid)
+            for index = #store.recent, 1, -1 do
+                if store.recent[index].uid == uid then table.remove(store.recent, index) end
+            end
+            storeSave()
+        end
+
+        local refreshChips, refreshFavorites
+
         local preferOriginal = false
         local function httpJson(url)
             local lastStatus, lastMessage
@@ -6316,10 +6778,10 @@ do
             ui.status.Text = info and ("Selected: " .. info.name .. (info.kind == "outfit" and "  (outfit)" or "  (current look)")) or "Nothing selected"
         end
 
-        local function addTile(info, image, order)
+        local function addTile(info, image, order, target, isFav)
             local ui = spoofUi
             if not ui then return end
-            local tile, face = bevel(ui.grid, 307, UDim2.fromOffset(98, 104), nil, order)
+            local tile, face = bevel(target or ui.grid, 307, UDim2.fromOffset(98, 104), nil, order)
             if image then
                 local picture = mk("ImageLabel", { BackgroundTransparency = 1, Image = "", ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -28), Position = UDim2.fromOffset(4, 4), ZIndex = 310, Parent = face })
                 ui.lazy[tile] = { label = picture, image = image }
@@ -6328,6 +6790,20 @@ do
             end
             lbl({ Text = info.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 20), Position = UDim2.new(0, 3, 1, -22), ZIndex = 310, Parent = face })
             local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = tile })
+            if info.kind ~= "random" then
+                local function paintStar(button, on)
+                    button.Text = on and "FAV" or "fav"
+                    button.TextColor3 = on and Color3.fromRGB(255, 205, 70) or Library.FontColor
+                    button.TextTransparency = on and 0 or 0.35
+                end
+                local star = lf("TextButton", { BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45, BorderSizePixel = 0, Font = Library.Font, TextSize = 10, Size = UDim2.fromOffset(26, 14), Position = UDim2.new(1, -29, 0, 3), ZIndex = 316, Parent = tile })
+                paintStar(star, favoriteIndex(info) ~= nil)
+                star.MouseButton1Click:Connect(function()
+                    local on = toggleFavorite(info)
+                    paintStar(star, on)
+                    if isFav and not on and refreshFavorites then refreshFavorites() end
+                end)
+            end
             local function ask()
                 local current = spoofUi
                 if not current then return end
@@ -6358,7 +6834,7 @@ do
                     selectTile(pick.info, pick.tile)
                 end)
             else
-                table.insert(ui.pool, { info = info, tile = tile })
+                if not isFav then table.insert(ui.pool, { info = info, tile = tile }) end
                 hit.MouseButton1Click:Connect(function()
                     selectTile(info, tile)
                     ask()
@@ -6374,12 +6850,38 @@ do
             return tile
         end
 
+        function refreshFavorites()
+            local ui = spoofUi
+            if not ui then return end
+            for _, child in ipairs(ui.favGrid:GetChildren()) do
+                if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
+            end
+            if #store.favorites == 0 then
+                mk("TextLabel", { BackgroundTransparency = 1, Text = "Press fav on an outfit or player to keep it here", TextSize = 11, TextWrapped = true, LayoutOrder = 1, Size = UDim2.fromOffset(98, 104), ZIndex = 309, Parent = ui.favGrid })
+                return
+            end
+            for index, entry in ipairs(store.favorites) do
+                local info = { kind = entry.kind, id = entry.id, uid = entry.uid, name = entry.name or "?" }
+                local image
+                if entry.kind == "outfit" and entry.id then
+                    image = string.format("rbxthumb://type=Outfit&id=%d&w=150&h=150", entry.id)
+                elseif entry.uid then
+                    image = string.format("rbxthumb://type=Avatar&id=%d&w=150&h=150", entry.uid)
+                end
+                if image then addTile(info, image, index, ui.favGrid, true) end
+            end
+        end
+
         local function loadTarget(uid, name)
             local ui = spoofUi
             if not ui or not uid then return end
             ui.token += 1
             local token = ui.token
             ui.target = { uid = uid, name = name }
+            if uid ~= LocalPlayer.UserId then
+                recordRecent(uid, name)
+                refreshChips()
+            end
             for _, child in ipairs(ui.grid:GetChildren()) do
                 if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
             end
@@ -6445,28 +6947,34 @@ do
             end)
         end
 
-        local function refreshChips()
+        function refreshChips()
             local ui = spoofUi
             if not ui then return end
             for _, child in ipairs(ui.chips:GetChildren()) do
                 if child:IsA("Frame") then child:Destroy() end
             end
             local query = string.lower(ui.search.Text or "")
-            local function chip(text, uid, order)
+            local function chip(text, uid, order, removable)
                 local width = TextService:GetTextSize(text, Library.FontSize, Library.Font, Vector2.new(1000, 20)).X + 18
                 local outer, face = bevel(ui.chips, 308, UDim2.fromOffset(width, 20), nil, order)
                 lbl({ Size = UDim2.new(1, 0, 1, 0), TextSize = Library.FontSize, Text = text, ZIndex = 310, Parent = face })
                 local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = outer })
                 Library:OnHighlight(hit, outer, { BorderColor3 = "AccentColor" }, { BorderColor3 = "Black" })
                 hit.MouseButton1Click:Connect(function() loadTarget(uid, text) end)
+                if removable then
+                    hit.MouseButton2Click:Connect(function()
+                        removeRecent(uid)
+                        refreshChips()
+                    end)
+                end
             end
-            chip("You", LocalPlayer.UserId, 0)
+            chip("You", LocalPlayer.UserId, 0, false)
             local shown = 0
-            for _, player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer and shown < 24
-                    and (query == "" or string.find(string.lower(player.Name), query, 1, true) or string.find(string.lower(player.DisplayName), query, 1, true)) then
+            for _, entry in ipairs(store.recent) do
+                if shown < 15 and type(entry.name) == "string" and type(entry.uid) == "number"
+                    and (query == "" or string.find(string.lower(entry.name), query, 1, true)) then
                     shown += 1
-                    chip(player.DisplayName, player.UserId, shown)
+                    chip(entry.name, entry.uid, shown, true)
                 end
             end
         end
@@ -6512,9 +7020,36 @@ do
             local barOuter = lf("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.fromOffset(4, 37), Size = UDim2.new(1, -8, 0, 5), ZIndex = 307, Visible = false, Parent = previewBox }, { BorderColor3 = "Black" })
             local barBack = lf("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 308, Parent = barOuter }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
             local barFill = lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = 309, Parent = barBack }, { BackgroundColor3 = "AccentColor" })
-            local grid = lf("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(4, 44), Size = UDim2.new(1, -8, 1, -48), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, ZIndex = 307, Parent = previewBox }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
-            Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
-            Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = grid })
+            local function makeGrid(visible)
+                local frameGrid = lf("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(4, 44), Size = UDim2.new(1, -8, 1, -48), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, Visible = visible, ZIndex = 307, Parent = previewBox }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+                Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = frameGrid })
+                Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = frameGrid })
+                return frameGrid
+            end
+            local grid = makeGrid(true)
+            local favGrid = makeGrid(false)
+
+            local tabButtons = {}
+            local setMode
+            local function tabButton(text, x, mode)
+                local outer, face = bevel(previewBox, 307, UDim2.fromOffset(66, 16), UDim2.fromOffset(x, 3))
+                lbl({ Size = UDim2.new(1, 0, 1, 0), TextSize = 12, Text = text, ZIndex = 309, Parent = face })
+                local hitButton = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = outer })
+                hitButton.MouseButton1Click:Connect(function() setMode(mode) end)
+                tabButtons[mode] = outer
+            end
+            tabButton("Browse", 4, "browse")
+            tabButton("Favorites", 74, "favorites")
+            function setMode(mode)
+                local ui = spoofUi
+                if not ui then return end
+                ui.mode = mode
+                ui.grid.Visible = mode == "browse"
+                ui.favGrid.Visible = mode == "favorites"
+                ui.activeGrid = mode == "favorites" and ui.favGrid or ui.grid
+                for name, outer in pairs(tabButtons) do setBorder(outer, name == mode and "AccentColor" or "Black") end
+                if mode == "favorites" then refreshFavorites() end
+            end
 
             local status = lbl({ Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(1, -16, 0, 16), Position = UDim2.new(0, 8, 1, -72), ZIndex = 307, Parent = body })
             local function button(text, position, size, callback)
@@ -6563,7 +7098,7 @@ do
                 end)
             end)
 
-            spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0, thumbsDone = true }
+            spoofUi = { main = main, grid = grid, favGrid = favGrid, activeGrid = grid, mode = "browse", chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0, thumbsDone = true }
             local owner = spoofUi
             task.spawn(function()
                 while spoofUi == owner do
@@ -6590,8 +7125,9 @@ do
                         end
                     end
                     if #waiting > 0 and inflight < 8 then
-                        local top = grid.AbsolutePosition.Y
-                        local bottom = top + grid.AbsoluteSize.Y
+                        local active = owner.activeGrid or grid
+                        local top = active.AbsolutePosition.Y
+                        local bottom = top + active.AbsoluteSize.Y
                         for _, item in ipairs(waiting) do
                             local y = item.tile.AbsolutePosition.Y
                             item.rank = ((y + 104 >= top - 110 and y <= bottom + 110) and 0 or 1000000) + item.tile.LayoutOrder
@@ -6635,10 +7171,14 @@ do
                 task.spawn(function()
                     local uid = resolveUserId(text)
                     if not uid then notify("Avatar spoofer: could not find " .. tostring(text)) return end
-                    loadTarget(uid, text ~= "" and text or tostring(uid))
+                    local name = text ~= "" and text or tostring(uid)
+                    local okName, real = pcall(function() return Players:GetNameFromUserIdAsync(uid) end)
+                    if okName and type(real) == "string" and real ~= "" then name = real end
+                    loadTarget(uid, name)
                 end)
             end)
             refreshChips()
+            setMode("browse")
             loadTarget(LocalPlayer.UserId, "You")
         end
 
@@ -6656,8 +7196,6 @@ do
                 if spoofUi.main.Visible ~= show then spoofUi.main.Visible = show end
             end
         end))
-        track(Players.PlayerAdded:Connect(function() if spoofUi then refreshChips() end end))
-        track(Players.PlayerRemoving:Connect(function() if spoofUi then task.defer(refreshChips) end end))
 
         SpooferActions.prefetch = function(uid, outfitId) prefetchAvatar(uid, outfitId) end
         SpooferActions.applyUser = function(uid) return runApply(uid) end
@@ -9121,9 +9659,9 @@ do
             local function paint(rec)
                 if rec.inst:IsA("ParticleEmitter") then
                     local prefix = "kec_" .. fxKey(name) .. "_" .. fxKey(rec.inst.Name)
-                    if flag(prefix .. "_on", false) then
-                        local picker = Options[prefix .. "_c"]
-                        if picker and typeof(picker.Value) == "Color3" then rec.inst.Color = ColorSequence.new(picker.Value) end
+                    if getgenv().AsterCfg.on(prefix .. "_on", false) then
+                        local color = getgenv().AsterCfg.color(prefix .. "_c")
+                        if color then rec.inst.Color = ColorSequence.new(color) end
                     end
                 end
                 for _, kid in ipairs(rec.kids) do paint(kid) end
@@ -9520,9 +10058,9 @@ do
             local base = "pac_" .. fxKey(label) .. "_"
             for _, emitter in ipairs(list) do
                 local key = fxKey(emitter.name)
-                if flag(base .. key .. "_on", false) then
-                    local picker = Options[base .. key .. "_c"]
-                    if picker and typeof(picker.Value) == "Color3" then map[key] = picker.Value end
+                if getgenv().AsterCfg.on(base .. key .. "_on", false) then
+                    local color = getgenv().AsterCfg.color(base .. key .. "_c")
+                    if color then map[key] = color end
                 end
             end
             return map

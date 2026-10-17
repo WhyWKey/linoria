@@ -1539,7 +1539,7 @@ local FX_WEAPONS = {
     { key = "revolver", label = "Revolver", tools = { "revolver" }, default = "JUDGE" },
 }
 
-local FxAudio = { custom = {}, failed = {}, checked = {}, reported = {} }
+local FxAudio = { ok = {}, checked = {}, reported = {}, scanning = false, scanned = false }
 
 local function fxReport(key, message)
     if FxAudio.reported[key] then return end
@@ -1552,83 +1552,80 @@ local function fxAssetNumber(entry)
     return tonumber(string.match(entry, "%d+"))
 end
 
-local function fxFetchAsset(id)
-    if FxAudio.custom[id] or FxAudio.failed[id] then return end
-    local send = (syn and syn.request) or http_request or request
-    if not (send and writefile and getcustomasset) then
-        FxAudio.failed[id] = "executor has no request/writefile/getcustomasset"
-        fxReport("fail" .. id, "Sound " .. id .. " cannot load: " .. FxAudio.failed[id])
-        return
+local function fxProbe(ids)
+    local probes = {}
+    for _, id in ipairs(ids) do
+        local probe = Instance.new("Sound")
+        probe.SoundId = "rbxassetid://" .. id
+        probes[#probes + 1] = probe
     end
-    FxAudio.failed[id] = "downloading"
-    task.spawn(function()
-        local reason
-        local ok, err = pcall(function()
-            local meta = send({
-                Url = "https://assetdelivery.roblox.com/v2/assetId/" .. id,
-                Method = "GET",
-                Headers = { ["Roblox-Place-Id"] = "292439477", ["User-Agent"] = "Roblox/WinInet", ["Accept"] = "application/json" },
-            })
-            if not (meta and meta.StatusCode == 200) then
-                reason = "lookup HTTP " .. tostring(meta and meta.StatusCode)
-                return
-            end
-            local data = game:GetService("HttpService"):JSONDecode(meta.Body)
-            local first = data.locations and data.locations[1]
-            local location = first and first.location
-            if not location then
-                local first_error = data.errors and data.errors[1]
-                reason = (first_error and first_error.message) or "no download location"
-                return
-            end
-            local file = send({ Url = location, Method = "GET" })
-            if not (file and file.StatusCode == 200 and type(file.Body) == "string" and #file.Body > 0) then
-                reason = "download HTTP " .. tostring(file and file.StatusCode)
-                return
-            end
-            local head = string.sub(file.Body, 1, 4)
-            local extension = (head == "OggS") and ".ogg" or ".mp3"
-            if makefolder then pcall(makefolder, "AsterSfx") end
-            local path = "AsterSfx/" .. id .. extension
-            writefile(path, file.Body)
-            FxAudio.custom[id] = getcustomasset(path)
-        end)
-        if FxAudio.custom[id] then
-            FxAudio.failed[id] = nil
-            fxReport("ok" .. id, "Sound " .. id .. " downloaded, it will play now")
-        else
-            FxAudio.failed[id] = reason or tostring(err)
-            fxReport("fail" .. id, "Sound " .. id .. " failed: " .. FxAudio.failed[id])
-        end
-    end)
+    pcall(function() game:GetService("ContentProvider"):PreloadAsync(probes) end)
+    for index, probe in ipairs(probes) do
+        FxAudio.ok[ids[index]] = probe.IsLoaded or probe.TimeLength > 0
+        probe:Destroy()
+    end
 end
 
 local function fxEnsure(entry)
     local id = fxAssetNumber(entry)
-    if not id or FxAudio.checked[id] then return end
+    if not id then return end
+    if FxAudio.ok[id] == false then
+        fxReport("block" .. id, "Sound " .. id .. " is private and cannot load in this game, pick another or paste a public id")
+        return
+    end
+    if FxAudio.ok[id] ~= nil or FxAudio.checked[id] then return end
     FxAudio.checked[id] = true
     task.spawn(function()
-        local probe = Instance.new("Sound")
-        probe.SoundId = "rbxassetid://" .. id
-        pcall(function() game:GetService("ContentProvider"):PreloadAsync({ probe }) end)
-        local loaded = probe.IsLoaded or probe.TimeLength > 0
-        probe:Destroy()
-        if not loaded then
-            fxReport("block" .. id, "Sound " .. id .. " is blocked for this game, trying a download")
-            fxFetchAsset(id)
+        fxProbe({ id })
+        if FxAudio.ok[id] == false then
+            fxReport("block" .. id, "Sound " .. id .. " is private and cannot load in this game, pick another or paste a public id")
         end
     end)
+end
+
+function FxAudio.scan(done)
+    if FxAudio.scanning or FxAudio.scanned then return end
+    FxAudio.scanning = true
+    task.spawn(function()
+        local rows = PF_GUN_ROWS
+        local index = 1
+        while index <= #rows do
+            local ids = {}
+            for position = index, math.min(index + 23, #rows) do
+                local id = tonumber(rows[position][3])
+                if id and FxAudio.ok[id] == nil then ids[#ids + 1] = id end
+            end
+            if #ids > 0 then fxProbe(ids) end
+            index += 24
+            task.wait()
+        end
+        local usable = 0
+        for _, row in ipairs(rows) do
+            if FxAudio.ok[tonumber(row[3])] then usable += 1 end
+        end
+        FxAudio.scanning = false
+        FxAudio.scanned = true
+        pcall(function() Library:Notify(string.format("Weapon sounds: %d of %d load in this game, the rest are private", usable, #rows), 6) end)
+        if done then pcall(done) end
+    end)
+end
+
+local function fxWeaponEntry(key, default)
+    local options = getgenv().Options or {}
+    local custom = options[key .. "_custom"]
+    local text = custom and custom.Value
+    local id = type(text) == "string" and tonumber(string.match(text, "%d%d%d+"))
+    if id then return "rbxassetid://" .. id end
+    local selected = options[key .. "_sound"]
+    return PF_GUN_BY_NAME[(selected and selected.Value) or default]
 end
 
 local function fxPlaySound(entry, volume, pitch, variation)
     if type(entry) == "table" then entry = entry[math.random(1, #entry)] end
     if type(entry) ~= "string" or entry == "" then return nil end
-    local id = fxAssetNumber(entry)
-    local source = entry
-    if id and FxAudio.custom[id] then source = FxAudio.custom[id] end
     fxEnsure(entry)
     local sound = Instance.new("Sound")
-    sound.SoundId = source
+    sound.SoundId = entry
     sound.Volume = tonumber(volume) or 1
     local speed = tonumber(pitch) or 1
     if variation and variation > 0 then speed = speed * (1 + (math.random() * 2 - 1) * variation) end
@@ -1643,6 +1640,71 @@ local FX_HIT_NAMES = { "nova", "sparks", "bubble", "orbs", "air", "blood", "glit
 local FX_MUZZLE_NAMES = { "Blue Black Hole", "Gold Black Hole", "Orange Black Hole", "Purple Black Hole", "Red Black Hole", "White Black Hole" }
 local function fxKey(text)
     return string.lower((string.gsub(tostring(text or ""), "[^%w]", "")))
+end
+
+local FxColor = {
+    classes = { ParticleEmitter = "Particle", Beam = "Beam", Trail = "Trail", PointLight = "Light", SpotLight = "Light", SurfaceLight = "Light", Sparkles = "Sparkles", Fire = "Fire", Smoke = "Smoke" },
+}
+
+function FxColor.dominant(sequence)
+    local best, bestScore = nil, -1
+    for _, keypoint in ipairs(sequence.Keypoints) do
+        local _, saturation, value = keypoint.Value:ToHSV()
+        local score = saturation * 0.6 + value * 0.4
+        if score > bestScore then
+            best, bestScore = keypoint.Value, score
+        end
+    end
+    return best or Color3.new(1, 1, 1)
+end
+
+function FxColor.read(inst)
+    local class = inst.ClassName
+    if class == "ParticleEmitter" or class == "Beam" or class == "Trail" then
+        local ok, color = pcall(FxColor.dominant, inst.Color)
+        if ok then return color end
+    elseif class == "Sparkles" then
+        return inst.SparkleColor
+    elseif class == "Smoke" or class == "Fire" or inst:IsA("Light") then
+        return inst.Color
+    end
+    return Color3.new(1, 1, 1)
+end
+
+function FxColor.retint(sequence, color)
+    local keypoints = sequence.Keypoints
+    local top = 0
+    for _, keypoint in ipairs(keypoints) do
+        local _, _, value = keypoint.Value:ToHSV()
+        top = math.max(top, value)
+    end
+    if top <= 0.001 or #keypoints < 2 then return ColorSequence.new(color) end
+    local hue, saturation, brightness = color:ToHSV()
+    local out = {}
+    for _, keypoint in ipairs(keypoints) do
+        local _, _, value = keypoint.Value:ToHSV()
+        out[#out + 1] = ColorSequenceKeypoint.new(keypoint.Time, Color3.fromHSV(hue, saturation, math.clamp(brightness * (value / top), 0, 1)))
+    end
+    return ColorSequence.new(out)
+end
+
+function FxColor.apply(inst, color)
+    local class = inst.ClassName
+    if class == "ParticleEmitter" or class == "Beam" or class == "Trail" then
+        inst.Color = FxColor.retint(inst.Color, color)
+    elseif class == "Sparkles" then
+        inst.SparkleColor = color
+    elseif class == "Fire" then
+        inst.Color = color
+        inst.SecondaryColor = color:Lerp(Color3.new(1, 1, 1), 0.25)
+    elseif class == "Smoke" or inst:IsA("Light") then
+        inst.Color = color
+    end
+end
+
+function FxColor.label(name, kind, count)
+    if count and count > 1 then return string.format("%s (%s x%d)", name, kind, count) end
+    return string.format("%s (%s)", name, kind)
 end
 local HIT_SOUND_NAMES = {}
 for name in pairs(HIT_SOUNDS) do table.insert(HIT_SOUND_NAMES, name) end
@@ -2387,7 +2449,19 @@ function Fx:Build()
     local size = Vector2.new(math.min(self.size.X, viewport.X - 20), math.min(self.size.Y, viewport.Y - 20))
     self.size = size
     local main = fxCreate("Frame", { Name = "AsterEffects", BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, Position = UDim2.new(0.5, -size.X / 2 + 40, 0.5, -size.Y / 2), Size = UDim2.fromOffset(size.X, size.Y), Visible = false, ZIndex = 1, Parent = Library.ScreenGui })
-    Library:MakeDraggable(main, 25)
+    Library:MakeDraggable(main, 25, true)
+    local settle = 0
+    main:GetPropertyChangedSignal("Position"):Connect(function()
+        settle += 1
+        local ticket = settle
+        if self.previewHost then self.previewHost.Visible = false end
+        if self.settingsHost then self.settingsHost.Visible = false end
+        task.delay(0.15, function()
+            if settle ~= ticket then return end
+            if self.previewHost then self.previewHost.Visible = true end
+            if self.settingsHost then self.settingsHost.Visible = true end
+        end)
+    end)
     self.main = main
     local frame = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 1, Parent = main }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
     fxLabel({ Size = UDim2.new(1, 0, 0, 25), Text = "Effects", TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 1, Parent = frame })
@@ -2597,6 +2671,7 @@ function Fx:Section(tabName, subName, sectionName)
 end
 
 local function fxSoundList(initial)
+    local STRIDE = 24
     local state = { config = initial }
     local frame = Library:Create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), ZIndex = 5 })
     state.frame = frame
@@ -2605,11 +2680,14 @@ local function fxSoundList(initial)
     local box = Library:Create("TextBox", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 0), Size = UDim2.fromScale(5, 1), Font = Library.Font, PlaceholderColor3 = Color3.fromRGB(190, 190, 190), PlaceholderText = initial.placeholder or "search sounds...", ClearTextOnFocus = false, Text = "", TextColor3 = Library.FontColor, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8, Parent = clip })
     Library:AddToRegistry(box, { TextColor3 = "FontColor" })
     Library:ApplyTextStroke(box)
-    local list = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 1, -24), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = frame }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
-    Library:Create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
-    Library:Create("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3), Parent = list })
+    local list = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 1, -24), CanvasSize = UDim2.new(), ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = frame }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
 
-    local rows = {}
+    local pool = {}
+    local filtered = {}
+    local shown
+    local dirty = true
+    local lastFirst, lastCount = -1, -1
+
     local function value(flag, default)
         local option = flag and Options[flag]
         if option and option.Value ~= nil then return option.Value end
@@ -2621,22 +2699,21 @@ local function fxSoundList(initial)
         fxPlaySound(config.lookup(name), value(config.volumeFlag, 1), value(config.pitchFlag, 1), value(config.varFlag, 0))
     end
 
-    for index, name in ipairs(initial.names) do
-        local row = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, 0, 0, 22), LayoutOrder = index, ZIndex = 6, Parent = list }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
-        fxLabel({ Text = name, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0.6, -40, 1, 0), Position = UDim2.fromOffset(6, 0), ZIndex = 7, Parent = row })
-        local category = initial.category and initial.category(name)
-        if category then
-            fxLabel({ Text = category, TextSize = 11, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Right, Size = UDim2.new(0.4, -52, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), ZIndex = 7, Parent = row })
-        end
-        local pick = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, -(initial.buttonWidth or 38) - 6, 1, 0), ZIndex = 9, Parent = row })
-        local playOuter, playFace = fxBevel(row, 7, UDim2.fromOffset(initial.buttonWidth or 38, 16), UDim2.new(1, -(initial.buttonWidth or 38) - 3, 0.5, -8))
+    local function makeRow()
+        local buttonWidth = initial.buttonWidth or 38
+        local row = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, -6, 0, 22), ZIndex = 6, Visible = false, Parent = list }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+        local entry = { frame = row, over = 0 }
+        entry.nameLabel = fxLabel({ Text = "", TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0.6, -40, 1, 0), Position = UDim2.fromOffset(6, 0), ZIndex = 7, Parent = row })
+        entry.catLabel = fxLabel({ Text = "", TextSize = 11, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Right, Size = UDim2.new(0.4, -52, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), ZIndex = 7, Parent = row })
+        local pick = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, -buttonWidth - 6, 1, 0), ZIndex = 9, Parent = row })
+        local playOuter, playFace = fxBevel(row, 7, UDim2.fromOffset(buttonWidth, 16), UDim2.new(1, -buttonWidth - 3, 0.5, -8))
         playOuter.Visible = false
+        entry.playOuter = playOuter
         fxLabel({ Text = initial.buttonText or "Play", TextSize = 11, Size = UDim2.new(1, 0, 1, 0), ZIndex = 9, Parent = playFace })
         local playHit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 11, Parent = playOuter })
-        local over = 0
         local function hover(delta)
-            over = math.max(over + delta, 0)
-            playOuter.Visible = over > 0 and not initial.noPlay
+            entry.over = math.max(entry.over + delta, 0)
+            playOuter.Visible = entry.over > 0 and not state.config.noPlay and entry.name ~= nil
         end
         for _, hit in ipairs({ pick, playHit }) do
             hit.MouseEnter:Connect(function() hover(1) end)
@@ -2644,33 +2721,81 @@ local function fxSoundList(initial)
         end
         pick.MouseButton1Click:Connect(function()
             local option = state.config.flag and Options[state.config.flag]
-            if option then option:SetValue(name) end
+            if option and entry.name then option:SetValue(entry.name) end
         end)
-        playHit.MouseButton1Click:Connect(function() play(name) end)
-        rows[name] = row
+        playHit.MouseButton1Click:Connect(function()
+            if entry.name then play(entry.name) end
+        end)
+        return entry
     end
 
-    local shown
-    local function refresh()
-        local current = value(state.config.flag, nil)
-        if current == shown then return end
-        shown = current
-        for name, row in pairs(rows) do fxBorder(row, name == current and "AccentColor" or "OutlineColor") end
+    local function render()
+        if not frame.Parent then return end
+        local height = list.AbsoluteSize.Y
+        if height <= 0 then return end
+        local first = math.max(math.floor(list.CanvasPosition.Y / STRIDE), 0)
+        local count = math.ceil(height / STRIDE) + 2
+        if not dirty and first == lastFirst and count == lastCount then return end
+        dirty = false
+        lastFirst, lastCount = first, count
+        for slot = 1, count do
+            if not pool[slot] then pool[slot] = makeRow() end
+        end
+        for slot, entry in ipairs(pool) do
+            local index = first + slot
+            local name = slot <= count and filtered[index] or nil
+            if name then
+                local category = state.config.category and state.config.category(name)
+                entry.name = name
+                entry.frame.Position = UDim2.fromOffset(3, 3 + (index - 1) * STRIDE)
+                entry.nameLabel.Text = name
+                entry.catLabel.Text = category or ""
+                fxBorder(entry.frame, name == shown and "AccentColor" or "OutlineColor")
+                entry.frame.Visible = true
+            else
+                entry.name = nil
+                entry.over = 0
+                entry.playOuter.Visible = false
+                entry.frame.Visible = false
+            end
+        end
     end
+
+    function state.applyFilter()
+        local query = string.lower(box.Text)
+        local config = state.config
+        table.clear(filtered)
+        for _, name in ipairs(config.names) do
+            local hidden = config.hidden and config.hidden(name)
+            if not hidden and (query == "" or string.find(string.lower(name), query, 1, true)) then
+                filtered[#filtered + 1] = name
+            end
+        end
+        list.CanvasSize = UDim2.fromOffset(0, #filtered * STRIDE + 6)
+        local limit = math.max(#filtered * STRIDE + 6 - list.AbsoluteSize.Y, 0)
+        if list.CanvasPosition.Y > limit then list.CanvasPosition = Vector2.new(0, limit) end
+        dirty = true
+        render()
+    end
+
     function state.attach(parent, config)
         state.config = config
         shown = nil
         frame.Parent = parent
-        refresh()
+        state.applyFilter()
     end
-    box:GetPropertyChangedSignal("Text"):Connect(function()
-        local query = string.lower(box.Text)
-        for name, row in pairs(rows) do
-            row.Visible = query == "" or string.find(string.lower(name), query, 1, true) ~= nil
-        end
-    end)
+
+    box:GetPropertyChangedSignal("Text"):Connect(function() state.applyFilter() end)
+    list:GetPropertyChangedSignal("CanvasPosition"):Connect(render)
+    list:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() dirty = true render() end)
     track(RunService.Heartbeat:Connect(function()
-        if frame.Parent and Fx.main and Fx.main.Visible and frame.Parent.Visible then refresh() end
+        if not (frame.Parent and Fx.main and Fx.main.Visible and frame.Parent.Visible) then return end
+        local current = value(state.config.flag, nil)
+        if current ~= shown then
+            shown = current
+            dirty = true
+        end
+        if dirty then render() end
     end))
     return state
 end
@@ -3134,21 +3259,23 @@ do
     local gunList
     for _, weapon in ipairs(FX_WEAPONS) do
         local key = "sfx_" .. weapon.key
-        local config = { names = PF_GUN_NAMES, lookup = function(name) return PF_GUN_BY_NAME[name] end, category = function(name) return PF_GUN_CATEGORY[name] end, flag = key .. "_sound", volumeFlag = key .. "_volume", pitchFlag = key .. "_pitch", varFlag = key .. "_pitchvar" }
+        local config = { names = PF_GUN_NAMES, lookup = function(name) return PF_GUN_BY_NAME[name] end, category = function(name) return PF_GUN_CATEGORY[name] end, hidden = function(name) local id = fxAssetNumber(PF_GUN_BY_NAME[name]) return id ~= nil and FxAudio.ok[id] == false end, flag = key .. "_sound", volumeFlag = key .. "_volume", pitchFlag = key .. "_pitch", varFlag = key .. "_pitchvar" }
         local box = Fx:Section("SFX", weapon.label, weapon.label .. " sound")
         box:Toggle({ Name = "Custom " .. weapon.label .. " sound", Flag = key .. "_on", Default = false })
         box:Dropdown({ Name = "Sound", Flag = key .. "_sound", Items = PF_GUN_NAMES, Default = weapon.default })
+        box:Input({ Name = "Custom sound id", Flag = key .. "_custom", Default = "", Placeholder = "public audio id, overrides the list" })
         box:Slider({ Name = "Volume", Flag = key .. "_volume", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
         box:Slider({ Name = "Pitch", Flag = key .. "_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
         box:Slider({ Name = "Pitch variation", Flag = key .. "_pitchvar", Min = 0, Max = 0.5, Default = 0, Decimals = 0.01 })
         box:Toggle({ Name = "Mute game shot sound", Flag = key .. "_mute", Default = true })
         box:Button({ Name = "Preview sound", Callback = function()
             local name = Options[config.flag] and Options[config.flag].Value
-            fxPlaySound(PF_GUN_BY_NAME[name], Options[config.volumeFlag].Value, Options[config.pitchFlag].Value, Options[config.varFlag].Value)
+            fxPlaySound(fxWeaponEntry(key, weapon.default), Options[config.volumeFlag].Value, Options[config.pitchFlag].Value, Options[config.varFlag].Value)
         end })
         Fx:Preview("SFX", weapon.label, nil, function(sub)
             gunList = gunList or fxSoundList(config)
             gunList.attach(sub.preview, config)
+            FxAudio.scan(function() if gunList then gunList.applyFilter() end end)
         end)
     end
 
@@ -3205,7 +3332,7 @@ do
                 local section = Fx:Section("VFX", "Kill effects", current .. " colors")
                 for _, emitter in ipairs(emitters) do
                     local prefix = "kec_" .. fxKey(current) .. "_" .. fxKey(emitter.name)
-                    section:Toggle({ Name = emitter.name, Flag = prefix .. "_on", Default = false }):Colorpicker({ Name = emitter.name, Flag = prefix .. "_c", Default = emitter.color })
+                    section:Toggle({ Name = emitter.label or emitter.name, Flag = prefix .. "_on", Default = false }):Colorpicker({ Name = emitter.name, Flag = prefix .. "_c", Default = emitter.color })
                 end
                 getgenv().AsterCfg.apply("kec_" .. fxKey(current) .. "_")
                 killSections[current] = section
@@ -3234,7 +3361,7 @@ do
                     local section = Fx:Section("VFX", "Aura effects", current .. " colors")
                     for _, emitter in ipairs(emitters) do
                         local prefix = "pac_" .. fxKey(current) .. "_" .. fxKey(emitter.name)
-                        section:Toggle({ Name = emitter.name, Flag = prefix .. "_on", Default = false }):Colorpicker({ Name = emitter.name, Flag = prefix .. "_c", Default = emitter.color })
+                        section:Toggle({ Name = emitter.label or emitter.name, Flag = prefix .. "_on", Default = false }):Colorpicker({ Name = emitter.name, Flag = prefix .. "_c", Default = emitter.color })
                     end
                     getgenv().AsterCfg.apply("pac_" .. fxKey(current) .. "_")
                     auraSections[current] = section
@@ -7155,7 +7282,20 @@ do
                     task.wait(0.15)
                 end
             end)
-            Library:MakeDraggable(main, 25)
+            Library:MakeDraggable(main, 25, true)
+            local settle = 0
+            main:GetPropertyChangedSignal("Position"):Connect(function()
+                settle += 1
+                local ticket = settle
+                local current = spoofUi
+                if current and current.activeGrid then current.activeGrid.Visible = false end
+                task.delay(0.15, function()
+                    local ui = spoofUi
+                    if settle ~= ticket or not ui then return end
+                    ui.grid.Visible = ui.mode == "browse"
+                    ui.favGrid.Visible = ui.mode == "favorites"
+                end)
+            end)
             search:GetPropertyChangedSignal("Text"):Connect(refreshChips)
             search.FocusLost:Connect(function(enter)
                 if not enter then return end
@@ -7259,8 +7399,13 @@ do
             end
             local key = "sfx_" .. weapon.key
             if not getFlag(key .. "_on", false) then return end
-            local entry = PF_GUN_BY_NAME[getFlag(key .. "_sound", weapon.default)]
+            local entry = fxWeaponEntry(key, weapon.default)
             if not entry then return end
+            local entryId = fxAssetNumber(entry)
+            if entryId and FxAudio.ok[entryId] == false then
+                fxEnsure(entry)
+                return
+            end
             fxPlaySound(entry, getFlag(key .. "_volume", 1), getFlag(key .. "_pitch", 1), getFlag(key .. "_pitchvar", 0))
             if getFlag(key .. "_mute", true) then
                 muting.untilTime = os.clock() + 0.4
@@ -7276,7 +7421,7 @@ do
                 for _, weapon in ipairs(FX_WEAPONS) do
                     local key = "sfx_" .. weapon.key
                     if getFlag(key .. "_on", false) then
-                        fxEnsure(PF_GUN_BY_NAME[getFlag(key .. "_sound", weapon.default)])
+                        fxEnsure(fxWeaponEntry(key, weapon.default))
                     end
                 end
                 task.wait(1.5)
@@ -9619,15 +9764,22 @@ do
             end
             local function scan(rec)
                 local inst = rec.inst
-                if inst:IsA("ParticleEmitter") and not seen[inst.Name] then
-                    seen[inst.Name] = true
-                    local keypoints = inst.Color.Keypoints
-                    result[#result + 1] = { name = inst.Name, color = keypoints[1] and keypoints[1].Value or Color3.new(1, 1, 1) }
+                local kind = FxColor.classes[inst.ClassName]
+                if kind then
+                    local entry = seen[inst.Name]
+                    if entry then
+                        entry.count += 1
+                    else
+                        entry = { name = inst.Name, kind = kind, count = 1, color = FxColor.read(inst) }
+                        seen[inst.Name] = entry
+                        result[#result + 1] = entry
+                    end
                 end
                 for _, kid in ipairs(rec.kids) do scan(kid) end
             end
             for _, rec in ipairs(tops) do scan(rec) end
             for _, rec in ipairs(tops) do pcall(function() rec.inst:Destroy() end) end
+            for _, entry in ipairs(result) do entry.label = FxColor.label(entry.name, entry.kind, entry.count) end
             return result
         end
         Actions.killEmitters = emitterNames
@@ -9657,11 +9809,11 @@ do
             for _, rec in ipairs(tops) do link(rec, tops) end
 
             local function paint(rec)
-                if rec.inst:IsA("ParticleEmitter") then
+                if FxColor.classes[rec.inst.ClassName] then
                     local prefix = "kec_" .. fxKey(name) .. "_" .. fxKey(rec.inst.Name)
                     if getgenv().AsterCfg.on(prefix .. "_on", false) then
                         local color = getgenv().AsterCfg.color(prefix .. "_c")
-                        if color then rec.inst.Color = ColorSequence.new(color) end
+                        if color then pcall(FxColor.apply, rec.inst, color) end
                     end
                 end
                 for _, kid in ipairs(rec.kids) do paint(kid) end
@@ -10022,32 +10174,25 @@ do
 
         local FX_CLASS = { ParticleEmitter = true, Beam = true, Trail = true, PointLight = true, SpotLight = true, SurfaceLight = true, Sparkles = true, Fire = true, Smoke = true }
 
-        local function colorOf(inst)
-            local class = inst.ClassName
-            if class == "ParticleEmitter" or class == "Beam" or class == "Trail" then
-                local ok, color = pcall(function() return inst.Color.Keypoints[1].Value end)
-                if ok then return color end
-            elseif class == "Sparkles" then
-                return inst.SparkleColor
-            elseif class == "Smoke" or class == "Fire" or inst:IsA("Light") then
-                return inst.Color
-            end
-            return Color3.new(1, 1, 1)
-        end
-
         local function collect(root)
             local list, seen = {}, {}
             local function visit(inst)
-                if FX_CLASS[inst.ClassName] then
+                local kind = FxColor.classes[inst.ClassName]
+                if kind then
                     local key = fxKey(inst.Name)
-                    if key ~= "" and not seen[key] and #list < 12 then
-                        seen[key] = true
-                        list[#list + 1] = { name = inst.Name, color = colorOf(inst) }
+                    local entry = seen[key]
+                    if entry then
+                        entry.count += 1
+                    elseif key ~= "" and #list < 14 then
+                        entry = { name = inst.Name, kind = kind, count = 1, color = FxColor.read(inst) }
+                        seen[key] = entry
+                        list[#list + 1] = entry
                     end
                 end
             end
             visit(root)
             for _, descendant in ipairs(root:GetDescendants()) do visit(descendant) end
+            for _, entry in ipairs(list) do entry.label = FxColor.label(entry.name, entry.kind, entry.count) end
             return list
         end
 
@@ -10067,17 +10212,7 @@ do
         end
 
         local function paintOverride(inst, color)
-            local class = inst.ClassName
-            if class == "ParticleEmitter" or class == "Beam" or class == "Trail" then
-                inst.Color = ColorSequence.new(color)
-            elseif class == "Sparkles" then
-                inst.SparkleColor = color
-            elseif class == "Fire" then
-                inst.Color = color
-                inst.SecondaryColor = color:Lerp(Color3.new(1, 1, 1), 0.25)
-            elseif class == "Smoke" or inst:IsA("Light") then
-                inst.Color = color
-            end
+            FxColor.apply(inst, color)
         end
 
         local function overrideTree(inst, map)

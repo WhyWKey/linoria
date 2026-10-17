@@ -1539,11 +1539,96 @@ local FX_WEAPONS = {
     { key = "revolver", label = "Revolver", tools = { "revolver" }, default = "JUDGE" },
 }
 
+local FxAudio = { custom = {}, failed = {}, checked = {}, reported = {} }
+
+local function fxReport(key, message)
+    if FxAudio.reported[key] then return end
+    FxAudio.reported[key] = true
+    pcall(function() Library:Notify(message, 6) end)
+end
+
+local function fxAssetNumber(entry)
+    if type(entry) ~= "string" then return nil end
+    return tonumber(string.match(entry, "%d+"))
+end
+
+local function fxFetchAsset(id)
+    if FxAudio.custom[id] or FxAudio.failed[id] then return end
+    local send = (syn and syn.request) or http_request or request
+    if not (send and writefile and getcustomasset) then
+        FxAudio.failed[id] = "executor has no request/writefile/getcustomasset"
+        fxReport("fail" .. id, "Sound " .. id .. " cannot load: " .. FxAudio.failed[id])
+        return
+    end
+    FxAudio.failed[id] = "downloading"
+    task.spawn(function()
+        local reason
+        local ok, err = pcall(function()
+            local meta = send({
+                Url = "https://assetdelivery.roblox.com/v2/assetId/" .. id,
+                Method = "GET",
+                Headers = { ["Roblox-Place-Id"] = "292439477", ["User-Agent"] = "Roblox/WinInet", ["Accept"] = "application/json" },
+            })
+            if not (meta and meta.StatusCode == 200) then
+                reason = "lookup HTTP " .. tostring(meta and meta.StatusCode)
+                return
+            end
+            local data = game:GetService("HttpService"):JSONDecode(meta.Body)
+            local first = data.locations and data.locations[1]
+            local location = first and first.location
+            if not location then
+                local first_error = data.errors and data.errors[1]
+                reason = (first_error and first_error.message) or "no download location"
+                return
+            end
+            local file = send({ Url = location, Method = "GET" })
+            if not (file and file.StatusCode == 200 and type(file.Body) == "string" and #file.Body > 0) then
+                reason = "download HTTP " .. tostring(file and file.StatusCode)
+                return
+            end
+            local head = string.sub(file.Body, 1, 4)
+            local extension = (head == "OggS") and ".ogg" or ".mp3"
+            if makefolder then pcall(makefolder, "AsterSfx") end
+            local path = "AsterSfx/" .. id .. extension
+            writefile(path, file.Body)
+            FxAudio.custom[id] = getcustomasset(path)
+        end)
+        if FxAudio.custom[id] then
+            FxAudio.failed[id] = nil
+            fxReport("ok" .. id, "Sound " .. id .. " downloaded, it will play now")
+        else
+            FxAudio.failed[id] = reason or tostring(err)
+            fxReport("fail" .. id, "Sound " .. id .. " failed: " .. FxAudio.failed[id])
+        end
+    end)
+end
+
+local function fxEnsure(entry)
+    local id = fxAssetNumber(entry)
+    if not id or FxAudio.checked[id] then return end
+    FxAudio.checked[id] = true
+    task.spawn(function()
+        local probe = Instance.new("Sound")
+        probe.SoundId = "rbxassetid://" .. id
+        pcall(function() game:GetService("ContentProvider"):PreloadAsync({ probe }) end)
+        local loaded = probe.IsLoaded or probe.TimeLength > 0
+        probe:Destroy()
+        if not loaded then
+            fxReport("block" .. id, "Sound " .. id .. " is blocked for this game, trying a download")
+            fxFetchAsset(id)
+        end
+    end)
+end
+
 local function fxPlaySound(entry, volume, pitch, variation)
     if type(entry) == "table" then entry = entry[math.random(1, #entry)] end
     if type(entry) ~= "string" or entry == "" then return nil end
+    local id = fxAssetNumber(entry)
+    local source = entry
+    if id and FxAudio.custom[id] then source = FxAudio.custom[id] end
+    fxEnsure(entry)
     local sound = Instance.new("Sound")
-    sound.SoundId = entry
+    sound.SoundId = source
     sound.Volume = tonumber(volume) or 1
     local speed = tonumber(pitch) or 1
     if variation and variation > 0 then speed = speed * (1 + (math.random() * 2 - 1) * variation) end
@@ -2315,6 +2400,11 @@ function Fx:SelectSub(sub)
         local ok, err = pcall(sub.builder, sub.preview, sub)
         if not ok then warn("Effects preview failed:", err) end
     end
+    if sub.relayouts then
+        task.defer(function()
+            for _, relayout in ipairs(sub.relayouts) do pcall(relayout) end
+        end)
+    end
     if sub.onShow then
         local ok, err = pcall(sub.onShow, sub)
         if not ok then warn("Effects preview failed:", err) end
@@ -2382,6 +2472,53 @@ function Fx:Section(tabName, subName, sectionName)
     fake:AddBlank(3)
     local group = wrapGroup(fake, { load = { 0, 0 } }, 1)
     group.frame = outer
+    local items = {}
+    local function relayout()
+        local width = container.AbsoluteSize.X
+        if width < 60 then return end
+        for _, item in ipairs(items) do
+            if item.kind == "toggle" then
+                if item.label.Parent then item.label.Size = UDim2.new(0, math.max(width - 21, 40), 1, 0) end
+                if item.region.Parent then item.region.Size = UDim2.new(0, math.max(width - 8, 40), 1, 0) end
+            else
+                local option = Options[item.flag]
+                local span = item.outer.AbsoluteSize.X - 2
+                if option and span > 20 then
+                    option.MaxSize = span
+                    option:Display()
+                end
+            end
+        end
+    end
+    container:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
+    group.relayout = relayout
+    sub.relayouts = sub.relayouts or {}
+    table.insert(sub.relayouts, relayout)
+    local function watch(kind, original)
+        return function(self, info)
+            local before = {}
+            for _, child in ipairs(container:GetChildren()) do before[child] = true end
+            local result = original(self, info)
+            for _, child in ipairs(container:GetChildren()) do
+                if not before[child] and child:IsA("Frame") then
+                    if kind == "toggle" and child.Size.X.Scale == 0 and child.Size.X.Offset == 13 then
+                        local label = child:FindFirstChildWhichIsA("TextLabel", true)
+                        local region
+                        for _, inner in ipairs(child:GetChildren()) do
+                            if inner:IsA("Frame") and inner.Size.X.Offset == 170 then region = inner end
+                        end
+                        if label and region then table.insert(items, { kind = "toggle", label = label, region = region }) end
+                    elseif kind == "slider" and child.Size.X.Scale == 1 and child.Size.X.Offset == -4 and child.Size.Y.Offset == 13 then
+                        table.insert(items, { kind = "slider", outer = child, flag = info.Flag })
+                    end
+                end
+            end
+            task.defer(relayout)
+            return result
+        end
+    end
+    group.Toggle = watch("toggle", group.Toggle)
+    group.Slider = watch("slider", group.Slider)
     return group
 end
 
@@ -2621,6 +2758,36 @@ do
             end
         end
         for name, section in pairs(killSections) do
+            if section then section.frame.Visible = name == current end
+        end
+    end))
+
+    local auraSections, auraPending, auraCheck = {}, {}, 0
+    track(RunService.Heartbeat:Connect(function()
+        local now = os.clock()
+        if now - auraCheck < 0.3 then return end
+        auraCheck = now
+        if not (Fx.main and Fx.main.Visible) then return end
+        local current = Options.pa_source and Options.pa_source.Value
+        if not current or not Actions.auraEmitters then return end
+        if auraSections[current] == nil and not auraPending[current] then
+            auraPending[current] = true
+            task.spawn(function()
+                local ok, emitters = pcall(Actions.auraEmitters, current)
+                if ok and emitters and #emitters > 0 then
+                    local section = Fx:Section("VFX", "Aura effects", current .. " colors")
+                    for _, emitter in ipairs(emitters) do
+                        local prefix = "pac_" .. fxKey(current) .. "_" .. fxKey(emitter.name)
+                        section:Toggle({ Name = emitter.name, Flag = prefix .. "_on", Default = false }):Colorpicker({ Name = emitter.name, Flag = prefix .. "_c", Default = emitter.color })
+                    end
+                    auraSections[current] = section
+                else
+                    auraSections[current] = false
+                end
+                auraPending[current] = nil
+            end)
+        end
+        for name, section in pairs(auraSections) do
             if section then section.frame.Visible = name == current end
         end
     end))
@@ -6464,7 +6631,16 @@ do
             local character = LocalPlayer.Character
             local tool = character and character:FindFirstChildOfClass("Tool")
             local weapon = tool and weaponByTool[normalize(tool.Name)]
-            if not weapon then return end
+            if not weapon then
+                if tool then
+                    local anyOn = false
+                    for _, candidate in ipairs(FX_WEAPONS) do
+                        if getFlag("sfx_" .. candidate.key .. "_on", false) then anyOn = true end
+                    end
+                    if anyOn then fxReport("tool" .. tool.Name, "Weapon sounds: no slot for tool '" .. tool.Name .. "'") end
+                end
+                return
+            end
             local key = "sfx_" .. weapon.key
             if not getFlag(key .. "_on", false) then return end
             local entry = PF_GUN_BY_NAME[getFlag(key .. "_sound", weapon.default)]
@@ -6477,6 +6653,19 @@ do
             end
         end
         table.insert(ShotEvents.shot, onShot)
+
+        local alive = true
+        task.spawn(function()
+            while alive do
+                for _, weapon in ipairs(FX_WEAPONS) do
+                    local key = "sfx_" .. weapon.key
+                    if getFlag(key .. "_on", false) then
+                        fxEnsure(PF_GUN_BY_NAME[getFlag(key .. "_sound", weapon.default)])
+                    end
+                end
+                task.wait(1.5)
+            end
+        end)
 
         track(RunService.Heartbeat:Connect(function()
             if os.clock() > muting.untilTime then return end
@@ -6506,6 +6695,7 @@ do
         end))
 
         onUnload(function()
+            alive = false
             for _, list in ipairs({ ShotEvents.kill, ShotEvents.shot }) do
                 for index = #list, 1, -1 do
                     if list[index] == onKill or list[index] == onShot then table.remove(list, index) end
@@ -9052,8 +9242,21 @@ do
             return picker and typeof(picker.Value) == "Color3" and picker.Value or Color3.fromRGB(133, 220, 255)
         end
 
+        local emitterCache = {}
+        local overrideMap
+
         local function signature()
-            return table.concat({ tostring(flag("pa_source", "angel")), tostring(auraColor()), tostring(Options.pa_color and Options.pa_color.Transparency or 0.2), tostring(flag("pa_pack_original", true)) }, "|")
+            local label = flag("pa_source", "angel")
+            local parts = { tostring(label), tostring(auraColor()), tostring(Options.pa_color and Options.pa_color.Transparency or 0.2), tostring(flag("pa_pack_original", true)) }
+            local list = emitterCache[label]
+            if list then
+                for _, emitter in ipairs(list) do
+                    local key = fxKey(emitter.name)
+                    local color = overrideMap(label)[key]
+                    parts[#parts + 1] = key .. "=" .. (color and tostring(color) or "-")
+                end
+            end
+            return table.concat(parts, "|")
         end
 
         local function clear()
@@ -9092,6 +9295,73 @@ do
         }
 
         local FX_CLASS = { ParticleEmitter = true, Beam = true, Trail = true, PointLight = true, SpotLight = true, SurfaceLight = true, Sparkles = true, Fire = true, Smoke = true }
+
+        local function colorOf(inst)
+            local class = inst.ClassName
+            if class == "ParticleEmitter" or class == "Beam" or class == "Trail" then
+                local ok, color = pcall(function() return inst.Color.Keypoints[1].Value end)
+                if ok then return color end
+            elseif class == "Sparkles" then
+                return inst.SparkleColor
+            elseif class == "Smoke" or class == "Fire" or inst:IsA("Light") then
+                return inst.Color
+            end
+            return Color3.new(1, 1, 1)
+        end
+
+        local function collect(root)
+            local list, seen = {}, {}
+            local function visit(inst)
+                if FX_CLASS[inst.ClassName] then
+                    local key = fxKey(inst.Name)
+                    if key ~= "" and not seen[key] and #list < 12 then
+                        seen[key] = true
+                        list[#list + 1] = { name = inst.Name, color = colorOf(inst) }
+                    end
+                end
+            end
+            visit(root)
+            for _, descendant in ipairs(root:GetDescendants()) do visit(descendant) end
+            return list
+        end
+
+        function overrideMap(label)
+            local map = {}
+            local list = emitterCache[label]
+            if not list then return map end
+            local base = "pac_" .. fxKey(label) .. "_"
+            for _, emitter in ipairs(list) do
+                local key = fxKey(emitter.name)
+                if flag(base .. key .. "_on", false) then
+                    local picker = Options[base .. key .. "_c"]
+                    if picker and typeof(picker.Value) == "Color3" then map[key] = picker.Value end
+                end
+            end
+            return map
+        end
+
+        local function paintOverride(inst, color)
+            local class = inst.ClassName
+            if class == "ParticleEmitter" or class == "Beam" or class == "Trail" then
+                inst.Color = ColorSequence.new(color)
+            elseif class == "Sparkles" then
+                inst.SparkleColor = color
+            elseif class == "Fire" then
+                inst.Color = color
+                inst.SecondaryColor = color:Lerp(Color3.new(1, 1, 1), 0.25)
+            elseif class == "Smoke" or inst:IsA("Light") then
+                inst.Color = color
+            end
+        end
+
+        local function overrideTree(inst, map)
+            local function one(item)
+                local color = FX_CLASS[item.ClassName] and map[fxKey(item.Name)]
+                if color then pcall(paintOverride, item, color) end
+            end
+            one(inst)
+            for _, descendant in ipairs(inst:GetDescendants()) do one(descendant) end
+        end
         local packRigs = {}
         local function packRig(entry)
             local id = type(entry) == "table" and entry.id or AURA_PACK.id
@@ -9117,6 +9387,28 @@ do
         end
         Actions.packRig = function(entry) return (packRig(entry)) end
 
+        Actions.auraEmitters = function(label)
+            if emitterCache[label] then return emitterCache[label] end
+            local list = {}
+            local rigName = AURA_PACK.rigs[label]
+            if rigName then
+                local rig = packRig(rigName)
+                if rig then list = collect(rig) end
+            else
+                local id = SOURCES[label]
+                if id then
+                    local ok, objects = pcall(function() return game:GetObjects(id) end)
+                    local model = ok and objects and objects[1]
+                    if model then
+                        list = collect(model)
+                        pcall(function() model:Destroy() end)
+                    end
+                end
+            end
+            emitterCache[label] = list
+            return list
+        end
+
         local function applyPack(char, rigName)
             local rig, isLoose = packRig(rigName)
             if not rig then
@@ -9125,6 +9417,8 @@ do
                 return
             end
             local keepColors = flag("pa_pack_original", true)
+            local overrides = overrideMap(flag("pa_source", "angel"))
+            local hasOverrides = next(overrides) ~= nil
             local root = char:FindFirstChild("HumanoidRootPart")
             local attached = 0
             local partList = rig:GetDescendants()
@@ -9173,6 +9467,7 @@ do
                                     tint(clone)
                                     for _, d in ipairs(clone:GetDescendants()) do tint(d) end
                                 end
+                                if hasOverrides then overrideTree(clone, overrides) end
                             end
                             attached += 1
                         end
@@ -9186,6 +9481,7 @@ do
             clear()
             local char = LocalPlayer.Character
             if not char then return end
+            pcall(Actions.auraEmitters, flag("pa_source", "angel"))
             local rigName = AURA_PACK.rigs[flag("pa_source", "angel")]
             if rigName then return applyPack(char, rigName) end
             local model
@@ -9195,6 +9491,8 @@ do
             model = ok and objects and objects[1]
             if not model then warnf("particle aura asset could not be loaded") return end
 
+            local overrides = overrideMap(flag("pa_source", "angel"))
+            local hasOverrides = next(overrides) ~= nil
             local function attach(part, target)
                 for _, child in ipairs(part:GetChildren()) do
                     if child:IsA("LuaSourceContainer") then continue end
@@ -9205,6 +9503,7 @@ do
                     clone.Parent = target
                     tint(clone)
                     for _, d in ipairs(clone:GetDescendants()) do tint(d) end
+                    if hasOverrides then overrideTree(clone, overrides) end
                     active[#active + 1] = clone
                 end
             end
@@ -9259,6 +9558,8 @@ do
             bag.clear()
             clear()
         end)
+
+        onUnload(function() Actions.auraEmitters = nil end)
     end)()
 
     ;(function()

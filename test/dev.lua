@@ -1553,6 +1553,12 @@ local function fxPlaySound(entry, volume, pitch, variation)
     game:GetService("Debris"):AddItem(sound, 8)
     return sound
 end
+local FX_KILL_NAMES = { "Stone", "Gold Statue", "Fade", "Ghost", "Shrink", "Blackhole", "Cosmic Strike", "Cyberspace", "Darkheart", "Deleted", "Galactic Pull", "Game Over", "Glitter Bomb", "Heartbreak", "Infinite Portal", "Lightning", "Northern Aurora Burst", "Paper Surprise", "Scorch", "Soul Grasp", "Sparkle", "Stereo", "Tornado", "Tornado Acid", "Tornado Earth", "Tornado Fire", "Tornado Lightning" }
+local FX_HIT_NAMES = { "nova", "sparks", "bubble", "orbs", "air", "blood", "glitch", "slash", "cosmic", "crescentslash", "Burst: Mutants Rage", "Burst: Armageddon", "Burst: Solar Flare", "Burst: Heaven", "Burst: Gravity God", "Burst: Red Ring of Death", "Burst: Blue Heat", "Burst: Stardust Fragment", "Burst: Fiery Ritual of Hallownest", "Burst: Midnight Blues", "Burst: Susanoo Arms", "Burst: Atomic", "Burst: Kurama" }
+local FX_MUZZLE_NAMES = { "Blue Black Hole", "Gold Black Hole", "Orange Black Hole", "Purple Black Hole", "Red Black Hole", "White Black Hole" }
+local function fxKey(text)
+    return string.lower((string.gsub(tostring(text or ""), "[^%w]", "")))
+end
 local HIT_SOUND_NAMES = {}
 for name in pairs(HIT_SOUNDS) do table.insert(HIT_SOUND_NAMES, name) end
 table.sort(HIT_SOUND_NAMES)
@@ -2374,7 +2380,9 @@ function Fx:Section(tabName, subName, sectionName)
     end)
     local fake = setmetatable({ Container = container, Resize = function() end }, GroupMeta)
     fake:AddBlank(3)
-    return wrapGroup(fake, { load = { 0, 0 } }, 1)
+    local group = wrapGroup(fake, { load = { 0, 0 } }, 1)
+    group.frame = outer
+    return group
 end
 
 local function fxSoundList(initial)
@@ -2383,7 +2391,7 @@ local function fxSoundList(initial)
     state.frame = frame
     local searchOuter, searchFace = fxBevel(frame, 5, UDim2.new(1, 0, 0, 20), UDim2.fromOffset(0, 0))
     local clip = Library:Create("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.new(0, 5, 0, 0), Size = UDim2.new(1, -5, 1, 0), ZIndex = 7, Parent = searchFace })
-    local box = Library:Create("TextBox", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 0), Size = UDim2.fromScale(5, 1), Font = Library.Font, PlaceholderColor3 = Color3.fromRGB(190, 190, 190), PlaceholderText = "search sounds...", ClearTextOnFocus = false, Text = "", TextColor3 = Library.FontColor, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8, Parent = clip })
+    local box = Library:Create("TextBox", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 0), Size = UDim2.fromScale(5, 1), Font = Library.Font, PlaceholderColor3 = Color3.fromRGB(190, 190, 190), PlaceholderText = initial.placeholder or "search sounds...", ClearTextOnFocus = false, Text = "", TextColor3 = Library.FontColor, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8, Parent = clip })
     Library:AddToRegistry(box, { TextColor3 = "FontColor" })
     Library:ApplyTextStroke(box)
     local list = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 1, -24), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = frame }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
@@ -2398,6 +2406,7 @@ local function fxSoundList(initial)
     end
     local function play(name)
         local config = state.config
+        if config.play then config.play(name) return end
         fxPlaySound(config.lookup(name), value(config.volumeFlag, 1), value(config.pitchFlag, 1), value(config.varFlag, 0))
     end
 
@@ -2408,15 +2417,15 @@ local function fxSoundList(initial)
         if category then
             fxLabel({ Text = category, TextSize = 11, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Right, Size = UDim2.new(0.4, -52, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), ZIndex = 7, Parent = row })
         end
-        local pick = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, -44, 1, 0), ZIndex = 9, Parent = row })
-        local playOuter, playFace = fxBevel(row, 7, UDim2.fromOffset(38, 16), UDim2.new(1, -41, 0.5, -8))
+        local pick = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, -(initial.buttonWidth or 38) - 6, 1, 0), ZIndex = 9, Parent = row })
+        local playOuter, playFace = fxBevel(row, 7, UDim2.fromOffset(initial.buttonWidth or 38, 16), UDim2.new(1, -(initial.buttonWidth or 38) - 3, 0.5, -8))
         playOuter.Visible = false
-        fxLabel({ Text = "Play", TextSize = 11, Size = UDim2.new(1, 0, 1, 0), ZIndex = 9, Parent = playFace })
+        fxLabel({ Text = initial.buttonText or "Play", TextSize = 11, Size = UDim2.new(1, 0, 1, 0), ZIndex = 9, Parent = playFace })
         local playHit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 11, Parent = playOuter })
         local over = 0
         local function hover(delta)
             over = math.max(over + delta, 0)
-            playOuter.Visible = over > 0
+            playOuter.Visible = over > 0 and not initial.noPlay
         end
         for _, hit in ipairs({ pick, playHit }) do
             hit.MouseEnter:Connect(function() hover(1) end)
@@ -2566,11 +2575,55 @@ do
         end)
     end
 
-    Fx:Preview("VFX", "Kill effects", fxNote("Kill effect preview on a dummy is coming next. Pick the effect below and use Preview effect to test it in the world."))
-    Fx:Preview("VFX", "Hit effects", fxNote("Hit effect preview on a dummy is coming next. Pick the effect below and use Preview effect to test it in the world."))
-    Fx:Preview("VFX", "Aura effects", fxNote("Aura preview on a dummy is coming next. Pick the aura below, it shows on your character."))
-    Fx:Preview("VFX", "Muzzle effects", fxNote("Muzzle effects show on the Muzzle part of the tool you hold."))
+    local killVfx, hitVfx, auraVfx, muzzleVfx
+    local killVfxConfig = { names = FX_KILL_NAMES, flag = "ke_effect", play = function(name) Actions.previewKillEffect(name) end, buttonText = "Preview", buttonWidth = 56, placeholder = "search kill effects..." }
+    local hitVfxConfig = { names = FX_HIT_NAMES, flag = "he_effect", play = function(name) Actions.previewHitEffect(name) end, buttonText = "Preview", buttonWidth = 56, placeholder = "search hit effects..." }
+    local auraVfxConfig = { names = AURA_PACK.items, flag = "pa_source", noPlay = true, placeholder = "search auras..." }
+    local muzzleVfxConfig = { names = FX_MUZZLE_NAMES, flag = "mz_effect", noPlay = true, placeholder = "search muzzle effects..." }
+    Fx:Preview("VFX", "Kill effects", nil, function(sub)
+        killVfx = killVfx or fxSoundList(killVfxConfig)
+        killVfx.attach(sub.preview, killVfxConfig)
+    end)
+    Fx:Preview("VFX", "Hit effects", nil, function(sub)
+        hitVfx = hitVfx or fxSoundList(hitVfxConfig)
+        hitVfx.attach(sub.preview, hitVfxConfig)
+    end)
+    Fx:Preview("VFX", "Aura effects", nil, function(sub)
+        auraVfx = auraVfx or fxSoundList(auraVfxConfig)
+        auraVfx.attach(sub.preview, auraVfxConfig)
+    end)
+    Fx:Preview("VFX", "Muzzle effects", nil, function(sub)
+        muzzleVfx = muzzleVfx or fxSoundList(muzzleVfxConfig)
+        muzzleVfx.attach(sub.preview, muzzleVfxConfig)
+    end)
     Fx:Preview("Tracers", "Bullet tracers", fxTracerPreview)
+
+    local killSections, lastKill, lastCheck = {}, nil, 0
+    track(RunService.Heartbeat:Connect(function()
+        local now = os.clock()
+        if now - lastCheck < 0.3 then return end
+        lastCheck = now
+        if not (Fx.main and Fx.main.Visible) then return end
+        local current = Options.ke_effect and Options.ke_effect.Value
+        if not current or current == lastKill or not Actions.killEmitters then return end
+        lastKill = current
+        if killSections[current] == nil then
+            local emitters = Actions.killEmitters(current)
+            if #emitters > 0 then
+                local section = Fx:Section("VFX", "Kill effects", current .. " colors")
+                for _, emitter in ipairs(emitters) do
+                    local prefix = "kec_" .. fxKey(current) .. "_" .. fxKey(emitter.name)
+                    section:Toggle({ Name = emitter.name, Flag = prefix .. "_on", Default = false }):Colorpicker({ Name = emitter.name, Flag = prefix .. "_c", Default = emitter.color })
+                end
+                killSections[current] = section
+            else
+                killSections[current] = false
+            end
+        end
+        for name, section in pairs(killSections) do
+            if section then section.frame.Visible = name == current end
+        end
+    end))
 end
 end
 
@@ -2881,7 +2934,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     local HitFx = Fx:Section("VFX", "Hit effects", "Hit effects")
     local heToggle = HitFx:Toggle({ Name = "Hit effects", Flag = "he_enabled", Default = false })
     heToggle:Colorpicker({ Name = "Color", Flag = "he_color", Default = Color3.fromRGB(255, 81, 0) })
-    HitFx:Dropdown({ Name = "Effect", Flag = "he_effect", Items = { "nova", "sparks", "bubble", "orbs", "air", "blood", "glitch", "slash", "cosmic", "crescentslash", "Burst: Mutants Rage", "Burst: Armageddon", "Burst: Solar Flare", "Burst: Heaven", "Burst: Gravity God", "Burst: Red Ring of Death", "Burst: Blue Heat", "Burst: Stardust Fragment", "Burst: Fiery Ritual of Hallownest", "Burst: Midnight Blues", "Burst: Susanoo Arms", "Burst: Atomic", "Burst: Kurama" }, Default = "nova" })
+    HitFx:Dropdown({ Name = "Effect", Flag = "he_effect", Items = FX_HIT_NAMES, Default = "nova" })
     HitFx:Dropdown({ Name = "Trigger", Flag = "he_trigger", Items = { "On hit", "On shot" }, Default = "On hit" })
     HitFx:Slider({ Name = "Size", Flag = "he_size", Min = 0, Max = 10, Default = 2, Decimals = 0.1 })
     HitFx:Slider({ Name = "Duration", Flag = "he_duration", Min = 0.1, Max = 10, Default = 2, Suffix = "s", Decimals = 0.1 })
@@ -2889,14 +2942,14 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
 
     local KillFx = Fx:Section("VFX", "Kill effects", "Kill effects")
     KillFx:Toggle({ Name = "Kill effects", Flag = "ke_enabled", Default = false, Tooltip = "Plays an effect where a player you shot dies" })
-    KillFx:Dropdown({ Name = "Effect", Flag = "ke_effect", Items = { "Stone", "Gold Statue", "Fade", "Ghost", "Shrink", "Blackhole", "Cosmic Strike", "Cyberspace", "Darkheart", "Deleted", "Galactic Pull", "Game Over", "Glitter Bomb", "Heartbreak", "Infinite Portal", "Lightning", "Northern Aurora Burst", "Paper Surprise", "Scorch", "Soul Grasp", "Sparkle", "Stereo", "Tornado", "Tornado Acid", "Tornado Earth", "Tornado Fire", "Tornado Lightning" }, Default = "Darkheart" })
+    KillFx:Dropdown({ Name = "Effect", Flag = "ke_effect", Items = FX_KILL_NAMES, Default = "Darkheart" })
     KillFx:Toggle({ Name = "Body reaction", Flag = "ke_body", Default = true, Tooltip = "Also changes the victim's own body parts where the original effect does (charred stone, shrinking, fading)" })
     KillFx:Slider({ Name = "Duration", Flag = "ke_duration", Min = 1, Max = 8, Default = 4, Suffix = "s", Decimals = 0.1 })
     KillFx:Button({ Name = "Preview effect", Callback = function() Actions.previewKillEffect() end })
 
     local Muzzle = Fx:Section("VFX", "Muzzle effects", "Muzzle effects")
     Muzzle:Toggle({ Name = "Muzzle effects", Flag = "mz_enabled", Default = false, Tooltip = "Black hole effects on the Muzzle part of the tool you hold" })
-    Muzzle:Dropdown({ Name = "Effect", Flag = "mz_effect", Items = { "Blue Black Hole", "Gold Black Hole", "Orange Black Hole", "Purple Black Hole", "Red Black Hole", "White Black Hole" }, Default = "Purple Black Hole" })
+    Muzzle:Dropdown({ Name = "Effect", Flag = "mz_effect", Items = FX_MUZZLE_NAMES, Default = "Purple Black Hole" })
     Muzzle:Dropdown({ Name = "Mode", Flag = "mz_mode", Items = { "While equipped", "On shot" }, Default = "While equipped" })
     Muzzle:Slider({ Name = "Flash time", Flag = "mz_flash", Min = 0.05, Max = 1.5, Default = 0.25, Suffix = "s", Decimals = 0.05 })
     Muzzle:Slider({ Name = "Size", Flag = "mz_size", Min = 0.5, Max = 100, Default = 5, Suffix = "%", Decimals = 0.5 })
@@ -8322,11 +8375,11 @@ do
             fn(position)
         end
 
-        local function emit(position)
+        local function emit(position, effectName)
             if typeof(position) ~= "Vector3" then return end
             local picker = Options.he_color
             local color = picker and typeof(picker.Value) == "Color3" and picker.Value or Color3.fromRGB(255, 81, 0)
-            local ok, err = pcall(HitEffects.Play, position, flag("he_effect", "nova"), color, flag("he_size", 2), flag("he_duration", 2))
+            local ok, err = pcall(HitEffects.Play, position, effectName or flag("he_effect", "nova"), color, flag("he_size", 2), flag("he_duration", 2))
             if not ok then warnf("hit effect failed:", err) end
         end
 
@@ -8364,9 +8417,9 @@ do
             if hook then hook(false) end
         end)
 
-        Actions.previewHitEffect = function()
+        Actions.previewHitEffect = function(effectName)
             local cam = Camera()
-            if cam then emit(cam.CFrame.Position + cam.CFrame.LookVector * 14) end
+            if cam then emit(cam.CFrame.Position + cam.CFrame.LookVector * 14, effectName) end
         end
 
         onUnload(function()
@@ -8639,6 +8692,30 @@ do
             return result and result.Position.Y or position.Y - 2.5
         end
 
+        local function emitterNames(name)
+            local nodes = KILL_FX[name]
+            local result, seen = {}, {}
+            if not nodes then return result end
+            local tops = {}
+            for _, tuple in ipairs(nodes) do
+                local ok, rec = pcall(build, tuple)
+                if ok and rec then tops[#tops + 1] = rec end
+            end
+            local function scan(rec)
+                local inst = rec.inst
+                if inst:IsA("ParticleEmitter") and not seen[inst.Name] then
+                    seen[inst.Name] = true
+                    local keypoints = inst.Color.Keypoints
+                    result[#result + 1] = { name = inst.Name, color = keypoints[1] and keypoints[1].Value or Color3.new(1, 1, 1) }
+                end
+                for _, kid in ipairs(rec.kids) do scan(kid) end
+            end
+            for _, rec in ipairs(tops) do scan(rec) end
+            for _, rec in ipairs(tops) do pcall(function() rec.inst:Destroy() end) end
+            return result
+        end
+        Actions.killEmitters = emitterNames
+
         local function playKillEffect(name, position, character, duration)
             local nodes = KILL_FX[name]
             if not nodes or typeof(position) ~= "Vector3" then return end
@@ -8662,6 +8739,18 @@ do
                 if rec then table.insert(tops, rec) end
             end
             for _, rec in ipairs(tops) do link(rec, tops) end
+
+            local function paint(rec)
+                if rec.inst:IsA("ParticleEmitter") then
+                    local prefix = "kec_" .. fxKey(name) .. "_" .. fxKey(rec.inst.Name)
+                    if flag(prefix .. "_on", false) then
+                        local picker = Options[prefix .. "_c"]
+                        if picker and typeof(picker.Value) == "Color3" then rec.inst.Color = ColorSequence.new(picker.Value) end
+                    end
+                end
+                for _, kid in ipairs(rec.kids) do paint(kid) end
+            end
+            for _, rec in ipairs(tops) do paint(rec) end
 
             local base
             if mode == "floor" then
@@ -8729,15 +8818,16 @@ do
             if not ok then warnf("kill effect failed:", err) end
         end)
 
-        Actions.previewKillEffect = function()
+        Actions.previewKillEffect = function(effectName)
             local cam = Camera()
             if not cam then return end
-            local ok, err = pcall(playKillEffect, flag("ke_effect", "Darkheart"), cam.CFrame.Position + cam.CFrame.LookVector * 14 + Vector3.new(0, -2, 0), nil, flag("ke_duration", 4))
+            local ok, err = pcall(playKillEffect, effectName or flag("ke_effect", "Darkheart"), cam.CFrame.Position + cam.CFrame.LookVector * 14 + Vector3.new(0, -2, 0), nil, flag("ke_duration", 4))
             if not ok then warnf("kill effect preview failed:", err) end
         end
 
         onUnload(function()
             Actions.previewKillEffect = noop
+            Actions.killEmitters = nil
             for _, container in ipairs(live) do pcall(function() container:Destroy() end) end
             table.clear(live)
         end)

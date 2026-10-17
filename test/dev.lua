@@ -2238,7 +2238,7 @@ do
 end
 
 do
-Fx = { tabs = {}, order = { "SFX", "VFX", "Tracers" }, built = false, size = Vector2.new(600, 740), minSize = Vector2.new(480, 560) }
+Fx = { tabs = {}, order = { "SFX", "VFX", "Tracers", "Sky" }, built = false, size = Vector2.new(600, 740), minSize = Vector2.new(480, 560) }
 for _, name in ipairs(Fx.order) do Fx.tabs[name] = { name = name, subs = {}, subOrder = {} } end
 
 local function fxCreate(class, props, registry)
@@ -2648,6 +2648,59 @@ local function fxTracerPreview(host)
     end))
 end
 
+local function fxSkyPreview(host)
+    local config = { names = SKYBOX_NAMES, flag = "skybox_value", noPlay = true, placeholder = "search skyboxes..." }
+    local listHost = Library:Create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0.4, -4, 1, 0), ZIndex = 4, Parent = host })
+    local netHost = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromScale(0.4, 0), Size = UDim2.fromScale(0.6, 1), ZIndex = 5, Parent = host }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+    local net = Library:Create("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, -8, 1, -8), ZIndex = 5, Parent = netHost })
+    Library:Create("UIAspectRatioConstraint", { AspectRatio = 4 / 3, AspectType = Enum.AspectType.FitWithinMaxSize, DominantAxis = Enum.DominantAxis.Width, Parent = net })
+    local cells = {
+        { "SkyboxUp", "Up", 1, 0 }, { "SkyboxLf", "Left", 0, 1 }, { "SkyboxFt", "Front", 1, 1 },
+        { "SkyboxRt", "Right", 2, 1 }, { "SkyboxBk", "Back", 3, 1 }, { "SkyboxDn", "Down", 1, 2 },
+    }
+    local faces = {}
+    for _, cell in ipairs(cells) do
+        local image = Library:Create("ImageLabel", { BackgroundColor3 = Color3.new(0, 0, 0), BorderColor3 = Library.OutlineColor, BorderSizePixel = 1, Position = UDim2.new(cell[3] / 4, 1, cell[4] / 3, 1), Size = UDim2.new(0.25, -2, 1 / 3, -2), ScaleType = Enum.ScaleType.Stretch, Image = "", ZIndex = 6, Parent = net })
+        fxLabel({ Text = cell[2], TextSize = 10, TextTransparency = 0.25, Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12), ZIndex = 7, Parent = image })
+        faces[cell[1]] = image
+    end
+    local note = fxLabel({ Text = "", TextWrapped = true, TextSize = Library.FontSize, Size = UDim2.fromScale(1, 1), ZIndex = 9, Visible = false, Parent = netHost })
+    local list = fxSoundList(config)
+    list.attach(listHost, config)
+    local shown
+    local last = 0
+    track(RunService.Heartbeat:Connect(function()
+        local now = os.clock()
+        if now - last < 0.25 then return end
+        last = now
+        if not (Fx.main and Fx.main.Visible and host.Visible) then return end
+        local name = Options.skybox_value and Options.skybox_value.Value
+        local preset = name and Actions.skyPreset and Actions.skyPreset(name)
+        local stamp = tostring(name)
+        if preset then
+            for _, cell in ipairs(cells) do stamp = stamp .. "|" .. tostring(preset[cell[1]]) end
+        end
+        if stamp == shown then return end
+        shown = stamp
+        local usable = preset and not preset.KeepOriginal and not preset.Custom
+        net.Visible = usable and true or false
+        note.Visible = not usable
+        if not usable then
+            if preset and preset.KeepOriginal then
+                note.Text = "Default keeps the game's own sky"
+            elseif name == "Custom" then
+                note.Text = "Enter ids in the Custom ids box, the preview appears once they load"
+            else
+                note.Text = "Pick a skybox to preview it"
+            end
+            return
+        end
+        for _, cell in ipairs(cells) do
+            faces[cell[1]].Image = preset[cell[1]] or ""
+        end
+    end))
+end
+
 local function fxNote(text)
     return function(host)
         fxLabel({ Text = text, TextWrapped = true, TextSize = Library.FontSize, Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(8, 0), ZIndex = 5, Parent = host })
@@ -2662,6 +2715,7 @@ Fx:Sub("VFX", "Hit effects")
 Fx:Sub("VFX", "Aura effects")
 Fx:Sub("VFX", "Muzzle effects")
 Fx:Sub("Tracers", "Bullet tracers")
+Fx:Sub("Sky", "Skyboxes")
 
 do
     local function soundSection(label, prefix, toggleFlag, idFlag, volumeFlag, pitchFlag, varFlag, defaultSound, previewCallback)
@@ -2734,6 +2788,7 @@ do
         muzzleVfx.attach(sub.preview, muzzleVfxConfig)
     end)
     Fx:Preview("Tracers", "Bullet tracers", fxTracerPreview)
+    Fx:Preview("Sky", "Skyboxes", fxSkyPreview)
 
     local killSections, lastKill, lastCheck = {}, nil, 0
     track(RunService.Heartbeat:Connect(function()
@@ -2998,11 +3053,17 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     EffectsBox:Toggle({ Name = "Effects window", Flag = "fx_ui", Default = false, Tooltip = "Opens the window with sounds, visual effects and tracers" })
 
     local LightMain, LightTime, LightFog = WorldPage:MultiSection({ Sections = { "Light", "Time", "Fog" }, Side = 1 })
-    LightMain:Toggle({ Name = "Ambient", Flag = "lighting_toggle_Ambient", Default = false }):Colorpicker({ Name = "Color", Flag = "lighting_colorAmbient", Default = WHITE })
+    LightMain:Toggle({ Name = "Ambient", Flag = "lighting_toggle_Ambient", Default = false }):Colorpicker({ Name = "Inner ambient", Flag = "lighting_colorAmbient", Default = WHITE }):Colorpicker({ Name = "Outer ambient", Flag = "lighting_colorOutdoorAmbient", Default = WHITE })
     LightMain:Toggle({ Name = "Brightness", Flag = "lighting_toggle_Brightness", Default = false })
     LightMain:Slider({ Name = "Brightness value", Flag = "lighting_number_Brightness", Min = 0, Max = 5, Default = 1.7, Decimals = 0.01 })
     LightMain:Toggle({ Name = "Exposure", Flag = "lighting_toggle_ExposureCompensation", Default = false })
     LightMain:Slider({ Name = "Exposure value", Flag = "lighting_number_ExposureCompensation", Min = -5, Max = 5, Default = -1.1, Decimals = 0.01 })
+    LightMain:Toggle({ Name = "Map lights", Flag = "maplights_enabled", Default = false, Tooltip = "Customizes the lamps and lights built into the map" })
+    LightMain:Toggle({ Name = "Always on", Flag = "maplights_force", Default = false, Tooltip = "Keeps map lights on during the day too" })
+    LightMain:Toggle({ Name = "Recolor lights", Flag = "maplights_recolor", Default = false }):Colorpicker({ Name = "Light color", Flag = "maplights_color", Default = Color3.fromRGB(255, 214, 150) })
+    LightMain:Slider({ Name = "Light brightness", Flag = "maplights_brightness", Min = 0, Max = 10, Default = 1, Decimals = 0.01 })
+    LightMain:Slider({ Name = "Light range", Flag = "maplights_range", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
+    LightMain:Toggle({ Name = "Light shadows", Flag = "maplights_shadows", Default = false })
     LightTime:Toggle({ Name = "Clock time", Flag = "lighting_toggle_ClockTime", Default = false })
     LightTime:Slider({ Name = "Clock time value", Flag = "lighting_number_ClockTime", Min = 0, Max = 24, Default = 9.2, Decimals = 0.01 })
     LightFog:Toggle({ Name = "Fog start", Flag = "lighting_toggle_FogStart", Default = false })
@@ -3011,7 +3072,8 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     LightFog:Slider({ Name = "Fog end value", Flag = "lighting_number_FogEnd", Suffix = " stud(s)", Min = 0, Max = 5000, Default = 2500, Decimals = 1 })
     LightFog:Toggle({ Name = "Fog color", Flag = "lighting_toggle_FogColor", Default = false }):Colorpicker({ Name = "Color", Flag = "lighting_colorFogColor", Default = WHITE })
 
-    local EnvSky, EnvAtmos, EnvBloom, EnvScreen = WorldPage:MultiSection({ Sections = { "Sky", "Atmos", "Bloom", "Screen" }, Side = 1 })
+    local EnvAtmos, EnvBloom, EnvScreen = WorldPage:MultiSection({ Sections = { "Atmos", "Bloom", "Screen" }, Side = 1 })
+    local EnvSky = Fx:Section("Sky", "Skyboxes", "Skybox")
     EnvSky:Toggle({ Name = "Skybox", Flag = "skybox_enabled", Default = false })
     EnvSky:Dropdown({ Name = "Preset", Flag = "skybox_value", Items = SKYBOX_NAMES, Default = SKYBOX_NAMES[1] })
     EnvSky:Input({ Name = "Custom ids", Flag = "skybox_custom_ids", Default = "", Placeholder = "1 id or link, or 6: up down front back left right" })
@@ -3843,6 +3905,7 @@ do
 
     local originalLighting = {
         Ambient = LightingService.Ambient,
+        OutdoorAmbient = LightingService.OutdoorAmbient,
         Brightness = LightingService.Brightness,
         ClockTime = LightingService.ClockTime,
         ExposureCompensation = LightingService.ExposureCompensation,
@@ -3979,6 +4042,13 @@ do
         end
     end
 
+    Actions.skyPreset = function(name)
+        local preset = SKYBOX_PRESETS[name]
+        if preset and preset.Custom then return customSkybox() end
+        return preset
+    end
+    onUnload(function() Actions.skyPreset = nil end)
+
     local lightingApplied = {}
     local lightingRestore = {}
 
@@ -3999,6 +4069,7 @@ do
 
     local function applyWorldLighting()
         applyLightingProp("Ambient", getFlag("lighting_toggle_Ambient", false), getColor("lighting_colorAmbient", originalLighting.Ambient))
+        applyLightingProp("OutdoorAmbient", getFlag("lighting_toggle_Ambient", false), getColor("lighting_colorOutdoorAmbient", originalLighting.OutdoorAmbient))
         applyLightingProp("Brightness", getFlag("lighting_toggle_Brightness", false), getFlag("lighting_number_Brightness", originalLighting.Brightness))
         applyLightingProp("ExposureCompensation", getFlag("lighting_toggle_ExposureCompensation", false), getFlag("lighting_number_ExposureCompensation", originalLighting.ExposureCompensation))
         applyLightingProp("ClockTime", getFlag("lighting_toggle_ClockTime", false), getFlag("lighting_number_ClockTime", originalLighting.ClockTime))
@@ -6147,10 +6218,17 @@ do
             ui.indicator.TextColor3 = INDICATOR_COLORS[kind] or INDICATOR_COLORS.unreachable
         end
 
-        local function closeSpoofUi()
+        local function destroySpoofUi()
             if spoofUi then
                 pcall(function() spoofUi.main:Destroy() end)
                 spoofUi = nil
+            end
+        end
+
+        local function closeSpoofUi()
+            if spoofUi then
+                spoofUi.hidden = true
+                pcall(function() spoofUi.main.Visible = false end)
             end
         end
 
@@ -6568,13 +6646,13 @@ do
             local wanted = getFlag("spoof_ui", false)
             if wanted and not spoofUi then
                 local ok, err = pcall(openSpoofUi)
-                if not ok then warn("Avatar spoofer window failed:", err) closeSpoofUi() end
-            elseif not wanted and spoofUi then
-                closeSpoofUi()
+                if not ok then warn("Avatar spoofer window failed:", err) destroySpoofUi() end
+            elseif spoofUi then
+                spoofUi.hidden = not wanted
             end
 
             if spoofUi then
-                local show = Library.Toggled ~= false
+                local show = Library.Toggled ~= false and not spoofUi.hidden
                 if spoofUi.main.Visible ~= show then spoofUi.main.Visible = show end
             end
         end))
@@ -6598,7 +6676,7 @@ do
             SpooferActions.prefetch = noop
             for _, entry in pairs(modelCache) do pcall(function() entry.model:Destroy() end) end
             table.clear(modelCache)
-            closeSpoofUi()
+            destroySpoofUi()
         end)
     end)()
 
@@ -6806,6 +6884,116 @@ do
     end
 
     local function typing() return UserInputService:GetFocusedTextBox() ~= nil end
+
+    ;(function()
+        local bag = newBag()
+        local records = setmetatable({}, { __mode = "k" })
+        local forced = setmetatable({}, { __mode = "k" })
+        local list = {}
+
+        local function eligible(inst)
+            if not inst:IsA("Light") then return false end
+            if inst:FindFirstAncestorOfClass("Tool") then return false end
+            local model = inst:FindFirstAncestorOfClass("Model")
+            while model do
+                if model:FindFirstChildOfClass("Humanoid") then return false end
+                model = model:FindFirstAncestorOfClass("Model")
+            end
+            local camera = workspace.CurrentCamera
+            if camera and inst:IsDescendantOf(camera) then return false end
+            return true
+        end
+
+        local function register(inst)
+            if records[inst] or not eligible(inst) then return end
+            local record = { Color = inst.Color, Brightness = inst.Brightness, Enabled = inst.Enabled, Shadows = inst.Shadows }
+            pcall(function() record.Range = inst.Range end)
+            records[inst] = record
+            list[#list + 1] = inst
+        end
+
+        local function apply()
+            local recolor = readFlag("maplights_recolor", false)
+            local color = (Options.maplights_color and typeof(Options.maplights_color.Value) == "Color3" and Options.maplights_color.Value or Color3.fromRGB(255, 214, 150))
+            local force = readFlag("maplights_force", false)
+            local brightness = readFlag("maplights_brightness", 1)
+            local range = readFlag("maplights_range", 1)
+            local shadows = readFlag("maplights_shadows", false)
+            local keep = 0
+            for index = 1, #list do
+                local inst = list[index]
+                if inst.Parent then
+                    keep += 1
+                    list[keep] = inst
+                    local record = records[inst]
+                    local wantColor = recolor and color or record.Color
+                    if inst.Color ~= wantColor then inst.Color = wantColor end
+                    local wantBrightness = record.Brightness * brightness
+                    if inst.Brightness ~= wantBrightness then inst.Brightness = wantBrightness end
+                    if record.Range then
+                        local wantRange = record.Range * range
+                        if inst.Range ~= wantRange then inst.Range = wantRange end
+                    end
+                    local wantShadows = shadows or record.Shadows
+                    if inst.Shadows ~= wantShadows then inst.Shadows = wantShadows end
+                    if force then
+                        if not forced[inst] then
+                            record.Enabled = inst.Enabled
+                            forced[inst] = true
+                        end
+                        if not inst.Enabled then inst.Enabled = true end
+                    elseif forced[inst] then
+                        inst.Enabled = record.Enabled
+                        forced[inst] = nil
+                    end
+                end
+            end
+            for index = #list, keep + 1, -1 do list[index] = nil end
+        end
+
+        local function restore()
+            for _, inst in ipairs(list) do
+                local record = records[inst]
+                if inst.Parent and record then
+                    pcall(function()
+                        inst.Color = record.Color
+                        inst.Brightness = record.Brightness
+                        inst.Shadows = record.Shadows
+                        if record.Range then inst.Range = record.Range end
+                        if forced[inst] then inst.Enabled = record.Enabled end
+                    end)
+                end
+                forced[inst] = nil
+            end
+        end
+
+        feature("maplights_enabled", function()
+            task.spawn(function()
+                local count = 0
+                for _, descendant in ipairs(workspace:GetDescendants()) do
+                    register(descendant)
+                    count += 1
+                    if count % 1500 == 0 then task.wait() end
+                end
+            end)
+            bag.add(workspace.DescendantAdded:Connect(function(descendant)
+                task.defer(register, descendant)
+            end))
+            local last = 0
+            bag.add(RunService.Heartbeat:Connect(function()
+                local now = os.clock()
+                if now - last < 0.15 then return end
+                last = now
+                apply()
+            end))
+        end, function()
+            bag.clear()
+            restore()
+            table.clear(list)
+            table.clear(records)
+        end)
+    end)()
+
 
     local function shiftDown()
         return UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)

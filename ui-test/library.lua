@@ -39,6 +39,7 @@ local Env = {
     isfolder       = Resolve("isfolder"),
     makefolder     = Resolve("makefolder"),
     request        = Resolve("request") or Resolve("http_request"),
+    httpget        = Resolve("httpget") or Resolve("HttpGet"),
     setclipboard   = Resolve("setclipboard") or Resolve("toclipboard"),
     identify       = Resolve("identifyexecutor") or Resolve("getexecutorname"),
     protect        = Resolve("protect_gui"),
@@ -295,9 +296,17 @@ local function FileContent(src)
                 local ok2, res = pcall(Env.request, { Url = src, Method = "GET" })
                 if ok2 and type(res) == "table" and (res.StatusCode == nil or res.StatusCode == 200) then body = res.Body end
             end
-            if not body then
-                local ok3, res = pcall(function() return game:HttpGet(src) end)
-                if ok3 then body = res end
+            if type(body) ~= "string" or #body == 0 then
+                body = nil
+                if Env.httpget then
+                    local ok3, res = pcall(Env.httpget, src)
+                    if ok3 and type(res) == "string" then body = res end
+                end
+            end
+            if type(body) ~= "string" or #body == 0 then
+                body = nil
+                local ok4, res = pcall(function() return game:HttpGet(src) end)
+                if ok4 and type(res) == "string" then body = res end
             end
             if not body or #body == 0 then
                 if not WarnedIcon[src] then WarnedIcon[src] = true; warn("[MouseUI] icon download failed: " .. src) end

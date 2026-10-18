@@ -1128,418 +1128,22 @@ local HIT_SOUNDS = {
     ["TF2"] = "rbxassetid://8255306220",
     ["Windows"] = "rbxassetid://9066167010",
 }
-local PF_GUN_ROWS = {
-    { "AEK-971", "Assault Rifle", "133516371859543" },
-    { "AEK-971 · Suppressor", "Assault Rifle", "99880413055272" },
-    { "AK-103", "Assault Rifle", "17641130148" },
-    { "AK-103 · AK-109", "Assault Rifle", "17641129066" },
-    { "AK-12", "Assault Rifle", "16075127461" },
-    { "AK-12M", "Assault Rifle", "72380614839121" },
-    { "AK-15", "Assault Rifle", "96906485318163" },
-    { "AK-19", "Assault Rifle", "130525871224619" },
-    { "AK-19 · AK-19 CQB", "Assault Rifle", "126849393651841" },
-    { "AK-47", "Assault Rifle", "17602206900" },
-    { "AK-74", "Assault Rifle", "17641130928" },
-    { "AKM", "Assault Rifle", "17641132046" },
-    { "AKM · VPO-209", "Assault Rifle", "17641112324" },
-    { "AN-94", "Assault Rifle", "136364749371284" },
-    { "AN-94 · AN 7.62x39 Conversion", "Assault Rifle", "129109666886625" },
-    { "AS VAL", "Assault Rifle", "16075134535" },
-    { "C7A2", "Assault Rifle", "16075135523" },
-    { "C7A2 · LSW Barrel", "Assault Rifle", "18197112195" },
-    { "F90 MBR", "Assault Rifle", "137686818026616" },
-    { "FAMAS F1", "Assault Rifle", "16075135165" },
-    { "FAMAS G2", "Assault Rifle", "16075135165" },
-    { "GERAT 90", "Assault Rifle", "17353531353" },
-    { "IA2 AR", "Assault Rifle", "86215296083702" },
-    { "K2", "Assault Rifle", "16541359547" },
-    { "K2 · DR-300", "Assault Rifle", "15685938275" },
-    { "L85A2", "Assault Rifle", "16075132271" },
-    { "L85A2 · SA80 .22 LR", "Assault Rifle", "649184310" },
-    { "L85A3", "Assault Rifle", "132262893891624" },
-    { "L85A3 · SA80 .22 LR", "Assault Rifle", "649184310" },
-    { "M16A1", "Assault Rifle", "10661221469" },
-    { "M16A3", "Assault Rifle", "16075129011" },
-    { "M16A4", "Assault Rifle", "16075129011" },
-    { "M231", "Assault Rifle", "16075130491" },
-    { "M38A5", "Assault Rifle", "125120182502765" },
-    { "M41A", "Assault Rifle", "139650941" },
-    { "M41A · U1", "Assault Rifle", "16076219249" },
-    { "MAC-15", "Assault Rifle", "99345281811573" },
-    { "MAC-15 · SD Barrel", "Assault Rifle", "73874264488572" },
-    { "MK16 SOCOM", "Assault Rifle", "16075129748" },
-    { "MK16 SOCOM · SCAR L 9mm Conversion", "Assault Rifle", "14832923200" },
-    { "QBZ-95", "Assault Rifle", "127238187361320" },
-    { "QBZ-97A", "Assault Rifle", "84426766948260" },
-    { "SPEAR LT", "Assault Rifle", "125219258359288" },
-    { "STG-44", "Assault Rifle", "15548676127" },
-    { "STG-527", "Assault Rifle", "16075134155" },
-    { "STG-91", "Assault Rifle", "16075133810" },
-    { "TAR-21", "Assault Rifle", "16075127693" },
-    { "TYPE 20", "Assault Rifle", "15685934472" },
-    { "TYPE 20 · Integral T20", "Assault Rifle", "15685936220" },
-    { "TYPE 88", "Assault Rifle", "17641125514" },
-    { "TYPE 88 · TYPE 58", "Assault Rifle", "17641124317" },
-    { "UAR A1", "Assault Rifle", "16075125338" },
-    { "VHS-D2", "Assault Rifle", "107515274382191" },
-    { "VZ.806", "Assault Rifle", "88786881927780" },
-    { "VZ.806 · Bren 2 7.62x39mm", "Assault Rifle", "140353747399822" },
-    { "VZ.808", "Assault Rifle", "111235738431634" },
-    { "VZ.808 · Integrated BREN3", "Assault Rifle", "79043819917248" },
-    { "XM-ACR", "Assault Rifle", "140183840329940" },
-    { "AK-308", "Battle Rifle", "126464829582837" },
-    { "BELERON ECR", "Battle Rifle", "16075138319" },
-    { "DOOMBOX", "Battle Rifle", "79971257421538" },
-    { "FAL 50.00", "Battle Rifle", "1994296766" },
-    { "FAL 50.63 PARA", "Battle Rifle", "1994296766" },
-    { "GUSTAV 66", "Battle Rifle", "17286165583" },
-    { "HCAR", "Battle Rifle", "14953333758" },
-    { "HENRY 45-70", "Battle Rifle", "16075136171" },
-    { "IA2 BR", "Battle Rifle", "140608936370811" },
-    { "M14", "Battle Rifle", "16075138809" },
-    { "M7 NGSW", "Battle Rifle", "122577844167289" },
-    { "M7 NGSW · SLX Suppressor", "Battle Rifle", "75767196795578" },
-    { "MK17 SOCOM", "Battle Rifle", "16075138391" },
-    { "MK17 SOCOM · SCAR-H 6.8 SPC Conversion", "Battle Rifle", "81450713164891" },
-    { "MK17 ULTRALIGHT", "Battle Rifle", "71123885686095" },
-    { "RM 277", "Battle Rifle", "135306327429253" },
-    { "SHAK-12", "Battle Rifle", "16076219756" },
-    { "SHAK-12 · SHAK-12 Heavy Suppressor", "Battle Rifle", "107044343874268" },
-    { "SHAK-12 · SHAK-12 Light Suppressor", "Battle Rifle", "107044343874268" },
-    { "STG-528", "Battle Rifle", "18998556378" },
-    { "STG-59H", "Battle Rifle", "10634165112" },
-    { "STG-59H · STG-59H (45)", "Battle Rifle", "124943245574408" },
-    { "VZ.806 BR", "Battle Rifle", "78160848265873" },
-    { "1858 CARBINE", "Carbine", "16075140347" },
-    { "AEK-973S", "Carbine", "130045370919248" },
-    { "AK-105", "Carbine", "17663399383" },
-    { "AK-105 · AK-107", "Carbine", "17641126709" },
-    { "AK-12U", "Carbine", "16075139878" },
-    { "AK-12U · PPK-12", "Carbine", "17353528381" },
-    { "AK-9", "Carbine", "16075141534" },
-    { "AK-9 · Integral AK9", "Carbine", "107069650150224" },
-    { "C25", "Carbine", "132885483989237" },
-    { "C8A2", "Carbine", "14773344256" },
-    { "CAN CANNON", "Carbine", "9805582738" },
-    { "EF88", "Carbine", "96232949143296" },
-    { "GROZA-1", "Carbine", "17641119108" },
-    { "GROZA-1 · GROZA-2", "Carbine", "17641117932" },
-    { "GROZA-1 · GROZA-3", "Carbine", "17641116913" },
-    { "GROZA-4", "Carbine", "16075140265" },
-    { "GYROJET CARBINE", "Carbine", "10223145931" },
-    { "HONEY BADGER", "Carbine", "14057273065" },
-    { "HONEY BADGER · Suppressor", "Carbine", "16075159878" },
-    { "JUAN CARBINE", "Carbine", "9715057591" },
-    { "JURY", "Carbine", "174295284" },
-    { "K1A", "Carbine", "16541359547" },
-    { "K1A · MAX-III", "Carbine", "15685938275" },
-    { "KAC SRR", "Carbine", "17286166253" },
-    { "L22A2", "Carbine", "16075132271" },
-    { "L22A2 · SA80 .22 LR", "Carbine", "649184310" },
-    { "M4", "Carbine", "16075141380" },
-    { "M4A1", "Carbine", "16075141380" },
-    { "MG89B", "Carbine", "16075142450" },
-    { "MINI FIX", "Carbine", "88083046833402" },
-    { "MINI FIX · SD Barrel", "Carbine", "91977959476473" },
-    { "MINI FIX · Trash Panda", "Carbine", "91977959476473" },
-    { "MK16 SOCOM SC", "Carbine", "95861431416829" },
-    { "MK16 SOCOM SC · SCAR SC 300 Subsonic", "Carbine", "92179874864338" },
-    { "MK16 SOCOM SC · SCAR SC 5.56", "Carbine", "16075140110" },
-    { "MK16 SOCOM SC · SCAR SC 9mm Conversion", "Carbine", "14832923200" },
-    { "MK16 SOCOM SC · SCAR SC Integral", "Carbine", "92179874864338" },
-    { "MTS-569", "Carbine", "102178239466150" },
-    { "MTS-569 · RSH 12 Gauge", "Carbine", "94354683957648" },
-    { "OTS-126", "Carbine", "9318182121" },
-    { "PDC-45", "Carbine", "83252361639763" },
-    { "PKP DYCHOK", "Carbine", "89257720427533" },
-    { "SA58 OSW", "Carbine", "112559250451577" },
-    { "SALTY WEASLE", "Carbine", "14057273065" },
-    { "SR-3M", "Carbine", "16075141599" },
-    { "SR-3M · Vikhr Suppressor", "Carbine", "16075134535" },
-    { "STG-448", "Carbine", "85130407063434" },
-    { "STG-89C", "Carbine", "16075141468" },
-    { "STG-89C · STG-89SD", "Carbine", "2745088770" },
-    { "STG-91K", "Carbine", "16075133810" },
-    { "UAR A3", "Carbine", "116741780353536" },
-    { "UAR A3 · 7.62x39mm", "Carbine", "77197396401241" },
-    { "VIRTUS", "Carbine", "133574669329887" },
-    { "VIRTUS · Intergrated Barrel", "Carbine", "95925030073626" },
-    { "X95R", "Carbine", "16075127693" },
-    { "BELERON TCR", "DMR", "16075143837" },
-    { "DRAGUNOV SVU", "DMR", "16075144268" },
-    { "JG-90", "DMR", "16075144013" },
-    { "M21", "DMR", "16075142539" },
-    { "M28 GDMR", "DMR", "130327434899933" },
-    { "MK11", "DMR", "9884629368" },
-    { "MK11 · MK11 500 Conversion", "DMR", "17286166835" },
-    { "MK12 SPR", "DMR", "84063148292242" },
-    { "MK20 SSR", "DMR", "9608734973" },
-    { "QBU-88", "DMR", "128514727476738" },
-    { "R-10/22", "DMR", "85263658992614" },
-    { "REGULATOR", "DMR", "125447900947863" },
-    { "SA58 SPR", "DMR", "130940678877691" },
-    { "SAIGA SAR", "DMR", "138788351108723" },
-    { "SAIGA SAR · Saiga 220 Russian Conversion", "DMR", "112964566667452" },
-    { "SAIGA SAR · Saiga 223 Conversion", "DMR", "73984180924372" },
-    { "SAIGA SAR · Saiga 545 Conversion", "DMR", "73984180924372" },
-    { "SAIGA SAR · Saiga 762 Conversion", "DMR", "112964566667452" },
-    { "SKS", "DMR", "16075142638" },
-    { "SVK-12", "DMR", "116215047304534" },
-    { "SVK-12 · SVK-12/12.7", "DMR", "90757301286043" },
-    { "UAR A3M2", "DMR", "116025147552242" },
-    { "VG-98", "DMR", "16075133810" },
-    { "VSS VINTOREZ", "DMR", "16075144150" },
-    { "VSS VINTOREZ · VSS 762 Conv", "DMR", "16075141599" },
-    { "VZ.806 PPS", "DMR", "78160848265873" },
-    { "AEK-999", "LMG", "140357772905535" },
-    { "AK-12BR", "LMG", "16075137959" },
-    { "ChainSAW", "LMG", "13541268422" },
-    { "FALO 50.41", "LMG", "92409444763779" },
-    { "HAMR IAR", "LMG", "10972840437" },
-    { "HAMR IAR · HAMR 9mm Conversion", "LMG", "14832923200" },
-    { "HORNET", "LMG", "13540609737" },
-    { "JUGGUN", "LMG", "13541268422" },
-    { "KORD-R", "LMG", "120390086460620" },
-    { "L86A2 LSW", "LMG", "16075148728" },
-    { "L86A2 LSW · SA80 .22 LR", "LMG", "649184310" },
-    { "LMG BLING", "LMG", "16075142450" },
-    { "LMG BLING · LMG BLING (ALEXANDRITE)", "LMG", "18524992478" },
-    { "LMG BLING · LMG BLING (AMETHYST)", "LMG", "18524992478" },
-    { "LMG BLING · LMG BLING (DIAMOND)", "LMG", "18524992478" },
-    { "LMG BLING · LMG BLING (EMERALD)", "LMG", "18524992478" },
-    { "LMG BLING · LMG BLING (ONYX)", "LMG", "18524992478" },
-    { "LMG BLING · LMG BLING (PAINITE)", "LMG", "18524992478" },
-    { "LMG BLING · LMG BLING (QUARTZ)", "LMG", "18524992478" },
-    { "LMG BLING · LMG BLING (RUBY)", "LMG", "18524994585" },
-    { "LMG BLING · LMG BLING (SAPPHIRE)", "LMG", "18524992478" },
-    { "LMG BLING · LMG BLING (TOPAZ)", "LMG", "18524992478" },
-    { "LSV M/04", "LMG", "9863722067" },
-    { "M1918A2", "LMG", "14953333043" },
-    { "M249 SAW", "LMG", "139956715152920" },
-    { "M27 IAR", "LMG", "94710438614714" },
-    { "M60E6", "LMG", "85789586022651" },
-    { "M60E6 · M60 5.56", "LMG", "93482600213126" },
-    { "MG3KWS", "LMG", "9690610405" },
-    { "MG42", "LMG", "6343876894" },
-    { "MG80", "LMG", "17353523008" },
-    { "MG91", "LMG", "16075133810" },
-    { "MGV-176", "LMG", "13540609737" },
-    { "PKM", "LMG", "137143667469930" },
-    { "PKP PECHENEG", "LMG", "89257720427533" },
-    { "PKP PECHENEG · SHORT BARREL", "LMG", "121576482132283" },
-    { "QJB-95 LSW", "LMG", "72005927783779" },
-    { "REAPR-338", "LMG", "121719251992638" },
-    { "RPK", "LMG", "16075146918" },
-    { "RPK-12", "LMG", "16075147159" },
-    { "RPK-16", "LMG", "110236675347398" },
-    { "RPK-74", "LMG", "16075148535" },
-    { "STONER 96", "LMG", "13541268422" },
-    { "UAR HBAR", "LMG", "16075125338" },
-    { "93R", "Machine Pistols", "16075146698" },
-    { "AEK-919K", "Machine Pistols", "110309837204939" },
-    { "ARM PISTOL", "Machine Pistols", "10473353543" },
-    { "ASMI", "Machine Pistols", "9318180641" },
-    { "AUTO 9", "Machine Pistols", "11301450456" },
-    { "G18C", "Machine Pistols", "16075144842" },
-    { "MAC-11", "Machine Pistols", "86510765054047" },
-    { "MAC-11 · Sionics Suppressor", "Machine Pistols", "17353521724" },
-    { "MICRO UZI", "Machine Pistols", "16075145292" },
-    { "MP1911", "Machine Pistols", "16075146144" },
-    { "PP-2000", "Machine Pistols", "9318182121" },
-    { "SKORPION VZ.61", "Machine Pistols", "10936828672" },
-    { "TEC-9", "Machine Pistols", "16075145504" },
-    { "COILGUN", "Other", "11220430857" },
-    { "COILGUN · e Shotgun Penny Conversion", "Other", "330274138" },
-    { "M79 THUMPER", "Other", "5744456369" },
-    { "OBREZ", "Other", "16075150290" },
-    { "SAIGA-12U", "Other", "16075150185" },
-    { "SAIGA-12U · SAIGA-50U", "Other", "17286167554" },
-    { "SASS 308", "Other", "14773346233" },
-    { "SAWED OFF", "Other", "16075149189" },
-    { "STAKEOUT", "Other", "127823525647306" },
-    { "SUPER SHORTY", "Other", "16075150601" },
-    { "THUNDER", "Other", "70730606737285" },
-    { "sfg 50", "Other", "16075148825" },
-    { "AKS-74U", "PDW", "17641122840" },
-    { "AKS-74U · AK-V", "PDW", "17641121691" },
-    { "AKS-74U · AKMSU", "PDW", "17641120514" },
-    { "BLOCKSON", "PDW", "16075144842" },
-    { "BWC9 A", "PDW", "13540609649" },
-    { "FAL PARA SHORTY", "PDW", "1994296766" },
-    { "FAMAS COMMANDO", "PDW", "70896404265084" },
-    { "FIVE-0", "PDW", "17286162019" },
-    { "FIVE-0 · AR-9", "PDW", "17286163471" },
-    { "FIVE-0 · FOUR-T-5", "PDW", "17286162785" },
-    { "IA2 SMG", "PDW", "105323865822334" },
-    { "K7", "PDW", "16075154790" },
-    { "K7 · K7 5.56x45 Conversion", "PDW", "16076219997" },
-    { "L2A3", "PDW", "16075152091" },
-    { "LUTY · DEFFAULT", "PDW", "102333295501841" },
-    { "LUTY · Integral", "PDW", "130142723315559" },
-    { "M3A1", "PDW", "131385316146612" },
-    { "M3A1 · OSS Suppressor", "PDW", "114519806224862" },
-    { "MAC-31", "PDW", "81426178522956" },
-    { "MAC10", "PDW", "16075154516" },
-    { "MAC10 · Sionics Suppressor", "PDW", "17353521724" },
-    { "MK16 SOCOM CQB", "PDW", "16075140110" },
-    { "MK16 SOCOM CQB · MK17 SOCOM CQB", "PDW", "16075138391" },
-    { "MK16 SOCOM CQB · SCAR PDW 9mm Conversion", "PDW", "14832923200" },
-    { "MP-9", "PDW", "16075145504" },
-    { "MP40", "PDW", "16075151861" },
-    { "P90", "PDW", "17286160893" },
-    { "PDX-45", "PDW", "6342509471" },
-    { "PP-19 BIZON", "PDW", "17286115321" },
-    { "PPSH-41", "PDW", "16075154674" },
-    { "RAMA 1130", "PDW", "6253488888" },
-    { "RATTLER", "PDW", "133574669329887" },
-    { "SMG 633", "PDW", "9864280124" },
-    { "SMX-10", "PDW", "16075151380" },
-    { "SMX-9", "PDW", "16075151751" },
-    { "SMX-9/10", "PDW", "16075154921" },
-    { "SMX-9K", "PDW", "16075151751" },
-    { "SMX-9SD", "PDW", "16075154071" },
-    { "STG-527C", "PDW", "85773849034946" },
-    { "STG-91C", "PDW", "16075133810" },
-    { "TOMMY GUN", "PDW", "16075150705" },
-    { "TYPEWRITER", "PDW", "18625401832" },
-    { "UAR A3 PARA", "PDW", "16075125338" },
-    { "UZI", "PDW", "16075145292" },
-    { "VECTOR 45", "PDW", "16075152939" },
-    { "X46", "PDW", "16075152453" },
-    { "X46 · Loudener", "PDW", "2484694762" },
-    { "X46 · Suppressor", "PDW", "92621306458927" },
-    { "X95 SMG", "PDW", "16075154377" },
-    { "XM-MARS", "PDW", "14241631460" },
-    { "AF2011-A1", "Pistols", "16075146144" },
-    { "ALIEN", "Pistols", "10593486171" },
-    { "AUTOMAG III", "Pistols", "11330587252" },
-    { "AUTOMAG III · AUTOMAG V", "Pistols", "16281996111" },
-    { "BOXY BUSTER", "Pistols", "16075133483" },
-    { "FIVE SEVEN", "Pistols", "3175583137" },
-    { "G1", "Pistols", "72326188551563" },
-    { "G17", "Pistols", "16075144842" },
-    { "G21", "Pistols", "16271566010" },
-    { "G23", "Pistols", "16075156134" },
-    { "G40", "Pistols", "16075155927" },
-    { "G50", "Pistols", "16075156353" },
-    { "GB-22", "Pistols", "16075156481" },
-    { "GB-22 · GB-10", "Pistols", "16076219461" },
-    { "GB-22 · GB-12", "Pistols", "16076220214" },
-    { "GB-22 · GB-50", "Pistols", "16076220436" },
-    { "GI M1", "Pistols", "16075156234" },
-    { "GOLDEN GUN", "Pistols", "18238800579" },
-    { "GRIZZLY", "Pistols", "16075155553" },
-    { "GSH-18", "Pistols", "113781865798446" },
-    { "GSP", "Pistols", "16075156593" },
-    { "GYROJET MARK I", "Pistols", "10223145931" },
-    { "HARDBALLER", "Pistols", "16075156234" },
-    { "IZHEVSK PB", "Pistols", "10384252483" },
-    { "JUAN", "Pistols", "9715057591" },
-    { "KG-99", "Pistols", "82429815921541" },
-    { "LA RATA", "Pistols", "16075156054" },
-    { "M17", "Pistols", "13540609649" },
-    { "M1911A1", "Pistols", "16075146144" },
-    { "M2011", "Pistols", "16075155285" },
-    { "M45A1", "Pistols", "16075155285" },
-    { "M7644", "Pistols", "16075146144" },
-    { "M9", "Pistols", "16075146698" },
-    { "M9 · Osprey Suppressor", "Pistols", "10658576113" },
-    { "MAKAROV PM", "Pistols", "6253270429" },
-    { "RAVEN L5", "Pistols", "16075155685" },
-    { "RAVEN XIX", "Pistols", "16079935327" },
-    { "TOY M1911", "Pistols", "16075142308" },
-    { "U-527/22", "Pistols", "111139013075317" },
-    { "U-527/22 · Integral U416", "Pistols", "130327948202358" },
-    { "ZIP 22", "Pistols", "16075144842" },
-    { "1858 NEW ARMY", "Revolvers", "16075140347" },
-    { "EXECUTIONER", "Revolvers", "2323962833" },
-    { "GOLDHAWK", "Revolvers", "11302551320" },
-    { "GOLDHAWK · BLING SRR", "Revolvers", "16075159623" },
-    { "JUDGE", "Revolvers", "174295284" },
-    { "MATEBA 6", "Revolvers", "2379068310" },
-    { "MATEBA 6 · Mateba 6 .454 Casull", "Revolvers", "16359101420" },
-    { "MP412 REX", "Revolvers", "16075156708" },
-    { "MP412 REX · MONARCH", "Revolvers", "17439816200" },
-    { "RH-44", "Revolvers", "17353530387" },
-    { "RSH-12", "Revolvers", "102178239466150" },
-    { "RSH-12 · RSH 12 Gauge", "Revolvers", "94354683957648" },
-    { "AA-12", "Shotgun", "3175637210" },
-    { "AK-12/76", "Shotgun", "16075156804" },
-    { "AK-12/76 · AK-12/410", "Shotgun", "16076220112" },
-    { "DT11", "Shotgun", "10583207724" },
-    { "DT11 · Integral Suppressor", "Shotgun", "17447183138" },
-    { "E-GUN", "Shotgun", "11220430857" },
-    { "E-GUN · e Shotgun Penny Conversion", "Shotgun", "330274138" },
-    { "GOLDEN SHORTY", "Shotgun", "18224393650" },
-    { "KS-23M", "Shotgun", "10626512117" },
-    { "KSG 12", "Shotgun", "16075157063" },
-    { "M37 12G", "Shotgun", "85511160904221" },
-    { "MODEL 870", "Shotgun", "16075156898" },
-    { "ROPOD SHOTTY", "Shotgun", "6823153536" },
-    { "SAIGA-12", "Shotgun", "16075150185" },
-    { "SAIGA-12 · SAIGA-50", "Shotgun", "17286167554" },
-    { "SCX-12", "Shotgun", "97226408700041" },
-    { "SPAS-12", "Shotgun", "10648390082" },
-    { "STEVENS DB", "Shotgun", "16075149189" },
-    { "TERMINATOR 12G", "Shotgun", "114427878430038" },
-    { "USAS-12", "Shotgun", "9318182796" },
-    { "AWM", "Sniper Rifle", "16075157319" },
-    { "AWS", "Sniper Rifle", "16075159623" },
-    { "BALLISTA", "Sniper Rifle", "85530370083584" },
-    { "BFG 50", "Sniper Rifle", "16075148825" },
-    { "DRAGUNOV SVDS", "Sniper Rifle", "16075159103" },
-    { "DSR-50", "Sniper Rifle", "108947604841287" },
-    { "FT300", "Sniper Rifle", "10155561848" },
-    { "FT300 · FT300 Suppressor", "Sniper Rifle", "10176982939" },
-    { "HECATE II", "Sniper Rifle", "16075158423" },
-    { "INTERVENTION", "Sniper Rifle", "16075159216" },
-    { "K14", "Sniper Rifle", "16075159335" },
-    { "KEK-50", "Sniper Rifle", "81493813404488" },
-    { "LR-3", "Sniper Rifle", "89176477644247" },
-    { "LR-4A", "Sniper Rifle", "89935122863975" },
-    { "M110A1 CSASS", "Sniper Rifle", "119218050539899" },
-    { "M1903", "Sniper Rifle", "10628614745" },
-    { "M1903 · Maxim Silencer", "Sniper Rifle", "10224754854" },
-    { "M82A1", "Sniper Rifle", "14241618991" },
-    { "MODEL 700", "Sniper Rifle", "16075157973" },
-    { "MOSIN NAGANT", "Sniper Rifle", "16075150290" },
-    { "NTW-20", "Sniper Rifle", "10483076439" },
-    { "RAILGUN", "Sniper Rifle", "200901180" },
-    { "RCS-10/22", "Sniper Rifle", "85263658992614" },
-    { "SCOUT RIFLE", "Sniper Rifle", "2694153540" },
-    { "THE FIX", "Sniper Rifle", "105517847477011" },
-    { "THE FIX · PORQ Chop", "Sniper Rifle", "101780535125811" },
-    { "THE FIX · Short Chop", "Sniper Rifle", "101780535125811" },
-    { "TIMBERWOLF", "Sniper Rifle", "82115391293580" },
-    { "TIMBERWOLF · .408 CHEYTAC", "Sniper Rifle", "75184198613740" },
-    { "TIMBERWOLF · Suppressor", "Sniper Rifle", "71912470470734" },
-    { "TRG-42", "Sniper Rifle", "105981600042533" },
-    { "VKS", "Sniper Rifle", "72346124985145" },
-    { "VKS · VKS Suppressor", "Sniper Rifle", "83241328344476" },
-    { "WA2000", "Sniper Rifle", "16075159757" },
-}
 HIT_SOUNDS["PF Hitmarker"] = "rbxassetid://287062939"
 HIT_SOUNDS["PF Killshot"] = { "rbxassetid://898398768", "rbxassetid://898398730", "rbxassetid://898398743" }
 HIT_SOUNDS["PF Headshot kill"] = { "rbxassetid://898398768", "rbxassetid://898398785", "rbxassetid://898398795", "rbxassetid://898398809", "rbxassetid://898398817", "rbxassetid://898398837" }
-local PF_GUN_NAMES, PF_GUN_BY_NAME, PF_GUN_CATEGORY = {}, {}, {}
-for _, row in ipairs(PF_GUN_ROWS) do
-    table.insert(PF_GUN_NAMES, row[1])
-    PF_GUN_BY_NAME[row[1]] = "rbxassetid://" .. row[3]
-    PF_GUN_CATEGORY[row[1]] = row[2]
-end
 
 local FX_WEAPONS = {
-    { key = "ak47", label = "AK-47", tools = { "ak47" }, default = "AK-47" },
-    { key = "m4a1", label = "M4A1", tools = { "m4a1", "m4" }, default = "M4A1" },
-    { key = "mp5", label = "MP5", tools = { "mp5" }, default = "MP-9" },
-    { key = "fal", label = "FAL", tools = { "fal" }, default = "FAL 50.00" },
-    { key = "r870", label = "Remington 870", tools = { "remington870", "r870", "remington" }, default = "MODEL 870" },
-    { key = "m700", label = "M700", tools = { "m700" }, default = "MODEL 700" },
-    { key = "m9", label = "M9", tools = { "m9" }, default = "M9" },
-    { key = "revolver", label = "Revolver", tools = { "revolver" }, default = "JUDGE" },
+    { key = "ak47", label = "AK-47", tools = { "ak47" } },
+    { key = "m4a1", label = "M4A1", tools = { "m4a1", "m4" } },
+    { key = "mp5", label = "MP5", tools = { "mp5" } },
+    { key = "fal", label = "FAL", tools = { "fal" } },
+    { key = "r870", label = "Remington 870", tools = { "remington870", "r870", "remington" } },
+    { key = "m700", label = "M700", tools = { "m700" } },
+    { key = "m9", label = "M9", tools = { "m9" } },
+    { key = "revolver", label = "Revolver", tools = { "revolver" } },
 }
 
-local FxAudio = { ok = {}, checked = {}, reported = {}, scanning = false, scanned = false }
+local FxAudio = { ok = {}, checked = {}, reported = {} }
 
 local function fxReport(key, message)
     if FxAudio.reported[key] then return end
@@ -1583,41 +1187,96 @@ local function fxEnsure(entry)
     end)
 end
 
-function FxAudio.scan(done)
-    if FxAudio.scanning or FxAudio.scanned then return end
-    FxAudio.scanning = true
-    task.spawn(function()
-        local rows = PF_GUN_ROWS
-        local index = 1
-        while index <= #rows do
-            local ids = {}
-            for position = index, math.min(index + 23, #rows) do
-                local id = tonumber(rows[position][3])
-                if id and FxAudio.ok[id] == nil then ids[#ids + 1] = id end
+local FxSaved = { weapons = {}, path = "Aster/sounds.json" }
+do
+    local ok, data = pcall(function()
+        if isfile and readfile and isfile(FxSaved.path) then
+            return game:GetService("HttpService"):JSONDecode(readfile(FxSaved.path))
+        end
+    end)
+    if ok and type(data) == "table" and type(data.weapons) == "table" then
+        for key, list in pairs(data.weapons) do
+            if type(list) == "table" then
+                local clean = {}
+                for _, row in ipairs(list) do
+                    if type(row) == "table" and type(row.name) == "string" and tonumber(row.id) then
+                        clean[#clean + 1] = { name = row.name, id = math.floor(tonumber(row.id)) }
+                    end
+                end
+                FxSaved.weapons[key] = clean
             end
-            if #ids > 0 then fxProbe(ids) end
-            index += 24
-            task.wait()
         end
-        local usable = 0
-        for _, row in ipairs(rows) do
-            if FxAudio.ok[tonumber(row[3])] then usable += 1 end
-        end
-        FxAudio.scanning = false
-        FxAudio.scanned = true
-        pcall(function() Library:Notify(string.format("Weapon sounds: %d of %d load in this game, the rest are private", usable, #rows), 6) end)
-        if done then pcall(done) end
+    end
+end
+
+function FxSaved.write()
+    if not writefile then return end
+    pcall(function()
+        if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
+        writefile(FxSaved.path, game:GetService("HttpService"):JSONEncode({ weapons = FxSaved.weapons }))
     end)
 end
 
-local function fxWeaponEntry(key, default)
+function FxSaved.list(key)
+    local list = FxSaved.weapons[key]
+    if not list then
+        list = {}
+        FxSaved.weapons[key] = list
+    end
+    return list
+end
+
+function FxSaved.names(key)
+    local names = {}
+    for _, row in ipairs(FxSaved.list(key)) do names[#names + 1] = row.name end
+    return names
+end
+
+function FxSaved.find(key, name)
+    for _, row in ipairs(FxSaved.list(key)) do
+        if row.name == name then return row.id end
+    end
+    return nil
+end
+
+function FxSaved.add(key, name, id)
+    local list = FxSaved.list(key)
+    for _, row in ipairs(list) do
+        if row.name == name then
+            row.id = id
+            FxSaved.write()
+            return
+        end
+    end
+    list[#list + 1] = { name = name, id = id }
+    FxSaved.write()
+end
+
+function FxSaved.remove(key, name)
+    local list = FxSaved.list(key)
+    for index, row in ipairs(list) do
+        if row.name == name then
+            table.remove(list, index)
+            FxSaved.write()
+            return true
+        end
+    end
+    return false
+end
+
+local function fxWeaponEntry(key)
     local options = getgenv().Options or {}
+    local selected = options[key .. "_sound"]
+    local name = selected and selected.Value
+    if type(name) == "string" and name ~= "" and name ~= "None" then
+        local id = FxSaved.find(key, name)
+        if id then return "rbxassetid://" .. id end
+    end
     local custom = options[key .. "_custom"]
     local text = custom and custom.Value
     local id = type(text) == "string" and tonumber(string.match(text, "%d%d%d+"))
     if id then return "rbxassetid://" .. id end
-    local selected = options[key .. "_sound"]
-    return PF_GUN_BY_NAME[(selected and selected.Value) or default]
+    return nil
 end
 
 local function fxPlaySound(entry, volume, pitch, variation)
@@ -1908,6 +1567,67 @@ local function patchLibrarySource(source)
     swap("                local Key = KeyPicker.Value;\n                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then\n                    return Key == 'MB1' and",
          "                local Key = KeyPicker.Value;\n                if Key == 'MB3' or Key == 'MB4' or Key == 'MB5' then\n                    return (Library.ButtonDown and Library.ButtonDown(Key)) == true;\n                end;\n                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then\n                    return Key == 'MB1' and")
 
+    swap([==[        if KeyPicker.SyncToggleState then
+            Info.Modes = { 'Toggle' }
+            Info.Mode = 'Toggle'
+        end]==],
+         [==[        if KeyPicker.SyncToggleState then
+            Info.Modes = { 'Toggle', 'Hold', 'Always' }
+        end]==])
+
+    swap([==[                KeyPicker.Mode = Mode;
+]==],
+         [==[                KeyPicker.Mode = Mode;
+                if KeyPicker.SyncToggleState and Mode == 'Hold' and KeyPicker.Value ~= 'None' then
+                    task.defer(function()
+                        pcall(function() ParentObj:SetValue(KeyPicker:GetState() == true) end)
+                    end)
+                end
+]==])
+
+    swap([==[        KeyPicker:Update();
+        Options[Idx] = KeyPicker;
+]==],
+         [==[        if KeyPicker.SyncToggleState then
+            local HeldBefore = false
+            Library:GiveSignal(RunService.Heartbeat:Connect(function()
+                if KeyPicker.Mode ~= 'Hold' or KeyPicker.Value == 'None' or Picking or InputService:GetFocusedTextBox() then
+                    HeldBefore = false
+                    return
+                end
+                local Down = KeyPicker:GetState() == true
+                if Down ~= HeldBefore then
+                    HeldBefore = Down
+                    ParentObj:SetValue(Down)
+                end
+            end))
+        end
+
+        KeyPicker:Update();
+        Options[Idx] = KeyPicker;
+]==])
+
+    swap([==[                if Addon.Type == 'KeyPicker' and Addon.SyncToggleState then
+                    Addon.Toggled = Bool
+                    Addon:Update()
+                end]==],
+         [==[                if Addon.Type == 'KeyPicker' and Addon.SyncToggleState then
+                    Addon.Toggled = Bool
+                    Addon:Update()
+                elseif Addon.Type == 'KeyPicker' then
+                    Addon:Update()
+                end]==])
+
+    swap([==[            ContainerLabel.TextColor3 = State and Library.AccentColor or Library.FontColor;
+            Library.RegistryMap[ContainerLabel].Properties.TextColor3 = State and 'AccentColor' or 'FontColor';]==],
+         [==[            local ParentOn = true
+            if ParentObj and ParentObj.Type == 'Toggle' then ParentOn = ParentObj.Value == true end
+            local Lit = State == true and ParentOn
+            if KeyPicker.Value == 'None' then KeybindEntry.Visible = false end
+
+            ContainerLabel.TextColor3 = Lit and Library.AccentColor or Library.FontColor;
+            Library.RegistryMap[ContainerLabel].Properties.TextColor3 = Lit and 'AccentColor' or 'FontColor';]==])
+
     swap("Cursor.ZIndex = 100;", "Cursor.ZIndex = 5000;")
     swap("CursorOutline.ZIndex = 99;", "CursorOutline.ZIndex = 4999;")
     return source
@@ -2162,28 +1882,6 @@ local function wrapGroup(group, page, side)
         })
     end
 
-    function wrapped:When(flagName, expected)
-        bump()
-        local depbox = group:AddDependencyBox()
-        local holder = depbox.Container.Parent
-        local function refresh()
-            local option = Options[flagName]
-            holder.Visible = option ~= nil and option.Value == expected
-            depbox:Resize()
-        end
-        depbox.Update = refresh
-        local option = Options[flagName]
-        if option then
-            local previous = option.Changed
-            option.Changed = function(value)
-                if previous then previous(value) end
-                refresh()
-            end
-        end
-        refresh()
-        return wrapGroup(depbox, page, side)
-    end
-
     function wrapped:Dropdown(info)
         bump()
         group:AddDropdown(info.Flag, {
@@ -2320,6 +2018,7 @@ do
     Trigger:Dropdown({ Name = "Hit part", Flag = "Trigger_Global_HitPart", Items = { "Head", "Torso", "Any" }, Default = "Head" })
     Trigger:Slider({ Name = "Delay", Flag = "Trigger_Global_Delay", Min = 0, Max = 300, Default = 40, Suffix = "ms", Decimals = 1 })
     Trigger:Slider({ Name = "Reaction time", Flag = "Trigger_Global_Reaction", Min = 0, Max = 200, Default = 0, Suffix = "ms", Decimals = 1 })
+    Trigger:Toggle({ Name = "Magnet", Flag = "trigger_magnet", Default = false, Tooltip = "While the trigger key is held, the aim assist (its FOV, hitscan, smoothing and method settings) pulls onto the target as well, and the triggerbot fires once the crosshair is on it. Set the trigger key mode to Hold so it only works while held. The aim assist toggle itself can stay off." })
     Trigger:Toggle({ Name = "Team check", Flag = "trigger_team", Default = false })
     Trigger:Toggle({ Name = "Forcefield check", Flag = "trigger_ff", Default = false })
     Trigger:Toggle({ Name = "Hostile only (inmates)", Flag = "trigger_hostile", Default = false })
@@ -2338,15 +2037,7 @@ do
     local Assist = CombatTab:Section({ Name = "Wallbang assist", Side = 1 })
     local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Works on anyone near your cursor, no silent aim needed. If an enemy is behind a wall, it moves the position the server sees up to (or into) the wall so the shot has a line, and sends the shot at that enemy." })
     assistToggle:Keybind({ Name = "Assist key", Flag = "wb_assist_key", Default = "None", Sync = true })
-    Assist:Dropdown({ Name = "Move method", Flag = "wb_assist_method", Items = { "Server position", "Velocity", "Orbit" }, Default = "Server position", Tooltip = "Server position: only what the server sees moves (writes the character CFrame). Velocity: you really move there with physics (no CFrame writes) and walls next to you stop colliding on the way, then you return. Orbit: looks for a spot circling under the target and snaps the server position there for a single frame when you shoot. The visualizer applies to Server position and Orbit." })
-    local teleportBox = Assist:When("wb_assist_method", "Orbit")
-    teleportBox:Slider({ Name = "Orbit radius", Flag = "wb_tp_radius", Min = 0, Max = 25, Default = 4, Suffix = " studs", Decimals = 0.5, Tooltip = "How wide the circle under the target is, 0 only tries straight below" })
-    teleportBox:Slider({ Name = "Min depth", Flag = "wb_tp_min", Min = 0, Max = 100, Default = 2, Suffix = " studs", Decimals = 0.5, Tooltip = "The shallowest the orbit gets below the target" })
-    teleportBox:Slider({ Name = "Max depth", Flag = "wb_tp_max", Min = 0, Max = 500, Default = 8, Suffix = " studs", Decimals = 0.5, Tooltip = "The deepest the orbit gets below the target, it always stops short of the void" })
-    teleportBox:Slider({ Name = "Orbit points", Flag = "wb_tp_points", Min = 3, Max = 24, Default = 12, Suffix = " spots", Decimals = 1, Tooltip = "How many spots get checked around each circle" })
-    teleportBox:Dropdown({ Name = "Scan for", Flag = "wb_tp_scan", Items = { "Wallbang or visible", "Visible", "Wallbang" }, Default = "Wallbang or visible", Tooltip = "Which kind of spot the scan accepts, the closest one to you wins" })
-    teleportBox:Slider({ Name = "Hold frames", Flag = "wb_tp_frames", Min = 1, Max = 8, Default = 1, Suffix = " frames", Decimals = 1, Tooltip = "How many frames the server position stays at the orbit spot. 1 is a single frame blip" })
-    teleportBox:Toggle({ Name = "Avoid solid spots", Flag = "wb_tp_free", Default = true, Tooltip = "Skips spots that would put you inside a part" })
+    Assist:Dropdown({ Name = "Move method", Flag = "wb_assist_method", Items = { "Server position", "Velocity" }, Default = "Server position", Tooltip = "Server position: only what the server sees moves (writes the character CFrame). Velocity: you really move there with physics (no CFrame writes) and walls next to you stop colliding on the way, then you return. The visualizer only applies to Server position." })
     Assist:Dropdown({ Name = "Mode", Flag = "wb_assist_mode", Items = { "Tween", "Teleport" }, Default = "Tween", Tooltip = "Tween moves at the speed below. Teleport jumps (Server position) or moves at 120 studs/s (Velocity)." })
     Assist:Toggle({ Name = "Inside wall", Flag = "wb_assist_inside", Default = false })
     Assist:Toggle({ Name = "Only while firing", Flag = "wb_assist_fire", Default = false, Tooltip = "Only moves while the fire button is held or auto fire is shooting" })
@@ -2386,6 +2077,31 @@ do
     silentCircle:Colorpicker({ Name = "Color", Flag = "silent_fov_color", Default = Color3.fromRGB(255, 120, 120), Alpha = true })
     FovSilent:Toggle({ Name = "Filled", Flag = "silent_fov_filled", Default = false })
     FovSilent:Slider({ Name = "Thickness", Flag = "silent_fov_thick", Min = 1, Max = 5, Default = 1, Decimals = 1 })
+
+    local OrbitSec = CombatTab:Section({ Name = "Orbit target", Side = 2 })
+    OrbitSec:Toggle({ Name = "Orbit target", Flag = "orbit_on", Default = false, Tooltip = "While silent aim has a target, the position the server sees circles that player. You stay where you are, only the server position moves." })
+    OrbitSec:Dropdown({ Name = "Height", Flag = "orbit_mode", Items = { "Under the map", "Below target", "Near void" }, Default = "Under the map", Tooltip = "Under the map: below the lowest floor under the target. Below target: straight below the target's height. Near void: just above the void." })
+    OrbitSec:Slider({ Name = "Depth", Flag = "orbit_depth", Min = 0, Max = 500, Default = 15, Suffix = " studs", Decimals = 0.5, Tooltip = "How far below the floor (Under the map) or below the target (Below target). It always stops short of the void" })
+    OrbitSec:Slider({ Name = "Radius", Flag = "orbit_radius", Min = 0, Max = 100, Default = 6, Suffix = " studs", Decimals = 0.5 })
+    OrbitSec:Slider({ Name = "Orbit speed", Flag = "orbit_spin", Min = 0, Max = 720, Default = 180, Suffix = " deg/s", Decimals = 1 })
+    OrbitSec:Dropdown({ Name = "Direction", Flag = "orbit_dir", Items = { "Clockwise", "Counter clockwise" }, Default = "Clockwise" })
+    OrbitSec:Slider({ Name = "Move speed", Flag = "orbit_speed", Min = 10, Max = 4000, Default = 150, Suffix = " studs/s", Decimals = 1, Tooltip = "How fast the server position travels to the orbit. 4000 jumps instantly" })
+    OrbitSec:Slider({ Name = "Max target distance", Flag = "orbit_max", Min = 10, Max = 5000, Default = 500, Suffix = " studs", Decimals = 1 })
+    local orbitVisual = OrbitSec:Toggle({ Name = "Visualizer", Flag = "orbit_visual", Default = false, Tooltip = "A highlighted copy of your character shows where the server sees you" })
+    orbitVisual:Colorpicker({ Name = "Fill", Flag = "orbit_fill", Default = Color3.fromRGB(180, 120, 255), Alpha = 0.6 })
+    orbitVisual:Colorpicker({ Name = "Outline", Flag = "orbit_line", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
+    local orbitTracer = OrbitSec:Toggle({ Name = "Tracer", Flag = "orbit_tracer", Default = false, Tooltip = "A line from you to where the server sees you" })
+    orbitTracer:Colorpicker({ Name = "Color", Flag = "orbit_tracer_color", Default = Color3.fromRGB(180, 120, 255), Alpha = 0 })
+    local orbitRing = OrbitSec:Toggle({ Name = "Show orbit ring", Flag = "orbit_ring", Default = false, Tooltip = "Draws the circle the server position travels on" })
+    orbitRing:Colorpicker({ Name = "Color", Flag = "orbit_ring_color", Default = Color3.fromRGB(180, 120, 255), Alpha = 0.3 })
+
+    local TargetSec = CombatTab:Section({ Name = "Target info", Side = 2 })
+    TargetSec:Toggle({ Name = "Target info panel", Flag = "tinfo_on", Default = false, Tooltip = "A small draggable panel about the player silent aim (or the aim assist) is locked onto. Drag it by its top part." })
+    TargetSec:Dropdown({ Name = "Target from", Flag = "tinfo_source", Items = { "Silent aim", "Aim assist" }, Default = "Silent aim" })
+    TargetSec:Toggle({ Name = "Show health", Flag = "tinfo_health", Default = true })
+    TargetSec:Toggle({ Name = "Show distance and line of sight", Flag = "tinfo_status", Default = true, Tooltip = "Visible, Wallbang (a wallbang spot exists) or Blocked" })
+    TargetSec:Toggle({ Name = "Show team and weapon", Flag = "tinfo_extra", Default = true })
+    TargetSec:Toggle({ Name = "Hide without target", Flag = "tinfo_hide", Default = true, Tooltip = "With the menu open the panel always shows so you can move it" })
 
     local GunMods = CombatTab:Section({ Name = "Gun mods", Side = 2 })
     GunMods:Toggle({ Name = "Gun modifications", Flag = "gun_mods", Default = false })
@@ -2493,6 +2209,64 @@ function Fx:Build()
         end)
     end)
     self.main = main
+    main.Active = true
+    local LIFT = 30
+    local lifted = setmetatable({}, { __mode = "k" })
+    local function lift(inst)
+        if lifted[inst] or not inst:IsA("GuiObject") then return end
+        lifted[inst] = true
+        inst.ZIndex += LIFT
+    end
+    lift(main)
+    main.DescendantAdded:Connect(function(descendant)
+        task.defer(lift, descendant)
+    end)
+    local popups = {}
+    local function raisePopup(frame)
+        local entry = { list = {}, conn = nil }
+        local function add(inst)
+            if inst:IsA("GuiObject") then
+                entry.list[#entry.list + 1] = inst
+                inst.ZIndex += LIFT
+            end
+        end
+        add(frame)
+        for _, descendant in ipairs(frame:GetDescendants()) do add(descendant) end
+        entry.conn = frame.DescendantAdded:Connect(function(descendant)
+            task.defer(function()
+                if popups[frame] == entry then add(descendant) end
+            end)
+        end)
+        popups[frame] = entry
+    end
+    local function lowerPopup(frame)
+        local entry = popups[frame]
+        popups[frame] = nil
+        if not entry then return end
+        if entry.conn then entry.conn:Disconnect() end
+        for _, inst in ipairs(entry.list) do
+            if inst.Parent then pcall(function() inst.ZIndex -= LIFT end) end
+        end
+    end
+    track(RunService.Heartbeat:Connect(function()
+        local opened = Library.OpenedFrames
+        for frame in pairs(popups) do
+            if not frame.Parent or not frame.Visible or not opened or not opened[frame] or not main.Visible then lowerPopup(frame) end
+        end
+        if not main.Visible or not opened then return end
+        local origin, extent = main.AbsolutePosition, main.AbsoluteSize
+        for frame in pairs(opened) do
+            if not popups[frame] and typeof(frame) == "Instance" and frame.Parent and frame.Visible then
+                local at = frame.AbsolutePosition
+                if at.X >= origin.X - 6 and at.X <= origin.X + extent.X and at.Y >= origin.Y - 6 and at.Y <= origin.Y + extent.Y + 40 then
+                    raisePopup(frame)
+                end
+            end
+        end
+    end))
+    onUnload(function()
+        for frame in pairs(popups) do lowerPopup(frame) end
+    end)
     local frame = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 1, Parent = main }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
     fxLabel({ Size = UDim2.new(1, 0, 0, 25), Text = "Effects", TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 1, Parent = frame })
 
@@ -3289,23 +3063,65 @@ do
     local gunList
     for _, weapon in ipairs(FX_WEAPONS) do
         local key = "sfx_" .. weapon.key
-        local config = { names = PF_GUN_NAMES, lookup = function(name) return PF_GUN_BY_NAME[name] end, category = function(name) return PF_GUN_CATEGORY[name] end, hidden = function(name) local id = fxAssetNumber(PF_GUN_BY_NAME[name]) return id ~= nil and FxAudio.ok[id] == false end, flag = key .. "_sound", volumeFlag = key .. "_volume", pitchFlag = key .. "_pitch", varFlag = key .. "_pitchvar" }
+        local config = { names = {}, lookup = function(name) local id = FxSaved.find(key, name) return id and ("rbxassetid://" .. id) or nil end, category = function(name) local id = FxSaved.find(key, name) return id and tostring(id) or nil end, flag = key .. "_sound", volumeFlag = key .. "_volume", pitchFlag = key .. "_pitch", varFlag = key .. "_pitchvar", placeholder = "search saved sounds..." }
+        local function dropdownValues()
+            local values = { "None" }
+            for _, name in ipairs(FxSaved.names(key)) do values[#values + 1] = name end
+            return values
+        end
+        local function refresh()
+            table.clear(config.names)
+            for _, name in ipairs(FxSaved.names(key)) do config.names[#config.names + 1] = name end
+            local option = Options[key .. "_sound"]
+            if option and option.SetValues then pcall(function() option:SetValues(dropdownValues()) end) end
+            if gunList and gunList.config == config then gunList.applyFilter() end
+        end
+        for _, name in ipairs(FxSaved.names(key)) do config.names[#config.names + 1] = name end
         local box = Fx:Section("SFX", weapon.label, weapon.label .. " sound")
         box:Toggle({ Name = "Custom " .. weapon.label .. " sound", Flag = key .. "_on", Default = false })
-        box:Dropdown({ Name = "Sound", Flag = key .. "_sound", Items = PF_GUN_NAMES, Default = weapon.default })
-        box:Input({ Name = "Custom sound id", Flag = key .. "_custom", Default = "", Placeholder = "public audio id, overrides the list" })
+        box:Dropdown({ Name = "Saved sound", Flag = key .. "_sound", Items = dropdownValues(), Default = "None", Tooltip = "Sounds you saved for this weapon. None plays the id typed below, if any." })
+        box:Input({ Name = "Sound id", Flag = key .. "_custom", Default = "", Placeholder = "public audio id or link" })
+        box:Input({ Name = "Sound name", Flag = key .. "_name", Default = "", Placeholder = "name to save it under (optional)" })
+        box:Button({ Name = "Save sound", Callback = function()
+            local text = Options[key .. "_custom"] and Options[key .. "_custom"].Value
+            local id = type(text) == "string" and tonumber(string.match(text, "%d%d%d+"))
+            if not id then
+                pcall(function() Library:Notify("Paste an audio id or link first", 4) end)
+                return
+            end
+            local typed = Options[key .. "_name"] and Options[key .. "_name"].Value
+            local name = type(typed) == "string" and string.match(typed, "^%s*(.-)%s*$") or ""
+            if name == "" then name = tostring(id) end
+            FxSaved.add(key, name, id)
+            refresh()
+            if Options[key .. "_sound"] then Options[key .. "_sound"]:SetValue(name) end
+            if Options[key .. "_name"] then Options[key .. "_name"]:SetValue("") end
+            fxEnsure("rbxassetid://" .. id)
+            pcall(function() Library:Notify("Saved " .. name .. " for " .. weapon.label, 4) end)
+        end })
+        box:Button({ Name = "Remove selected", Callback = function()
+            local selected = Options[key .. "_sound"] and Options[key .. "_sound"].Value
+            if type(selected) == "string" and FxSaved.remove(key, selected) then
+                refresh()
+                if Options[key .. "_sound"] then Options[key .. "_sound"]:SetValue("None") end
+                pcall(function() Library:Notify("Removed " .. selected, 4) end)
+            end
+        end })
         box:Slider({ Name = "Volume", Flag = key .. "_volume", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
         box:Slider({ Name = "Pitch", Flag = key .. "_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
         box:Slider({ Name = "Pitch variation", Flag = key .. "_pitchvar", Min = 0, Max = 0.5, Default = 0, Decimals = 0.01 })
         box:Toggle({ Name = "Mute game shot sound", Flag = key .. "_mute", Default = true })
         box:Button({ Name = "Preview sound", Callback = function()
-            local name = Options[config.flag] and Options[config.flag].Value
-            fxPlaySound(fxWeaponEntry(key, weapon.default), Options[config.volumeFlag].Value, Options[config.pitchFlag].Value, Options[config.varFlag].Value)
+            local entry = fxWeaponEntry(key)
+            if not entry then
+                pcall(function() Library:Notify("No sound picked or typed for " .. weapon.label, 4) end)
+                return
+            end
+            fxPlaySound(entry, Options[config.volumeFlag].Value, Options[config.pitchFlag].Value, Options[config.varFlag].Value)
         end })
         Fx:Preview("SFX", weapon.label, nil, function(sub)
             gunList = gunList or fxSoundList(config)
             gunList.attach(sub.preview, config)
-            FxAudio.scan(function() if gunList then gunList.applyFilter() end end)
         end)
     end
 
@@ -3951,7 +3767,7 @@ do
         Text = "Keybind list shows",
         Values = { "All", "Toggled", "Active" },
         Default = "All",
-        Tooltip = "All: every keybind. Toggled: only keybinds whose feature is switched on. Active: only keybinds held or toggled right now.",
+        Tooltip = "All: every keybind that has a key. Toggled: only keybinds whose feature is switched on. Active: only keybinds held or toggled right now.",
         Callback = function(value)
             pcall(function() Library:SetKeybindMode(value) end)
         end,
@@ -7429,7 +7245,7 @@ do
             end
             local key = "sfx_" .. weapon.key
             if not getFlag(key .. "_on", false) then return end
-            local entry = fxWeaponEntry(key, weapon.default)
+            local entry = fxWeaponEntry(key)
             if not entry then return end
             local entryId = fxAssetNumber(entry)
             if entryId and FxAudio.ok[entryId] == false then
@@ -7451,7 +7267,7 @@ do
                 for _, weapon in ipairs(FX_WEAPONS) do
                     local key = "sfx_" .. weapon.key
                     if getFlag(key .. "_on", false) then
-                        fxEnsure(fxWeaponEntry(key, weapon.default))
+                        fxEnsure(fxWeaponEntry(key))
                     end
                 end
                 task.wait(1.5)
@@ -11287,13 +11103,14 @@ do
 
     do
         local SP = Actions.sp
-        local requests, order = {}, { "assist", "desync" }
+        local requests, order = {}, { "assist", "orbit", "desync" }
         local engine = newBag()
         local running = false
         local applied, realCF = nil, nil
         local lastSpeed, lastStyle, lastWarn = 100, nil, 0
         local RESTORE, GHOST = "AsterServerPosRestore", "AsterServerPosGhost"
         SP.pos = nil
+        local groundBelow
 
         local rayParams = RaycastParams.new()
         rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -11305,7 +11122,11 @@ do
         end
 
         function SP.shooter(root)
+            if SP.active == "orbit" then return SP.realPos(root) end
             return SP.pos or SP.realPos(root)
+        end
+        function SP.floorAt(position, lowest)
+            return groundBelow(position, lowest)
         end
 
         local function picker(name, fallbackColor, fallbackAlpha)
@@ -11322,7 +11143,7 @@ do
             return style
         end
 
-        local function groundBelow(position, lowest)
+        function groundBelow(position, lowest)
             local list = {}
             for _, player in ipairs(Players:GetPlayers()) do
                 if player.Character then list[#list + 1] = player.Character end
@@ -11457,11 +11278,12 @@ do
             local real = root.CFrame
             local realPos = real.Position
             local goal, speed, style
+            SP.active = nil
             for _, name in ipairs(order) do
                 local fn = requests[name]
                 if fn then
                     local ok, g, s, v = pcall(fn, root, realPos)
-                    if ok and g then goal, speed, style = g, s or 100, v break end
+                    if ok and g then goal, speed, style = g, s or 100, v SP.active = name break end
                 end
             end
             if goal then
@@ -11882,10 +11704,39 @@ do
                 return hum ~= nil and hum.Health > 0 and char:FindFirstChild("HumanoidRootPart") ~= nil
             end
 
-            local function step(dt)
+            local magnet, aimOn, bound = false, false, false
+
+            local function aimWanted()
+                if aimOn and keyActive("Aim_Global_Key") then return true end
+                return magnet and keyActive("Trigger_Global_Key")
+            end
+
+            local step
+            local function refreshBind()
+                local want = aimOn or magnet
+                if want == bound then return end
+                bound = want
+                if want then
+                    lockedPlayer, lastPlayer, accX, accY = nil, nil, 0, 0
+                    RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function(dt)
+                        local ok, err = pcall(step, dt)
+                        if not ok then warnf("aim assist error:", err) end
+                    end)
+                else
+                    pcall(function() RunService:UnbindFromRenderStep(name) end)
+                    lockedPlayer, lastPlayer = nil, nil
+                end
+            end
+
+            Actions.aimMagnet = function(on)
+                magnet = on and true or false
+                refreshBind()
+            end
+
+            function step(dt)
                 local cam = Camera()
                 local _, _, root = localParts()
-                if not cam or not root or typing() or not keyActive("Aim_Global_Key") then
+                if not cam or not root or typing() or not aimWanted() then
                     lockedPlayer, lastPlayer = nil, nil
                     accX, accY = 0, 0
                     return
@@ -11942,14 +11793,16 @@ do
             end
 
             feature("Aim_Global_Enabled", function()
-                lockedPlayer, lastPlayer, accX, accY = nil, nil, 0, 0
-                RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function(dt)
-                    local ok, err = pcall(step, dt)
-                    if not ok then warnf("aim assist error:", err) end
-                end)
+                aimOn = true
+                refreshBind()
             end, function()
-                pcall(function() RunService:UnbindFromRenderStep(name) end)
-                lockedPlayer, lastPlayer = nil, nil
+                aimOn = false
+                refreshBind()
+            end)
+
+            onUnload(function()
+                magnet, aimOn = false, false
+                refreshBind()
             end)
         end
 
@@ -12307,25 +12160,17 @@ do
                 local args = table.pack(...)
                 local _, _, myRoot = localParts()
                 local usePart, newOrigin, hit = part, nil, nil
-                local tpOverride
-                if assisted and flag("wb_assist_method", "Server position") == "Orbit" and A.tpGoal and clock() - (A.tpAt or 0) < 0.5 then
-                    tpOverride = A.tpGoal
-                end
-                if tpOverride and A.tpKind == "visible" and A.tpPart == part and A.tpEye then
-                    newOrigin, hit = A.tpEye, part.Position
-                    A.snapFrames = math.max(1, math.floor(flag("wb_tp_frames", 1)))
-                elseif wallbang and myRoot then
+                if wallbang and myRoot then
                     WB.updateIgnore()
-                    local status, moved, moveHit = wallbangPlan(origin, part, myRoot, tpOverride)
+                    local status, moved, moveHit = wallbangPlan(origin, part, myRoot)
                     if not status then
                         for _, alt in ipairs(altParts(entity.Character, part)) do
-                            status, moved, moveHit = wallbangPlan(origin, alt, myRoot, tpOverride)
+                            status, moved, moveHit = wallbangPlan(origin, alt, myRoot)
                             if status then usePart = alt break end
                         end
                     end
                     if status == "moved" then
                         newOrigin, hit = moved, moveHit
-                        if tpOverride then A.snapFrames = math.max(1, math.floor(flag("wb_tp_frames", 1))) end
                     elseif not status and flag("silent_wall", false) then
                         return original(...)
                     end
@@ -12518,7 +12363,7 @@ do
         do
             local bag = newBag()
             local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterType = Enum.RaycastFilterType.Include
             pcall(function() params.CollisionGroup = "ClientBullet" end)
             local seenSince, nextShot = nil, 0
             local TORSO = { Torso = true, UpperTorso = true, LowerTorso = true, HumanoidRootPart = true }
@@ -12526,7 +12371,15 @@ do
             feature("Trigger_Global_Enabled", function()
                 seenSince, nextShot = nil, 0
                 task.spawn(Gun.find)
+                local magnetOn = false
+                Actions.aimMagnet(flag("trigger_magnet", false))
+                magnetOn = flag("trigger_magnet", false)
                 bag.add(RunService.Heartbeat:Connect(function()
+                    local wantMagnet = flag("trigger_magnet", false)
+                    if wantMagnet ~= magnetOn then
+                        magnetOn = wantMagnet
+                        Actions.aimMagnet(wantMagnet)
+                    end
                     local cam = Camera()
                     local _, _, root = localParts()
                     if not cam or not root or typing() or not keyActive("Trigger_Global_Key") or not readyGun() then
@@ -12535,10 +12388,12 @@ do
                     end
                     local ref = aimRef()
                     local ray = cam:ViewportPointToRay(ref.X, ref.Y)
-                    local list = { cam }
-                    if LocalPlayer.Character then list[#list + 1] = LocalPlayer.Character end
+                    local list = {}
+                    for _, other in ipairs(Players:GetPlayers()) do
+                        if other ~= LocalPlayer and other.Character then list[#list + 1] = other.Character end
+                    end
                     params.FilterDescendantsInstances = list
-                    local result = workspace:Raycast(ray.Origin, ray.Direction * 1500, params)
+                    local result = #list > 0 and workspace:Raycast(ray.Origin, ray.Direction * 1500, params) or nil
                     local model = result and result.Instance:FindFirstAncestorOfClass("Model")
                     local player = model and Players:GetPlayerFromCharacter(model)
                     local hum = model and model:FindFirstChildOfClass("Humanoid")
@@ -12555,7 +12410,13 @@ do
                         local data = Gun.data()
                         local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
                         local range = data and tonumber(data.Range) or 1000
-                        if head and (result.Position - head.Position).Magnitude > range then good = false end
+                        if not head then
+                            good = false
+                        elseif (result.Position - head.Position).Magnitude > range then
+                            good = false
+                        elseif not visibleFrom(head.Position, result.Instance, model) then
+                            good = false
+                        end
                     end
                     if not good then seenSince = nil return end
                     local now = clock()
@@ -12568,6 +12429,286 @@ do
             end, function()
                 bag.clear()
                 seenSince = nil
+                Actions.aimMagnet(false)
+            end)
+        end
+
+        do
+            local bag = newBag()
+            local panel
+
+            local function destroyPanel()
+                if panel then pcall(function() panel.outer:Destroy() end) end
+                panel = nil
+            end
+
+            local function buildPanel()
+                if panel and panel.outer.Parent then return panel end
+                destroyPanel()
+                local outer = Library:Create("Frame", { BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.new(1, -250, 0.35, 0), Size = UDim2.fromOffset(230, 70), Visible = false, ZIndex = 100, Parent = Library.ScreenGui })
+                pcall(function() Library:ApplyGlow(outer) end)
+                local inner = Library:Create("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 101, Parent = outer })
+                Library:AddToRegistry(inner, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" }, true)
+                local accent = Library:Create("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = 102, Parent = inner })
+                Library:AddToRegistry(accent, { BackgroundColor3 = "AccentColor" }, true)
+                local nameLabel = Library:CreateLabel({ Position = UDim2.fromOffset(6, 4), Size = UDim2.new(1, -12, 0, 16), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", ZIndex = 104, Parent = inner })
+                local barOuter = Library:Create("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(6, 24), Size = UDim2.new(1, -12, 0, 10), ZIndex = 103, Parent = inner })
+                Library:AddToRegistry(barOuter, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" }, true)
+                local barFill = Library:Create("Frame", { BackgroundColor3 = Color3.fromRGB(110, 220, 120), BorderSizePixel = 0, Position = UDim2.fromOffset(1, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 104, Parent = barOuter })
+                local healthLabel = Library:CreateLabel({ Position = UDim2.fromOffset(0, 0), Size = UDim2.new(1, 0, 1, 0), TextSize = 11, Text = "", ZIndex = 105, Parent = barOuter })
+                local statusLabel = Library:CreateLabel({ Position = UDim2.fromOffset(6, 38), Size = UDim2.new(1, -12, 0, 14), TextSize = Library.FontSize - 1, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, RichText = true, Text = "", ZIndex = 104, Parent = inner })
+                local extraLabel = Library:CreateLabel({ Position = UDim2.fromOffset(6, 52), Size = UDim2.new(1, -12, 0, 14), TextSize = Library.FontSize - 1, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", ZIndex = 104, Parent = inner })
+                Library:MakeDraggable(outer, 80)
+                panel = { outer = outer, name = nameLabel, bar = barOuter, fill = barFill, health = healthLabel, status = statusLabel, extra = extraLabel, target = nil, nextPick = 0 }
+                return panel
+            end
+
+            local GOOD, WARN, BAD = Color3.fromRGB(110, 220, 120), Color3.fromRGB(240, 200, 90), Color3.fromRGB(230, 95, 95)
+            local function hex(color)
+                return string.format("#%02x%02x%02x", math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5))
+            end
+
+            local function pickInfoTarget()
+                local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                if not head or not Camera() then return nil end
+                local source = flag("tinfo_source", "Silent aim")
+                if source == "Silent aim" then
+                    if not (flag("Silent_Global_Enabled", false) and keyActive("Silent_Global_Key")) then return nil end
+                    local data = Gun.data()
+                    return selectTarget("silent", aimRef(), head.Position, { skipWall = true, limit = data and tonumber(data.Range) or 1000 })
+                end
+                if not flag("Aim_Global_Enabled", false) then return nil end
+                return selectTarget("aim", aimRef(), head.Position, { skipWall = true })
+            end
+
+            local function updatePanel()
+                local p = buildPanel()
+                local now = clock()
+                if now >= p.nextPick then
+                    p.nextPick = now + 0.1
+                    local entity, part = pickInfoTarget()
+                    p.target, p.part = entity, part
+                end
+                local entity, part = p.target, p.part
+                local character = entity and entity.Character
+                local hum = character and character:FindFirstChildOfClass("Humanoid")
+                local root = entity and entity.Root
+                local menuOpen = Library.Toggled == true
+                if not (entity and character and character.Parent and hum and root and root.Parent) then
+                    p.outer.Visible = menuOpen or not flag("tinfo_hide", true)
+                    if p.outer.Visible then
+                        p.name.Text = "No target"
+                        p.fill.Size = UDim2.new(0, 0, 1, -2)
+                        p.health.Text = ""
+                        p.status.Text = ""
+                        p.extra.Text = ""
+                        p.bar.Visible, p.status.Visible, p.extra.Visible = false, false, false
+                        p.outer.Size = UDim2.fromOffset(230, 26)
+                    end
+                    return
+                end
+                p.outer.Visible = true
+                local player = entity.Player
+                local display = player.DisplayName ~= "" and player.DisplayName or player.Name
+                p.name.Text = display == player.Name and display or (display .. "  @" .. player.Name)
+                local height = 22
+                local showHealth = flag("tinfo_health", true)
+                p.bar.Visible = showHealth
+                if showHealth then
+                    local max = math.max(hum.MaxHealth, 1)
+                    local ratio = math.clamp(hum.Health / max, 0, 1)
+                    p.fill.Size = UDim2.new(ratio, -2, 1, -2)
+                    p.fill.BackgroundColor3 = BAD:Lerp(GOOD, ratio)
+                    p.health.Text = string.format("%d / %d", math.floor(hum.Health + 0.5), math.floor(max + 0.5))
+                    p.bar.Position = UDim2.fromOffset(6, height)
+                    height += 14
+                end
+                local showStatus = flag("tinfo_status", true)
+                p.status.Visible = showStatus
+                if showStatus then
+                    local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                    local text = ""
+                    if head then
+                        local distance = (root.Position - head.Position).Magnitude
+                        local label, color = "Blocked", BAD
+                        if part and part.Parent then
+                            WB.tick()
+                            local status = WB.status(head.Position, part)
+                            if status == "visible" then
+                                label, color = "Visible", GOOD
+                            elseif status == "wallbang" then
+                                label, color = flag("silent_wallbang", false) and "Wallbang" or "Behind wall", WARN
+                            end
+                        end
+                        text = string.format("%d studs  <font color=\"%s\">%s</font>", math.floor(distance + 0.5), hex(color), label)
+                    end
+                    p.status.Text = text
+                    p.status.Position = UDim2.fromOffset(6, height)
+                    height += 14
+                end
+                local showExtra = flag("tinfo_extra", true)
+                p.extra.Visible = showExtra
+                if showExtra then
+                    local tool = character:FindFirstChildOfClass("Tool")
+                    local team = player.Team and player.Team.Name or "No team"
+                    p.extra.Text = team .. "  |  " .. (tool and tool.Name or "No weapon")
+                    p.extra.Position = UDim2.fromOffset(6, height)
+                    height += 14
+                end
+                p.outer.Size = UDim2.fromOffset(230, height + 6)
+            end
+
+            feature("tinfo_on", function()
+                buildPanel()
+                bag.add(RunService.RenderStepped:Connect(function()
+                    local ok, err = pcall(updatePanel)
+                    if not ok and clock() - (panel and panel.warned or 0) > 5 then
+                        if panel then panel.warned = clock() end
+                        warnf("target info:", err)
+                    end
+                end))
+            end, function()
+                bag.clear()
+                destroyPanel()
+            end)
+
+            onUnload(function()
+                bag.clear()
+                destroyPanel()
+            end)
+        end
+
+        do
+            local bag = newBag()
+            local orbit = { target = nil, angle = 0, last = nil, floorAt = 0, floorY = nil, floorFor = nil, nextPick = 0, ring = nil, ringParts = {} }
+
+            local function destroyRing()
+                if orbit.ring then pcall(function() orbit.ring:Destroy() end) end
+                orbit.ring = nil
+                table.clear(orbit.ringParts)
+            end
+
+            local function pickTarget(root)
+                local cam = Camera()
+                local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                if not cam or not head then return nil end
+                local entity = selectTarget("silent", aimRef(), head.Position, { skipWall = true, ignoreDown = false, limit = flag("orbit_max", 500) })
+                return entity and entity.Root or nil
+            end
+
+            local function orbitHeight(center)
+                local void = workspace.FallenPartsDestroyHeight
+                if type(void) ~= "number" or void ~= void then void = -500 end
+                local floorLimit = void + 12
+                local mode = flag("orbit_mode", "Under the map")
+                local depth = flag("orbit_depth", 15)
+                local y
+                if mode == "Near void" then
+                    y = floorLimit + 6
+                elseif mode == "Below target" then
+                    y = center.Y - depth
+                else
+                    local now = clock()
+                    if not orbit.floorY or now - orbit.floorAt > 0.25 or not orbit.floorFor or (orbit.floorFor - center).Magnitude > 4 then
+                        orbit.floorAt, orbit.floorFor = now, center
+                        orbit.floorY = Actions.sp.floorAt(center, true)
+                    end
+                    y = (orbit.floorY or (center.Y - 6)) - depth
+                end
+                return math.max(y, floorLimit)
+            end
+
+            local function updateRing(center, y, radius, color, transparency)
+                local count = 28
+                if not orbit.ring or orbit.ring.Parent == nil then
+                    destroyRing()
+                    local folder = Instance.new("Folder")
+                    folder.Name = "AsterOrbitRing"
+                    for i = 1, count do
+                        local part = Instance.new("Part")
+                        part.Anchored, part.CanCollide, part.CanQuery, part.CanTouch = true, false, false, false
+                        part.CastShadow = false
+                        part.Material = Enum.Material.Neon
+                        part.Size = v3(0.25, 0.25, 1)
+                        part.Parent = folder
+                        orbit.ringParts[i] = part
+                    end
+                    folder.Parent = workspace.CurrentCamera
+                    orbit.ring = folder
+                end
+                local step = (math.pi * 2) / count
+                local length = math.max(radius * step * 1.05, 0.3)
+                for i, part in ipairs(orbit.ringParts) do
+                    local a1 = (i - 1) * step
+                    local p = v3(center.X + math.cos(a1) * radius, y, center.Z + math.sin(a1) * radius)
+                    local a2 = a1 + step
+                    local q = v3(center.X + math.cos(a2) * radius, y, center.Z + math.sin(a2) * radius)
+                    part.Size = v3(0.25, 0.25, length)
+                    part.CFrame = CFrame.lookAt((p + q) / 2, q)
+                    part.Color = color
+                    part.Transparency = transparency
+                end
+            end
+
+            local function orbitRequest(root, realPos)
+                if not (flag("Silent_Global_Enabled", false) and keyActive("Silent_Global_Key")) then
+                    orbit.last = nil
+                    destroyRing()
+                    return nil
+                end
+                local now = clock()
+                local target = orbit.target
+                if not target or not target.Parent or now >= orbit.nextPick then
+                    target = pickTarget(root)
+                    orbit.target = target
+                    orbit.nextPick = now + 0.1
+                end
+                if not target or not target.Parent then
+                    orbit.last = nil
+                    destroyRing()
+                    return nil
+                end
+                local dt = orbit.last and math.min(now - orbit.last, 0.1) or 0
+                orbit.last = now
+                local spin = math.rad(flag("orbit_spin", 180))
+                if flag("orbit_dir", "Clockwise") ~= "Clockwise" then spin = -spin end
+                orbit.angle = (orbit.angle + spin * dt) % (math.pi * 2)
+                local center = target.Position
+                local y = orbitHeight(center)
+                local radius = flag("orbit_radius", 6)
+                local goal = v3(center.X + math.cos(orbit.angle) * radius, y, center.Z + math.sin(orbit.angle) * radius)
+                if flag("orbit_ring", false) then
+                    local color, alpha = Actions.sp.ringStyle()
+                    updateRing(center, y, radius, color, alpha)
+                else
+                    destroyRing()
+                end
+                local style
+                if flag("orbit_visual", false) then
+                    style = Actions.sp.visualStyle("orbit_fill", "orbit_line", flag("orbit_tracer", false) and "orbit_tracer_color" or nil)
+                end
+                return goal, flag("orbit_speed", 150), style
+            end
+
+            function Actions.sp.ringStyle()
+                local option = Options["orbit_ring_color"]
+                local color = option and typeof(option.Value) == "Color3" and option.Value or Color3.fromRGB(180, 120, 255)
+                local alpha = option and tonumber(option.Transparency) or 0.3
+                return color, alpha
+            end
+
+            feature("orbit_on", function()
+                orbit.target, orbit.last, orbit.nextPick, orbit.floorY = nil, nil, 0, nil
+                Actions.sp.enable("orbit", orbitRequest)
+            end, function()
+                Actions.sp.disable("orbit")
+                orbit.target, orbit.last = nil, nil
+                destroyRing()
+            end)
+
+            onUnload(function()
+                Actions.sp.disable("orbit")
+                destroyRing()
             end)
         end
 
@@ -12583,56 +12724,6 @@ do
             local function firing()
                 if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then return true end
                 return clock() - (Actions.lastAutoShot or -10) < 0.4
-            end
-
-            local function scanOrbit(realPos, headOffset, part)
-                local radius = flag("wb_tp_radius", 4)
-                local minDepth, maxDepth = flag("wb_tp_min", 2), flag("wb_tp_max", 8)
-                if maxDepth < minDepth then minDepth, maxDepth = maxDepth, minDepth end
-                local points = math.max(math.floor(flag("wb_tp_points", 12)), 3)
-                local void = workspace.FallenPartsDestroyHeight
-                if type(void) ~= "number" or void ~= void then void = -500 end
-                local lowest = void + 12
-                local mode = flag("wb_tp_scan", "Wallbang or visible")
-                local wantVisible, wantWall = mode ~= "Wallbang", mode ~= "Visible"
-                local avoid = flag("wb_tp_free", true)
-                local anchor = part.Parent and part.Parent:FindFirstChild("HumanoidRootPart")
-                local center = anchor and anchor.Position or part.Position
-                local target = part.Position
-
-                local candidates = {}
-                local levels = 3
-                for level = 0, levels - 1 do
-                    local depth = minDepth + (maxDepth - minDepth) * (level / (levels - 1))
-                    local y = center.Y - depth
-                    if y > lowest then
-                        candidates[#candidates + 1] = v3(center.X, y, center.Z)
-                        if radius > 0.1 then
-                            for index = 0, points - 1 do
-                                local angle = index / points * math.pi * 2
-                                candidates[#candidates + 1] = v3(center.X + math.cos(angle) * radius, y, center.Z + math.sin(angle) * radius)
-                            end
-                        end
-                    end
-                end
-                table.sort(candidates, function(left, right)
-                    return (left - realPos).Magnitude < (right - realPos).Magnitude
-                end)
-
-                local tested = 0
-                for _, at in ipairs(candidates) do
-                    if not avoid or freeSpace(at) then
-                        local eye = at + headOffset
-                        if wantVisible and not workspace:Raycast(eye, target - eye, WB.ray) and not workspace:Raycast(target, eye - target, WB.ray) then
-                            return at, eye, "visible"
-                        end
-                        if wantWall and tested < 18 then
-                            tested += 1
-                            if WB.status(eye, part, at) == "wallbang" then return at, eye, "wallbang" end
-                        end
-                    end
-                end
-                return nil
             end
 
             local function evaluate()
@@ -12661,19 +12752,13 @@ do
                 end
                 table.sort(candidates, function(a, b) return a.d < b.d end)
 
-                local teleport = flag("wb_assist_method", "Server position") == "Orbit"
-                for index = 1, math.min(#candidates, teleport and 2 or 4) do
+                for index = 1, math.min(#candidates, 4) do
                     local part = candidates[index].e.Head
                     local status = WB.status(origin, part, realPos)
                     if status == "visible" then
                         return nil
                     elseif status == "wallbang" then
                         return nil, part
-                    end
-                    if teleport then
-                        local at, eye, kind = scanOrbit(realPos, headOffset, part)
-                        if at then return nil, part, at, eye, kind end
-                        continue
                     end
                     local delta = part.Position - realPos
                     local distance = delta.Magnitude
@@ -12696,13 +12781,9 @@ do
                 local now = clock()
                 if now < nextEval then return end
                 nextEval = now + 0.1
-                local goal, part, tpGoal, tpEye, tpKind = evaluate()
+                local goal, part = evaluate()
                 A.goal = goal
                 if goal then A.goalAt = now end
-                if tpGoal then
-                    A.tpGoal, A.tpEye, A.tpKind, A.tpPart, A.tpAt = tpGoal, tpEye, tpKind, part, now
-                    A.style = flag("wb_assist_visual", false) and Actions.sp.visualStyle("wb_assist_fill", "wb_assist_line") or nil
-                end
                 if goal then
                     A.speed = flag("wb_assist_mode", "Tween") == "Teleport" and 1e9 or flag("wb_assist_speed", 50)
                     A.style = flag("wb_assist_visual", false) and Actions.sp.visualStyle("wb_assist_fill", "wb_assist_line") or nil
@@ -12782,15 +12863,7 @@ do
 
             feature("wb_assist", function()
                 Actions.sp.enable("assist", function()
-                    local method = flag("wb_assist_method", "Server position")
-                    if method == "Orbit" then
-                        if (A.snapFrames or 0) > 0 and A.tpGoal and clock() - (A.tpAt or 0) < 0.5 then
-                            A.snapFrames -= 1
-                            return A.tpGoal, 1e9, A.style
-                        end
-                        return nil
-                    end
-                    if not A.goal or method ~= "Server position" then return nil end
+                    if not A.goal or flag("wb_assist_method", "Server position") ~= "Server position" then return nil end
                     return A.goal, A.speed, A.style
                 end)
                 bag.add(RunService.Heartbeat:Connect(function(dt)

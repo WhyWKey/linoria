@@ -81,6 +81,10 @@ local Library = {
     Visible = true,
     Unloaded = false,
     Shine = true,
+    Animated = {},
+    KeyPickers = {},
+    MouseMode = "raw",
+    Binding = nil,
     ToggleKey = Enum.KeyCode.RightShift,
     Font = Enum.Font.Code,
     TextSize = 13,
@@ -160,13 +164,65 @@ function Library:Connect(signal, fn)
     return c
 end
 
+local function Has(list, v)
+    for _, x in ipairs(list) do
+        if x == v then return true end
+    end
+    return false
+end
+
+local KEY_SHORT = {
+    LeftShift = "LShift", RightShift = "RShift", LeftControl = "LCtrl", RightControl = "RCtrl",
+    LeftAlt = "LAlt", RightAlt = "RAlt", Return = "Enter", Backspace = "Bksp", Escape = "Esc",
+    Delete = "Del", Insert = "Ins", PageUp = "PgUp", PageDown = "PgDn", CapsLock = "Caps",
+}
+
+local function ShortKey(name)
+    local s = KEY_SHORT[name] or name
+    if #s > 6 then s = s:sub(1, 6) end
+    return s
+end
+
+local function InputName(input)
+    local t = input.UserInputType
+    if t == Enum.UserInputType.MouseButton1 then return "MB1" end
+    if t == Enum.UserInputType.MouseButton2 then return "MB2" end
+    if t == Enum.UserInputType.MouseButton3 then return "MB3" end
+    if t == Enum.UserInputType.Keyboard then return input.KeyCode.Name end
+    return nil
+end
+
+local function TrackOver(state, gui)
+    gui.MouseEnter:Connect(function() state.Over = state.Over + 1 end)
+    gui.MouseLeave:Connect(function() state.Over = math.max(state.Over - 1, 0) end)
+end
+
+-- Mouse coordinates may or may not include the topbar inset depending on the executor and
+-- container. Any press on a short element (height < inset) tells us which convention holds.
+function Library:Calibrate(inst)
+    local pos = UserInputService:GetMouseLocation()
+    local ok, inset = pcall(function() return GuiService:GetGuiInset() end)
+    if not ok or not inset then return end
+    local a, b = Inside(inst, pos), Inside(inst, pos - inset)
+    if a and not b then self.MouseMode = "raw" elseif b and not a then self.MouseMode = "alt" end
+end
+
+function Library:GetMouse()
+    local pos = UserInputService:GetMouseLocation()
+    if self.MouseMode == "alt" then
+        local ok, inset = pcall(function() return GuiService:GetGuiInset() end)
+        if ok and inset then return pos - inset end
+    end
+    return pos
+end
+
 function Library:Tween(inst, props, t)
     TweenService:Create(inst, TweenInfo.new(t or 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
 end
 
 function Library:Fire(obj)
-    if obj.Callback then self:SafeCall(obj.Callback, obj.Value) end
-    for _, fn in ipairs(obj.Changed) do self:SafeCall(fn, obj.Value) end
+    if obj.Callback then self:SafeCall(obj.Callback, obj.Value, obj.Alpha) end
+    for _, fn in ipairs(obj.Changed) do self:SafeCall(fn, obj.Value, obj.Alpha) end
 end
 
 --// instance factory: New(class, props, themeMap)  themeMap = { Property = "ThemeKey" }
@@ -390,7 +446,17 @@ function Library:Init()
         Parent = self.NotifyHolder,
     })
 
-    self:Connect(UserInputService.InputBegan, function(input)
+    self:Connect(UserInputService.InputBegan, function(input, processed)
+        if self.Binding then
+            self:HandleBind(input)
+            return
+        end
+        if not processed and not UserInputService:GetFocusedTextBox() then
+            local name = InputName(input)
+            if name then
+                for _, kp in ipairs(self.KeyPickers) do kp:_Press(name) end
+            end
+        end
         if IsPress(input) and self.Popup then
             -- the mouse position may or may not include the topbar inset depending on the
             -- executor/container, so test both, plus hover flags that need no coordinates
@@ -414,7 +480,20 @@ function Library:Init()
         end
     end)
 
+    self:Connect(UserInputService.InputEnded, function(input)
+        local name = InputName(input)
+        if name then
+            for _, kp in ipairs(self.KeyPickers) do kp:_Release(name) end
+        end
+    end)
+
     self:Connect(RunService.Heartbeat, function()
+        local now = os.clock()
+        for p in pairs(self.Animated) do
+            p:Evaluate(now)
+            p:Render()
+            for _, fn in ipairs(p.Updated) do self:SafeCall(fn, p.Value, p.Alpha) end
+        end
         if not self.Shine then return end
         local x = -1 + 2 * ((os.clock() % 3) / 3)
         for g in pairs(self.Shines) do
@@ -545,6 +624,7 @@ function Elements:AddLabel(text, wrap)
     local obj = { Type = "Label" }
     Common(obj, holder)
     function obj:SetText(t) Label.Text = tostring(t) end
+    Library:_AttachAddons(obj, Label, Label, 0)
     return obj
 end
 
@@ -632,9 +712,9 @@ function Elements:AddToggle(idx, cfg)
         BackgroundTransparency = Toggle.Value and 0 or 1,
         Parent = Box,
     }, { BackgroundColor3 = "Accent" })
-    Library:New("TextLabel", {
+    local ToggleLabel = Library:New("TextLabel", {
         Position = UDim2.fromOffset(16, 0),
-        Size = UDim2.new(1, cfg.Folding and -34 or -16, 1, 0),
+        Size = UDim2.new(1, cfg.Folding and -38 or -18, 1, 0),
         Text = cfg.Text or idx,
         TextTruncate = Enum.TextTruncate.AtEnd,
         Parent = Row,
@@ -676,6 +756,7 @@ function Elements:AddToggle(idx, cfg)
             Parent = Fold,
         })
         Library:New("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingTop = UDim.new(0, 2), Parent = Fold })
+        Row:SetAttribute("rx", 20)
         Toggle.Frame = Fold
         setmetatable(Toggle, ContainerMT)
         function Toggle:SetFolded(folded)
@@ -688,6 +769,7 @@ function Elements:AddToggle(idx, cfg)
         end)
         if cfg.Folded == false then Toggle:SetFolded(false) end
     end
+    Library:_AttachAddons(Toggle, Row, ToggleLabel, 16)
     return Toggle
 end
 
@@ -801,6 +883,7 @@ function Elements:AddSlider(idx, cfg)
     Bar.InputBegan:Connect(function(input)
         if not IsPress(input) then return end
         Library:ClosePopup()
+        Library:Calibrate(Bar)
         stop()
         update(input.Position.X)
         dragConn = UserInputService.InputChanged:Connect(function(i)

@@ -63,6 +63,7 @@ local UserInputService = Service("UserInputService")
 local TweenService     = Service("TweenService")
 local RunService       = Service("RunService")
 local CoreGui          = Service("CoreGui")
+local GuiService       = Service("GuiService")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -391,8 +392,20 @@ function Library:Init()
 
     self:Connect(UserInputService.InputBegan, function(input)
         if IsPress(input) and self.Popup then
+            -- the mouse position may or may not include the topbar inset depending on the
+            -- executor/container, so test both, plus hover flags that need no coordinates
+            local P = self.Popup
             local pos = UserInputService:GetMouseLocation()
-            if not (Inside(self.Popup.Frame, pos) or Inside(self.Popup.Field, pos)) then
+            local okInset, inset = pcall(function() return GuiService:GetGuiInset() end)
+            local alt = okInset and (pos - inset) or pos
+            local function hit(inst)
+                return Inside(inst, pos) or Inside(inst, alt)
+            end
+            if not (P.Over > 0 or hit(P.Frame) or hit(P.Field)) then
+                if self.Debug then
+                    warn(("[MouseUI] popup closed by outside click | mouse %s | popup %s %s"):format(
+                        tostring(pos), tostring(P.Frame.AbsolutePosition), tostring(P.Frame.AbsoluteSize)))
+                end
                 self:ClosePopup()
             end
         end
@@ -933,6 +946,12 @@ function Elements:AddDropdown(idx, cfg)
             BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
             Parent = Popup,
         }, { ScrollBarImageColor3 = "Accent" })
+        local state = { Frame = Popup, Field = Field, Owner = Dropdown, Over = 0 }
+        local function track(gui)
+            gui.MouseEnter:Connect(function() state.Over = state.Over + 1 end)
+            gui.MouseLeave:Connect(function() state.Over = math.max(state.Over - 1, 0) end)
+        end
+        track(Popup)
         local buttons = {}
         local function paint()
             for v, b in pairs(buttons) do
@@ -949,6 +968,7 @@ function Elements:AddDropdown(idx, cfg)
                 Parent = List,
             })
             Library:New("UIPadding", { PaddingLeft = UDim.new(0, 5), Parent = b })
+            track(b)
             buttons[v] = b
             b.MouseButton1Click:Connect(function()
                 if Dropdown.Multi then
@@ -964,7 +984,11 @@ function Elements:AddDropdown(idx, cfg)
             end)
         end
         paint()
-        Library.Popup = { Frame = Popup, Field = Field, Owner = Dropdown }
+        Library.Popup = state
+        if Library.Debug then
+            warn(("[MouseUI] popup opened | %d values | pos %s size %s"):format(
+                count, tostring(Popup.AbsolutePosition), tostring(Popup.AbsoluteSize)))
+        end
     end
     Field.MouseButton1Click:Connect(function()
         if Library.Popup and Library.Popup.Owner == Dropdown then Library:ClosePopup() else open() end

@@ -677,6 +677,7 @@ function Elements:AddButton(cfg, callback)
     Btn.MouseLeave:Connect(function() Library:Tween(Btn, { BackgroundColor3 = Library.Theme.Field }, 0.08) end)
     Btn.MouseButton1Click:Connect(function()
         Library:ClosePopup()
+        Library:Calibrate(Btn)
         if obj.Callback then Library:SafeCall(obj.Callback) end
     end)
     function obj:SetText(t) Btn.Text = tostring(t) end
@@ -730,6 +731,7 @@ function Elements:AddToggle(idx, cfg)
     function Toggle:OnChanged(fn) table.insert(self.Changed, fn) end
     Row.MouseButton1Click:Connect(function()
         Library:ClosePopup()
+        Library:Calibrate(Row)
         Toggle:SetValue(not Toggle.Value)
     end)
 
@@ -1074,6 +1076,7 @@ function Elements:AddDropdown(idx, cfg)
         end
     end
     Field.MouseButton1Click:Connect(function()
+        Library:Calibrate(Field)
         if Library.Popup and Library.Popup.Owner == Dropdown then Library:ClosePopup() else open() end
     end)
     return Dropdown
@@ -1297,7 +1300,10 @@ function Library.BuildButton(parent, cfg, onClick)
         ZIndex = 2,
         Parent = B.Frame,
     })
-    Click.MouseButton1Click:Connect(function() onClick() end)
+    Click.MouseButton1Click:Connect(function()
+        Library:Calibrate(Click)
+        onClick()
+    end)
 
     function B:Render()
         local col = self.Active and Library.Theme.Text or Library.Theme.TextDim
@@ -1430,6 +1436,7 @@ function Library:CreateWindow(cfg)
     TitleBar.InputBegan:Connect(function(input)
         if not IsPress(input) then return end
         self:ClosePopup()
+        self:Calibrate(TitleBar)
         stopDrag()
         local startMouse = Vector2.new(input.Position.X, input.Position.Y)
         local startPos = Window.Outer.Position

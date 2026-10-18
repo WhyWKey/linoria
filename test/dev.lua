@@ -2162,6 +2162,28 @@ local function wrapGroup(group, page, side)
         })
     end
 
+    function wrapped:When(flagName, expected)
+        bump()
+        local depbox = group:AddDependencyBox()
+        local holder = depbox.Container.Parent
+        local function refresh()
+            local option = Options[flagName]
+            holder.Visible = option ~= nil and option.Value == expected
+            depbox:Resize()
+        end
+        depbox.Update = refresh
+        local option = Options[flagName]
+        if option then
+            local previous = option.Changed
+            option.Changed = function(value)
+                if previous then previous(value) end
+                refresh()
+            end
+        end
+        refresh()
+        return wrapGroup(depbox, page, side)
+    end
+
     function wrapped:Dropdown(info)
         bump()
         group:AddDropdown(info.Flag, {
@@ -2316,7 +2338,14 @@ do
     local Assist = CombatTab:Section({ Name = "Wallbang assist", Side = 1 })
     local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Works on anyone near your cursor, no silent aim needed. If an enemy is behind a wall, it moves the position the server sees up to (or into) the wall so the shot has a line, and sends the shot at that enemy." })
     assistToggle:Keybind({ Name = "Assist key", Flag = "wb_assist_key", Default = "None", Sync = true })
-    Assist:Dropdown({ Name = "Move method", Flag = "wb_assist_method", Items = { "Server position", "Velocity" }, Default = "Server position", Tooltip = "Server position: only what the server sees moves (writes the character CFrame). Velocity: you really move there with physics (no CFrame writes) and walls next to you stop colliding on the way, then you return. The visualizer only applies to Server position." })
+    Assist:Dropdown({ Name = "Move method", Flag = "wb_assist_method", Items = { "Server position", "Velocity", "Teleport" }, Default = "Server position", Tooltip = "Server position: only what the server sees moves (writes the character CFrame). Velocity: you really move there with physics (no CFrame writes) and walls next to you stop colliding on the way, then you return. Teleport: scans up and down for the best height and snaps the server position there for a single frame when you shoot. The visualizer applies to Server position and Teleport." })
+    local teleportBox = Assist:When("wb_assist_method", "Teleport")
+    teleportBox:Slider({ Name = "Max top", Flag = "wb_tp_top", Min = 0, Max = 50, Default = 12, Suffix = " studs", Decimals = 0.5, Tooltip = "How far above you the scan may go, it always stays under the game's height limit (49.9 above the ground)" })
+    teleportBox:Slider({ Name = "Max down", Flag = "wb_tp_down", Min = 0, Max = 500, Default = 8, Suffix = " studs", Decimals = 0.5, Tooltip = "How far below you the scan may go, it always stops short of the void" })
+    teleportBox:Slider({ Name = "Scan step", Flag = "wb_tp_step", Min = 0.25, Max = 4, Default = 1, Suffix = " studs", Decimals = 0.25, Tooltip = "Gap between the heights that get checked, smaller is more precise but costs more" })
+    teleportBox:Dropdown({ Name = "Scan for", Flag = "wb_tp_scan", Items = { "Wallbang or visible", "Visible", "Wallbang" }, Default = "Wallbang or visible", Tooltip = "Which kind of spot the scan accepts, the nearest height that qualifies wins" })
+    teleportBox:Slider({ Name = "Hold frames", Flag = "wb_tp_frames", Min = 1, Max = 8, Default = 1, Suffix = " frames", Decimals = 1, Tooltip = "How many frames the server position stays at the new height. 1 is a single frame blip" })
+    teleportBox:Toggle({ Name = "Avoid solid spots", Flag = "wb_tp_free", Default = true, Tooltip = "Skips heights that would put you inside a part" })
     Assist:Dropdown({ Name = "Mode", Flag = "wb_assist_mode", Items = { "Tween", "Teleport" }, Default = "Tween", Tooltip = "Tween moves at the speed below. Teleport jumps (Server position) or moves at 120 studs/s (Velocity)." })
     Assist:Toggle({ Name = "Inside wall", Flag = "wb_assist_inside", Default = false })
     Assist:Toggle({ Name = "Only while firing", Flag = "wb_assist_fire", Default = false, Tooltip = "Only moves while the fire button is held or auto fire is shooting" })
@@ -12277,17 +12306,25 @@ do
                 local args = table.pack(...)
                 local _, _, myRoot = localParts()
                 local usePart, newOrigin, hit = part, nil, nil
-                if wallbang and myRoot then
+                local tpOverride
+                if assisted and flag("wb_assist_method", "Server position") == "Teleport" and A.tpGoal and clock() - (A.tpAt or 0) < 0.5 then
+                    tpOverride = A.tpGoal
+                end
+                if tpOverride and A.tpKind == "visible" and A.tpPart == part and A.tpEye then
+                    newOrigin, hit = A.tpEye, part.Position
+                    A.snapFrames = math.max(1, math.floor(flag("wb_tp_frames", 1)))
+                elseif wallbang and myRoot then
                     WB.updateIgnore()
-                    local status, moved, moveHit = wallbangPlan(origin, part, myRoot)
+                    local status, moved, moveHit = wallbangPlan(origin, part, myRoot, tpOverride)
                     if not status then
                         for _, alt in ipairs(altParts(entity.Character, part)) do
-                            status, moved, moveHit = wallbangPlan(origin, alt, myRoot)
+                            status, moved, moveHit = wallbangPlan(origin, alt, myRoot, tpOverride)
                             if status then usePart = alt break end
                         end
                     end
                     if status == "moved" then
                         newOrigin, hit = moved, moveHit
+                        if tpOverride then A.snapFrames = math.max(1, math.floor(flag("wb_tp_frames", 1))) end
                     elseif not status and flag("silent_wall", false) then
                         return original(...)
                     end
@@ -12547,6 +12584,44 @@ do
                 return clock() - (Actions.lastAutoShot or -10) < 0.4
             end
 
+            local function scanHeights(realPos, headOffset, part)
+                local down, top = flag("wb_tp_down", 8), flag("wb_tp_top", 12)
+                local void = workspace.FallenPartsDestroyHeight
+                if type(void) ~= "number" or void ~= void then void = -500 end
+                down = math.min(down, math.max(realPos.Y - void - 12, 0))
+                local character = LocalPlayer.Character
+                params.FilterDescendantsInstances = { character, Camera() }
+                local ground = workspace:Raycast(realPos, v3(0, -600, 0), params)
+                if ground then top = math.min(top, math.max(ground.Position.Y + 49.9 - 1 - realPos.Y, 0)) end
+                local step = math.max(flag("wb_tp_step", 1), math.max(top, down) / 60, 0.25)
+                local mode = flag("wb_tp_scan", "Wallbang or visible")
+                local wantVisible, wantWall = mode ~= "Wallbang", mode ~= "Visible"
+                local avoid = flag("wb_tp_free", true)
+                local offsets = {}
+                for k = 1, 200 do
+                    local added = false
+                    if k * step <= top then offsets[#offsets + 1] = k * step added = true end
+                    if k * step <= down then offsets[#offsets + 1] = -k * step added = true end
+                    if not added then break end
+                end
+                local target = part.Position
+                local tested = 0
+                for _, dy in ipairs(offsets) do
+                    local at = realPos + v3(0, dy, 0)
+                    if not avoid or freeSpace(at) then
+                        local eye = at + headOffset
+                        if wantVisible and not workspace:Raycast(eye, target - eye, WB.ray) and not workspace:Raycast(target, eye - target, WB.ray) then
+                            return at, eye, "visible"
+                        end
+                        if wantWall and tested < 14 then
+                            tested += 1
+                            if WB.status(eye, part, at) == "wallbang" then return at, eye, "wallbang" end
+                        end
+                    end
+                end
+                return nil
+            end
+
             local function evaluate()
                 local char, _, root = localParts()
                 if not char or not root or typing() then return nil end
@@ -12573,13 +12648,19 @@ do
                 end
                 table.sort(candidates, function(a, b) return a.d < b.d end)
 
-                for index = 1, math.min(#candidates, 4) do
+                local teleport = flag("wb_assist_method", "Server position") == "Teleport"
+                for index = 1, math.min(#candidates, teleport and 2 or 4) do
                     local part = candidates[index].e.Head
                     local status = WB.status(origin, part, realPos)
                     if status == "visible" then
                         return nil
                     elseif status == "wallbang" then
                         return nil, part
+                    end
+                    if teleport then
+                        local at, eye, kind = scanHeights(realPos, headOffset, part)
+                        if at then return nil, part, at, eye, kind end
+                        continue
                     end
                     local delta = part.Position - realPos
                     local distance = delta.Magnitude
@@ -12602,9 +12683,13 @@ do
                 local now = clock()
                 if now < nextEval then return end
                 nextEval = now + 0.1
-                local goal, part = evaluate()
+                local goal, part, tpGoal, tpEye, tpKind = evaluate()
                 A.goal = goal
                 if goal then A.goalAt = now end
+                if tpGoal then
+                    A.tpGoal, A.tpEye, A.tpKind, A.tpPart, A.tpAt = tpGoal, tpEye, tpKind, part, now
+                    A.style = flag("wb_assist_visual", false) and Actions.sp.visualStyle("wb_assist_fill", "wb_assist_line") or nil
+                end
                 if goal then
                     A.speed = flag("wb_assist_mode", "Tween") == "Teleport" and 1e9 or flag("wb_assist_speed", 50)
                     A.style = flag("wb_assist_visual", false) and Actions.sp.visualStyle("wb_assist_fill", "wb_assist_line") or nil
@@ -12684,7 +12769,15 @@ do
 
             feature("wb_assist", function()
                 Actions.sp.enable("assist", function()
-                    if not A.goal or flag("wb_assist_method", "Server position") ~= "Server position" then return nil end
+                    local method = flag("wb_assist_method", "Server position")
+                    if method == "Teleport" then
+                        if (A.snapFrames or 0) > 0 and A.tpGoal and clock() - (A.tpAt or 0) < 0.5 then
+                            A.snapFrames -= 1
+                            return A.tpGoal, 1e9, A.style
+                        end
+                        return nil
+                    end
+                    if not A.goal or method ~= "Server position" then return nil end
                     return A.goal, A.speed, A.style
                 end)
                 bag.add(RunService.Heartbeat:Connect(function(dt)

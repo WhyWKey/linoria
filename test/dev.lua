@@ -2338,14 +2338,15 @@ do
     local Assist = CombatTab:Section({ Name = "Wallbang assist", Side = 1 })
     local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Works on anyone near your cursor, no silent aim needed. If an enemy is behind a wall, it moves the position the server sees up to (or into) the wall so the shot has a line, and sends the shot at that enemy." })
     assistToggle:Keybind({ Name = "Assist key", Flag = "wb_assist_key", Default = "None", Sync = true })
-    Assist:Dropdown({ Name = "Move method", Flag = "wb_assist_method", Items = { "Server position", "Velocity", "Teleport" }, Default = "Server position", Tooltip = "Server position: only what the server sees moves (writes the character CFrame). Velocity: you really move there with physics (no CFrame writes) and walls next to you stop colliding on the way, then you return. Teleport: scans up and down for the best height and snaps the server position there for a single frame when you shoot. The visualizer applies to Server position and Teleport." })
-    local teleportBox = Assist:When("wb_assist_method", "Teleport")
-    teleportBox:Slider({ Name = "Max top", Flag = "wb_tp_top", Min = 0, Max = 50, Default = 12, Suffix = " studs", Decimals = 0.5, Tooltip = "How far above you the scan may go, it always stays under the game's height limit (49.9 above the ground)" })
-    teleportBox:Slider({ Name = "Max down", Flag = "wb_tp_down", Min = 0, Max = 500, Default = 8, Suffix = " studs", Decimals = 0.5, Tooltip = "How far below you the scan may go, it always stops short of the void" })
-    teleportBox:Slider({ Name = "Scan step", Flag = "wb_tp_step", Min = 0.25, Max = 4, Default = 1, Suffix = " studs", Decimals = 0.25, Tooltip = "Gap between the heights that get checked, smaller is more precise but costs more" })
-    teleportBox:Dropdown({ Name = "Scan for", Flag = "wb_tp_scan", Items = { "Wallbang or visible", "Visible", "Wallbang" }, Default = "Wallbang or visible", Tooltip = "Which kind of spot the scan accepts, the nearest height that qualifies wins" })
-    teleportBox:Slider({ Name = "Hold frames", Flag = "wb_tp_frames", Min = 1, Max = 8, Default = 1, Suffix = " frames", Decimals = 1, Tooltip = "How many frames the server position stays at the new height. 1 is a single frame blip" })
-    teleportBox:Toggle({ Name = "Avoid solid spots", Flag = "wb_tp_free", Default = true, Tooltip = "Skips heights that would put you inside a part" })
+    Assist:Dropdown({ Name = "Move method", Flag = "wb_assist_method", Items = { "Server position", "Velocity", "Orbit" }, Default = "Server position", Tooltip = "Server position: only what the server sees moves (writes the character CFrame). Velocity: you really move there with physics (no CFrame writes) and walls next to you stop colliding on the way, then you return. Orbit: looks for a spot circling under the target and snaps the server position there for a single frame when you shoot. The visualizer applies to Server position and Orbit." })
+    local teleportBox = Assist:When("wb_assist_method", "Orbit")
+    teleportBox:Slider({ Name = "Orbit radius", Flag = "wb_tp_radius", Min = 0, Max = 25, Default = 4, Suffix = " studs", Decimals = 0.5, Tooltip = "How wide the circle under the target is, 0 only tries straight below" })
+    teleportBox:Slider({ Name = "Min depth", Flag = "wb_tp_min", Min = 0, Max = 100, Default = 2, Suffix = " studs", Decimals = 0.5, Tooltip = "The shallowest the orbit gets below the target" })
+    teleportBox:Slider({ Name = "Max depth", Flag = "wb_tp_max", Min = 0, Max = 500, Default = 8, Suffix = " studs", Decimals = 0.5, Tooltip = "The deepest the orbit gets below the target, it always stops short of the void" })
+    teleportBox:Slider({ Name = "Orbit points", Flag = "wb_tp_points", Min = 3, Max = 24, Default = 12, Suffix = " spots", Decimals = 1, Tooltip = "How many spots get checked around each circle" })
+    teleportBox:Dropdown({ Name = "Scan for", Flag = "wb_tp_scan", Items = { "Wallbang or visible", "Visible", "Wallbang" }, Default = "Wallbang or visible", Tooltip = "Which kind of spot the scan accepts, the closest one to you wins" })
+    teleportBox:Slider({ Name = "Hold frames", Flag = "wb_tp_frames", Min = 1, Max = 8, Default = 1, Suffix = " frames", Decimals = 1, Tooltip = "How many frames the server position stays at the orbit spot. 1 is a single frame blip" })
+    teleportBox:Toggle({ Name = "Avoid solid spots", Flag = "wb_tp_free", Default = true, Tooltip = "Skips spots that would put you inside a part" })
     Assist:Dropdown({ Name = "Mode", Flag = "wb_assist_mode", Items = { "Tween", "Teleport" }, Default = "Tween", Tooltip = "Tween moves at the speed below. Teleport jumps (Server position) or moves at 120 studs/s (Velocity)." })
     Assist:Toggle({ Name = "Inside wall", Flag = "wb_assist_inside", Default = false })
     Assist:Toggle({ Name = "Only while firing", Flag = "wb_assist_fire", Default = false, Tooltip = "Only moves while the fire button is held or auto fire is shooting" })
@@ -12307,7 +12308,7 @@ do
                 local _, _, myRoot = localParts()
                 local usePart, newOrigin, hit = part, nil, nil
                 local tpOverride
-                if assisted and flag("wb_assist_method", "Server position") == "Teleport" and A.tpGoal and clock() - (A.tpAt or 0) < 0.5 then
+                if assisted and flag("wb_assist_method", "Server position") == "Orbit" and A.tpGoal and clock() - (A.tpAt or 0) < 0.5 then
                     tpOverride = A.tpGoal
                 end
                 if tpOverride and A.tpKind == "visible" and A.tpPart == part and A.tpEye then
@@ -12584,36 +12585,48 @@ do
                 return clock() - (Actions.lastAutoShot or -10) < 0.4
             end
 
-            local function scanHeights(realPos, headOffset, part)
-                local down, top = flag("wb_tp_down", 8), flag("wb_tp_top", 12)
+            local function scanOrbit(realPos, headOffset, part)
+                local radius = flag("wb_tp_radius", 4)
+                local minDepth, maxDepth = flag("wb_tp_min", 2), flag("wb_tp_max", 8)
+                if maxDepth < minDepth then minDepth, maxDepth = maxDepth, minDepth end
+                local points = math.max(math.floor(flag("wb_tp_points", 12)), 3)
                 local void = workspace.FallenPartsDestroyHeight
                 if type(void) ~= "number" or void ~= void then void = -500 end
-                down = math.min(down, math.max(realPos.Y - void - 12, 0))
-                local character = LocalPlayer.Character
-                params.FilterDescendantsInstances = { character, Camera() }
-                local ground = workspace:Raycast(realPos, v3(0, -600, 0), params)
-                if ground then top = math.min(top, math.max(ground.Position.Y + 49.9 - 1 - realPos.Y, 0)) end
-                local step = math.max(flag("wb_tp_step", 1), math.max(top, down) / 60, 0.25)
+                local lowest = void + 12
                 local mode = flag("wb_tp_scan", "Wallbang or visible")
                 local wantVisible, wantWall = mode ~= "Wallbang", mode ~= "Visible"
                 local avoid = flag("wb_tp_free", true)
-                local offsets = {}
-                for k = 1, 200 do
-                    local added = false
-                    if k * step <= top then offsets[#offsets + 1] = k * step added = true end
-                    if k * step <= down then offsets[#offsets + 1] = -k * step added = true end
-                    if not added then break end
-                end
+                local anchor = part.Parent and part.Parent:FindFirstChild("HumanoidRootPart")
+                local center = anchor and anchor.Position or part.Position
                 local target = part.Position
+
+                local candidates = {}
+                local levels = 3
+                for level = 0, levels - 1 do
+                    local depth = minDepth + (maxDepth - minDepth) * (level / (levels - 1))
+                    local y = center.Y - depth
+                    if y > lowest then
+                        candidates[#candidates + 1] = v3(center.X, y, center.Z)
+                        if radius > 0.1 then
+                            for index = 0, points - 1 do
+                                local angle = index / points * math.pi * 2
+                                candidates[#candidates + 1] = v3(center.X + math.cos(angle) * radius, y, center.Z + math.sin(angle) * radius)
+                            end
+                        end
+                    end
+                end
+                table.sort(candidates, function(left, right)
+                    return (left - realPos).Magnitude < (right - realPos).Magnitude
+                end)
+
                 local tested = 0
-                for _, dy in ipairs(offsets) do
-                    local at = realPos + v3(0, dy, 0)
+                for _, at in ipairs(candidates) do
                     if not avoid or freeSpace(at) then
                         local eye = at + headOffset
                         if wantVisible and not workspace:Raycast(eye, target - eye, WB.ray) and not workspace:Raycast(target, eye - target, WB.ray) then
                             return at, eye, "visible"
                         end
-                        if wantWall and tested < 14 then
+                        if wantWall and tested < 18 then
                             tested += 1
                             if WB.status(eye, part, at) == "wallbang" then return at, eye, "wallbang" end
                         end
@@ -12648,7 +12661,7 @@ do
                 end
                 table.sort(candidates, function(a, b) return a.d < b.d end)
 
-                local teleport = flag("wb_assist_method", "Server position") == "Teleport"
+                local teleport = flag("wb_assist_method", "Server position") == "Orbit"
                 for index = 1, math.min(#candidates, teleport and 2 or 4) do
                     local part = candidates[index].e.Head
                     local status = WB.status(origin, part, realPos)
@@ -12658,7 +12671,7 @@ do
                         return nil, part
                     end
                     if teleport then
-                        local at, eye, kind = scanHeights(realPos, headOffset, part)
+                        local at, eye, kind = scanOrbit(realPos, headOffset, part)
                         if at then return nil, part, at, eye, kind end
                         continue
                     end
@@ -12770,7 +12783,7 @@ do
             feature("wb_assist", function()
                 Actions.sp.enable("assist", function()
                     local method = flag("wb_assist_method", "Server position")
-                    if method == "Teleport" then
+                    if method == "Orbit" then
                         if (A.snapFrames or 0) > 0 and A.tpGoal and clock() - (A.tpAt or 0) < 0.5 then
                             A.snapFrames -= 1
                             return A.tpGoal, 1e9, A.style

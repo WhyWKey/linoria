@@ -1143,7 +1143,30 @@ local FX_WEAPONS = {
     { key = "revolver", label = "Revolver", tools = { "revolver" } },
 }
 
-local FxAudio = { ok = {}, checked = {}, reported = {} }
+local FxAudio = { ok = {}, checked = {}, reported = {}, failedAt = {} }
+
+local FxLog = {}
+pcall(function()
+    track(game:GetService("LogService").MessageOut:Connect(function(message)
+        if type(message) ~= "string" then return end
+        local lower = string.lower(message)
+        if string.find(lower, "sound", 1, true) or string.find(lower, "asset", 1, true) or string.find(lower, "audio", 1, true) then
+            FxLog[#FxLog + 1] = message
+            if #FxLog > 60 then table.remove(FxLog, 1) end
+        end
+    end))
+end)
+
+local function fxBlockedText(id)
+    local reason
+    for index = #FxLog, 1, -1 do
+        if string.find(FxLog[index], tostring(id), 1, true) then
+            reason = string.sub(FxLog[index], 1, 140)
+            break
+        end
+    end
+    return "Sound " .. id .. " did not load: " .. (reason or "Roblox logged no reason") .. ". Put an .mp3 in Aster/sounds and type its file name to use a local file"
+end
 
 local function fxReport(key, message)
     if FxAudio.reported[key] then return end
@@ -1153,7 +1176,41 @@ end
 
 local function fxAssetNumber(entry)
     if type(entry) ~= "string" then return nil end
-    return tonumber(string.match(entry, "%d+"))
+    return tonumber(string.match(entry, "^rbxassetid://(%d+)"))
+end
+
+local FX_SOUND_DIR = "Aster/sounds/"
+local fxLocalCache = {}
+local function fxLocalAsset(file)
+    if type(file) ~= "string" or file == "" then return nil end
+    if fxLocalCache[file] then return fxLocalCache[file] end
+    if type(getcustomasset) ~= "function" or type(isfile) ~= "function" then return nil end
+    local candidates = { file }
+    if not string.find(file, "%.%a%a%a?%a?$") then
+        for _, extension in ipairs({ ".mp3", ".ogg", ".wav" }) do candidates[#candidates + 1] = file .. extension end
+    end
+    for _, name in ipairs(candidates) do
+        local ok, exists = pcall(isfile, FX_SOUND_DIR .. name)
+        if ok and exists then
+            local made, asset = pcall(getcustomasset, FX_SOUND_DIR .. name)
+            if made and type(asset) == "string" and asset ~= "" then
+                fxLocalCache[file] = asset
+                return asset
+            end
+        end
+    end
+    return nil
+end
+
+local function fxParseSource(text)
+    if type(text) ~= "string" then return nil end
+    text = string.match(text, "^%s*(.-)%s*$")
+    if text == "" then return nil end
+    local linkId = string.match(text, "[?&]id=(%d+)") or string.match(text, "/asset/(%d+)") or string.match(text, "rbxassetid://(%d+)") or string.match(text, "store/asset/(%d+)")
+    if linkId then return { id = tonumber(linkId) } end
+    if string.match(text, "^%d%d%d+$") then return { id = tonumber(text) } end
+    if fxLocalAsset(text) then return { file = text } end
+    return { missing = text }
 end
 
 local function fxProbe(ids)
@@ -1166,6 +1223,7 @@ local function fxProbe(ids)
     pcall(function() game:GetService("ContentProvider"):PreloadAsync(probes) end)
     for index, probe in ipairs(probes) do
         FxAudio.ok[ids[index]] = probe.IsLoaded or probe.TimeLength > 0
+        if FxAudio.ok[ids[index]] == false then FxAudio.failedAt[ids[index]] = os.clock() end
         probe:Destroy()
     end
 end
@@ -1174,15 +1232,20 @@ local function fxEnsure(entry)
     local id = fxAssetNumber(entry)
     if not id then return end
     if FxAudio.ok[id] == false then
-        fxReport("block" .. id, "Sound " .. id .. " is private and cannot load in this game, pick another or paste a public id")
-        return
+        if os.clock() - (FxAudio.failedAt[id] or 0) > 30 then
+            FxAudio.ok[id] = nil
+            FxAudio.checked[id] = nil
+        else
+            fxReport("block" .. id, fxBlockedText(id))
+            return
+        end
     end
     if FxAudio.ok[id] ~= nil or FxAudio.checked[id] then return end
     FxAudio.checked[id] = true
     task.spawn(function()
         fxProbe({ id })
         if FxAudio.ok[id] == false then
-            fxReport("block" .. id, "Sound " .. id .. " is private and cannot load in this game, pick another or paste a public id")
+            fxReport("block" .. id, fxBlockedText(id))
         end
     end)
 end
@@ -1199,8 +1262,12 @@ do
             if type(list) == "table" then
                 local clean = {}
                 for _, row in ipairs(list) do
-                    if type(row) == "table" and type(row.name) == "string" and tonumber(row.id) then
-                        clean[#clean + 1] = { name = row.name, id = math.floor(tonumber(row.id)) }
+                    if type(row) == "table" and type(row.name) == "string" then
+                        if tonumber(row.id) then
+                            clean[#clean + 1] = { name = row.name, id = math.floor(tonumber(row.id)) }
+                        elseif type(row.file) == "string" and row.file ~= "" then
+                            clean[#clean + 1] = { name = row.name, file = row.file }
+                        end
                     end
                 end
                 FxSaved.weapons[key] = clean
@@ -1232,23 +1299,34 @@ function FxSaved.names(key)
     return names
 end
 
-function FxSaved.find(key, name)
+function FxSaved.row(key, name)
     for _, row in ipairs(FxSaved.list(key)) do
-        if row.name == name then return row.id end
+        if row.name == name then return row end
     end
     return nil
 end
 
-function FxSaved.add(key, name, id)
+function FxSaved.entry(key, name)
+    local row = FxSaved.row(key, name)
+    if not row then return nil end
+    if row.id then return "rbxassetid://" .. row.id end
+    return fxLocalAsset(row.file)
+end
+
+function FxSaved.label(key, name)
+    local row = FxSaved.row(key, name)
+    if not row then return nil end
+    return row.id and tostring(row.id) or row.file
+end
+
+function FxSaved.add(key, name, source)
     local list = FxSaved.list(key)
-    for _, row in ipairs(list) do
-        if row.name == name then
-            row.id = id
-            FxSaved.write()
-            return
-        end
+    local row = FxSaved.row(key, name)
+    if not row then
+        row = { name = name }
+        list[#list + 1] = row
     end
-    list[#list + 1] = { name = name, id = id }
+    row.id, row.file = source.id, source.file
     FxSaved.write()
 end
 
@@ -1269,13 +1347,13 @@ local function fxWeaponEntry(key)
     local selected = options[key .. "_sound"]
     local name = selected and selected.Value
     if type(name) == "string" and name ~= "" and name ~= "None" then
-        local id = FxSaved.find(key, name)
-        if id then return "rbxassetid://" .. id end
+        local entry = FxSaved.entry(key, name)
+        if entry then return entry end
     end
     local custom = options[key .. "_custom"]
-    local text = custom and custom.Value
-    local id = type(text) == "string" and tonumber(string.match(text, "%d%d%d+"))
-    if id then return "rbxassetid://" .. id end
+    local source = fxParseSource(custom and custom.Value)
+    if source and source.id then return "rbxassetid://" .. source.id end
+    if source and source.file then return fxLocalAsset(source.file) end
     return nil
 end
 
@@ -1292,6 +1370,16 @@ local function fxPlaySound(entry, volume, pitch, variation)
     sound.Parent = game:GetService("SoundService")
     sound:Play()
     game:GetService("Debris"):AddItem(sound, 8)
+    local id = fxAssetNumber(entry)
+    if id then
+        task.delay(1.5, function()
+            if sound.Parent and not sound.IsLoaded and sound.TimeLength <= 0 then
+                FxAudio.ok[id] = false
+                FxAudio.failedAt[id] = os.clock()
+                fxReport("block" .. id, fxBlockedText(id))
+            end
+        end)
+    end
     return sound
 end
 local FX_KILL_NAMES = { "Stone", "Gold Statue", "Fade", "Ghost", "Shrink", "Blackhole", "Cosmic Strike", "Cyberspace", "Darkheart", "Deleted", "Galactic Pull", "Game Over", "Glitter Bomb", "Heartbreak", "Infinite Portal", "Lightning", "Northern Aurora Burst", "Paper Surprise", "Scorch", "Soul Grasp", "Sparkle", "Stereo", "Tornado", "Tornado Acid", "Tornado Earth", "Tornado Fire", "Tornado Lightning" }
@@ -2120,7 +2208,7 @@ do
 end
 
 do
-Fx = { tabs = {}, order = { "SFX", "VFX", "Tracers", "Sky" }, built = false, size = Vector2.new(600, 740), minSize = Vector2.new(480, 560) }
+Fx = { tabs = {}, order = { "SFX", "VFX", "Tracers", "Sky", "Car orbit" }, built = false, size = Vector2.new(600, 740), minSize = Vector2.new(480, 560) }
 for _, name in ipairs(Fx.order) do Fx.tabs[name] = { name = name, subs = {}, subOrder = {} } end
 
 local function fxCreate(class, props, registry)
@@ -3031,6 +3119,8 @@ Fx:Sub("VFX", "Muzzle effects")
 Fx:Sub("Tracers", "Bullet tracers")
 Fx:Sub("Sky", "Skyboxes")
 Fx:Sub("Sky", "Atmosphere")
+Fx:Sub("Car orbit", "Spawner")
+Fx:Sub("Car orbit", "Orbit")
 
 do
     local function soundSection(label, prefix, toggleFlag, idFlag, volumeFlag, pitchFlag, varFlag, defaultSound, previewCallback)
@@ -3063,7 +3153,7 @@ do
     local gunList
     for _, weapon in ipairs(FX_WEAPONS) do
         local key = "sfx_" .. weapon.key
-        local config = { names = {}, lookup = function(name) local id = FxSaved.find(key, name) return id and ("rbxassetid://" .. id) or nil end, category = function(name) local id = FxSaved.find(key, name) return id and tostring(id) or nil end, flag = key .. "_sound", volumeFlag = key .. "_volume", pitchFlag = key .. "_pitch", varFlag = key .. "_pitchvar", placeholder = "search saved sounds..." }
+        local config = { names = {}, lookup = function(name) return FxSaved.entry(key, name) end, category = function(name) return FxSaved.label(key, name) end, flag = key .. "_sound", volumeFlag = key .. "_volume", pitchFlag = key .. "_pitch", varFlag = key .. "_pitchvar", placeholder = "search saved sounds..." }
         local function dropdownValues()
             local values = { "None" }
             for _, name in ipairs(FxSaved.names(key)) do values[#values + 1] = name end
@@ -3080,23 +3170,27 @@ do
         local box = Fx:Section("SFX", weapon.label, weapon.label .. " sound")
         box:Toggle({ Name = "Custom " .. weapon.label .. " sound", Flag = key .. "_on", Default = false })
         box:Dropdown({ Name = "Saved sound", Flag = key .. "_sound", Items = dropdownValues(), Default = "None", Tooltip = "Sounds you saved for this weapon. None plays the id typed below, if any." })
-        box:Input({ Name = "Sound id", Flag = key .. "_custom", Default = "", Placeholder = "public audio id or link" })
+        box:Input({ Name = "Sound id or file", Flag = key .. "_custom", Default = "", Placeholder = "audio id, link, or a file in Aster/sounds" })
         box:Input({ Name = "Sound name", Flag = key .. "_name", Default = "", Placeholder = "name to save it under (optional)" })
         box:Button({ Name = "Save sound", Callback = function()
             local text = Options[key .. "_custom"] and Options[key .. "_custom"].Value
-            local id = type(text) == "string" and tonumber(string.match(text, "%d%d%d+"))
-            if not id then
-                pcall(function() Library:Notify("Paste an audio id or link first", 4) end)
+            local source = fxParseSource(text)
+            if not source then
+                pcall(function() Library:Notify("Paste an audio id, link or file name first", 4) end)
+                return
+            end
+            if source.missing then
+                pcall(function() Library:Notify("No file named " .. source.missing .. " in Aster/sounds, and it is not an id", 5) end)
                 return
             end
             local typed = Options[key .. "_name"] and Options[key .. "_name"].Value
             local name = type(typed) == "string" and string.match(typed, "^%s*(.-)%s*$") or ""
-            if name == "" then name = tostring(id) end
-            FxSaved.add(key, name, id)
+            if name == "" then name = source.id and tostring(source.id) or source.file end
+            FxSaved.add(key, name, source)
             refresh()
             if Options[key .. "_sound"] then Options[key .. "_sound"]:SetValue(name) end
             if Options[key .. "_name"] then Options[key .. "_name"]:SetValue("") end
-            fxEnsure("rbxassetid://" .. id)
+            if source.id then fxEnsure("rbxassetid://" .. source.id) end
             pcall(function() Library:Notify("Saved " .. name .. " for " .. weapon.label, 4) end)
         end })
         box:Button({ Name = "Remove selected", Callback = function()
@@ -3110,7 +3204,9 @@ do
         box:Slider({ Name = "Volume", Flag = key .. "_volume", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
         box:Slider({ Name = "Pitch", Flag = key .. "_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
         box:Slider({ Name = "Pitch variation", Flag = key .. "_pitchvar", Min = 0, Max = 0.5, Default = 0, Decimals = 0.01 })
-        box:Toggle({ Name = "Mute game shot sound", Flag = key .. "_mute", Default = true })
+        box:Dropdown({ Name = "Method", Flag = key .. "_method", Items = { "Replace game sound", "Play on shot" }, Default = "Replace game sound", Tooltip = "Replace game sound swaps the sound the game itself plays for this weapon, so it also changes the guns other players hold. Play on shot leaves the game sound alone and plays yours on top of your own shots." })
+        box:Toggle({ Name = "Replace other players' guns", Flag = key .. "_others", Default = true })
+        box:Toggle({ Name = "Mute game sound (Play on shot)", Flag = key .. "_mute", Default = true })
         box:Button({ Name = "Preview sound", Callback = function()
             local entry = fxWeaponEntry(key)
             if not entry then
@@ -3162,6 +3258,96 @@ do
     atmoStore:Input({ Name = "Asset link or id", Flag = "atmo_asset", Default = "", Placeholder = "create.roblox.com/store/asset/123..." })
     atmoStore:Button({ Name = "Save asset", Callback = function() FxAtmo.add() end })
     atmoStore:Button({ Name = "Remove selected asset", Callback = function() FxAtmo.remove() end })
+
+    Fx:Preview("Car orbit", "Spawner", function(sub)
+        local host = sub.preview
+        fxLabel({ Text = "Cars", TextSize = Library.FontSize, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 12), ZIndex = 5, Parent = host })
+        local countLabel = fxLabel({ Text = "0", TextSize = 46, Size = UDim2.new(1, 0, 0, 54), Position = UDim2.fromOffset(0, 28), ZIndex = 5, Parent = host })
+        local targetLabel = fxLabel({ Text = "", TextSize = Library.FontSize, TextTransparency = 0.3, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 84), ZIndex = 5, Parent = host })
+        local barOuter, barFace = fxBevel(host, 5, UDim2.new(1, -60, 0, 12), UDim2.fromOffset(30, 108))
+        local barFill = fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = 7, Parent = barFace }, { BackgroundColor3 = "AccentColor" })
+        local statusLabel = fxLabel({ Text = "", TextSize = Library.FontSize, Size = UDim2.new(1, -16, 0, 34), Position = UDim2.fromOffset(8, 128), TextWrapped = true, ZIndex = 5, Parent = host })
+        local detailLabel = fxLabel({ Text = "", TextSize = Library.FontSize - 1, TextTransparency = 0.4, Size = UDim2.new(1, -16, 0, 30), Position = UDim2.fromOffset(8, 164), TextWrapped = true, ZIndex = 5, Parent = host })
+        track(RunService.Heartbeat:Connect(function()
+            if not (host.Parent and Fx.main and Fx.main.Visible and host.Visible) then return end
+            local api = Actions.carOrbit
+            local state = api and api.state
+            if not state then
+                statusLabel.Text = "Car orbit is not available"
+                return
+            end
+            local target = math.max(math.floor(readFlag("car_target", 20)), 1)
+            countLabel.Text = tostring(state.count)
+            targetLabel.Text = string.format("target %d  |  moving %d", target, state.owned)
+            barFill.Size = UDim2.new(math.clamp(state.count / target, 0, 1), 0, 1, 0)
+            statusLabel.Text = state.status
+            detailLabel.Text = state.detail or ""
+        end))
+    end)
+
+    Fx:Preview("Car orbit", "Orbit", function(sub)
+        local host = sub.preview
+        local dots = {}
+        local DOTS = 24
+        local view = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(6, 6), Size = UDim2.new(1, -12, 1, -34), ZIndex = 5, ClipsDescendants = true, Parent = host }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+        local caption = fxLabel({ Text = "top view", TextSize = Library.FontSize - 1, TextTransparency = 0.4, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 1, -22), ZIndex = 5, Parent = host })
+        local middle = fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(7, 7), ZIndex = 7, Parent = view }, { BackgroundColor3 = "AccentColor" })
+        for index = 1, DOTS do
+            dots[index] = Library:Create("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(6, 4), ZIndex = 6, Visible = false, Parent = view })
+        end
+        local angle = 0
+        track(RunService.Heartbeat:Connect(function(dt)
+            if not (host.Parent and Fx.main and Fx.main.Visible and host.Visible) then return end
+            local api = Actions.carOrbit
+            if not (api and api.pattern) then return end
+            local spin = math.rad(readFlag("car_spin", 90))
+            if readFlag("car_dir", "Clockwise") ~= "Clockwise" then spin = -spin end
+            angle = (angle + spin * dt) % (math.pi * 2)
+            local count = math.clamp(api.state.count > 0 and api.state.count or 12, 1, DOTS)
+            local size = view.AbsoluteSize
+            local radius = math.max(readFlag("car_radius", 35), 1)
+            local reach = math.max(radius, math.abs(readFlag("car_height", 12)) * 0.5)
+            local scale = (math.min(size.X, size.Y) / 2 - 12) / math.max(reach * 1.15, 1)
+            for index = 1, DOTS do
+                local dot = dots[index]
+                if index <= count then
+                    local offset = api.pattern(index, count, angle, true)
+                    dot.Position = UDim2.fromOffset(size.X / 2 + offset.X * scale, size.Y / 2 + offset.Z * scale)
+                    dot.Visible = true
+                else
+                    dot.Visible = false
+                end
+            end
+            local follow = readFlag("car_follow", "Self")
+            caption.Text = string.format("top view  |  following %s  |  %s", string.lower(follow), readFlag("car_pattern", "Ring"))
+        end))
+    end)
+
+    local carSpawn = Fx:Section("Car orbit", "Spawner", "Car spawner")
+    carSpawn:Toggle({ Name = "Spawn cars", Flag = "car_spawn_on", Default = false, Tooltip = "Presses the police garage car spawners over and over, moves each new car forward to free the spot and counts them. Needs the team that can use the garage." })
+    carSpawn:Slider({ Name = "Target cars", Flag = "car_target", Min = 1, Max = 200, Default = 20, Suffix = " cars", Decimals = 1, Tooltip = "Stops spawning once this many cars are yours" })
+    carSpawn:Slider({ Name = "Spawn delay", Flag = "car_delay", Min = 0.05, Max = 2, Default = 0.25, Suffix = " s", Decimals = 0.05, Tooltip = "Time between spawn presses" })
+    carSpawn:Slider({ Name = "Move forward", Flag = "car_forward", Min = 5, Max = 150, Default = 25, Suffix = " studs", Decimals = 0.5, Tooltip = "How far in front of the garage new cars are parked while orbit is off. With orbit on they go straight to their orbit spot" })
+    carSpawn:Toggle({ Name = "Reverse forward", Flag = "car_flip", Default = false, Tooltip = "Use this if the cars get parked behind the spawn spot" })
+    carSpawn:Toggle({ Name = "Use both spawners", Flag = "car_both", Default = true, Tooltip = "The police garage has two spawner pads, using both doubles the speed" })
+    carSpawn:Toggle({ Name = "Stand at the garage", Flag = "car_tp", Default = true, Tooltip = "The spawner only works close by, so you are held next to the pads while spawning" })
+    carSpawn:Toggle({ Name = "Return afterwards", Flag = "car_return", Default = true })
+    carSpawn:Button({ Name = "Grab nearby cars", Callback = function() if Actions.carOrbit then Actions.carOrbit.grab() end end })
+    carSpawn:Button({ Name = "Release all cars", Callback = function() if Actions.carOrbit then Actions.carOrbit.release() end end })
+
+    local carOrbitBox = Fx:Section("Car orbit", "Orbit", "Orbit")
+    carOrbitBox:Toggle({ Name = "Orbit cars", Flag = "car_orbit_on", Default = false, Tooltip = "Your cars circle the center you pick. Only your own cars move, and only what the server lets you own" })
+    carOrbitBox:Dropdown({ Name = "Follow", Flag = "car_follow", Items = { "Self", "Cursor" }, Default = "Self", Tooltip = "Self circles you. Cursor circles the spot your mouse points at" })
+    carOrbitBox:Dropdown({ Name = "Pattern", Flag = "car_pattern", Items = { "Ring", "Double ring", "Helix", "Tornado", "Sphere", "Wheel" }, Default = "Ring" })
+    carOrbitBox:Slider({ Name = "Radius", Flag = "car_radius", Min = 3, Max = 300, Default = 35, Suffix = " studs", Decimals = 0.5 })
+    carOrbitBox:Slider({ Name = "Height", Flag = "car_height", Min = -20, Max = 120, Default = 12, Suffix = " studs", Decimals = 0.5, Tooltip = "Height of the orbit above the center" })
+    carOrbitBox:Slider({ Name = "Height spread", Flag = "car_spread", Min = 0, Max = 100, Default = 0, Suffix = " studs", Decimals = 0.5, Tooltip = "How tall the Helix, Tornado and Sphere patterns are" })
+    carOrbitBox:Slider({ Name = "Orbit speed", Flag = "car_spin", Min = 0, Max = 720, Default = 90, Suffix = " deg/s", Decimals = 1 })
+    carOrbitBox:Dropdown({ Name = "Direction", Flag = "car_dir", Items = { "Clockwise", "Counter clockwise" }, Default = "Clockwise" })
+    carOrbitBox:Dropdown({ Name = "Facing", Flag = "car_face", Items = { "Direction of travel", "Center", "Fixed" }, Default = "Direction of travel" })
+    carOrbitBox:Slider({ Name = "Car tilt", Flag = "car_tilt", Min = 0, Max = 180, Default = 0, Suffix = " deg", Decimals = 1, Tooltip = "Rolls every car sideways, 90 puts them on their side" })
+    carOrbitBox:Slider({ Name = "Follow smoothing", Flag = "car_smooth", Min = 1, Max = 60, Default = 12, Suffix = " /s", Decimals = 1, Tooltip = "How quickly the orbit center catches up with you or the cursor, lower is lazier" })
+    carOrbitBox:Toggle({ Name = "Stay under the height cap", Flag = "car_cap", Default = true, Tooltip = "Keeps cars below the game's height limit and above the void" })
 
     local killSections, lastKill, lastCheck = {}, nil, 0
     track(RunService.Heartbeat:Connect(function()
@@ -7229,6 +7415,152 @@ do
             return false
         end
 
+        local METHOD_REPLACE = "Replace game sound"
+        local applied = {}
+        local replacing = false
+        local nextSweep = 0
+        local ignoreNear = { "step", "run", "jump", "land", "swim", "climb", "fall", "walk", "splash", "hit", "impact", "ricochet", "shell", "casing", "hurt", "damage", "death", "tase", "bullet" }
+
+        local function wanted(key)
+            if not getFlag(key .. "_on", false) then return nil end
+            if getFlag(key .. "_method", METHOD_REPLACE) ~= METHOD_REPLACE then return nil end
+            local entry = fxWeaponEntry(key)
+            if not entry then return nil end
+            local id = fxAssetNumber(entry)
+            if id then
+                fxEnsure(entry)
+                if FxAudio.ok[id] ~= true then return nil end
+            end
+            return entry
+        end
+
+        local function restoreSound(sound)
+            local record = applied[sound]
+            if not record then return end
+            applied[sound] = nil
+            pcall(function()
+                sound.SoundId = record.id
+                sound.Volume = record.volume
+                sound.PlaybackSpeed = record.speed
+            end)
+        end
+
+        local function applySound(sound, weapon, owned)
+            if not sound:IsA("Sound") or sound.Looped or keeps(sound) then return end
+            local key = "sfx_" .. weapon.key
+            local entry = (owned or getFlag(key .. "_others", true)) and wanted(key) or nil
+            if not entry then
+                restoreSound(sound)
+                return
+            end
+            local record = applied[sound]
+            if not record then
+                record = { id = sound.SoundId, volume = sound.Volume, speed = sound.PlaybackSpeed }
+                applied[sound] = record
+            end
+            record.key, record.owned = key, owned
+            if sound.SoundId ~= entry then
+                sound.SoundId = entry
+                if sound.IsPlaying then sound.TimePosition = 0 end
+            end
+            sound.Volume = record.volume * getFlag(key .. "_volume", 1)
+            if not sound.IsPlaying then
+                local variation = getFlag(key .. "_pitchvar", 0)
+                sound.PlaybackSpeed = math.max(record.speed * getFlag(key .. "_pitch", 1) * (1 + (math.random() * 2 - 1) * variation), 0.05)
+            end
+        end
+
+        local function applyTool(tool, owned)
+            local weapon = weaponByTool[normalize(tool.Name)]
+            if not weapon then return end
+            for _, descendant in ipairs(tool:GetDescendants()) do
+                if descendant:IsA("Sound") then applySound(descendant, weapon, owned) end
+            end
+        end
+
+        local function sweep()
+            replacing = next(applied) ~= nil
+            if not replacing then
+                for _, weapon in ipairs(FX_WEAPONS) do
+                    if getFlag("sfx_" .. weapon.key .. "_on", false) then
+                        replacing = true
+                        break
+                    end
+                end
+            end
+            if not replacing then return end
+            for _, player in ipairs(Players:GetPlayers()) do
+                local owned = player == LocalPlayer
+                local character = player.Character
+                if character then
+                    for _, child in ipairs(character:GetChildren()) do
+                        if child:IsA("Tool") then applyTool(child, owned) end
+                    end
+                end
+                if owned then
+                    local pack = player:FindFirstChildOfClass("Backpack")
+                    if pack then
+                        for _, child in ipairs(pack:GetChildren()) do
+                            if child:IsA("Tool") then applyTool(child, true) end
+                        end
+                    end
+                end
+            end
+            for sound, record in pairs(applied) do
+                if not sound.Parent then
+                    applied[sound] = nil
+                elseif not wanted(record.key) or (not record.owned and not getFlag(record.key .. "_others", true)) then
+                    restoreSound(sound)
+                end
+            end
+        end
+
+        local function nearestHolder(position)
+            local bestPlayer, bestTool, bestDistance
+            for _, player in ipairs(Players:GetPlayers()) do
+                local character = player.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                local tool = character and character:FindFirstChildOfClass("Tool")
+                if root and tool then
+                    local distance = (root.Position - position).Magnitude
+                    if distance <= 12 and (not bestDistance or distance < bestDistance) then
+                        bestPlayer, bestTool, bestDistance = player, tool, distance
+                    end
+                end
+            end
+            return bestPlayer, bestTool
+        end
+
+        track(workspace.DescendantAdded:Connect(function(descendant)
+            if not replacing or not descendant:IsA("Sound") or keeps(descendant) then return end
+            local tool = descendant:FindFirstAncestorOfClass("Tool")
+            local owner
+            if tool then
+                owner = tool.Parent and Players:GetPlayerFromCharacter(tool.Parent) or nil
+            else
+                local model = descendant:FindFirstAncestorOfClass("Model")
+                if model and Players:GetPlayerFromCharacter(model) then return end
+                local name = string.lower(descendant.Name)
+                for _, word in ipairs(ignoreNear) do
+                    if string.find(name, word, 1, true) then return end
+                end
+                local parent = descendant.Parent
+                if parent and parent:IsA("Attachment") then parent = parent.Parent end
+                if not (parent and parent:IsA("BasePart")) then return end
+                owner, tool = nearestHolder(parent.Position)
+            end
+            if not tool then return end
+            local weapon = weaponByTool[normalize(tool.Name)]
+            if weapon then applySound(descendant, weapon, owner == LocalPlayer) end
+        end))
+
+        track(RunService.Heartbeat:Connect(function()
+            local now = os.clock()
+            if now < nextSweep then return end
+            nextSweep = now + 0.5
+            pcall(sweep)
+        end))
+
         local function onShot(origin)
             local character = LocalPlayer.Character
             local tool = character and character:FindFirstChildOfClass("Tool")
@@ -7245,6 +7577,10 @@ do
             end
             local key = "sfx_" .. weapon.key
             if not getFlag(key .. "_on", false) then return end
+            if getFlag(key .. "_method", METHOD_REPLACE) == METHOD_REPLACE then
+                applyTool(tool, true)
+                return
+            end
             local entry = fxWeaponEntry(key)
             if not entry then return end
             local entryId = fxAssetNumber(entry)
@@ -7254,7 +7590,7 @@ do
             end
             fxPlaySound(entry, getFlag(key .. "_volume", 1), getFlag(key .. "_pitch", 1), getFlag(key .. "_pitchvar", 0))
             if getFlag(key .. "_mute", true) then
-                muting.untilTime = os.clock() + 0.4
+                muting.untilTime = os.clock() + 0.5
                 muting.tool = tool
                 muting.origin = origin
             end
@@ -7278,7 +7614,8 @@ do
             if os.clock() > muting.untilTime then return end
             local tool = muting.tool
             if not (tool and tool.Parent) then return end
-            for _, descendant in ipairs(tool:GetDescendants()) do
+            local scope = LocalPlayer.Character or tool
+            for _, descendant in ipairs(scope:GetDescendants()) do
                 if descendant:IsA("Sound") and descendant.IsPlaying and descendant.TimePosition < 0.35 and not keeps(descendant) then
                     descendant:Stop()
                 end
@@ -7303,6 +7640,7 @@ do
 
         onUnload(function()
             alive = false
+            for sound in pairs(applied) do restoreSound(sound) end
             for _, list in ipairs({ ShotEvents.kill, ShotEvents.shot }) do
                 for index = #list, 1, -1 do
                     if list[index] == onKill or list[index] == onShot then table.remove(list, index) end
@@ -11391,6 +11729,400 @@ do
         end)
     end
 
+    do
+        local api = { state = { count = 0, owned = 0, status = "Idle", detail = "", spawning = false } }
+        Actions.carOrbit = api
+        local state = api.state
+        local cars = {}
+        local bag = newBag()
+        local engineUsers = 0
+        local spawnToken = 0
+        local angle = 0
+        local center
+        local lastCenterAt = 0
+        local ground = { at = 0, y = nil, around = nil }
+        local garage = v3(615.18, 98.2, 2501.2)
+        local carParams = RaycastParams.new()
+        carParams.FilterType = Enum.RaycastFilterType.Exclude
+
+        local function carFolder()
+            return workspace:FindFirstChild("CarContainer")
+        end
+
+        local function topCar(seat)
+            local folder = carFolder()
+            local node = seat
+            while node and node.Parent and node.Parent ~= folder do node = node.Parent end
+            if node and node.Parent == folder then return node end
+            return seat.Parent
+        end
+
+        local function entryFor(seat)
+            for _, entry in ipairs(cars) do
+                if entry.seat == seat then return entry end
+            end
+            return nil
+        end
+
+        local function adopt(seat)
+            if entryFor(seat) then return nil end
+            local look = seat.CFrame.LookVector * FLAT
+            if look.Magnitude < 0.01 then look = v3(0, 0, -1) end
+            look = look.Unit
+            if flag("car_flip", false) then look = -look end
+            local entry = { seat = seat, model = topCar(seat), spawn = seat.CFrame, forward = look }
+            cars[#cars + 1] = entry
+            return entry
+        end
+
+        local function findPads()
+            local items = workspace:FindFirstChild("Prison_ITEMS")
+            local buttons = items and items:FindFirstChild("buttons")
+            local pads = {}
+            if not buttons then return pads end
+            for _, button in ipairs(buttons:GetChildren()) do
+                local pad = button.Name == "Car Spawner" and button:FindFirstChild("Car Spawner")
+                if pad and pad:IsA("BasePart") and (pad.Position - garage).Magnitude < 90 then pads[#pads + 1] = pad end
+            end
+            table.sort(pads, function(a, b) return (a.Position - garage).Magnitude < (b.Position - garage).Magnitude end)
+            return pads
+        end
+
+        local function isOwner(seat)
+            if type(isnetworkowner) ~= "function" then return true end
+            local ok, result = pcall(isnetworkowner, seat)
+            return ok and result == true
+        end
+
+        local function prune()
+            for index = #cars, 1, -1 do
+                local entry = cars[index]
+                if not (entry.seat and entry.seat.Parent and entry.seat:IsDescendantOf(workspace)) then table.remove(cars, index) end
+            end
+        end
+
+        local function refreshState()
+            prune()
+            local owned = 0
+            for _, entry in ipairs(cars) do
+                if isOwner(entry.seat) then owned += 1 end
+            end
+            state.count, state.owned = #cars, owned
+        end
+
+        function api.release()
+            table.clear(cars)
+            state.count, state.owned = 0, 0
+            say("Released all cars")
+        end
+
+        function api.grab()
+            local folder = carFolder()
+            local _, _, root = localParts()
+            if not (folder and root) then say("No cars found") return end
+            local added = 0
+            for _, descendant in ipairs(folder:GetDescendants()) do
+                if descendant:IsA("VehicleSeat") and descendant.Occupant == nil and (descendant.Position - root.Position).Magnitude < 250 and isOwner(descendant) and not entryFor(descendant) then
+                    if adopt(descendant) then added += 1 end
+                end
+            end
+            refreshState()
+            say(string.format("Grabbed %d cars, you now have %d", added, state.count))
+        end
+
+        function api.pattern(i, n, a, flat)
+            local pattern = flag("car_pattern", "Ring")
+            local radius = flag("car_radius", 35)
+            local height = flag("car_height", 12)
+            local spread = flag("car_spread", 0)
+            local frac = (i - 0.5) / n
+            local phase = a + (i - 1) * (math.pi * 2 / n)
+            if pattern == "Double ring" then
+                if i % 2 == 0 then
+                    return v3(math.cos(-phase) * radius * 0.6, height + spread * 0.25, math.sin(-phase) * radius * 0.6)
+                end
+                return v3(math.cos(phase) * radius, height, math.sin(phase) * radius)
+            elseif pattern == "Helix" then
+                return v3(math.cos(phase) * radius, height + (frac - 0.5) * spread, math.sin(phase) * radius)
+            elseif pattern == "Tornado" then
+                local r = radius * (0.25 + 0.75 * frac)
+                local p = a + frac * math.pi * 6
+                return v3(math.cos(p) * r, height + frac * spread, math.sin(p) * r)
+            elseif pattern == "Sphere" then
+                local y = 1 - 2 * frac
+                local ring = math.sqrt(math.max(1 - y * y, 0))
+                local p = a + (i - 1) * 2.399963
+                local vertical = spread > 0 and spread or radius
+                return v3(math.cos(p) * ring * radius, height + y * vertical, math.sin(p) * ring * radius)
+            elseif pattern == "Wheel" then
+                local cam = Camera()
+                local right = v3(1, 0, 0)
+                if cam and not flat then
+                    right = cam.CFrame.RightVector * FLAT
+                    right = right.Magnitude > 0.01 and right.Unit or v3(1, 0, 0)
+                end
+                return right * math.cos(phase) * radius + v3(0, height + math.sin(phase) * radius, 0)
+            end
+            return v3(math.cos(phase) * radius, height, math.sin(phase) * radius)
+        end
+
+        local function groundAt(position)
+            local now = clock()
+            if ground.y and ground.around and now - ground.at < 0.4 and (ground.around - position).Magnitude < 6 then return ground.y end
+            local list = {}
+            local folder = carFolder()
+            if folder then list[#list + 1] = folder end
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player.Character then list[#list + 1] = player.Character end
+            end
+            carParams.FilterDescendantsInstances = list
+            local hit = workspace:Raycast(v3(position.X, position.Y + 300, position.Z), v3(0, -900, 0), carParams)
+            ground.at, ground.around, ground.y = now, position, hit and hit.Position.Y or nil
+            return ground.y
+        end
+
+        local function orbitCenter(dt, root)
+            local target
+            if flag("car_follow", "Self") == "Cursor" then
+                local cam = Camera()
+                if cam then
+                    local ref = UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter and cam.ViewportSize / 2 or UserInputService:GetMouseLocation()
+                    local ray = cam:ViewportPointToRay(ref.X, ref.Y)
+                    local list = { cam }
+                    local folder = carFolder()
+                    if folder then list[#list + 1] = folder end
+                    for _, player in ipairs(Players:GetPlayers()) do
+                        if player.Character then list[#list + 1] = player.Character end
+                    end
+                    carParams.FilterDescendantsInstances = list
+                    local hit = workspace:Raycast(ray.Origin, ray.Direction * 2000, carParams)
+                    target = hit and hit.Position or (ray.Origin + ray.Direction * 150)
+                end
+            end
+            target = target or Actions.sp.realPos(root)
+            if not center then
+                center = target
+            else
+                local rate = flag("car_smooth", 12)
+                center = center:Lerp(target, 1 - math.exp(-rate * dt))
+            end
+            return center
+        end
+
+        local function orbitCFrame(i, n, middle)
+            local dir = flag("car_dir", "Clockwise") == "Clockwise" and 1 or -1
+            local offset = api.pattern(i, n, angle, false)
+            local position = middle + offset
+            local void = workspace.FallenPartsDestroyHeight
+            if type(void) ~= "number" or void ~= void then void = -500 end
+            local top = math.huge
+            if flag("car_cap", true) then
+                local floorY = groundAt(middle)
+                if floorY then top = floorY + 48.5 end
+            end
+            position = v3(position.X, math.clamp(position.Y, void + 15, math.max(top, void + 16)), position.Z)
+            local face = flag("car_face", "Direction of travel")
+            local cf
+            if face == "Center" then
+                cf = CFrame.lookAt(position, v3(middle.X, position.Y, middle.Z) + v3(0, 0.001, 0))
+            elseif face == "Fixed" then
+                cf = CFrame.new(position)
+            else
+                local ahead = middle + api.pattern(i, n, angle + dir * 0.05, false) - position
+                if ahead.Magnitude > 1e-3 then cf = CFrame.lookAt(position, position + ahead) else cf = CFrame.new(position) end
+            end
+            local tilt = flag("car_tilt", 0)
+            if tilt ~= 0 then cf = cf * CFrame.Angles(0, 0, math.rad(tilt)) end
+            return cf
+        end
+
+        local function parkCFrame(entry, k)
+            local forward = entry.forward
+            local right = forward:Cross(v3(0, 1, 0))
+            right = right.Magnitude > 0.01 and right.Unit or v3(1, 0, 0)
+            local distance = flag("car_forward", 25)
+            local lane, row, tier = k % 6, math.floor(k / 6) % 3, math.floor(k / 18)
+            local position = entry.spawn.Position + forward * (distance + row * 12) + right * ((lane - 2.5) * 7) + v3(0, 3 + tier * 6, 0)
+            return CFrame.lookAt(position, position + forward)
+        end
+
+        local function engineStep(dt)
+            local orbiting = flag("car_orbit_on", false)
+            if not (orbiting or state.spawning) then return end
+            prune()
+            local count = #cars
+            if count == 0 then return end
+            local _, _, root = localParts()
+            if not root then return end
+            local middle
+            if orbiting then
+                local spin = math.rad(flag("car_spin", 90))
+                if flag("car_dir", "Clockwise") ~= "Clockwise" then spin = -spin end
+                angle = (angle + spin * dt) % (math.pi * 2)
+                middle = orbitCenter(dt, root)
+            else
+                center = nil
+            end
+            for index, entry in ipairs(cars) do
+                local seat = entry.seat
+                if seat.Occupant == nil then
+                    seat.CFrame = orbiting and orbitCFrame(index, count, middle) or parkCFrame(entry, index - 1)
+                    seat.AssemblyLinearVelocity = ZERO
+                    seat.AssemblyAngularVelocity = ZERO
+                end
+            end
+        end
+
+        local function startEngine()
+            engineUsers += 1
+            if engineUsers > 1 then return end
+            bag.add(RunService.Heartbeat:Connect(function(dt)
+                local ok, err = pcall(engineStep, math.min(dt, 0.1))
+                if not ok and clock() - lastCenterAt > 5 then
+                    lastCenterAt = clock()
+                    warnf("car orbit:", err)
+                end
+            end))
+            local nextState = 0
+            bag.add(RunService.Heartbeat:Connect(function()
+                local now = clock()
+                if now < nextState then return end
+                nextState = now + 0.25
+                pcall(refreshState)
+            end))
+        end
+
+        local function stopEngine()
+            engineUsers = math.max(engineUsers - 1, 0)
+            if engineUsers == 0 then
+                bag.clear()
+                center = nil
+            end
+        end
+
+        local function spawnLoop(token)
+            local pads = findPads()
+            local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+            local interact = remotes and remotes:FindFirstChild("InteractWithItem")
+            if #pads == 0 or not interact then
+                state.status = #pads == 0 and "Police garage spawners not found" or "InteractWithItem remote not found"
+                say(state.status)
+                state.spawning = false
+                switchOff("car_spawn_on")
+                return
+            end
+            local list = flag("car_both", true) and { pads[1], pads[2] } or { pads[1] }
+            local _, _, root = localParts()
+            local home = root and root.CFrame
+            local stand = list[1].Position
+            if list[2] then stand = (list[1].Position + list[2].Position) / 2 end
+            stand += v3(0, 4, 0)
+            local folder = carFolder()
+            local watch
+            if folder then
+                watch = folder.ChildAdded:Connect(function(child)
+                    task.spawn(function()
+                        local seat
+                        for _ = 1, 20 do
+                            seat = child:FindFirstChildWhichIsA("VehicleSeat", true)
+                            if seat then break end
+                            task.wait(0.1)
+                        end
+                        if not seat or token ~= spawnToken then return end
+                        for _, pad in ipairs(pads) do
+                            if (seat.Position - pad.Position).Magnitude < 80 then
+                                if adopt(seat) then state.detail = "Last car: " .. child.Name end
+                                return
+                            end
+                        end
+                    end)
+                end)
+            end
+            local holdConn
+            if flag("car_tp", true) then
+                holdConn = RunService.Heartbeat:Connect(function()
+                    local _, _, mine = localParts()
+                    if mine then
+                        mine.CFrame = CFrame.new(stand)
+                        mine.AssemblyLinearVelocity = ZERO
+                    end
+                end)
+            end
+            state.status = "Spawning"
+            local refused, idle = 0, 0
+            local lastCount = #cars
+            while token == spawnToken do
+                refreshState()
+                local target = math.floor(flag("car_target", 20))
+                if state.count >= target then
+                    state.status = string.format("Done, %d cars", state.count)
+                    break
+                end
+                local round = 0
+                for _, pad in ipairs(list) do
+                    task.spawn(function()
+                        local ok, result = pcall(function() return interact:InvokeServer(pad) end)
+                        if ok and result == false then refused += 1 end
+                        round += 1
+                    end)
+                end
+                task.wait(math.max(flag("car_delay", 0.25), 0.05))
+                if #cars > lastCount then
+                    lastCount, refused, idle = #cars, 0, 0
+                else
+                    idle += 1
+                end
+                if refused >= 8 or idle >= 24 then
+                    state.status = refused >= 8 and "The spawner refused, you may be on the wrong team" or "No new cars appear, the spawn spot may be blocked"
+                    say(state.status)
+                    break
+                end
+            end
+            if watch then watch:Disconnect() end
+            if holdConn then holdConn:Disconnect() end
+            if token == spawnToken then
+                state.spawning = false
+                if flag("car_tp", true) and flag("car_return", true) and home then
+                    local _, _, mine = localParts()
+                    if mine then mine.CFrame = home end
+                end
+                switchOff("car_spawn_on")
+            end
+        end
+
+        feature("car_spawn_on", function()
+            spawnToken += 1
+            local token = spawnToken
+            state.spawning = true
+            state.detail = ""
+            startEngine()
+            task.spawn(spawnLoop, token)
+        end, function()
+            spawnToken += 1
+            state.spawning = false
+            if state.status == "Spawning" then state.status = "Stopped" end
+            stopEngine()
+        end)
+
+        feature("car_orbit_on", function()
+            angle = 0
+            center = nil
+            startEngine()
+            state.status = state.spawning and state.status or "Orbiting"
+        end, function()
+            stopEngine()
+            if not state.spawning and state.status == "Orbiting" then state.status = "Idle" end
+        end)
+
+        onUnload(function()
+            spawnToken += 1
+            state.spawning = false
+            bag.clear()
+            table.clear(cars)
+            Actions.carOrbit = nil
+        end)
+    end
+
     ;(function()
         local rand = Random.new()
 
@@ -12445,21 +13177,58 @@ do
             local function buildPanel()
                 if panel and panel.outer.Parent then return panel end
                 destroyPanel()
-                local outer = Library:Create("Frame", { BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.new(1, -250, 0.35, 0), Size = UDim2.fromOffset(230, 70), Visible = false, ZIndex = 100, Parent = Library.ScreenGui })
+                local outer = Library:Create("Frame", { BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.new(1, -370, 0.35, 0), Size = UDim2.fromOffset(350, 118), Visible = false, ZIndex = 100, Parent = Library.ScreenGui })
                 pcall(function() Library:ApplyGlow(outer) end)
                 local inner = Library:Create("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 101, Parent = outer })
                 Library:AddToRegistry(inner, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" }, true)
-                local accent = Library:Create("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = 102, Parent = inner })
+                local frame = Library:Create("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = UDim2.fromOffset(5, 5), Size = UDim2.new(1, -10, 1, -10), ZIndex = 102, Parent = inner })
+                Library:AddToRegistry(frame, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" }, true)
+                local accent = Library:Create("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = 103, Parent = inner })
                 Library:AddToRegistry(accent, { BackgroundColor3 = "AccentColor" }, true)
-                local nameLabel = Library:CreateLabel({ Position = UDim2.fromOffset(6, 4), Size = UDim2.new(1, -12, 0, 16), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", ZIndex = 104, Parent = inner })
-                local barOuter = Library:Create("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(6, 24), Size = UDim2.new(1, -12, 0, 10), ZIndex = 103, Parent = inner })
-                Library:AddToRegistry(barOuter, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" }, true)
-                local barFill = Library:Create("Frame", { BackgroundColor3 = Color3.fromRGB(110, 220, 120), BorderSizePixel = 0, Position = UDim2.fromOffset(1, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 104, Parent = barOuter })
-                local healthLabel = Library:CreateLabel({ Position = UDim2.fromOffset(0, 0), Size = UDim2.new(1, 0, 1, 0), TextSize = 11, Text = "", ZIndex = 105, Parent = barOuter })
-                local statusLabel = Library:CreateLabel({ Position = UDim2.fromOffset(6, 38), Size = UDim2.new(1, -12, 0, 14), TextSize = Library.FontSize - 1, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, RichText = true, Text = "", ZIndex = 104, Parent = inner })
-                local extraLabel = Library:CreateLabel({ Position = UDim2.fromOffset(6, 52), Size = UDim2.new(1, -12, 0, 14), TextSize = Library.FontSize - 1, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", ZIndex = 104, Parent = inner })
-                Library:MakeDraggable(outer, 80)
-                panel = { outer = outer, name = nameLabel, bar = barOuter, fill = barFill, health = healthLabel, status = statusLabel, extra = extraLabel, target = nil, nextPick = 0 }
+
+                local function slot(x, y)
+                    local box = Library:Create("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(42, 42), ZIndex = 103, Parent = frame })
+                    Library:AddToRegistry(box, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" }, true)
+                    return box
+                end
+                local avatarBox = slot(8, 8)
+                local teamBox = slot(8, 58)
+                local toolBox = slot(290, 8)
+                local sightBox = slot(290, 58)
+                local avatar = Library:Create("ImageLabel", { BackgroundTransparency = 1, Size = UDim2.new(1, -4, 1, -4), Position = UDim2.fromOffset(2, 2), Image = "", ZIndex = 104, Parent = avatarBox })
+                local toolIcon = Library:Create("ImageLabel", { BackgroundTransparency = 1, Size = UDim2.new(1, -6, 1, -6), Position = UDim2.fromOffset(3, 3), Image = "", ScaleType = Enum.ScaleType.Fit, ZIndex = 104, Parent = toolBox })
+                local toolText = Library:CreateLabel({ Size = UDim2.new(1, 0, 1, 0), TextSize = 9, TextWrapped = true, Text = "", ZIndex = 105, Parent = toolBox })
+                local teamFill = Library:Create("Frame", { BackgroundColor3 = Color3.fromRGB(80, 80, 80), BackgroundTransparency = 0.35, BorderSizePixel = 0, Position = UDim2.fromOffset(2, 2), Size = UDim2.new(1, -4, 1, -4), ZIndex = 104, Parent = teamBox })
+                local teamText = Library:CreateLabel({ Size = UDim2.new(1, 0, 1, 0), TextSize = 10, Text = "", ZIndex = 105, Parent = teamBox })
+                local sightFill = Library:Create("Frame", { BackgroundColor3 = Color3.fromRGB(80, 80, 80), BackgroundTransparency = 0.45, BorderSizePixel = 0, Position = UDim2.fromOffset(2, 2), Size = UDim2.new(1, -4, 1, -4), ZIndex = 104, Parent = sightBox })
+                local sightText = Library:CreateLabel({ Size = UDim2.new(1, 0, 1, 0), TextSize = 10, Text = "", ZIndex = 105, Parent = sightBox })
+
+                local nameLabel = Library:CreateLabel({ Position = UDim2.fromOffset(58, 6), Size = UDim2.new(1, -116, 0, 18), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", ZIndex = 104, Parent = frame })
+                local statusLabel = Library:CreateLabel({ Position = UDim2.fromOffset(58, 24), Size = UDim2.new(1, -116, 0, 14), TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, RichText = true, Text = "", ZIndex = 104, Parent = frame })
+                local divider = Library:Create("Frame", { BackgroundColor3 = Library.OutlineColor, BorderSizePixel = 0, Position = UDim2.fromOffset(58, 42), Size = UDim2.new(1, -116, 0, 1), ZIndex = 104, Parent = frame })
+                Library:AddToRegistry(divider, { BackgroundColor3 = "OutlineColor" }, true)
+
+                local function barRow(caption)
+                    local row = {}
+                    row.caption = Library:CreateLabel({ Size = UDim2.new(1, -116, 0, 12), Position = UDim2.fromOffset(58, 46), TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, TextTransparency = 0.35, Text = caption, ZIndex = 104, Parent = frame })
+                    row.value = Library:CreateLabel({ Size = UDim2.new(1, -116, 0, 12), Position = UDim2.fromOffset(58, 46), TextSize = 11, TextXAlignment = Enum.TextXAlignment.Right, RichText = true, Text = "", ZIndex = 104, Parent = frame })
+                    row.track = Library:Create("Frame", { BackgroundColor3 = Library.OutlineColor, BorderSizePixel = 0, Position = UDim2.fromOffset(58, 60), Size = UDim2.new(1, -116, 0, 3), ZIndex = 104, Parent = frame })
+                    Library:AddToRegistry(row.track, { BackgroundColor3 = "OutlineColor" }, true)
+                    row.fill = Library:Create("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = 105, Parent = row.track })
+                    return row
+                end
+                local healthRow = barRow("health")
+                local rangeRow = barRow("distance")
+
+                Library:MakeDraggable(outer, 120)
+                panel = {
+                    outer = outer, frame = frame, avatar = avatar, avatarId = nil,
+                    toolBox = toolBox, toolIcon = toolIcon, toolText = toolText,
+                    teamFill = teamFill, teamText = teamText, sightFill = sightFill, sightText = sightText,
+                    teamBox = teamBox, sightBox = sightBox,
+                    name = nameLabel, status = statusLabel, health = healthRow, range = rangeRow,
+                    target = nil, nextPick = 0,
+                }
                 return panel
             end
 
@@ -12481,6 +13250,15 @@ do
                 return selectTarget("aim", aimRef(), head.Position, { skipWall = true })
             end
 
+            local function placeRow(row, y, visible)
+                row.caption.Visible, row.value.Visible, row.track.Visible = visible, visible, visible
+                if visible then
+                    row.caption.Position = UDim2.fromOffset(58, y)
+                    row.value.Position = UDim2.fromOffset(58, y)
+                    row.track.Position = UDim2.fromOffset(58, y + 14)
+                end
+            end
+
             local function updatePanel()
                 local p = buildPanel()
                 local now = clock()
@@ -12494,16 +13272,36 @@ do
                 local hum = character and character:FindFirstChildOfClass("Humanoid")
                 local root = entity and entity.Root
                 local menuOpen = Library.Toggled == true
+                local accentHex = hex(Library.AccentColor)
+                local keyHex = "#8a8a8a"
+                local showHealth = flag("tinfo_health", true)
+                local showStatus = flag("tinfo_status", true)
+                local showExtra = flag("tinfo_extra", true)
+                local y = 46
+                placeRow(p.health, y, showHealth)
+                if showHealth then y += 20 end
+                placeRow(p.range, y, showStatus)
+                p.teamBox.Visible = showExtra
+                p.toolBox.Visible = showExtra
+                p.sightBox.Visible = showStatus
+
                 if not (entity and character and character.Parent and hum and root and root.Parent) then
                     p.outer.Visible = menuOpen or not flag("tinfo_hide", true)
                     if p.outer.Visible then
                         p.name.Text = "No target"
-                        p.fill.Size = UDim2.new(0, 0, 1, -2)
-                        p.health.Text = ""
-                        p.status.Text = ""
-                        p.extra.Text = ""
-                        p.bar.Visible, p.status.Visible, p.extra.Visible = false, false, false
-                        p.outer.Size = UDim2.fromOffset(230, 26)
+                        p.status.Text = string.format("<font color=\"%s\">waiting for a target</font>", keyHex)
+                        p.health.value.Text = ""
+                        p.range.value.Text = ""
+                        p.health.fill.Size = UDim2.new(0, 0, 1, 0)
+                        p.range.fill.Size = UDim2.new(0, 0, 1, 0)
+                        if p.avatarId then
+                            p.avatarId = nil
+                            p.avatar.Image = ""
+                        end
+                        p.toolIcon.Image, p.toolText.Text = "", ""
+                        p.teamText.Text, p.sightText.Text = "", ""
+                        p.teamFill.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+                        p.sightFill.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
                     end
                     return
                 end
@@ -12511,51 +13309,58 @@ do
                 local player = entity.Player
                 local display = player.DisplayName ~= "" and player.DisplayName or player.Name
                 p.name.Text = display == player.Name and display or (display .. "  @" .. player.Name)
-                local height = 22
-                local showHealth = flag("tinfo_health", true)
-                p.bar.Visible = showHealth
+
+                if p.avatarId ~= player.UserId then
+                    p.avatarId = player.UserId
+                    p.avatar.Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", player.UserId)
+                end
+
+                local tool = character:FindFirstChildOfClass("Tool")
+                local team = player.Team
+                local teamName = team and team.Name or "none"
+                local toolName = tool and tool.Name or "none"
+                local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                local distance = head and (root.Position - head.Position).Magnitude or 0
+                local statusText = string.format("<font color=\"%s\">team</font> <font color=\"%s\">%s</font>  <font color=\"%s\">tool</font> <font color=\"%s\">%s</font>", keyHex, accentHex, teamName, keyHex, accentHex, toolName)
+                p.status.Text = statusText
+                p.status.Visible = showExtra
+
+                if showExtra then
+                    local texture = tool and tool.TextureId or ""
+                    p.toolIcon.Image = texture
+                    p.toolText.Text = texture == "" and (tool and tool.Name or "") or ""
+                    p.teamFill.BackgroundColor3 = team and team.TeamColor.Color or Color3.fromRGB(80, 80, 80)
+                    p.teamText.Text = team and string.upper(string.sub(team.Name, 1, 3)) or "-"
+                end
+
                 if showHealth then
                     local max = math.max(hum.MaxHealth, 1)
                     local ratio = math.clamp(hum.Health / max, 0, 1)
-                    p.fill.Size = UDim2.new(ratio, -2, 1, -2)
-                    p.fill.BackgroundColor3 = BAD:Lerp(GOOD, ratio)
-                    p.health.Text = string.format("%d / %d", math.floor(hum.Health + 0.5), math.floor(max + 0.5))
-                    p.bar.Position = UDim2.fromOffset(6, height)
-                    height += 14
+                    p.health.fill.Size = UDim2.new(ratio, 0, 1, 0)
+                    p.health.fill.BackgroundColor3 = ratio < 0.35 and BAD or Library.AccentColor
+                    p.health.value.Text = string.format("%d / %d", math.floor(hum.Health + 0.5), math.floor(max + 0.5))
                 end
-                local showStatus = flag("tinfo_status", true)
-                p.status.Visible = showStatus
+
                 if showStatus then
-                    local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
-                    local text = ""
-                    if head then
-                        local distance = (root.Position - head.Position).Magnitude
-                        local label, color = "Blocked", BAD
-                        if part and part.Parent then
-                            WB.tick()
-                            local status = WB.status(head.Position, part)
-                            if status == "visible" then
-                                label, color = "Visible", GOOD
-                            elseif status == "wallbang" then
-                                label, color = flag("silent_wallbang", false) and "Wallbang" or "Behind wall", WARN
-                            end
+                    local label, color = "Blocked", BAD
+                    if part and part.Parent and head then
+                        WB.tick()
+                        local status = WB.status(head.Position, part)
+                        if status == "visible" then
+                            label, color = "Visible", GOOD
+                        elseif status == "wallbang" then
+                            label, color = flag("silent_wallbang", false) and "Wallbang" or "Behind wall", WARN
                         end
-                        text = string.format("%d studs  <font color=\"%s\">%s</font>", math.floor(distance + 0.5), hex(color), label)
                     end
-                    p.status.Text = text
-                    p.status.Position = UDim2.fromOffset(6, height)
-                    height += 14
+                    local data = Gun.data()
+                    local limit = data and tonumber(data.Range) or flag("silent_max_dist", 1000)
+                    local closeness = math.clamp(1 - distance / math.max(limit, 1), 0, 1)
+                    p.range.fill.Size = UDim2.new(closeness, 0, 1, 0)
+                    p.range.fill.BackgroundColor3 = color
+                    p.range.value.Text = string.format("%d studs  <font color=\"%s\">%s</font>", math.floor(distance + 0.5), hex(color), label)
+                    p.sightFill.BackgroundColor3 = color
+                    p.sightText.Text = string.upper(string.sub(label, 1, 4))
                 end
-                local showExtra = flag("tinfo_extra", true)
-                p.extra.Visible = showExtra
-                if showExtra then
-                    local tool = character:FindFirstChildOfClass("Tool")
-                    local team = player.Team and player.Team.Name or "No team"
-                    p.extra.Text = team .. "  |  " .. (tool and tool.Name or "No weapon")
-                    p.extra.Position = UDim2.fromOffset(6, height)
-                    height += 14
-                end
-                p.outer.Size = UDim2.fromOffset(230, height + 6)
             end
 
             feature("tinfo_on", function()

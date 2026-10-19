@@ -1456,6 +1456,10 @@ end
 local HIT_SOUND_NAMES = {}
 for name in pairs(HIT_SOUNDS) do table.insert(HIT_SOUND_NAMES, name) end
 table.sort(HIT_SOUND_NAMES)
+
+local function fxHitEntry(group, name)
+    return FxSaved.entry(group, name) or HIT_SOUNDS[name]
+end
 local playHitSound
 local function noop() end
 local SpooferActions = { apply = noop, reset = noop, applyUser = noop, applyOutfit = noop }
@@ -2155,6 +2159,9 @@ do
     Silent:Toggle({ Name = "Auto fire", Flag = "silent_autofire", Default = false })
     Silent:Slider({ Name = "Auto fire rate", Flag = "silent_autofire_rate", Min = 1, Max = 60, Default = 15, Suffix = " hz", Decimals = 1 })
     Silent:Toggle({ Name = "Auto fire: skip blocked", Flag = "silent_autofire_check", Default = true, Tooltip = "With wallbang on, auto fire only shoots targets you can see or wallbang" })
+    Silent:Toggle({ Name = "Auto switch", Flag = "silent_switch", Default = false, Tooltip = "While auto fire has a target, switches between the weapons picked below. Weapons you do not have are skipped, and so are empty ones when another is ready" })
+    Silent:Dropdown({ Name = "Switch weapons", Flag = "silent_switch_weapons", Items = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver", "Taser" }, Multi = true, Default = {}, Tooltip = "The weapons to cycle through, in this order" })
+    Silent:Slider({ Name = "Switch delay", Flag = "silent_switch_delay", Min = 0.03, Max = 2, Default = 0.3, Suffix = " s", Decimals = 0.01, Tooltip = "Time between weapon switches" })
 
     local FovAim, FovSilent = CombatTab:MultiSection({ Sections = { "Aim FOV", "Silent FOV" }, Side = 2 })
     local aimCircle = FovAim:Toggle({ Name = "Show FOV circle", Flag = "aim_fov_show", Default = false })
@@ -2167,7 +2174,7 @@ do
     FovSilent:Slider({ Name = "Thickness", Flag = "silent_fov_thick", Min = 1, Max = 5, Default = 1, Decimals = 1 })
 
     local OrbitSec = CombatTab:Section({ Name = "Orbit target", Side = 2 })
-    OrbitSec:Toggle({ Name = "Orbit target", Flag = "orbit_on", Default = false, Tooltip = "While silent aim has a target, the position the server sees circles that player. You stay where you are, only the server position moves." })
+    OrbitSec:Toggle({ Name = "Orbit target", Flag = "orbit_on", Default = false, Tooltip = "While silent aim has a target, the position the server sees circles that player. You stay where you are, only the server position moves." }):Keybind({ Name = "Orbit key", Flag = "orbit_key", Default = "None", Sync = true })
     OrbitSec:Dropdown({ Name = "Height", Flag = "orbit_mode", Items = { "Under the map", "Below target", "Near void" }, Default = "Under the map", Tooltip = "Under the map: below the lowest floor under the target. Below target: straight below the target's height. Near void: just above the void." })
     OrbitSec:Slider({ Name = "Depth", Flag = "orbit_depth", Min = 0, Max = 500, Default = 15, Suffix = " studs", Decimals = 0.5, Tooltip = "How far below the floor (Under the map) or below the target (Below target). It always stops short of the void" })
     OrbitSec:Slider({ Name = "Radius", Flag = "orbit_radius", Min = 0, Max = 100, Default = 6, Suffix = " studs", Decimals = 0.5 })
@@ -3123,31 +3130,70 @@ Fx:Sub("Car orbit", "Spawner")
 Fx:Sub("Car orbit", "Orbit")
 
 do
-    local function soundSection(label, prefix, toggleFlag, idFlag, volumeFlag, pitchFlag, varFlag, defaultSound, previewCallback)
+    local lists = {}
+    local function soundSection(label, group, toggleFlag, idFlag, volumeFlag, pitchFlag, varFlag, defaultSound, previewCallback)
+        local config = { names = {}, lookup = function(name) return fxHitEntry(group, name) end, category = function(name) return FxSaved.label(group, name) end, flag = idFlag, volumeFlag = volumeFlag, pitchFlag = pitchFlag, varFlag = varFlag }
+        local function allNames()
+            local values = {}
+            for _, name in ipairs(HIT_SOUND_NAMES) do values[#values + 1] = name end
+            for _, name in ipairs(FxSaved.names(group)) do
+                if not HIT_SOUNDS[name] then values[#values + 1] = name end
+            end
+            return values
+        end
+        local function refresh()
+            table.clear(config.names)
+            for _, name in ipairs(allNames()) do config.names[#config.names + 1] = name end
+            local option = Options[idFlag]
+            if option and option.SetValues then pcall(function() option:SetValues(allNames()) end) end
+            if lists[group] then lists[group].applyFilter() end
+        end
+        for _, name in ipairs(allNames()) do config.names[#config.names + 1] = name end
         local box = Fx:Section("SFX", label, label)
         box:Toggle({ Name = label .. "s", Flag = toggleFlag, Default = false })
-        box:Dropdown({ Name = label, Flag = idFlag, Items = HIT_SOUND_NAMES, Default = defaultSound })
+        box:Dropdown({ Name = label, Flag = idFlag, Items = allNames(), Default = defaultSound, Tooltip = "Built in sounds and the ids you saved below" })
+        box:Input({ Name = "Sound id", Flag = group .. "_custom", Default = "", Placeholder = "audio id or link to save" })
+        box:Input({ Name = "Sound name", Flag = group .. "_name", Default = "", Placeholder = "name to save it under (optional)" })
+        box:Button({ Name = "Save sound", Callback = function()
+            local text = Options[group .. "_custom"] and Options[group .. "_custom"].Value
+            local source = fxParseSource(text)
+            if not (source and source.id) then
+                pcall(function() Library:Notify("Paste an audio id or link first", 4) end)
+                return
+            end
+            local typed = Options[group .. "_name"] and Options[group .. "_name"].Value
+            local name = type(typed) == "string" and string.match(typed, "^%s*(.-)%s*$") or ""
+            if name == "" then name = tostring(source.id) end
+            FxSaved.add(group, name, { id = source.id })
+            refresh()
+            if Options[idFlag] then Options[idFlag]:SetValue(name) end
+            if Options[group .. "_name"] then Options[group .. "_name"]:SetValue("") end
+            fxEnsure("rbxassetid://" .. source.id)
+            pcall(function() Library:Notify("Saved " .. name .. " for the " .. string.lower(label), 4) end)
+        end })
+        box:Button({ Name = "Remove selected", Callback = function()
+            local selected = Options[idFlag] and Options[idFlag].Value
+            if type(selected) == "string" and FxSaved.remove(group, selected) then
+                refresh()
+                if Options[idFlag] then Options[idFlag]:SetValue(defaultSound) end
+                pcall(function() Library:Notify("Removed " .. selected, 4) end)
+            else
+                pcall(function() Library:Notify("Only sounds you saved can be removed", 4) end)
+            end
+        end })
         box:Slider({ Name = "Volume", Flag = volumeFlag, Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
         box:Slider({ Name = "Pitch", Flag = pitchFlag, Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
         box:Slider({ Name = "Pitch variation", Flag = varFlag, Min = 0, Max = 0.5, Default = 0, Decimals = 0.01 })
         box:Button({ Name = "Preview sound", Callback = previewCallback })
+        Fx:Preview("SFX", label, nil, function(sub)
+            lists[group] = lists[group] or fxSoundList(config)
+            lists[group].attach(sub.preview, config)
+        end)
     end
     soundSection("Hit sound", "hit", "World_HitSound", "World_HitSoundId", "World_HitVolume", "World_HitPitch", "World_HitPitchVar", "Gamesense", function() if playHitSound then playHitSound() end end)
     soundSection("Kill sound", "kill", "World_KillSound", "World_KillSoundId", "World_KillVolume", "World_KillPitch", "World_KillPitchVar", "PF Killshot", function()
         local name = Options.World_KillSoundId and Options.World_KillSoundId.Value
-        fxPlaySound(HIT_SOUNDS[name], Options.World_KillVolume.Value, Options.World_KillPitch.Value, Options.World_KillPitchVar.Value)
-    end)
-
-    local hitConfig = { names = HIT_SOUND_NAMES, lookup = function(name) return HIT_SOUNDS[name] end, flag = "World_HitSoundId", volumeFlag = "World_HitVolume", pitchFlag = "World_HitPitch", varFlag = "World_HitPitchVar" }
-    local killConfig = { names = HIT_SOUND_NAMES, lookup = function(name) return HIT_SOUNDS[name] end, flag = "World_KillSoundId", volumeFlag = "World_KillVolume", pitchFlag = "World_KillPitch", varFlag = "World_KillPitchVar" }
-    local hitList, killList
-    Fx:Preview("SFX", "Hit sound", nil, function(sub)
-        hitList = hitList or fxSoundList(hitConfig)
-        hitList.attach(sub.preview, hitConfig)
-    end)
-    Fx:Preview("SFX", "Kill sound", nil, function(sub)
-        killList = killList or fxSoundList(killConfig)
-        killList.attach(sub.preview, killConfig)
+        fxPlaySound(fxHitEntry("kill", name), Options.World_KillVolume.Value, Options.World_KillPitch.Value, Options.World_KillPitchVar.Value)
     end)
 
     local gunList
@@ -3207,6 +3253,9 @@ do
         box:Dropdown({ Name = "Method", Flag = key .. "_method", Items = { "Replace game sound", "Play on shot" }, Default = "Replace game sound", Tooltip = "Replace game sound swaps the sound the game itself plays for this weapon, so it also changes the guns other players hold. Play on shot leaves the game sound alone and plays yours on top of your own shots." })
         box:Toggle({ Name = "Replace other players' guns", Flag = key .. "_others", Default = true })
         box:Toggle({ Name = "Mute game sound (Play on shot)", Flag = key .. "_mute", Default = true })
+        box:Button({ Name = "Forget found game sound", Callback = function()
+            if Actions.sfxForget then Actions.sfxForget(key) end
+        end })
         box:Button({ Name = "Preview sound", Callback = function()
             local entry = fxWeaponEntry(key)
             if not entry then
@@ -3281,7 +3330,7 @@ do
             targetLabel.Text = string.format("target %d  |  moving %d", target, state.owned)
             barFill.Size = UDim2.new(math.clamp(state.count / target, 0, 1), 0, 1, 0)
             statusLabel.Text = state.status
-            detailLabel.Text = state.detail or ""
+            detailLabel.Text = string.format("alive %d/%d  |  regrabs %d  |  %s", state.owned, state.count, state.regrabs or 0, state.detail or "")
         end))
     end)
 
@@ -3324,30 +3373,79 @@ do
     end)
 
     local carSpawn = Fx:Section("Car orbit", "Spawner", "Car spawner")
+    carSpawn:Dropdown({ Name = "Preset", Flag = "car_spawn_preset", Items = { "Careful 30", "Quick 20", "Swarm 60", "Mega 150" }, Default = "Quick 20", Tooltip = "Sets the target and the delay. Press Apply preset after picking" })
+    carSpawn:Button({ Name = "Apply preset", Callback = function()
+        local name = readFlag("car_spawn_preset", "Quick 20")
+        if carApplyPreset(CAR_SPAWN_PRESETS, name) then pcall(function() Library:Notify("Applied preset " .. name, 3) end) end
+    end })
     carSpawn:Toggle({ Name = "Spawn cars", Flag = "car_spawn_on", Default = false, Tooltip = "Presses the police garage car spawners over and over, moves each new car forward to free the spot and counts them. Needs the team that can use the garage." })
     carSpawn:Slider({ Name = "Target cars", Flag = "car_target", Min = 1, Max = 200, Default = 20, Suffix = " cars", Decimals = 1, Tooltip = "Stops spawning once this many cars are yours" })
     carSpawn:Slider({ Name = "Spawn delay", Flag = "car_delay", Min = 0.05, Max = 2, Default = 0.25, Suffix = " s", Decimals = 0.05, Tooltip = "Time between spawn presses" })
     carSpawn:Slider({ Name = "Move forward", Flag = "car_forward", Min = 5, Max = 150, Default = 25, Suffix = " studs", Decimals = 0.5, Tooltip = "How far in front of the garage new cars are parked while orbit is off. With orbit on they go straight to their orbit spot" })
     carSpawn:Toggle({ Name = "Reverse forward", Flag = "car_flip", Default = false, Tooltip = "Use this if the cars get parked behind the spawn spot" })
     carSpawn:Toggle({ Name = "Use both spawners", Flag = "car_both", Default = true, Tooltip = "The police garage has two spawner pads, using both doubles the speed" })
-    carSpawn:Toggle({ Name = "Stand at the garage", Flag = "car_tp", Default = true, Tooltip = "The spawner only works close by, so you are held next to the pads while spawning" })
+    carSpawn:Dropdown({ Name = "Garage position", Flag = "car_stand", Items = { "Next to spawner", "Pinned on spawner", "Stay where I am" }, Default = "Next to spawner", Tooltip = "Next to spawner: you are moved onto the pad once and can then move around freely, you are only pulled back if you get too far away. Pinned: held on the pad. Stay: no teleport, walk there yourself" })
     carSpawn:Toggle({ Name = "Return afterwards", Flag = "car_return", Default = true })
     carSpawn:Button({ Name = "Grab nearby cars", Callback = function() if Actions.carOrbit then Actions.carOrbit.grab() end end })
     carSpawn:Button({ Name = "Release all cars", Callback = function() if Actions.carOrbit then Actions.carOrbit.release() end end })
 
+    local carControl = Fx:Section("Car orbit", "Spawner", "Car control")
+    carControl:Toggle({ Name = "Auto regrab", Flag = "car_regrab", Default = false, Tooltip = "Keeps picking up free cars near you and pulls back cars the server took from you" })
+    carControl:Slider({ Name = "Regrab cooldown", Flag = "car_regrab_cd", Min = 0.25, Max = 10, Default = 2, Suffix = " s", Decimals = 0.05 })
+    carControl:Slider({ Name = "Regrab range", Flag = "car_grab_range", Min = 20, Max = 1000, Default = 250, Suffix = " studs", Decimals = 0.5, Tooltip = "How far from you cars are picked up" })
+    carControl:Button({ Name = "Regrab all", Callback = function() if Actions.carOrbit then Actions.carOrbit.regrab() end end })
+    carControl:Toggle({ Name = "Stronger sync", Flag = "car_dual", Default = true, Tooltip = "Places the cars a second time every frame after physics, so other players see them where you do. Turn it off if it lags" })
+    carControl:Toggle({ Name = "Place mode (freeze)", Flag = "car_freeze", Default = false, Tooltip = "Leaves every car exactly where it is right now. Turn it off to continue the orbit" })
+    carControl:Toggle({ Name = "Strip wheels", Flag = "car_strip", Default = false, Tooltip = "Hides your cars' wheels and turns off their collision so they glide easier. Looks only change for you, and it is undone when you turn it off" })
+
+    local CAR_ORBIT_PRESETS = {
+        ["Tornado"] = { car_pattern = "Tornado", car_radius = 40, car_height = 4, car_spread = 60, car_spin = 180, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Halo"] = { car_pattern = "Ring", car_radius = 30, car_height = 25, car_spread = 0, car_spin = 120, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Highway line"] = { car_pattern = "Line", car_radius = 35, car_height = 4, car_spread = 0, car_spin = 28, car_gap = 15, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Windmill"] = { car_pattern = "Line", car_radius = 35, car_height = 18, car_spread = 0, car_spin = 120, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Car wall"] = { car_pattern = "Wall", car_radius = 35, car_height = 22, car_spread = 0, car_spin = 0, car_gap = 14, car_face = "Fixed", car_tilt = 0, car_dir = "Clockwise" },
+        ["Grid carpet"] = { car_pattern = "Grid", car_radius = 35, car_height = 20, car_spread = 0, car_spin = 0, car_gap = 14, car_face = "Fixed", car_tilt = 0, car_dir = "Clockwise" },
+        ["Ferris wheel"] = { car_pattern = "Wheel", car_radius = 20, car_height = 28, car_spread = 0, car_spin = 45, car_gap = 14, car_face = "Fixed", car_tilt = 90, car_dir = "Clockwise" },
+        ["Sphere cage"] = { car_pattern = "Sphere", car_radius = 35, car_height = 25, car_spread = 25, car_spin = 60, car_gap = 14, car_face = "Center", car_tilt = 0, car_dir = "Clockwise" },
+        ["Double helix"] = { car_pattern = "Helix", car_radius = 28, car_height = 22, car_spread = 40, car_spin = 150, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Cube"] = { car_pattern = "Cube", car_radius = 35, car_height = 22, car_spread = 0, car_spin = 40, car_gap = 12, car_face = "Fixed", car_tilt = 0, car_dir = "Clockwise" },
+        ["Galaxy"] = { car_pattern = "Spiral", car_radius = 80, car_height = 15, car_spread = 0, car_spin = 40, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Star"] = { car_pattern = "Star", car_radius = 40, car_height = 15, car_spread = 0, car_spin = 60, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Figure eight"] = { car_pattern = "Figure eight", car_radius = 35, car_height = 15, car_spread = 0, car_spin = 100, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+    }
+    local CAR_ORBIT_PRESET_NAMES = { "Tornado", "Halo", "Highway line", "Windmill", "Car wall", "Grid carpet", "Ferris wheel", "Sphere cage", "Double helix", "Cube", "Galaxy", "Star", "Figure eight" }
+    local CAR_SPAWN_PRESETS = {
+        ["Careful 30"] = { car_target = 30, car_delay = 0.5 },
+        ["Quick 20"] = { car_target = 20, car_delay = 0.25 },
+        ["Swarm 60"] = { car_target = 60, car_delay = 0.15 },
+        ["Mega 150"] = { car_target = 150, car_delay = 0.1 },
+    }
+    local function carApplyPreset(table_, name)
+        local preset = table_[name]
+        if not preset then return false end
+        for flagName, value in pairs(preset) do fxSet(flagName, value) end
+        return true
+    end
+
     local carOrbitBox = Fx:Section("Car orbit", "Orbit", "Orbit")
+    carOrbitBox:Dropdown({ Name = "Preset", Flag = "car_preset", Items = CAR_ORBIT_PRESET_NAMES, Default = "Tornado", Tooltip = "Pick a look, then press Apply preset. It sets the pattern, size, speed, facing and tilt but never the car count" })
+    carOrbitBox:Button({ Name = "Apply preset", Callback = function()
+        local name = readFlag("car_preset", "Tornado")
+        if carApplyPreset(CAR_ORBIT_PRESETS, name) then pcall(function() Library:Notify("Applied preset " .. name, 3) end) end
+    end })
     carOrbitBox:Toggle({ Name = "Orbit cars", Flag = "car_orbit_on", Default = false, Tooltip = "Your cars circle the center you pick. Only your own cars move, and only what the server lets you own" })
-    carOrbitBox:Dropdown({ Name = "Follow", Flag = "car_follow", Items = { "Self", "Cursor" }, Default = "Self", Tooltip = "Self circles you. Cursor circles the spot your mouse points at" })
-    carOrbitBox:Dropdown({ Name = "Pattern", Flag = "car_pattern", Items = { "Ring", "Double ring", "Helix", "Tornado", "Sphere", "Wheel" }, Default = "Ring" })
-    carOrbitBox:Slider({ Name = "Radius", Flag = "car_radius", Min = 3, Max = 300, Default = 35, Suffix = " studs", Decimals = 0.5 })
-    carOrbitBox:Slider({ Name = "Height", Flag = "car_height", Min = -20, Max = 120, Default = 12, Suffix = " studs", Decimals = 0.5, Tooltip = "Height of the orbit above the center" })
-    carOrbitBox:Slider({ Name = "Height spread", Flag = "car_spread", Min = 0, Max = 100, Default = 0, Suffix = " studs", Decimals = 0.5, Tooltip = "How tall the Helix, Tornado and Sphere patterns are" })
+    carOrbitBox:Dropdown({ Name = "Follow", Flag = "car_follow", Items = { "Self", "Cursor", "Selected player", "Silent aim target" }, Default = "Self", Tooltip = "Self circles you. Cursor circles the spot your mouse points at. Selected player circles the player picked in the Players tab. Silent aim target circles whoever silent aim is on. Without a target it circles you" })
+    carOrbitBox:Dropdown({ Name = "Pattern", Flag = "car_pattern", Items = { "Ring", "Double ring", "Helix", "Tornado", "Sphere", "Wheel", "Line", "Grid", "Wall", "Cube", "Spiral", "Star", "Figure eight" }, Default = "Ring", Tooltip = "Line, Grid, Wall and Cube use the Spacing slider and turn around the center as they spin" })
+    carOrbitBox:Slider({ Name = "Radius", Flag = "car_radius", Min = 3, Max = 1000, Default = 35, Suffix = " studs", Decimals = 0.5 })
+    carOrbitBox:Slider({ Name = "Height", Flag = "car_height", Min = -20, Max = 1000, Default = 12, Suffix = " studs", Decimals = 0.5, Tooltip = "Height of the orbit above the center" })
+    carOrbitBox:Slider({ Name = "Height spread", Flag = "car_spread", Min = 0, Max = 1000, Default = 0, Suffix = " studs", Decimals = 0.5, Tooltip = "How tall the Helix, Tornado and Sphere patterns are" })
+    carOrbitBox:Slider({ Name = "Spacing", Flag = "car_gap", Min = 3, Max = 60, Default = 14, Suffix = " studs", Decimals = 0.05, Tooltip = "Gap between cars in the Line, Grid, Wall and Cube patterns" })
     carOrbitBox:Slider({ Name = "Orbit speed", Flag = "car_spin", Min = 0, Max = 720, Default = 90, Suffix = " deg/s", Decimals = 1 })
     carOrbitBox:Dropdown({ Name = "Direction", Flag = "car_dir", Items = { "Clockwise", "Counter clockwise" }, Default = "Clockwise" })
     carOrbitBox:Dropdown({ Name = "Facing", Flag = "car_face", Items = { "Direction of travel", "Center", "Fixed" }, Default = "Direction of travel" })
     carOrbitBox:Slider({ Name = "Car tilt", Flag = "car_tilt", Min = 0, Max = 180, Default = 0, Suffix = " deg", Decimals = 1, Tooltip = "Rolls every car sideways, 90 puts them on their side" })
     carOrbitBox:Slider({ Name = "Follow smoothing", Flag = "car_smooth", Min = 1, Max = 60, Default = 12, Suffix = " /s", Decimals = 1, Tooltip = "How quickly the orbit center catches up with you or the cursor, lower is lazier" })
-    carOrbitBox:Toggle({ Name = "Stay under the height cap", Flag = "car_cap", Default = true, Tooltip = "Keeps cars below the game's height limit and above the void" })
+    carOrbitBox:Toggle({ Name = "Stay under the height cap", Flag = "car_cap", Default = false, Tooltip = "Keeps cars below the game's height limit and above the void" })
 
     local killSections, lastKill, lastCheck = {}, nil, 0
     track(RunService.Heartbeat:Connect(function()
@@ -3419,7 +3517,7 @@ do
     fly:Dropdown({ Name = "Mode", Flag = "misc_fly_mode", Items = { "Velocity", "CFrame" }, Default = "Velocity" })
     fly:Slider({ Name = "Speed", Flag = "misc_fly_speed", Min = 1, Max = 150, Default = 50, Suffix = " studs", Decimals = 1 })
     fly:Slider({ Name = "Vertical speed", Flag = "misc_fly_vspeed", Min = 1, Max = 100, Default = 40, Suffix = " studs", Decimals = 1 })
-    fly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_fly_cap", Default = true })
+    fly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_fly_cap", Default = false })
     fly:Label({ Name = "Up: Space   Down: Left Ctrl" })
     speed:Toggle({ Name = "Speed", Flag = "misc_speed", Default = false }):Keybind({ Name = "Speed key", Flag = "misc_speed_key", Default = "None", Sync = true })
     speed:Dropdown({ Name = "Mode", Flag = "misc_speed_mode", Items = { "Velocity", "CFrame", "WalkSpeed" }, Default = "Velocity" })
@@ -3447,6 +3545,8 @@ do
     local Character = MiscPage:Section({ Name = "Character", Side = 1 })
     Character:Toggle({ Name = "No jump cooldown", Flag = "misc_no_jump_cd", Default = false })
     Character:Toggle({ Name = "Camera phase", Flag = "misc_camera_phase", Default = false })
+    Character:Toggle({ Name = "Infinite camera zoom", Flag = "misc_camera_zoom", Default = false, Tooltip = "Lets you scroll the camera out as far as you want, in third person" })
+    Character:Slider({ Name = "Max zoom distance", Flag = "misc_camera_zoom_max", Min = 100, Max = 100000, Default = 100000, Suffix = " studs", Decimals = 1 })
     Character:Toggle({ Name = "Gravity", Flag = "misc_gravity", Default = false })
     Character:Dropdown({ Name = "Gravity mode", Flag = "misc_gravity_mode", Items = { "Workspace", "Local" }, Default = "Workspace" })
     Character:Slider({ Name = "Gravity value", Flag = "misc_gravity_value", Min = 0, Max = 300, Default = 196, Decimals = 1 })
@@ -3539,7 +3639,7 @@ do
     vFly:Toggle({ Name = "Vehicle fly", Flag = "misc_vfly", Default = false }):Keybind({ Name = "Vehicle fly key", Flag = "misc_vfly_key", Default = "None", Sync = true })
     vFly:Slider({ Name = "Speed", Flag = "misc_vfly_speed", Min = 1, Max = 100, Default = 60, Suffix = " studs", Decimals = 1 })
     vFly:Toggle({ Name = "Move along camera", Flag = "misc_vfly_camera", Default = true })
-    vFly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_vfly_cap", Default = true })
+    vFly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_vfly_cap", Default = false })
     vFly:Label({ Name = "Up: E   Down: Q" })
     vSpeed:Toggle({ Name = "Vehicle speed", Flag = "misc_vspeed", Default = false }):Keybind({ Name = "Vehicle speed key", Flag = "misc_vspeed_key", Default = "None", Sync = true })
     vSpeed:Slider({ Name = "Max speed", Flag = "misc_vspeed_value", Min = 80, Max = 200, Default = 140, Decimals = 1 })
@@ -3569,6 +3669,7 @@ do
     local EspList = VisualsPage:MultiSection({ Sections = { "Players" }, Side = 1 })
     EspList:Toggle({ Name = "Enabled", Flag = "esp_enabled", Default = false })
     EspList:Toggle({ Name = "Name", Flag = "esp_name", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_name_color1", Default = WHITE })
+    EspList:Dropdown({ Name = "Name type", Flag = "esp_name_type", Items = { "Username", "Display name", "Display (@username)" }, Default = "Username", Tooltip = "Which name the ESP shows above players" })
     EspList:Toggle({ Name = "Boxes", Flag = "esp_box", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_box_color", Default = WHITE })
     EspList:Toggle({ Name = "Outline", Flag = "esp_outline_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_outline_color", Default = BLACK })
     EspList:Toggle({ Name = "Fill", Flag = "esp_fill", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_fill_color", Default = WHITE, Alpha = 0.9 })
@@ -3845,6 +3946,7 @@ do
         local name = readFlag("Player_Selected", "")
         return name ~= "" and Players:FindFirstChild(name) or nil
     end
+    Actions.selectedPlayer = selectedPlayer
 
     PlayerOptions:Dropdown({
         Name = "Relationship",
@@ -3969,6 +4071,120 @@ do
         Tooltip = "Drag the round grip in the bottom-right corner to resize the menu",
         Callback = function(value) Library.WireframeDrag = value end,
     })
+
+    do
+        local TeleportService = game:GetService("TeleportService")
+        local HttpService = game:GetService("HttpService")
+        local ServerGroup = SettingsTab:AddRightGroupbox("Server")
+        local busy = false
+
+        local function tell(message)
+            pcall(function() Library:Notify(message, 5) end)
+        end
+
+        local function readOption(name, default)
+            local option = Options and Options[name]
+            if option and option.Value ~= nil then return option.Value end
+            return default
+        end
+
+        local function fetchServers()
+            local send = (syn and syn.request) or http_request or request
+            local minimum = readOption("ServerHopMin", 0)
+            for _, host in ipairs({ "games.roproxy.com", "games.roblox.com" }) do
+                local found, cursor = {}, nil
+                for _ = 1, 3 do
+                    local url = string.format("https://%s/v1/games/%d/servers/Public?sortOrder=Asc&excludeFullGames=true&limit=100%s", host, game.PlaceId, cursor and ("&cursor=" .. cursor) or "")
+                    local body
+                    if send then
+                        local ok, reply = pcall(send, { Url = url, Method = "GET" })
+                        if ok and type(reply) == "table" and reply.StatusCode == 200 and type(reply.Body) == "string" then body = reply.Body end
+                    else
+                        local ok, reply = pcall(function() return game:HttpGet(url) end)
+                        if ok and type(reply) == "string" then body = reply end
+                    end
+                    if not body then break end
+                    local okJson, data = pcall(function() return HttpService:JSONDecode(body) end)
+                    if not (okJson and type(data) == "table" and type(data.data) == "table") then break end
+                    for _, server in ipairs(data.data) do
+                        if type(server) == "table" and server.id and server.id ~= game.JobId and type(server.playing) == "number" and type(server.maxPlayers) == "number"
+                            and server.playing < server.maxPlayers and server.playing >= minimum then
+                            found[#found + 1] = server
+                        end
+                    end
+                    cursor = type(data.nextPageCursor) == "string" and data.nextPageCursor or nil
+                    if not cursor then break end
+                end
+                if #found > 0 then return found end
+            end
+            return {}
+        end
+
+        pcall(function()
+            Library:GiveSignal(TeleportService.TeleportInitFailed:Connect(function(_, result, message)
+                busy = false
+                tell("Teleport failed: " .. tostring(message ~= "" and message or result))
+            end))
+        end)
+
+        ServerGroup:AddDropdown("ServerHopMode", {
+            Text = "Server hop picks",
+            Values = { "Random", "Fewest players", "Most players" },
+            Default = "Random",
+            Tooltip = "Which public server to join. Full servers and this one are skipped",
+        })
+        ServerGroup:AddSlider("ServerHopMin", {
+            Text = "Minimum players",
+            Default = 0,
+            Min = 0,
+            Max = 40,
+            Rounding = 0,
+            Tooltip = "Skips servers with fewer players than this",
+        })
+        ServerGroup:AddButton("Server hop", function()
+            if busy then return end
+            busy = true
+            tell("Looking for a server...")
+            task.spawn(function()
+                local list = fetchServers()
+                if #list == 0 then
+                    busy = false
+                    tell("No other server found. Try lowering the minimum players")
+                    return
+                end
+                local mode = readOption("ServerHopMode", "Random")
+                if mode == "Fewest players" then
+                    table.sort(list, function(a, b) return a.playing < b.playing end)
+                elseif mode == "Most players" then
+                    table.sort(list, function(a, b) return a.playing > b.playing end)
+                end
+                local pick = mode == "Random" and list[math.random(1, #list)] or list[1]
+                tell(string.format("Joining a server with %d/%d players", pick.playing, pick.maxPlayers))
+                local ok, err = pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, LocalPlayer) end)
+                if not ok then
+                    busy = false
+                    tell("Teleport failed: " .. tostring(err))
+                end
+            end)
+        end)
+        ServerGroup:AddButton("Rejoin", function()
+            if busy then return end
+            busy = true
+            tell("Rejoining...")
+            local ok, err = pcall(function()
+                if #Players:GetPlayers() <= 1 then
+                    TeleportService:Teleport(game.PlaceId, LocalPlayer)
+                else
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+                end
+            end)
+            if not ok then
+                busy = false
+                tell("Rejoin failed: " .. tostring(err))
+            end
+        end)
+        ServerGroup:AddLabel("Aster is not loaded again after joining, run it again")
+    end
 
     do
         local BUTTONS = { MB3 = true, MB4 = true, MB5 = true }
@@ -4213,7 +4429,7 @@ do
 
         local withOverride, okFour = replaceOnce(filtered,
             "newTracked[player.Character]={name=player.Name,Cheap=false}",
-            "newTracked[player.Character]={name=player.Name,Cheap=false,Config=getgenv().TS_ESPOverride and getgenv().TS_ESPOverride(player) or nil}")
+            "newTracked[player.Character]={name=getgenv().TS_ESPName and getgenv().TS_ESPName(player) or player.Name,Cheap=false,Config=getgenv().TS_ESPOverride and getgenv().TS_ESPOverride(player) or nil}")
         if not okFour then
             warn("Highlight color patch skipped: the ESP library changed")
             return filtered
@@ -4290,16 +4506,28 @@ do
         end
         return entry
     end
+    getgenv().TS_ESPName = function(player)
+        local style = getFlag("esp_name_type", "Username")
+        local display = player.DisplayName
+        if display == nil or display == "" then display = player.Name end
+        if style == "Display name" then return display end
+        if style == "Display (@username)" then
+            if display == player.Name then return display end
+            return display .. " (@" .. player.Name .. ")"
+        end
+        return player.Name
+    end
     onUnload(function()
         getgenv().TS_ESPFilter = nil
         getgenv().TS_ESPOverride = nil
+        getgenv().TS_ESPName = nil
     end)
 
     local lastTeamSignature
     local function checkTeamChanges()
         local parts = {}
         table.insert(parts, table.concat({
-            tostring(getFlag("esp_enemies_only", false)), tostring(getFlag("esp_hostile_only", false)), tostring(getFlag("esp_use_team_color", false)),
+            tostring(getFlag("esp_enemies_only", false)), tostring(getFlag("esp_hostile_only", false)), tostring(getFlag("esp_use_team_color", false)), tostring(getFlag("esp_name_type", "Username")),
             tostring(getFlag("rel_hl_friendly", false)), tostring(getFlag("rel_hl_priority", false)),
             tostring(getColor("rel_hl_friendly_color", Color3.new(1, 1, 1))), tostring(getColor("rel_hl_priority_color", Color3.new(1, 1, 1))),
         }, ":"))
@@ -5011,7 +5239,7 @@ do
     pendingHits = {}
 
     playHitSound = function()
-        local entry = HIT_SOUNDS[getFlag("World_HitSoundId", "Gamesense")]
+        local entry = fxHitEntry("hit", getFlag("World_HitSoundId", "Gamesense"))
         if not entry then return end
         fxPlaySound(entry, getFlag("World_HitVolume", 1), getFlag("World_HitPitch", 1), getFlag("World_HitPitchVar", 0))
     end
@@ -7401,7 +7629,7 @@ do
 
         local function onKill()
             if not getFlag("World_KillSound", false) then return end
-            fxPlaySound(HIT_SOUNDS[getFlag("World_KillSoundId", "PF Killshot")], getFlag("World_KillVolume", 1), getFlag("World_KillPitch", 1), getFlag("World_KillPitchVar", 0))
+            fxPlaySound(fxHitEntry("kill", getFlag("World_KillSoundId", "PF Killshot")), getFlag("World_KillVolume", 1), getFlag("World_KillPitch", 1), getFlag("World_KillPitchVar", 0))
         end
         table.insert(ShotEvents.kill, onKill)
 
@@ -7417,6 +7645,11 @@ do
 
         local METHOD_REPLACE = "Replace game sound"
         local applied = {}
+        local applyLearned
+        local learned, learnedList, learnScans = {}, {}, {}
+        local learnUntil, learnOrigin, learnWeapon = 0, nil, nil
+        local lastLearnScan, lastBroad = 0, 0
+        local LEARN_FILE = "Aster/gunsounds.json"
         local replacing = false
         local nextSweep = 0
         local ignoreNear = { "step", "run", "jump", "land", "swim", "climb", "fall", "walk", "splash", "hit", "impact", "ricochet", "shell", "casing", "hurt", "damage", "death", "tase", "bullet" }
@@ -7438,6 +7671,7 @@ do
             local record = applied[sound]
             if not record then return end
             applied[sound] = nil
+            if record.conn then pcall(function() record.conn:Disconnect() end) end
             pcall(function()
                 sound.SoundId = record.id
                 sound.Volume = record.volume
@@ -7457,6 +7691,11 @@ do
             if not record then
                 record = { id = sound.SoundId, volume = sound.Volume, speed = sound.PlaybackSpeed }
                 applied[sound] = record
+                record.conn = sound:GetPropertyChangedSignal("SoundId"):Connect(function()
+                    if applied[sound] ~= record then return end
+                    local want = wanted(record.key)
+                    if want and sound.SoundId ~= want then pcall(applyLearned, sound) end
+                end)
             end
             record.key, record.owned = key, owned
             if sound.SoundId ~= entry then
@@ -7515,6 +7754,39 @@ do
             end
         end
 
+        local function sidKey(text)
+            text = tostring(text or "")
+            if text == "" then return nil end
+            local number = string.match(text, "rbxassetid://(%d+)") or string.match(text, "[?&]id=(%d+)")
+            if number then return "id" .. number end
+            return string.lower(text)
+        end
+
+        local function saveLearned()
+            if type(writefile) ~= "function" then return end
+            pcall(function()
+                if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
+                writefile(LEARN_FILE, game:GetService("HttpService"):JSONEncode(learnedList))
+            end)
+        end
+
+        pcall(function()
+            if type(isfile) == "function" and type(readfile) == "function" and isfile(LEARN_FILE) then
+                local data = game:GetService("HttpService"):JSONDecode(readfile(LEARN_FILE))
+                for key, ids in pairs(data) do
+                    for _, weapon in ipairs(FX_WEAPONS) do
+                        if weapon.key == key and type(ids) == "table" then
+                            learnedList[key] = {}
+                            for sid in pairs(ids) do
+                                learned[sid] = weapon
+                                learnedList[key][sid] = true
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+
         local function nearestHolder(position)
             local bestPlayer, bestTool, bestDistance
             for _, player in ipairs(Players:GetPlayers()) do
@@ -7561,6 +7833,144 @@ do
             pcall(sweep)
         end))
 
+        local function ownerOf(sound)
+            local tool = sound:FindFirstAncestorOfClass("Tool")
+            if tool and tool.Parent then
+                local holder = Players:GetPlayerFromCharacter(tool.Parent)
+                if holder then return holder == LocalPlayer end
+            end
+            local model = sound:FindFirstAncestorOfClass("Model")
+            local modelOwner = model and Players:GetPlayerFromCharacter(model)
+            if modelOwner then return modelOwner == LocalPlayer end
+            local parent = sound.Parent
+            if parent and parent:IsA("Attachment") then parent = parent.Parent end
+            if parent and parent:IsA("BasePart") then
+                local near = nearestHolder(parent.Position)
+                if near then return near == LocalPlayer end
+            end
+            return true
+        end
+
+        applyLearned = function(sound)
+            if not sound:IsA("Sound") then return end
+            local sid = sidKey(sound.SoundId)
+            local weapon = sid and learned[sid]
+            if not weapon then return end
+            applySound(sound, weapon, ownerOf(sound))
+        end
+
+        local function learnCandidate(sound, weapon)
+            if not sound:IsA("Sound") or sound.Looped or applied[sound] or keeps(sound) then return false end
+            local sid = sidKey(sound.SoundId)
+            if not sid or learned[sid] then return false end
+            local mine = fxWeaponEntry("sfx_" .. weapon.key)
+            if mine and sidKey(mine) == sid then return false end
+            local name = string.lower(sound.Name)
+            for _, word in ipairs(ignoreNear) do
+                if string.find(name, word, 1, true) then return false end
+            end
+            local model = sound:FindFirstAncestorOfClass("Model")
+            local modelOwner = model and Players:GetPlayerFromCharacter(model)
+            if modelOwner and modelOwner ~= LocalPlayer then return false end
+            return true
+        end
+
+        local function learn(sound, weapon)
+            local sid = sidKey(sound.SoundId)
+            if not sid then return end
+            learned[sid] = weapon
+            learnedList[weapon.key] = learnedList[weapon.key] or {}
+            learnedList[weapon.key][sid] = true
+            saveLearned()
+            local parent = sound.Parent
+            fxReport("learn" .. sid, string.format("Weapon sounds: found the %s game sound '%s' in %s", weapon.label, sound.Name, parent and parent.Name or "?"))
+            pcall(applyLearned, sound)
+        end
+
+        local function scanForLearn(weapon, origin, tool)
+            local character = LocalPlayer.Character
+            local seen = {}
+            local function consider(sound)
+                if seen[sound] or not sound:IsA("Sound") then return end
+                seen[sound] = true
+                if sound.IsPlaying and sound.TimePosition < 0.45 and learnCandidate(sound, weapon) then learn(sound, weapon) end
+            end
+            local function scanRoot(root)
+                if not root then return end
+                for _, descendant in ipairs(root:GetDescendants()) do
+                    if descendant:IsA("Sound") then consider(descendant) end
+                end
+            end
+            scanRoot(tool)
+            scanRoot(character)
+            scanRoot(game:GetService("SoundService"))
+            scanRoot(LocalPlayer:FindFirstChildOfClass("PlayerGui"))
+            local ok, parts = pcall(workspace.GetPartBoundsInRadius, workspace, origin, 10)
+            if ok and parts then
+                for _, part in ipairs(parts) do
+                    for _, child in ipairs(part:GetChildren()) do
+                        if child:IsA("Sound") then
+                            consider(child)
+                        elseif child:IsA("Attachment") then
+                            for _, inner in ipairs(child:GetChildren()) do consider(inner) end
+                        end
+                    end
+                end
+            end
+        end
+
+        track(game.DescendantAdded:Connect(function(descendant)
+            if not descendant:IsA("Sound") then return end
+            if replacing and next(learned) ~= nil then pcall(applyLearned, descendant) end
+            local weapon = learnWeapon
+            if weapon and os.clock() < learnUntil and learnCandidate(descendant, weapon) then
+                local character = LocalPlayer.Character
+                local close = false
+                if character and descendant:IsDescendantOf(character) then close = true end
+                if not close and (descendant:IsDescendantOf(game:GetService("SoundService")) or descendant:IsDescendantOf(LocalPlayer)) then close = true end
+                if not close and learnOrigin then
+                    local parent = descendant.Parent
+                    if parent and parent:IsA("Attachment") then parent = parent.Parent end
+                    if parent and parent:IsA("BasePart") and (parent.Position - learnOrigin).Magnitude < 10 then close = true end
+                end
+                if close then learn(descendant, weapon) end
+            end
+        end))
+
+        local function broadSweep()
+            if next(learned) == nil then return end
+            local now = os.clock()
+            if now - lastBroad < 4 then return end
+            lastBroad = now
+            local roots = { game:GetService("ReplicatedStorage"), game:GetService("SoundService"), LocalPlayer, workspace }
+            for _, root in ipairs(roots) do
+                for _, descendant in ipairs(root:GetDescendants()) do
+                    if descendant:IsA("Sound") then pcall(applyLearned, descendant) end
+                end
+            end
+        end
+
+        track(RunService.Heartbeat:Connect(function()
+            if replacing then pcall(broadSweep) end
+        end))
+
+        Actions.sfxForget = function(key)
+            local removed = 0
+            for sid, weapon in pairs(learned) do
+                if "sfx_" .. weapon.key == key then
+                    learned[sid] = nil
+                    removed += 1
+                end
+            end
+            for sound, record in pairs(applied) do
+                if record.key == key then restoreSound(sound) end
+            end
+            learnedList[string.sub(key, 5)] = nil
+            learnScans[key] = 0
+            saveLearned()
+            pcall(function() Library:Notify(removed > 0 and "Forgot the found game sound, fire the weapon once to find it again" or "Nothing was found yet for this weapon", 4) end)
+        end
+
         local function onShot(origin)
             local character = LocalPlayer.Character
             local tool = character and character:FindFirstChildOfClass("Tool")
@@ -7579,6 +7989,20 @@ do
             if not getFlag(key .. "_on", false) then return end
             if getFlag(key .. "_method", METHOD_REPLACE) == METHOD_REPLACE then
                 applyTool(tool, true)
+                local now = os.clock()
+                if (learnScans[key] or 0) < 14 and now - lastLearnScan > 0.5 then
+                    lastLearnScan = now
+                    learnScans[key] = (learnScans[key] or 0) + 1
+                    learnUntil, learnOrigin, learnWeapon = now + 0.45, origin, weapon
+                    for _, wait in ipairs({ 0.04, 0.12, 0.3 }) do
+                        task.delay(wait, function() pcall(scanForLearn, weapon, origin, tool) end)
+                    end
+                    task.delay(0.6, function()
+                        if not learnedList[weapon.key] and (learnScans[key] or 0) >= 4 then
+                            fxReport("nolearn" .. key, "Weapon sounds: could not find the game sound for " .. weapon.label .. ". Try the Play on shot method with Mute game sound")
+                        end
+                    end)
+                end
                 return
             end
             local entry = fxWeaponEntry(key)
@@ -7640,6 +8064,7 @@ do
 
         onUnload(function()
             alive = false
+            Actions.sfxForget = nil
             for sound in pairs(applied) do restoreSound(sound) end
             for _, list in ipairs({ ShotEvents.kill, ShotEvents.shot }) do
                 for index = #list, 1, -1 do
@@ -7915,6 +8340,29 @@ do
             cheatFlagged[player.UserId] = true
             say(player.Name .. " may be cheating (" .. kind .. ")")
         end
+    end
+
+    do
+        local bag, original = newBag(), nil
+        local function apply()
+            local cap = flag("misc_camera_zoom_max", 100000)
+            if LocalPlayer.CameraMaxZoomDistance ~= cap then LocalPlayer.CameraMaxZoomDistance = cap end
+            if LocalPlayer.CameraMode ~= Enum.CameraMode.Classic then LocalPlayer.CameraMode = Enum.CameraMode.Classic end
+        end
+        feature("misc_camera_zoom", function()
+            original = { LocalPlayer.CameraMaxZoomDistance, LocalPlayer.CameraMode }
+            pcall(apply)
+            bag.add(RunService.RenderStepped:Connect(function() pcall(apply) end))
+        end, function()
+            bag.clear()
+            if original then
+                pcall(function()
+                    LocalPlayer.CameraMaxZoomDistance = original[1]
+                    LocalPlayer.CameraMode = original[2]
+                end)
+            end
+            original = nil
+        end)
     end
 
     do
@@ -8877,7 +9325,7 @@ do
                     yLevel = nil
                     root.AssemblyLinearVelocity = v3(dir.X * speed, 2.25 + (up + down) * vertical, dir.Z * speed)
                 end
-                if flag("misc_fly_cap", true) then yLevel = capHeight(root, yLevel) end
+                if flag("misc_fly_cap", false) then yLevel = capHeight(root, yLevel) end
             end))
         end, function() bag.clear() end)
     end
@@ -11390,7 +11838,7 @@ do
                 else
                     root.CFrame = CFrame.lookAlong(root.Position, cam.CFrame.LookVector) + (hum.MoveDirection + v3(0, vertical, 0)) * speed * dt
                 end
-                if flag("misc_vfly_cap", true) then
+                if flag("misc_vfly_cap", false) then
                     capHeight(root, nil, workspace:FindFirstChild("CarContainer"))
                 end
                 for weld, offset in pairs(welds) do
@@ -11730,7 +12178,7 @@ do
     end
 
     do
-        local api = { state = { count = 0, owned = 0, status = "Idle", detail = "", spawning = false } }
+        local api = { state = { count = 0, owned = 0, regrabs = 0, stripped = 0, status = "Idle", detail = "", spawning = false } }
         Actions.carOrbit = api
         local state = api.state
         local cars = {}
@@ -11770,7 +12218,12 @@ do
             if look.Magnitude < 0.01 then look = v3(0, 0, -1) end
             look = look.Unit
             if flag("car_flip", false) then look = -look end
-            local entry = { seat = seat, model = topCar(seat), spawn = seat.CFrame, forward = look }
+            local model = topCar(seat)
+            local entry = { seat = seat, model = model, spawn = seat.CFrame, forward = look, partsAt = 0 }
+            if model and model:IsA("Model") then
+                local ok, pivot = pcall(model.GetPivot, model)
+                if ok then entry.offset = seat.CFrame:ToObjectSpace(pivot) end
+            end
             cars[#cars + 1] = entry
             return entry
         end
@@ -11810,7 +12263,84 @@ do
             state.count, state.owned = #cars, owned
         end
 
+        local function wheelParts(entry)
+            local list = {}
+            local model = entry.model
+            if not model then return list end
+            for _, descendant in ipairs(model:GetDescendants()) do
+                if descendant:IsA("BasePart") then
+                    local name = string.lower(descendant.Name)
+                    if name:find("wheel", 1, true) or name:find("tire", 1, true) or name:find("tyre", 1, true) then list[#list + 1] = descendant end
+                end
+            end
+            return list
+        end
+
+        local function stripEntry(entry)
+            if entry.stripped then return end
+            entry.stripped = {}
+            for _, part in ipairs(wheelParts(entry)) do
+                local saved = { part = part, collide = part.CanCollide, touch = part.CanTouch, query = part.CanQuery, massless = part.Massless, transparency = part.Transparency }
+                entry.stripped[#entry.stripped + 1] = saved
+                pcall(function()
+                    part.CanCollide = false
+                    part.CanTouch = false
+                    part.CanQuery = false
+                    part.Massless = true
+                    part.Transparency = 1
+                end)
+            end
+            state.stripped += #entry.stripped
+        end
+
+        local function unstripEntry(entry)
+            if not entry.stripped then return end
+            for _, saved in ipairs(entry.stripped) do
+                if saved.part and saved.part.Parent then
+                    pcall(function()
+                        saved.part.CanCollide = saved.collide
+                        saved.part.CanTouch = saved.touch
+                        saved.part.CanQuery = saved.query
+                        saved.part.Massless = saved.massless
+                        saved.part.Transparency = saved.transparency
+                    end)
+                end
+            end
+            state.stripped = math.max(state.stripped - #entry.stripped, 0)
+            entry.stripped = nil
+        end
+
+        local function grabNear(range)
+            local folder = carFolder()
+            local _, _, root = localParts()
+            if not (folder and root) then return 0 end
+            local added = 0
+            for _, descendant in ipairs(folder:GetDescendants()) do
+                if descendant:IsA("VehicleSeat") and descendant.Occupant == nil and (descendant.Position - root.Position).Magnitude < range and not entryFor(descendant) and isOwner(descendant) then
+                    if adopt(descendant) then added += 1 end
+                end
+            end
+            refreshState()
+            return added
+        end
+
+        local function reclaim()
+            local _, _, root = localParts()
+            if not root then return 0 end
+            local pulled = 0
+            for _, entry in ipairs(cars) do
+                local seat = entry.seat
+                if seat.Occupant == nil and not isOwner(seat) then
+                    seat.CFrame = root.CFrame * CFrame.new(0, 3, -10)
+                    seat.AssemblyLinearVelocity = ZERO
+                    pulled += 1
+                end
+            end
+            return pulled
+        end
+
         function api.release()
+            for _, entry in ipairs(cars) do unstripEntry(entry) end
             table.clear(cars)
             state.count, state.owned = 0, 0
             say("Released all cars")
@@ -11820,14 +12350,21 @@ do
             local folder = carFolder()
             local _, _, root = localParts()
             if not (folder and root) then say("No cars found") return end
-            local added = 0
-            for _, descendant in ipairs(folder:GetDescendants()) do
-                if descendant:IsA("VehicleSeat") and descendant.Occupant == nil and (descendant.Position - root.Position).Magnitude < 250 and isOwner(descendant) and not entryFor(descendant) then
-                    if adopt(descendant) then added += 1 end
-                end
-            end
-            refreshState()
+            local added = grabNear(flag("car_grab_range", 250))
             say(string.format("Grabbed %d cars, you now have %d", added, state.count))
+        end
+
+        function api.regrab()
+            local added = grabNear(flag("car_grab_range", 250))
+            local pulled = reclaim()
+            state.regrabs += added + pulled
+            refreshState()
+            say(string.format("Regrab: %d new, %d pulled back, %d total", added, pulled, state.count))
+        end
+
+        local function rotY(vector, angle_)
+            local c, sn = math.cos(angle_), math.sin(angle_)
+            return v3(vector.X * c + vector.Z * sn, vector.Y, -vector.X * sn + vector.Z * c)
         end
 
         function api.pattern(i, n, a, flat)
@@ -11837,7 +12374,43 @@ do
             local spread = flag("car_spread", 0)
             local frac = (i - 0.5) / n
             local phase = a + (i - 1) * (math.pi * 2 / n)
-            if pattern == "Double ring" then
+            local gap = flag("car_gap", 14)
+            if pattern == "Line" then
+                return rotY(v3((i - (n + 1) / 2) * gap, height, 0), a)
+            elseif pattern == "Grid" then
+                local cols = math.max(math.ceil(math.sqrt(n)), 1)
+                local rows = math.ceil(n / cols)
+                local col, row = (i - 1) % cols, math.floor((i - 1) / cols)
+                return rotY(v3((col - (cols - 1) / 2) * gap, height, (row - (rows - 1) / 2) * gap), a)
+            elseif pattern == "Wall" then
+                local cols = math.max(math.ceil(math.sqrt(n * 1.8)), 1)
+                local rows = math.ceil(n / cols)
+                local col, row = (i - 1) % cols, math.floor((i - 1) / cols)
+                return rotY(v3((col - (cols - 1) / 2) * gap, height + ((rows - 1) / 2 - row) * gap * 0.6, 0), a)
+            elseif pattern == "Cube" then
+                local side = math.max(math.ceil(n ^ (1 / 3) - 1e-6), 1)
+                local lx, ly, lz = (i - 1) % side, math.floor((i - 1) / side) % side, math.floor((i - 1) / (side * side))
+                local mid = (side - 1) / 2
+                return rotY(v3((lx - mid) * gap, height + (ly - mid) * gap * 0.6, (lz - mid) * gap), a)
+            elseif pattern == "Spiral" then
+                local r = radius * (0.1 + 0.9 * frac)
+                local p = a + frac * math.pi * 4
+                return v3(math.cos(p) * r, height, math.sin(p) * r)
+            elseif pattern == "Star" then
+                local spot = ((i - 1) / n) * 10
+                local k = math.floor(spot)
+                local u = spot - k
+                local function vertex(index)
+                    local ang = (index % 10) * math.pi / 5
+                    local rr = index % 2 == 0 and radius or radius * 0.45
+                    return v3(math.sin(ang) * rr, 0, math.cos(ang) * rr)
+                end
+                local point = vertex(k):Lerp(vertex(k + 1), u)
+                return rotY(v3(point.X, height, point.Z), a)
+            elseif pattern == "Figure eight" then
+                local d = 1 + math.sin(phase) ^ 2
+                return v3(math.cos(phase) * radius * 1.4 / d, height, math.sin(phase) * math.cos(phase) * radius * 1.4 / d)
+            elseif pattern == "Double ring" then
                 if i % 2 == 0 then
                     return v3(math.cos(-phase) * radius * 0.6, height + spread * 0.25, math.sin(-phase) * radius * 0.6)
                 end
@@ -11883,7 +12456,18 @@ do
 
         local function orbitCenter(dt, root)
             local target
-            if flag("car_follow", "Self") == "Cursor" then
+            local follow = flag("car_follow", "Self")
+            if follow == "Selected player" or follow == "Silent aim target" then
+                local targetRoot
+                if follow == "Selected player" then
+                    local player = Actions.selectedPlayer and Actions.selectedPlayer()
+                    local character = player and player.Character
+                    targetRoot = character and character:FindFirstChild("HumanoidRootPart")
+                else
+                    targetRoot = Actions.silentTarget and Actions.silentTarget()
+                end
+                if targetRoot and targetRoot.Parent then target = targetRoot.Position end
+            elseif follow == "Cursor" then
                 local cam = Camera()
                 if cam then
                     local ref = UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter and cam.ViewportSize / 2 or UserInputService:GetMouseLocation()
@@ -11916,7 +12500,7 @@ do
             local void = workspace.FallenPartsDestroyHeight
             if type(void) ~= "number" or void ~= void then void = -500 end
             local top = math.huge
-            if flag("car_cap", true) then
+            if flag("car_cap", false) then
                 local floorY = groundAt(middle)
                 if floorY then top = floorY + 48.5 end
             end
@@ -11946,14 +12530,77 @@ do
             return CFrame.lookAt(position, position + forward)
         end
 
+        local function carParts(entry)
+            local now = clock()
+            if entry.parts and now - entry.partsAt < 1 then return entry.parts end
+            local list = {}
+            local model = entry.model
+            if model and model.Parent then
+                for _, descendant in ipairs(model:GetDescendants()) do
+                    if descendant:IsA("BasePart") and not descendant.Anchored then
+                        list[#list + 1] = descendant
+                        if #list >= 60 then break end
+                    end
+                end
+            end
+            if #list == 0 then list[1] = entry.seat end
+            entry.parts, entry.partsAt = list, now
+            return list
+        end
+
+        local function placeEntry(entry, cf, velocity)
+            local seat = entry.seat
+            entry.goal = cf
+            entry.goalVelocity = velocity or ZERO
+            local model = entry.model
+            if entry.offset and model and model.Parent and model:IsA("Model") then
+                local ok = pcall(model.PivotTo, model, cf * entry.offset)
+                if not ok then seat.CFrame = cf end
+            else
+                seat.CFrame = cf
+            end
+            for _, part in ipairs(carParts(entry)) do
+                part.AssemblyLinearVelocity = entry.goalVelocity
+                part.AssemblyAngularVelocity = ZERO
+            end
+        end
+
+        local function holdStep()
+            for _, entry in ipairs(cars) do
+                local goal = entry.goal
+                if goal and entry.seat.Parent and entry.seat.Occupant == nil then
+                    local seat = entry.seat
+                    local model = entry.model
+                    if entry.offset and model and model.Parent and model:IsA("Model") then
+                        pcall(model.PivotTo, model, goal * entry.offset)
+                    else
+                        seat.CFrame = goal
+                    end
+                    seat.AssemblyLinearVelocity = entry.goalVelocity or ZERO
+                    seat.AssemblyAngularVelocity = ZERO
+                end
+            end
+        end
+
         local function engineStep(dt)
             local orbiting = flag("car_orbit_on", false)
-            if not (orbiting or state.spawning) then return end
+            local frozen = flag("car_freeze", false)
+            if not (orbiting or state.spawning or frozen) then return end
             prune()
             local count = #cars
             if count == 0 then return end
             local _, _, root = localParts()
             if not root then return end
+            if frozen then
+                for _, entry in ipairs(cars) do
+                    local seat = entry.seat
+                    if seat.Occupant == nil then
+                        entry.frozen = entry.frozen or seat.CFrame
+                        placeEntry(entry, entry.frozen, ZERO)
+                    end
+                end
+                return
+            end
             local middle
             if orbiting then
                 local spin = math.rad(flag("car_spin", 90))
@@ -11966,9 +12613,14 @@ do
             for index, entry in ipairs(cars) do
                 local seat = entry.seat
                 if seat.Occupant == nil then
-                    seat.CFrame = orbiting and orbitCFrame(index, count, middle) or parkCFrame(entry, index - 1)
-                    seat.AssemblyLinearVelocity = ZERO
-                    seat.AssemblyAngularVelocity = ZERO
+                    local goal = orbiting and orbitCFrame(index, count, middle) or parkCFrame(entry, index - 1)
+                    local velocity = ZERO
+                    if orbiting and entry.lastGoal and dt > 0 then
+                        velocity = (goal.Position - entry.lastGoal.Position) / dt
+                        if velocity.Magnitude > 150 then velocity = velocity.Unit * 150 end
+                    end
+                    entry.lastGoal = goal
+                    placeEntry(entry, goal, velocity)
                 end
             end
         end
@@ -11976,16 +12628,44 @@ do
         local function startEngine()
             engineUsers += 1
             if engineUsers > 1 then return end
-            bag.add(RunService.Heartbeat:Connect(function(dt)
+            local radiusSaved = {}
+            for _, name in ipairs({ "SimulationRadius", "MaximumSimulationRadius" }) do
+                if type(gethiddenproperty) == "function" and type(sethiddenproperty) == "function" then
+                    local okRead, value = pcall(gethiddenproperty, LocalPlayer, name)
+                    if okRead and type(value) == "number" then
+                        radiusSaved[name] = value
+                        pcall(sethiddenproperty, LocalPlayer, name, 1e9)
+                    end
+                end
+            end
+            bag.add({ Disconnect = function()
+                for name, value in pairs(radiusSaved) do pcall(sethiddenproperty, LocalPlayer, name, value) end
+            end })
+            local stepSignal = RunService.PreSimulation or RunService.Stepped
+            bag.add(stepSignal:Connect(function(first, second)
+                local dt = second or first
+                if type(dt) ~= "number" then dt = 1 / 60 end
                 local ok, err = pcall(engineStep, math.min(dt, 0.1))
                 if not ok and clock() - lastCenterAt > 5 then
                     lastCenterAt = clock()
                     warnf("car orbit:", err)
                 end
             end))
-            local nextState = 0
+            bag.add(RunService.Heartbeat:Connect(function()
+                if not flag("car_dual", true) then return end
+                pcall(holdStep)
+            end))
+            local nextState, nextRegrab = 0, 0
             bag.add(RunService.Heartbeat:Connect(function()
                 local now = clock()
+                if flag("car_regrab", false) and now >= nextRegrab then
+                    nextRegrab = now + math.max(flag("car_regrab_cd", 2), 0.25)
+                    pcall(function()
+                        local added = grabNear(flag("car_grab_range", 250))
+                        local pulled = reclaim()
+                        state.regrabs += added + pulled
+                    end)
+                end
                 if now < nextState then return end
                 nextState = now + 0.25
                 pcall(refreshState)
@@ -12039,12 +12719,32 @@ do
                 end)
             end
             local holdConn
-            if flag("car_tp", true) then
+            local mode = flag("car_stand", "Next to spawner")
+            if mode == "Pinned on spawner" then
                 holdConn = RunService.Heartbeat:Connect(function()
                     local _, _, mine = localParts()
                     if mine then
                         mine.CFrame = CFrame.new(stand)
                         mine.AssemblyLinearVelocity = ZERO
+                    end
+                end)
+            elseif mode == "Next to spawner" then
+                local spot = list[1].Position + v3(0, 3, 0)
+                local _, _, mine = localParts()
+                if mine then
+                    mine.CFrame = CFrame.new(spot)
+                    mine.AssemblyLinearVelocity = ZERO
+                end
+                holdConn = RunService.Heartbeat:Connect(function()
+                    local _, _, mine2 = localParts()
+                    if not mine2 then return end
+                    local nearest = math.huge
+                    for _, pad in ipairs(list) do
+                        nearest = math.min(nearest, (pad.Position - mine2.Position).Magnitude)
+                    end
+                    if nearest > 12 then
+                        mine2.CFrame = CFrame.new(spot)
+                        mine2.AssemblyLinearVelocity = ZERO
                     end
                 end)
             end
@@ -12082,7 +12782,7 @@ do
             if holdConn then holdConn:Disconnect() end
             if token == spawnToken then
                 state.spawning = false
-                if flag("car_tp", true) and flag("car_return", true) and home then
+                if mode ~= "Stay where I am" and flag("car_return", true) and home then
                     local _, _, mine = localParts()
                     if mine then mine.CFrame = home end
                 end
@@ -12104,6 +12804,39 @@ do
             stopEngine()
         end)
 
+        feature("car_regrab", function()
+            startEngine()
+        end, function()
+            stopEngine()
+        end)
+
+        feature("car_freeze", function()
+            for _, entry in ipairs(cars) do entry.frozen = nil end
+            startEngine()
+            state.status = "Frozen in place"
+        end, function()
+            for _, entry in ipairs(cars) do entry.frozen = nil end
+            stopEngine()
+            if state.status == "Frozen in place" then state.status = flag("car_orbit_on", false) and "Orbiting" or "Idle" end
+        end)
+
+        local stripConn
+        feature("car_strip", function()
+            if stripConn then stripConn:Disconnect() end
+            local nextAt = 0
+            stripConn = RunService.Heartbeat:Connect(function()
+                local now = clock()
+                if now < nextAt then return end
+                nextAt = now + 0.5
+                for _, entry in ipairs(cars) do
+                    if entry.model and entry.model.Parent then pcall(stripEntry, entry) end
+                end
+            end)
+        end, function()
+            if stripConn then stripConn:Disconnect() stripConn = nil end
+            for _, entry in ipairs(cars) do unstripEntry(entry) end
+        end)
+
         feature("car_orbit_on", function()
             angle = 0
             center = nil
@@ -12117,6 +12850,8 @@ do
         onUnload(function()
             spawnToken += 1
             state.spawning = false
+            if stripConn then stripConn:Disconnect() stripConn = nil end
+            for _, entry in ipairs(cars) do unstripEntry(entry) end
             bag.clear()
             table.clear(cars)
             Actions.carOrbit = nil
@@ -13034,6 +13769,80 @@ do
                 return true
             end
 
+            local SWITCH_ORDER = {
+                { label = "AK-47", tools = { "ak47" } },
+                { label = "M4A1", tools = { "m4a1", "m4" } },
+                { label = "MP5", tools = { "mp5" } },
+                { label = "FAL", tools = { "fal" } },
+                { label = "Remington 870", tools = { "remington870", "r870", "remington" } },
+                { label = "M700", tools = { "m700" } },
+                { label = "M9", tools = { "m9" } },
+                { label = "Revolver", tools = { "revolver" } },
+                { label = "Taser", tools = { "taser" } },
+            }
+            local switchNext = 0
+
+            local function pickedIn(value, key)
+                if type(value) ~= "table" then return false end
+                if value[key] == true then return true end
+                for _, chosen in pairs(value) do
+                    if chosen == key then return true end
+                end
+                return false
+            end
+
+            local function toolFor(entry, holders)
+                for _, holder in ipairs(holders) do
+                    for _, child in ipairs(holder:GetChildren()) do
+                        if child:IsA("Tool") then
+                            local name = fxKey(child.Name)
+                            for _, alias in ipairs(entry.tools) do
+                                if name == alias then return child end
+                            end
+                        end
+                    end
+                end
+                return nil
+            end
+
+            local function autoSwitch(now, head)
+                if now < switchNext then return end
+                local chosen = flag("silent_switch_weapons", {})
+                local order = {}
+                for _, entry in ipairs(SWITCH_ORDER) do
+                    if pickedIn(chosen, entry.label) then order[#order + 1] = entry end
+                end
+                if #order == 0 then return end
+                local entity = selectTarget("silent", aimRef(), head.Position, { limit = 1000, ignoreDown = false, skipWall = flag("silent_wallbang", false) })
+                if not entity then return end
+                switchNext = now + math.max(flag("silent_switch_delay", 0.3), 0.03)
+                local character = LocalPlayer.Character
+                local hum = character and character:FindFirstChildOfClass("Humanoid")
+                if not hum then return end
+                local current = character:FindFirstChildOfClass("Tool")
+                local holders = { character }
+                local pack = LocalPlayer:FindFirstChildOfClass("Backpack")
+                if pack then holders[#holders + 1] = pack end
+                local available = {}
+                for _, entry in ipairs(order) do
+                    local tool = toolFor(entry, holders)
+                    if tool then available[#available + 1] = tool end
+                end
+                if #available == 0 then return end
+                local index = 0
+                for position, tool in ipairs(available) do
+                    if tool == current then index = position break end
+                end
+                for step = 1, #available do
+                    local candidate = available[(index + step - 1) % #available + 1]
+                    local ammo = candidate:GetAttribute("Local_CurrentAmmo")
+                    if candidate ~= current and (ammo == nil or ammo > 0) then
+                        hum:EquipTool(candidate)
+                        return
+                    end
+                end
+            end
+
             feature("Silent_Global_Enabled", function()
                 wants.silent = true
                 refresh()
@@ -13057,6 +13866,7 @@ do
                         local _, _, root = localParts()
                         local cam = Camera()
                         local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                        if root and cam and head and flag("silent_switch", false) then pcall(autoSwitch, now, head) end
                         if root and cam and head and readyGun() then
                             local data = Gun.data()
                             local entity, part = selectTarget("silent", aimRef(), head.Position, {
@@ -13400,6 +14210,18 @@ do
                 local entity = selectTarget("silent", aimRef(), head.Position, { skipWall = true, ignoreDown = false, limit = flag("orbit_max", 500) })
                 return entity and entity.Root or nil
             end
+
+            local silentCache = { at = 0, root = nil }
+            Actions.silentTarget = function()
+                local now = clock()
+                if now - silentCache.at > 0.1 then
+                    silentCache.at = now
+                    local ok, root = pcall(pickTarget)
+                    silentCache.root = ok and root or nil
+                end
+                return silentCache.root
+            end
+            onUnload(function() Actions.silentTarget = nil end)
 
             local function orbitHeight(center)
                 local void = workspace.FallenPartsDestroyHeight

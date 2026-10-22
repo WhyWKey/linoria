@@ -2241,7 +2241,8 @@ do
     do
         local RB = RageSubs.Main:Section({ Name = "Ragebot", Side = 1 })
         RB:Toggle({ Name = "Enabled", Flag = "rb_enabled", Default = false, Tooltip = "Hides in the void, comes out next to the target, shoots and goes back" }):Keybind({ Name = "Ragebot key", Flag = "rb_key", Default = "None", Sync = true })
-        RB:Dropdown({ Name = "Weapon", Flag = "rb_weapon", Items = { "Equipped", "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver" }, Default = "Equipped", Tooltip = "Equipped keeps whatever you hold. A weapon name equips it for you while the ragebot has a target" })
+        RB:Dropdown({ Name = "Weapons", Flag = "rb_weapons", Items = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver" }, Multi = true, Default = {}, Tooltip = "The ragebot cycles through these weapons while it shoots and equips them for you. Nothing selected keeps whatever you hold" })
+        RB:Slider({ Name = "Weapon switch delay", Flag = "rb_switch_delay", Min = 0.05, Max = 2, Default = 0.15, Suffix = "s", Decimals = 0.01, Tooltip = "How long each weapon is held before the next one. An empty or reloading weapon is swapped out at once" })
         RB:Dropdown({ Name = "Autoget weapons", Flag = "rb_autoget", Items = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }, Multi = true, Default = {}, Tooltip = "Picks these weapons up from their spawns whenever you do not have them, also after you respawn. The ragebot pauses while you fetch one" })
         RB:Dropdown({ Name = "Settings", Flag = "rb_settings", Items = { "View target", "Show server position", "Random peek spot" }, Multi = true, Default = {}, Tooltip = "View target: the camera follows the target. Show server position: a highlighted copy of you shows where the server sees you. Random peek spot: a new random spot around the target for every shot" })
         RB:Dropdown({ Name = "Hit part", Flag = "rb_part", Items = { "Head", "Torso", "Random" }, Default = "Head" })
@@ -2255,7 +2256,7 @@ do
 
         local RT = RageSubs.Main:Section({ Name = "Target", Side = 2 })
         RT:Toggle({ Name = "Add target to list", Flag = "rb_add", Default = false, Tooltip = "Press the key to add the player closest to your cursor to the target list. Press again on the same player to remove them" }):Keybind({ Name = "Add target key", Flag = "rb_add_key", Default = "G", Sync = false })
-        RT:Dropdown({ Name = "Mode", Flag = "rb_mode", Items = { "Target list", "Players tab", "Closest", "Closest to cursor" }, Default = "Target list", Tooltip = "Target list: only the players in the list below, nobody else. Players tab: only the player selected in the Players tab. Closest and Closest to cursor shoot anyone" })
+        RT:Dropdown({ Name = "Mode", Flag = "rb_tmode", Items = { "Target list", "Players tab", "Closest", "Closest to cursor" }, Default = "Target list", Tooltip = "Target list: only the players in the list below, nobody else. Players tab: only the player selected in the Players tab. Closest and Closest to cursor shoot anyone" })
         local names = {}
         for _, player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer then names[#names + 1] = player.Name end
@@ -2268,7 +2269,7 @@ do
         RT:Slider({ Name = "Nearby range", Flag = "rb_nearby_range", Min = 10, Max = 300, Default = 60, Suffix = " studs", Decimals = 1 })
         RT:Toggle({ Name = "Swap targets", Flag = "rb_swap", Default = false, Tooltip = "Moves on to the next player when the current one takes no damage for the time below" })
         RT:Slider({ Name = "Swap after", Flag = "rb_swap_time", Min = 1, Max = 30, Default = 4, Suffix = "s", Decimals = 0.5 })
-        RT:Toggle({ Name = "Ignore forcefield", Flag = "rb_ff", Default = false })
+        RT:Toggle({ Name = "Skip forcefield targets", Flag = "rb_ff", Default = false, Tooltip = "Picks another target while one has a forcefield. Off: you stay hidden in the void until the forcefield is gone" })
         RT:Toggle({ Name = "Ignore tased and arrested", Flag = "rb_down", Default = false })
         RT:Toggle({ Name = "Ignore friendly team", Flag = "rb_team", Default = false })
         RT:Toggle({ Name = "Hostile only (inmates)", Flag = "rb_hostile", Default = false })
@@ -2289,7 +2290,7 @@ do
         RV:Slider({ Name = "Smart wait", Flag = "rb_smart_wait", Min = 1, Max = 30, Default = 8, Suffix = "s", Decimals = 0.5 })
         RV:Slider({ Name = "Smart void time", Flag = "rb_smart_void", Min = 1, Max = 30, Default = 5, Suffix = "s", Decimals = 0.5 })
         RV:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "Under map", "High", "Far", "Extreme" }, Default = "Under map", Tooltip = "Under map hides just above the point where the engine destroys parts, below your real position, the same spot the Void desync uses. High, Far and Extreme are far above or beside the map and can be killed by the game's kill planes" })
-        RV:Dropdown({ Name = "Direction", Flag = "rb_dir", Items = { "+Y", "+X", "+Z" }, Default = "+Y" })
+        RV:Dropdown({ Name = "Direction", Flag = "rb_dir", Items = { "+Y", "+X", "+Z" }, Multi = true, Default = { "+Y" }, Tooltip = "Every position change picks one of the selected directions at random. Does not affect the Under map pattern" })
         RV:Slider({ Name = "Depth multiplier", Flag = "rb_depth", Min = 0.1, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
         RV:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
 
@@ -2357,7 +2358,8 @@ do
     Silent:Dropdown({ Name = "Switch weapons", Flag = "silent_switch_weapons", Items = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver", "Taser" }, Multi = true, Default = {}, Tooltip = "The weapons to cycle through, in this order" })
     Silent:Slider({ Name = "Switch delay", Flag = "silent_switch_delay", Min = 0.03, Max = 2, Default = 0.3, Suffix = " s", Decimals = 0.01, Tooltip = "Time between weapon switches" })
 
-    local FovAim, FovSilent = CombatSubs.Aim:MultiSection({ Sections = { "Aim FOV", "Silent FOV" }, Side = 2 })
+    local FovAim = CombatSubs.Aim:Section({ Name = "Aim FOV", Side = 2 })
+    local FovSilent = CombatSubs.Silent:Section({ Name = "Silent FOV", Side = 1 })
     local aimCircle = FovAim:Toggle({ Name = "Show FOV circle", Flag = "aim_fov_show", Default = false })
     aimCircle:Colorpicker({ Name = "Color", Flag = "aim_fov_color", Default = Color3.new(1, 1, 1), Alpha = true })
     FovAim:Toggle({ Name = "Filled", Flag = "aim_fov_filled", Default = false })
@@ -3643,7 +3645,8 @@ do
     carOrbitBox:Dropdown({ Name = "Facing", Flag = "car_face", Items = { "Direction of travel", "Center", "Fixed" }, Default = "Direction of travel" })
     carOrbitBox:Slider({ Name = "Car tilt", Flag = "car_tilt", Min = 0, Max = 180, Default = 0, Suffix = " deg", Decimals = 1, Tooltip = "Rolls every car sideways, 90 puts them on their side" })
     carOrbitBox:Slider({ Name = "Follow smoothing", Flag = "car_smooth", Min = 1, Max = 60, Default = 12, Suffix = " /s", Decimals = 1, Tooltip = "How quickly the orbit center catches up with you or the cursor, lower is lazier" })
-    carOrbitBox:Toggle({ Name = "Stay under the height cap", Flag = "car_cap", Default = false, Tooltip = "Keeps cars below the game's height limit and above the void" })
+    carOrbitBox:Toggle({ Name = "Stay under the height cap", Flag = "car_cap", Default = true, Tooltip = "Keeps every car below the height limit and above the void, so the orbit never reaches the kill plane" })
+    carOrbitBox:Slider({ Name = "Height cap", Flag = "car_cap_y", Min = 20, Max = 179, Default = 165, Suffix = " studs", Decimals = 1, Tooltip = "Highest point a car may reach. The kill plane is at about 180" })
 
     local killSections, lastKill, lastCheck = {}, nil, 0
     track(RunService.Heartbeat:Connect(function()
@@ -4114,7 +4117,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     AuraBox:Dropdown({ Name = "Aura", Flag = "pa_source", Items = AURA_PACK.items, Default = "angel" })
     AuraBox:Toggle({ Name = "Keep pack colors", Flag = "pa_pack_original", Default = true, Tooltip = "Pack auras keep their own colors. Turn off to paint them with the color above like the other auras." })
 
-    local Avatar = WorldSubs.Effects:Section({ Name = "Avatar changer", Side = 2 })
+    local Avatar = PlayersPage:Section({ Name = "Avatar changer", Side = 2 })
     Avatar:Toggle({ Name = "Avatar spoofer window", Flag = "spoof_ui", Default = false, Tooltip = "Opens a window to browse a player's current look and saved outfits" })
     Avatar:Input({ Name = "User", Flag = "spoof_avatar_user", Placeholder = "UserId, username or profile URL" })
     Avatar:Button({ Name = "Apply avatar", Callback = function()
@@ -13742,9 +13745,10 @@ do
             local void = workspace.FallenPartsDestroyHeight
             if type(void) ~= "number" or void ~= void then void = -500 end
             local top = math.huge
-            if flag("car_cap", false) then
+            if flag("car_cap", true) then
+                top = flag("car_cap_y", 165)
                 local floorY = groundAt(middle)
-                if floorY then top = floorY + 48.5 end
+                if floorY then top = math.min(top, floorY + 48.5) end
             end
             position = v3(position.X, math.clamp(position.Y, void + 15, math.max(top, void + 16)), position.Z)
             local face = flag("car_face", "Direction of travel")
@@ -13767,8 +13771,11 @@ do
             local right = forward:Cross(v3(0, 1, 0))
             right = right.Magnitude > 0.01 and right.Unit or v3(1, 0, 0)
             local distance = flag("car_forward", 25)
-            local lane, row, tier = k % 6, math.floor(k / 6) % 3, math.floor(k / 18)
-            local position = entry.spawn.Position + forward * (distance + row * 12) + right * ((lane - 2.5) * 7) + v3(0, 3 + tier * 6, 0)
+            local lane, row, tier = k % 5, math.floor(k / 5) % 4, math.floor(k / 20)
+            local flat = entry.spawn.Position + forward * (distance + row * 22) + right * ((lane - 2) * 12)
+            local lift = tier * 10
+            if flag("car_cap", true) then lift = math.min(lift, math.max(flag("car_cap_y", 165) - flat.Y, 0)) end
+            local position = v3(flat.X, entry.spawn.Position.Y + 1 + lift, flat.Z)
             return CFrame.lookAt(position, position + forward)
         end
 
@@ -15168,6 +15175,7 @@ do
                 ["Remington 870"] = { "remington870", "r870", "remington" }, ["M700"] = { "m700" }, ["M9"] = { "m9" }, ["Revolver"] = { "revolver" },
             }
             local HEAD_OFFSET = v3(0, 1.5, 0)
+            local WEAPON_ORDER = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver" }
 
             local function picked(value, key)
                 if type(value) ~= "table" then return false end
@@ -15298,7 +15306,7 @@ do
             end
 
             local function pickTarget(realPos)
-                local mode = flag("rb_mode", "Target list")
+                local mode = flag("rb_tmode", "Target list")
                 local list = flag("rb_targets", {})
                 local range = flag("rb_range", 2000)
                 local nearby = flag("rb_nearby", false)
@@ -15370,6 +15378,8 @@ do
             end
 
             local function voidPoint(now)
+                local currentPattern = flag("rb_pattern", "Under map")
+                if R.voidPattern ~= currentPattern then R.voidPattern, R.voidPos = currentPattern, nil end
                 if R.voidPos and now - R.voidRoll < flag("rb_switch", 0.05) then return R.voidPos end
                 R.voidRoll = now
                 local depth = flag("rb_depth", 1)
@@ -15399,7 +15409,12 @@ do
                 main = math.clamp(main, -5e8, 5e8)
                 a = math.clamp(a, -5e8, 5e8)
                 b = math.clamp(b, -5e8, 5e8)
-                local direction = flag("rb_dir", "+Y")
+                local chosen = {}
+                local value = flag("rb_dir", { "+Y" })
+                for _, name in ipairs({ "+Y", "+X", "+Z" }) do
+                    if picked(value, name) then chosen[#chosen + 1] = name end
+                end
+                local direction = #chosen > 0 and chosen[math.random(1, #chosen)] or "+Y"
                 if direction == "+X" then
                     R.voidPos = v3(main, a, b)
                 elseif direction == "+Z" then
@@ -15577,6 +15592,7 @@ do
                 R.realPos = realPos
                 local _, hum = localParts()
                 local tool, empty = gunState()
+                if empty and R.altReady then empty = false end
                 local voidOn = flag("rb_void", false)
                 local when = flag("rb_void_when", "While targeting")
                 local e = R.entity
@@ -15605,7 +15621,8 @@ do
                 end
 
                 if not e or not R.center then
-                    R.status = "waiting for target"
+                    local listed = flag("rb_targets", {})
+                    R.status = (flag("rb_tmode", "Target list") == "Target list" and next(listed) == nil) and "no targets selected" or "waiting for target"
                     R.lastPhase = ""
                     if voidOn and when == "Always" then
                         if now >= R.phaseEnd then
@@ -15619,6 +15636,13 @@ do
 
                 if not tool then
                     R.status = "no gun"
+                    return nil
+                end
+
+                if e.Character:FindFirstChildOfClass("ForceField") then
+                    R.status = "target has forcefield"
+                    R.lastPhase = ""
+                    if voidOn then return voidPoint(now), 1e9, style end
                     return nil
                 end
 
@@ -15713,12 +15737,41 @@ do
                 end
                 R.entity, R.center, R.vel, R.live = e, position, velocity or ZERO, live ~= false
 
-                local label = flag("rb_weapon", "Equipped")
-                if e and label ~= "Equipped" and hum and now >= R.equipAt then
-                    R.equipAt = now + 0.4
+                local chosen = flag("rb_weapons", {})
+                local pool = {}
+                for _, name in ipairs(WEAPON_ORDER) do
+                    if picked(chosen, name) then
+                        local owned = findWeapon(name)
+                        if owned then pool[#pool + 1] = owned end
+                    end
+                end
+                R.altReady = false
+                if e and hum and #pool > 0 then
                     local held = char:FindFirstChildOfClass("Tool")
-                    local wanted = findWeapon(label)
-                    if wanted and held ~= wanted then pcall(function() hum:EquipTool(wanted) end) end
+                    local function ready(tool)
+                        local ammo = tool:GetAttribute("Local_CurrentAmmo")
+                        return (ammo == nil or ammo > 0) and (tool:GetAttribute("Local_ReloadSession") or 0) <= 0
+                    end
+                    local heldIndex = 0
+                    for index, tool in ipairs(pool) do
+                        if tool == held then heldIndex = index end
+                    end
+                    local heldReady = heldIndex > 0 and ready(held)
+                    for _, tool in ipairs(pool) do
+                        if tool ~= held and ready(tool) then R.altReady = true break end
+                    end
+                    if not heldReady or (#pool > 1 and now >= R.equipAt) then
+                        local pick
+                        for step = 1, #pool do
+                            local tool = pool[(heldIndex + step - 1) % #pool + 1]
+                            if tool ~= held and ready(tool) then pick = tool break end
+                        end
+                        if heldIndex == 0 and not pick then pick = pool[1] end
+                        if pick then
+                            R.equipAt = now + math.max(flag("rb_switch_delay", 0.15), 0.05)
+                            pcall(function() hum:EquipTool(pick) end)
+                        end
+                    end
                 end
 
                 local settings = flag("rb_settings", {})

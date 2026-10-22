@@ -2077,6 +2077,88 @@ local function wrapPage(tab)
         return table.unpack(sections)
     end
 
+    function page:SubTabs(names)
+        local bar = { buttons = {}, current = names[1], built = false, groups = {} }
+        local subs = {}
+
+        local function apply()
+            for name, list in pairs(bar.groups) do
+                for _, frame in ipairs(list) do frame.Visible = name == bar.current end
+            end
+            for name, button in pairs(bar.buttons) do
+                local active = name == bar.current
+                button.BackgroundColor3 = active and Library.AccentColor or Library.MainColor
+                pcall(function()
+                    Library.RegistryMap[button].Properties.BackgroundColor3 = active and "AccentColor" or "MainColor"
+                end)
+            end
+        end
+
+        local function build(container)
+            if bar.built then return end
+            bar.built = true
+            local box = container.Parent.Parent
+            local tabFrame = box.Parent.Parent
+            for _, side in ipairs(tabFrame:GetChildren()) do
+                if side:IsA("ScrollingFrame") then
+                    side.Position = UDim2.new(side.Position.X.Scale, side.Position.X.Offset, 0, side.Position.Y.Offset + 28)
+                    side.Size = UDim2.new(side.Size.X.Scale, side.Size.X.Offset, 1, side.Size.Y.Offset - 28)
+                end
+            end
+            local holder = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 7, 0, 6), Size = UDim2.new(1, -14, 0, 22), ZIndex = 3, Parent = tabFrame })
+            Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = holder })
+            for index, name in ipairs(names) do
+                local width = Library:GetTextBounds(name, Library.Font, Library.FontSize) + 22
+                local frame = Library:Create("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(0, width, 1, 0), LayoutOrder = index, ZIndex = 3, Parent = holder })
+                Library:AddToRegistry(frame, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+                Library:CreateLabel({ Size = UDim2.new(1, 0, 1, 0), Text = name, ZIndex = 4, Parent = frame })
+                local hit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 6, Parent = frame })
+                hit.MouseButton1Click:Connect(function()
+                    if Library:MouseIsOverOpenedFrame() then return end
+                    bar.current = name
+                    apply()
+                end)
+                bar.buttons[name] = frame
+            end
+            apply()
+        end
+
+        local function register(name, container)
+            build(container)
+            local frame = container.Parent.Parent
+            bar.groups[name] = bar.groups[name] or {}
+            table.insert(bar.groups[name], frame)
+            frame.Visible = name == bar.current
+        end
+
+        for _, name in ipairs(names) do
+            local sub = { load = { 0, 0 } }
+            local function pick(side)
+                if side == 1 or side == 2 then return side end
+                return sub.load[1] <= sub.load[2] and 1 or 2
+            end
+            function sub:Section(info)
+                local side = pick(info.Side)
+                local group = side == 1 and tab:AddLeftGroupbox(info.Name) or tab:AddRightGroupbox(info.Name)
+                GroupMeta = GroupMeta or getmetatable(group)
+                register(name, group.Container)
+                return wrapGroup(group, sub, side)
+            end
+            function sub:MultiSection(info)
+                local side = pick(info.Side)
+                local box = side == 1 and tab:AddLeftTabbox() or tab:AddRightTabbox()
+                local sections = {}
+                for index, title in ipairs(info.Sections) do
+                    sections[index] = wrapGroup(box:AddTab(title), sub, side)
+                end
+                register(name, sections[1].Container or box.Tabs[info.Sections[1]].Container)
+                return table.unpack(sections)
+            end
+            subs[name] = sub
+        end
+        return subs
+    end
+
     return page
 end
 
@@ -2090,13 +2172,18 @@ function Window:Page(info)
     return wrapPage(LinoriaWindow:AddTab(info.Name))
 end
 
-local CombatTab   = Window:Page({ Name = "Legit bot", Columns = 2, Subtabs = false })
-local RageTab     = Window:Page({ Name = "Ragebot", Columns = 2, Subtabs = false })
+local CombatTab   = Window:Page({ Name = "Legit", Columns = 2, Subtabs = false })
+local CombatSubs  = CombatTab:SubTabs({ "Aim", "Silent", "Other" })
+local RageTab     = Window:Page({ Name = "Rage", Columns = 2, Subtabs = false })
+local RageSubs    = RageTab:SubTabs({ "Main", "Void", "Aim", "Other" })
 local VisualsPage = Window:Page({ Name = "Visuals", Columns = 2, Subtabs = false })
+local VisualsSubs = VisualsPage:SubTabs({ "ESP", "Viewmodel", "Screen" })
 local WorldPage   = Window:Page({ Name = "World",   Columns = 2, Subtabs = false })
+local WorldSubs   = WorldPage:SubTabs({ "Lighting", "Weather", "Effects", "Indicators" })
 
 local PlayersPage  = Window:Page({ Name = "Players", Columns = 2, Subtabs = false })
 local MiscPage     = Window:Page({ Name = "Misc",    Columns = 2, Subtabs = false })
+local MiscSubs     = MiscPage:SubTabs({ "Movement", "Combat", "Utility" })
 local MiscActions  = { clearCheats = noop }
 local TeleportPage = Window:Page({ Name = "Teleport", Columns = 2, Subtabs = false })
 local ShotEvents = { shot = {}, hit = {}, cast = {}, kill = {} }
@@ -2115,7 +2202,7 @@ do
 
 do
 
-    local Aim = CombatTab:Section({ Name = "Aim assist", Side = 1 })
+    local Aim = CombatSubs.Aim:Section({ Name = "Aim assist", Side = 1 })
     local aimEnabled = Aim:Toggle({ Name = "Enabled", Flag = "Aim_Global_Enabled", Default = false })
     aimEnabled:Keybind({ Name = "Aim key", Flag = "Aim_Global_Key", Default = "MB2", Mode = "Hold" })
     Aim:Dropdown({ Name = "Method", Flag = "aim_method", Items = { "Camera", "Mouse" }, Default = "Camera" })
@@ -2133,14 +2220,14 @@ do
     Aim:Toggle({ Name = "Hostile only (inmates)", Flag = "aim_hostile", Default = false })
     Aim:Toggle({ Name = "Ignore tased / arrested", Flag = "aim_ignore_down", Default = false })
 
-    local Smooth = CombatTab:Section({ Name = "Aim smoothing", Side = 1 })
+    local Smooth = CombatSubs.Aim:Section({ Name = "Aim smoothing", Side = 1 })
     Smooth:Toggle({ Name = "Smoothing", Flag = "aim_smooth", Default = true })
     Smooth:Slider({ Name = "Start", Flag = "aim_smooth_start", Min = 0, Max = 99, Default = 85, Suffix = "%", Decimals = 1 })
     Smooth:Slider({ Name = "End", Flag = "aim_smooth_end", Min = 0, Max = 99, Default = 20, Suffix = "%", Decimals = 1 })
     Smooth:Slider({ Name = "Increment", Flag = "aim_smooth_inc", Min = 0, Max = 200, Default = 50, Suffix = "%/s", Decimals = 1 })
     Smooth:Slider({ Name = "Randomization", Flag = "aim_smooth_rand", Min = 0, Max = 50, Default = 5, Suffix = "%", Decimals = 1 })
 
-    local Trigger = CombatTab:Section({ Name = "Triggerbot", Side = 1 })
+    local Trigger = CombatSubs.Other:Section({ Name = "Triggerbot", Side = 1 })
     local triggerEnabled = Trigger:Toggle({ Name = "Enabled", Flag = "Trigger_Global_Enabled", Default = false })
     triggerEnabled:Keybind({ Name = "Trigger key", Flag = "Trigger_Global_Key", Default = "None", Mode = "Always" })
     Trigger:Dropdown({ Name = "Hit part", Flag = "Trigger_Global_HitPart", Items = { "Head", "Torso", "Any" }, Default = "Head" })
@@ -2152,7 +2239,7 @@ do
     Trigger:Toggle({ Name = "Hostile only (inmates)", Flag = "trigger_hostile", Default = false })
 
     do
-        local RB = RageTab:Section({ Name = "Ragebot", Side = 1 })
+        local RB = RageSubs.Main:Section({ Name = "Ragebot", Side = 1 })
         RB:Toggle({ Name = "Enabled", Flag = "rb_enabled", Default = false, Tooltip = "Hides in the void, comes out next to the target, shoots and goes back" }):Keybind({ Name = "Ragebot key", Flag = "rb_key", Default = "None", Sync = true })
         RB:Dropdown({ Name = "Weapon", Flag = "rb_weapon", Items = { "Equipped", "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver" }, Default = "Equipped", Tooltip = "Equipped keeps whatever you hold. A weapon name equips it for you while the ragebot has a target" })
         RB:Dropdown({ Name = "Autoget weapons", Flag = "rb_autoget", Items = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }, Multi = true, Default = {}, Tooltip = "Picks these weapons up from their spawns whenever you do not have them, also after you respawn. The ragebot pauses while you fetch one" })
@@ -2162,12 +2249,13 @@ do
         RB:Slider({ Name = "Shot delay after peeking", Flag = "rb_shot_delay", Min = 0, Max = 0.3, Default = 0.03, Suffix = "s", Decimals = 0.01, Tooltip = "How long you stand at the peek spot before the first shot, so the server has your new position" })
         RB:Toggle({ Name = "Auto reload", Flag = "rb_reload", Default = false, Tooltip = "Reloads when the gun is empty. With void spam on you stay hidden while it reloads" })
         RB:Toggle({ Name = "Show status", Flag = "rb_status", Default = false, Tooltip = "A line of text at the top of the screen with what the ragebot is doing" })
+        RB:Slider({ Name = "Status offset", Flag = "rb_status_y", Min = -300, Max = 300, Default = 40, Suffix = "px", Decimals = 1, Tooltip = "Vertical distance of the status text from the middle of the screen" })
         RB:Toggle({ Name = "Safe mode", Flag = "rb_safe", Default = false, Tooltip = "Below the health percentage you stay hidden (or at home when void spam is off) until you healed" })
         RB:Slider({ Name = "Safe mode health", Flag = "rb_safe_hp", Min = 5, Max = 90, Default = 20, Suffix = "%", Decimals = 1 })
 
-        local RT = RageTab:Section({ Name = "Target", Side = 1 })
+        local RT = RageSubs.Main:Section({ Name = "Target", Side = 2 })
         RT:Toggle({ Name = "Add target to list", Flag = "rb_add", Default = false, Tooltip = "Press the key to add the player closest to your cursor to the target list. Press again on the same player to remove them" }):Keybind({ Name = "Add target key", Flag = "rb_add_key", Default = "G", Sync = false })
-        RT:Dropdown({ Name = "Mode", Flag = "rb_mode", Items = { "Closest", "Closest to cursor", "Target list", "Players tab" }, Default = "Closest", Tooltip = "Closest: nearest player. Target list: only players in the list below. Players tab: the player selected in the Players tab" })
+        RT:Dropdown({ Name = "Mode", Flag = "rb_mode", Items = { "Target list", "Players tab", "Closest", "Closest to cursor" }, Default = "Target list", Tooltip = "Target list: only the players in the list below, nobody else. Players tab: only the player selected in the Players tab. Closest and Closest to cursor shoot anyone" })
         local names = {}
         for _, player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer then names[#names + 1] = player.Name end
@@ -2192,9 +2280,10 @@ do
         RT:Button({ Name = "Clear whitelist", Callback = function() if Actions.rageList then Actions.rageList("rb_white", false) end end })
         Actions.rageNames = names
 
-        local RV = RageTab:Section({ Name = "Void spam", Side = 2 })
+        local RV = RageSubs.Void:Section({ Name = "Void spam", Side = 1 })
         RV:Toggle({ Name = "Void spam", Flag = "rb_void", Default = false, Tooltip = "Switches between a hiding spot far outside the map and the peek spot" })
         RV:Dropdown({ Name = "When", Flag = "rb_void_when", Items = { "While targeting", "While reloading", "Smart", "Always" }, Default = "While targeting", Tooltip = "While targeting: hide between peeks the whole time. While reloading: hide only to reload. Smart: peek normally and hide for a while when the target stops taking damage. Always: also hides without a target" })
+        RV:Toggle({ Name = "Show void location", Flag = "rb_void_show", Default = false, Tooltip = "A marker, a line and a distance text show where your hiding spot is" }):Colorpicker({ Name = "Void marker", Flag = "rb_void_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
         RV:Slider({ Name = "In void", Flag = "rb_in_time", Min = 0.05, Max = 3, Default = 0.35, Suffix = "s", Decimals = 0.01 })
         RV:Slider({ Name = "Out of void", Flag = "rb_out_time", Min = 0.05, Max = 2, Default = 0.2, Suffix = "s", Decimals = 0.01 })
         RV:Slider({ Name = "Smart wait", Flag = "rb_smart_wait", Min = 1, Max = 30, Default = 8, Suffix = "s", Decimals = 0.5 })
@@ -2204,14 +2293,14 @@ do
         RV:Slider({ Name = "Depth multiplier", Flag = "rb_depth", Min = 0.1, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
         RV:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
 
-        local RP = RageTab:Section({ Name = "Peek spot", Side = 2 })
+        local RP = RageSubs.Void:Section({ Name = "Peek spot", Side = 2 })
         RP:Dropdown({ Name = "Position", Flag = "rb_peek_mode", Items = { "Behind", "Above", "Random", "Spiral" }, Default = "Behind", Tooltip = "Where you appear next to the target" })
         RP:Slider({ Name = "Distance", Flag = "rb_peek_dist", Min = 1, Max = 40, Default = 6, Suffix = " studs", Decimals = 0.5 })
         RP:Slider({ Name = "Height offset", Flag = "rb_peek_height", Min = -6, Max = 20, Default = 2, Suffix = " studs", Decimals = 0.5 })
         RP:Slider({ Name = "Spiral speed", Flag = "rb_spiral_speed", Min = 0.5, Max = 30, Default = 6, Suffix = " rad/s", Decimals = 0.5 })
         RP:Dropdown({ Name = "Line of sight check", Flag = "rb_los", Items = { "Off", "Visible only" }, Default = "Off", Tooltip = "Visible only searches around the target for a spot with a clear line to the head and stays hidden when there is none" })
 
-        local RR = RageTab:Section({ Name = "Prediction and resolver", Side = 2 })
+        local RR = RageSubs.Aim:Section({ Name = "Prediction and resolver", Side = 1 })
         RR:Toggle({ Name = "Prediction", Flag = "rb_pred", Default = false, Tooltip = "Aims ahead of a moving target" })
         RR:Slider({ Name = "Base time", Flag = "rb_pred_base", Min = 0, Max = 0.5, Default = 0.07, Suffix = "s", Decimals = 0.01 })
         RR:Slider({ Name = "Multiplier", Flag = "rb_pred_mult", Min = 0, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
@@ -2220,7 +2309,7 @@ do
         RR:Slider({ Name = "Map limit", Flag = "rb_bounds", Min = 1000, Max = 20000, Default = 8000, Suffix = " studs", Decimals = 1, Tooltip = "Further from the center than this counts as outside the map" })
     end
 
-    local Wall = RageTab:Section({ Name = "Wallbang", Side = 1 })
+    local Wall = RageSubs.Aim:Section({ Name = "Wallbang", Side = 2 })
     Wall:Toggle({ Name = "Wallbang", Flag = "silent_wallbang", Default = false })
     Wall:Dropdown({
         Name = "Method", Flag = "wb_method", Items = { "Vape V4", "Aster Origin", "Aster Reach", "Aster Precise" }, Default = "Aster Reach",
@@ -2231,7 +2320,7 @@ do
     Wall:Toggle({ Name = "Damage check", Flag = "wb_damage", Default = true, Tooltip = "Only uses a shot origin and hit point that can deal damage: close enough to you and to the target's body, and inside the gun's range. The indicator, auto fire and assist use the same check." })
     Wall:Slider({ Name = "Max spot distance", Flag = "wb_spot", Min = 5, Max = 20, Default = 7.5, Suffix = " studs", Decimals = 0.1 })
 
-    local Assist = RageTab:Section({ Name = "Wallbang assist", Side = 1 })
+    local Assist = RageSubs.Aim:Section({ Name = "Wallbang assist", Side = 2 })
     local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Works on anyone near your cursor, no silent aim needed. If an enemy is behind a wall, it moves the position the server sees up to (or into) the wall so the shot has a line, and sends the shot at that enemy." })
     assistToggle:Keybind({ Name = "Assist key", Flag = "wb_assist_key", Default = "None", Sync = true })
     Assist:Dropdown({ Name = "Move method", Flag = "wb_assist_method", Items = { "Server position", "Velocity" }, Default = "Server position", Tooltip = "Server position: only what the server sees moves (writes the character CFrame). Velocity: you really move there with physics (no CFrame writes) and walls next to you stop colliding on the way, then you return. The visualizer only applies to Server position." })
@@ -2246,7 +2335,7 @@ do
     assistVisual:Colorpicker({ Name = "Fill", Flag = "wb_assist_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0.6 })
     assistVisual:Colorpicker({ Name = "Outline", Flag = "wb_assist_line", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
 
-    local Silent = CombatTab:Section({ Name = "Silent aim", Side = 2 })
+    local Silent = CombatSubs.Silent:Section({ Name = "Silent aim", Side = 1 })
     local silentEnabled = Silent:Toggle({ Name = "Enabled", Flag = "Silent_Global_Enabled", Default = false })
     silentEnabled:Keybind({ Name = "Silent key", Flag = "Silent_Global_Key", Default = "None", Mode = "Always" })
     Silent:Slider({ Name = "FOV", Flag = "silent_fov", Min = 10, Max = 800, Default = 150, Suffix = "px", Decimals = 1 })
@@ -2268,7 +2357,7 @@ do
     Silent:Dropdown({ Name = "Switch weapons", Flag = "silent_switch_weapons", Items = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver", "Taser" }, Multi = true, Default = {}, Tooltip = "The weapons to cycle through, in this order" })
     Silent:Slider({ Name = "Switch delay", Flag = "silent_switch_delay", Min = 0.03, Max = 2, Default = 0.3, Suffix = " s", Decimals = 0.01, Tooltip = "Time between weapon switches" })
 
-    local FovAim, FovSilent = CombatTab:MultiSection({ Sections = { "Aim FOV", "Silent FOV" }, Side = 2 })
+    local FovAim, FovSilent = CombatSubs.Aim:MultiSection({ Sections = { "Aim FOV", "Silent FOV" }, Side = 2 })
     local aimCircle = FovAim:Toggle({ Name = "Show FOV circle", Flag = "aim_fov_show", Default = false })
     aimCircle:Colorpicker({ Name = "Color", Flag = "aim_fov_color", Default = Color3.new(1, 1, 1), Alpha = true })
     FovAim:Toggle({ Name = "Filled", Flag = "aim_fov_filled", Default = false })
@@ -2278,7 +2367,7 @@ do
     FovSilent:Toggle({ Name = "Filled", Flag = "silent_fov_filled", Default = false })
     FovSilent:Slider({ Name = "Thickness", Flag = "silent_fov_thick", Min = 1, Max = 5, Default = 1, Decimals = 1 })
 
-    local OrbitSec = RageTab:Section({ Name = "Orbit target", Side = 2 })
+    local OrbitSec = RageSubs.Other:Section({ Name = "Orbit target", Side = 2 })
     OrbitSec:Toggle({ Name = "Orbit target", Flag = "orbit_on", Default = false, Tooltip = "While silent aim has a target, the position the server sees circles that player. You stay where you are, only the server position moves." }):Keybind({ Name = "Orbit key", Flag = "orbit_key", Default = "None", Sync = true })
     OrbitSec:Dropdown({ Name = "Height", Flag = "orbit_mode", Items = { "Under the map", "Below target", "Near void" }, Default = "Under the map", Tooltip = "Under the map: below the lowest floor under the target. Below target: straight below the target's height. Near void: just above the void." })
     OrbitSec:Slider({ Name = "Depth", Flag = "orbit_depth", Min = 0, Max = 500, Default = 15, Suffix = " studs", Decimals = 0.5, Tooltip = "How far below the floor (Under the map) or below the target (Below target). It always stops short of the void" })
@@ -2295,7 +2384,7 @@ do
     local orbitRing = OrbitSec:Toggle({ Name = "Show orbit ring", Flag = "orbit_ring", Default = false, Tooltip = "Draws the circle the server position travels on" })
     orbitRing:Colorpicker({ Name = "Color", Flag = "orbit_ring_color", Default = Color3.fromRGB(180, 120, 255), Alpha = 0.3 })
 
-    local TargetSec = CombatTab:Section({ Name = "Target info", Side = 2 })
+    local TargetSec = CombatSubs.Silent:Section({ Name = "Target info", Side = 2 })
     TargetSec:Toggle({ Name = "Target info panel", Flag = "tinfo_on", Default = false, Tooltip = "A small draggable panel about the player silent aim (or the aim assist) is locked onto. Drag it by its top part." })
     TargetSec:Dropdown({ Name = "Target from", Flag = "tinfo_source", Items = { "Silent aim", "Aim assist" }, Default = "Silent aim" })
     TargetSec:Toggle({ Name = "Show health", Flag = "tinfo_health", Default = true })
@@ -2303,17 +2392,17 @@ do
     TargetSec:Toggle({ Name = "Show team and weapon", Flag = "tinfo_extra", Default = true })
     TargetSec:Toggle({ Name = "Hide without target", Flag = "tinfo_hide", Default = true, Tooltip = "With the menu open the panel always shows so you can move it" })
 
-    local GunMods = RageTab:Section({ Name = "Gun mods", Side = 2 })
+    local GunMods = RageSubs.Aim:Section({ Name = "Gun mods", Side = 1 })
     GunMods:Toggle({ Name = "Gun modifications", Flag = "gun_mods", Default = false })
     GunMods:Slider({ Name = "Fire delay (% of stock)", Flag = "gun_fire_rate", Min = 1, Max = 100, Default = 100, Suffix = "%", Decimals = 1 })
     GunMods:Toggle({ Name = "No spread", Flag = "gun_no_spread", Default = false })
     GunMods:Toggle({ Name = "Full automatic", Flag = "gun_full_auto", Default = false })
     GunMods:Toggle({ Name = "Custom range", Flag = "gun_range_on", Default = false })
     GunMods:Slider({ Name = "Range", Flag = "gun_range", Min = 10, Max = 100000, Default = 1000, Suffix = " studs", Decimals = 1 })
-    local Hits = CombatTab:Section({ Name = "Hit feedback", Side = 2 })
+    local Hits = CombatSubs.Other:Section({ Name = "Hit feedback", Side = 2 })
     Hits:Toggle({ Name = "Hit notifications", Flag = "World_HitNotify", Default = false })
     Hits:Toggle({ Name = "Bullet impacts", Flag = "World_Impacts", Default = false })
-    local Utility = CombatTab:Section({ Name = "Weapon utility", Side = 2 })
+    local Utility = CombatSubs.Other:Section({ Name = "Weapon utility", Side = 2 })
     Utility:Toggle({ Name = "Auto reload", Flag = "gun_auto_reload", Default = false })
     Utility:Toggle({ Name = "Auto swap on empty", Flag = "gun_auto_swap", Default = false })
     Utility:Toggle({ Name = "Shoot through vehicles", Flag = "gun_vehicle_wallbang", Default = false })
@@ -3621,7 +3710,7 @@ end
 
 do
 
-    local fly, speed, spider = MiscPage:MultiSection({ Sections = { "Fly", "Speed", "Spider" }, Side = 1 })
+    local fly, speed, spider = MiscSubs.Movement:MultiSection({ Sections = { "Fly", "Speed", "Spider" }, Side = 1 })
     fly:Toggle({ Name = "Fly", Flag = "misc_fly", Default = false }):Keybind({ Name = "Fly key", Flag = "misc_fly_key", Default = "None", Sync = true })
     fly:Dropdown({ Name = "Mode", Flag = "misc_fly_mode", Items = { "Velocity", "CFrame" }, Default = "Velocity" })
     fly:Slider({ Name = "Speed", Flag = "misc_fly_speed", Min = 1, Max = 150, Default = 50, Suffix = " studs", Decimals = 1 })
@@ -3636,7 +3725,7 @@ do
     spider:Slider({ Name = "Climb speed", Flag = "misc_spider_speed", Min = 1, Max = 100, Default = 30, Suffix = " studs", Decimals = 1 })
     spider:Toggle({ Name = "Climb state", Flag = "misc_spider_state", Default = false })
 
-    local high, long, phase = MiscPage:MultiSection({ Sections = { "High jump", "Long jump", "Phase" }, Side = 1 })
+    local high, long, phase = MiscSubs.Movement:MultiSection({ Sections = { "High jump", "Long jump", "Phase" }, Side = 2 })
     high:Toggle({ Name = "High jump", Flag = "misc_highjump", Default = false }):Keybind({ Name = "High jump key", Flag = "misc_highjump_key", Default = "None", Sync = true })
     high:Dropdown({ Name = "Mode", Flag = "misc_highjump_mode", Items = { "Velocity", "Impulse", "Instant" }, Default = "Velocity" })
     high:Slider({ Name = "Power", Flag = "misc_highjump_power", Min = 1, Max = 150, Default = 50, Suffix = " studs", Decimals = 1 })
@@ -3651,7 +3740,7 @@ do
     phase:Label({ Name = "Hold Shift to Phase while Spider is on" })
     phase:Toggle({ Name = "Disabler (fixes Character mode)", Flag = "misc_disabler", Default = false })
 
-    local Character = MiscPage:Section({ Name = "Character", Side = 1 })
+    local Character = MiscSubs.Utility:Section({ Name = "Character", Side = 1 })
     Character:Toggle({ Name = "No jump cooldown", Flag = "misc_no_jump_cd", Default = false })
     Character:Toggle({ Name = "Camera phase", Flag = "misc_camera_phase", Default = false })
     Character:Toggle({ Name = "Infinite camera zoom", Flag = "misc_camera_zoom", Default = false, Tooltip = "Lets you scroll the camera out as far as you want, in third person" })
@@ -3660,19 +3749,19 @@ do
     Character:Dropdown({ Name = "Gravity mode", Flag = "misc_gravity_mode", Items = { "Workspace", "Local" }, Default = "Workspace" })
     Character:Slider({ Name = "Gravity value", Flag = "misc_gravity_value", Min = 0, Max = 300, Default = 196, Decimals = 1 })
 
-    local World = MiscPage:Section({ Name = "Xray", Side = 1 })
+    local World = MiscSubs.Utility:Section({ Name = "Xray", Side = 1 })
     World:Toggle({ Name = "Xray", Flag = "misc_xray", Default = false })
     World:Slider({ Name = "Part transparency", Flag = "misc_xray_alpha", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
     World:Input({ Name = "Keep opaque (names)", Flag = "misc_xray_ignore", Default = "", Placeholder = "Door, Fence" })
 
-    local Melee = MiscPage:Section({ Name = "Melee aura", Side = 2 })
+    local Melee = MiscSubs.Combat:Section({ Name = "Melee aura", Side = 1 })
     Melee:Toggle({ Name = "Melee aura", Flag = "misc_melee", Default = false })
     Melee:Slider({ Name = "Range", Flag = "misc_melee_range", Min = 1, Max = 15, Default = 15, Suffix = " studs", Decimals = 1 })
     Melee:Slider({ Name = "Delay", Flag = "misc_melee_delay", Min = 0.1, Max = 1, Default = 0.5, Suffix = "s", Decimals = 0.05 })
     Melee:Toggle({ Name = "Skip friendly players", Flag = "misc_melee_friendly", Default = true })
     Melee:Toggle({ Name = "Skip forcefield", Flag = "misc_melee_ff", Default = true })
 
-    local arrest, taze = MiscPage:MultiSection({ Sections = { "Auto arrest", "Auto taze" }, Side = 2 })
+    local arrest, taze = MiscSubs.Combat:MultiSection({ Sections = { "Auto arrest", "Auto taze" }, Side = 2 })
     arrest:Toggle({ Name = "Auto arrest", Flag = "misc_autoarrest", Default = false })
     arrest:Slider({ Name = "Range", Flag = "misc_arrest_range", Min = 1, Max = 7.5, Default = 7.5, Suffix = " studs", Decimals = 0.5 })
     arrest:Toggle({ Name = "Equip handcuffs", Flag = "misc_arrest_hand", Default = true })
@@ -3683,7 +3772,7 @@ do
     taze:Slider({ Name = "Range", Flag = "misc_taze_range", Min = 1, Max = 52, Default = 52, Suffix = " studs", Decimals = 1 })
     taze:Toggle({ Name = "Velocity check", Flag = "misc_taze_velocity", Default = true })
 
-    local Protect = MiscPage:Section({ Name = "Protection", Side = 2 })
+    local Protect = MiscSubs.Utility:Section({ Name = "Protection", Side = 2 })
     Protect:Toggle({ Name = "Anti taze", Flag = "misc_anti_taze", Default = false })
     Protect:Toggle({ Name = "Anti fling", Flag = "misc_anti_fling", Default = false })
     Protect:Toggle({ Name = "Destroy body on death", Flag = "misc_destroy_body", Default = false })
@@ -3691,23 +3780,23 @@ do
     Protect:Toggle({ Name = "Anti kill plane", Flag = "misc_anti_killplane", Default = false })
     Protect:Toggle({ Name = "Anti invisible", Flag = "misc_anti_invis", Default = false })
 
-    local Detect = MiscPage:Section({ Name = "Cheat detector", Side = 2 })
+    local Detect = MiscSubs.Utility:Section({ Name = "Cheat detector", Side = 2 })
     Detect:Toggle({ Name = "Cheat detector", Flag = "misc_cheat_detector", Default = false })
     Detect:Toggle({ Name = "Teleport check", Flag = "misc_cheat_teleport", Default = true })
     Detect:Button({ Name = "Clear flags", Callback = function() MiscActions.clearCheats() end })
 
-    local Fling = MiscPage:Section({ Name = "Fling cars", Side = 2 })
+    local Fling = MiscSubs.Combat:Section({ Name = "Fling cars", Side = 1 })
     Fling:Toggle({ Name = "Fling cars", Flag = "misc_fling_cars", Default = false })
     Fling:Slider({ Name = "Target range", Flag = "misc_fling_range", Min = 20, Max = 1000, Default = 300, Suffix = " studs", Decimals = 1 })
 
-    local Invis = MiscPage:Section({ Name = "Invisibility", Side = 2 })
+    local Invis = MiscSubs.Utility:Section({ Name = "Invisibility", Side = 1 })
     local invisToggle = Invis:Toggle({ Name = "Invisibility", Flag = "misc_invis", Default = false })
     invisToggle:Keybind({ Name = "Invisibility key", Flag = "misc_invis_key", Default = "None", Sync = true })
     Invis:Toggle({ Name = "Hide under the map (look up)", Flag = "misc_invis_under", Default = true })
     Invis:Toggle({ Name = "Move while hidden", Flag = "misc_invis_move", Default = false })
     Invis:Slider({ Name = "Look-up pitch", Flag = "misc_invis_pitch", Min = -90, Max = 90, Default = 90, Suffix = "°", Decimals = 1 })
 
-    local Desync = RageTab:Section({ Name = "Desync", Side = 2 })
+    local Desync = RageSubs.Other:Section({ Name = "Desync", Side = 1 })
     Desync:Toggle({ Name = "Desync", Flag = "misc_desync", Default = false, Tooltip = "The server sees you at another position than the one you play at" }):Keybind({ Name = "Desync key", Flag = "misc_desync_key", Default = "None", Sync = true })
     Desync:Dropdown({
         Name = "Style", Flag = "misc_desync_style", Items = { "Offset", "Void" }, Default = "Offset",
@@ -3723,7 +3812,7 @@ do
     local desyncTracer = Desync:Toggle({ Name = "Tracer", Flag = "misc_desync_tracer", Default = false })
     desyncTracer:Colorpicker({ Name = "Tracer color", Flag = "misc_desync_tracer_color", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
 
-    local Walk = MiscPage:Section({ Name = "Walk speed", Side = 1 })
+    local Walk = MiscSubs.Movement:Section({ Name = "Walk speed", Side = 1 })
     Walk:Toggle({ Name = "Walk speed", Flag = "misc_walk", Default = false }):Keybind({ Name = "Walk speed key", Flag = "misc_walk_key", Default = "None", Sync = true })
     Walk:Slider({ Name = "Walk speed", Flag = "misc_walk_value", Min = 16, Max = 200, Default = 16, Suffix = " studs/s", Decimals = 1 })
     Walk:Toggle({ Name = "No acceleration", Flag = "misc_noaccel", Default = false, Tooltip = "Start and stop at full speed instead of speeding up and sliding" }):Keybind({ Name = "No acceleration key", Flag = "misc_noaccel_key", Default = "None", Sync = true })
@@ -3734,7 +3823,7 @@ do
     Walk:Slider({ Name = "Speed outside prison", Flag = "misc_walk_out", Min = 16, Max = 100, Default = 100, Suffix = " studs/s", Decimals = 1 })
     Walk:Toggle({ Name = "Notify area changes", Flag = "misc_walk_notify", Default = false, Tooltip = "Shows which area the script thinks you are in" })
 
-    local Move = MiscPage:Section({ Name = "Movement", Side = 1 })
+    local Move = MiscSubs.Movement:Section({ Name = "Movement", Side = 2 })
     Move:Toggle({ Name = "Jump multiplier", Flag = "misc_jumpmult", Default = false }):Keybind({ Name = "Jump multiplier key", Flag = "misc_jumpmult_key", Default = "None", Sync = true })
     Move:Slider({ Name = "Jump multiplier (max 3x)", Flag = "misc_jumpmult_value", Min = 1, Max = 3, Default = 1.5, Suffix = "x", Decimals = 0.05 })
     Move:Toggle({ Name = "Spinbot", Flag = "misc_spinbot", Default = false }):Keybind({ Name = "Spinbot key", Flag = "misc_spinbot_key", Default = "None", Sync = true })
@@ -3744,7 +3833,7 @@ do
     Move:Toggle({ Name = "Hold Left Ctrl to teleport", Flag = "misc_clicktp_ctrl", Default = true })
     Move:Slider({ Name = "Click teleport range", Flag = "misc_clicktp_range", Min = 10, Max = 2000, Default = 500, Suffix = " studs", Decimals = 1 })
 
-    local vFly, vSpeed = MiscPage:MultiSection({ Sections = { "Vehicle fly", "Vehicle speed" }, Side = 1 })
+    local vFly, vSpeed = MiscSubs.Movement:MultiSection({ Sections = { "Vehicle fly", "Vehicle speed" }, Side = 2 })
     vFly:Toggle({ Name = "Vehicle fly", Flag = "misc_vfly", Default = false }):Keybind({ Name = "Vehicle fly key", Flag = "misc_vfly_key", Default = "None", Sync = true })
     vFly:Slider({ Name = "Speed", Flag = "misc_vfly_speed", Min = 1, Max = 100, Default = 60, Suffix = " studs", Decimals = 1 })
     vFly:Toggle({ Name = "Move along camera", Flag = "misc_vfly_camera", Default = true })
@@ -3775,7 +3864,7 @@ end
 
 do
 
-    local EspList = VisualsPage:MultiSection({ Sections = { "Players" }, Side = 1 })
+    local EspList = VisualsSubs.ESP:MultiSection({ Sections = { "Players" }, Side = 1 })
     EspList:Toggle({ Name = "Enabled", Flag = "esp_enabled", Default = false })
     EspList:Toggle({ Name = "Name", Flag = "esp_name", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_name_color1", Default = WHITE })
     EspList:Dropdown({ Name = "Name type", Flag = "esp_name_type", Items = { "Username", "Display name", "Display (@username)" }, Default = "Username", Tooltip = "Which name the ESP shows above players" })
@@ -3797,7 +3886,7 @@ do
     EspList:Toggle({ Name = "Team colors", Flag = "esp_use_team_color", Default = false })
 EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpicker({ Name = "Visible", Flag = "esp_chams_adorn_vis_color", Default = Color3.fromRGB(59, 204, 90), Alpha = 0.35 }):Colorpicker({ Name = "Behind walls", Flag = "esp_chams_adorn_occ_color", Default = Color3.fromRGB(59, 144, 204), Alpha = 0.7 })
 
-    local SetGeneral, SetBox, SetHealth, SetArrows = VisualsPage:MultiSection({ Sections = { "General", "Box", "Health", "Arrows" }, Side = 2 })
+    local SetGeneral, SetBox, SetHealth, SetArrows = VisualsSubs.ESP:MultiSection({ Sections = { "General", "Box", "Health", "Arrows" }, Side = 2 })
     SetGeneral:Toggle({ Name = "Players", Flag = "esp_players", Default = true })
     SetGeneral:Toggle({ Name = "Local player", Flag = "esp_local_player", Default = false })
     SetGeneral:Slider({ Name = "Text size (all text)", Flag = "esp_text_size", Suffix = " px", Min = 8, Max = 24, Default = 12, Decimals = 1 })
@@ -3809,21 +3898,21 @@ EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpic
     SetArrows:Slider({ Name = "Size", Flag = "esp_arrow_size", Suffix = " px", Min = 8, Max = 32, Default = 14, Decimals = 1 })
     SetArrows:Slider({ Name = "Orbit radius", Flag = "esp_arrow_orbit", Suffix = " px", Min = 50, Max = 300, Default = 100, Decimals = 1 })
 
-    local AdornLayers, AdornGlow = VisualsPage:MultiSection({ Sections = { "Layers", "Glow" }, Side = 2 })
+    local AdornLayers, AdornGlow = VisualsSubs.ESP:MultiSection({ Sections = { "Layers", "Glow" }, Side = 1 })
     AdornLayers:Slider({ Name = "Visible thickness", Flag = "esp_chams_adorn_thickness", Min = 0, Max = 0.6, Default = 0.1, Decimals = 0.01 })
     AdornGlow:Toggle({ Name = "Glow", Flag = "esp_chams_adorn_glow", Default = false })
     AdornGlow:Slider({ Name = "Glow strength", Flag = "esp_chams_adorn_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
     AdornGlow:Toggle({ Name = "Round head", Flag = "esp_chams_adorn_round_head", Default = true })
     AdornGlow:Slider({ Name = "Head size", Flag = "esp_chams_adorn_head_size", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
 
-    local CamFov = VisualsPage:Section({ Name = "Camera", Side = 1 })
+    local CamFov = VisualsSubs.Screen:Section({ Name = "Camera", Side = 1 })
 CamFov:Toggle({ Name = "FOV changer", Flag = "camera_fov_changer", Default = false })
 CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max = 140, Default = 100, Suffix = "°", Decimals = 1 })
 
-    local EffectsBox = WorldPage:Section({ Name = "Effects window", Side = 1 })
+    local EffectsBox = WorldSubs.Effects:Section({ Name = "Effects window", Side = 1 })
     EffectsBox:Toggle({ Name = "Effects window", Flag = "fx_ui", Default = false, Tooltip = "Opens the window with sounds, visual effects and tracers" })
 
-    local LightMain, LightTime, LightFog = WorldPage:MultiSection({ Sections = { "Light", "Time", "Fog" }, Side = 1 })
+    local LightMain, LightTime, LightFog = WorldSubs.Lighting:MultiSection({ Sections = { "Light", "Time", "Fog" }, Side = 1 })
     LightMain:Toggle({ Name = "Ambient", Flag = "lighting_toggle_Ambient", Default = false }):Colorpicker({ Name = "Inner ambient", Flag = "lighting_colorAmbient", Default = WHITE }):Colorpicker({ Name = "Outer ambient", Flag = "lighting_colorOutdoorAmbient", Default = WHITE })
     LightMain:Toggle({ Name = "Brightness", Flag = "lighting_toggle_Brightness", Default = false })
     LightMain:Slider({ Name = "Brightness value", Flag = "lighting_number_Brightness", Min = 0, Max = 5, Default = 1.7, Decimals = 0.01 })
@@ -3843,7 +3932,7 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     LightFog:Slider({ Name = "Fog end value", Flag = "lighting_number_FogEnd", Suffix = " stud(s)", Min = 0, Max = 5000, Default = 2500, Decimals = 1 })
     LightFog:Toggle({ Name = "Fog color", Flag = "lighting_toggle_FogColor", Default = false }):Colorpicker({ Name = "Color", Flag = "lighting_colorFogColor", Default = WHITE })
 
-    local EnvAtmos, EnvBloom, EnvScreen = WorldPage:MultiSection({ Sections = { "Atmos", "Bloom", "Screen" }, Side = 1 })
+    local EnvAtmos, EnvBloom, EnvScreen = WorldSubs.Lighting:MultiSection({ Sections = { "Atmos", "Bloom", "Screen" }, Side = 2 })
     local EnvSky = Fx:Section("Sky", "Skyboxes", "Skybox")
     EnvSky:Toggle({ Name = "Skybox", Flag = "skybox_enabled", Default = false })
     EnvSky:Dropdown({ Name = "Preset", Flag = "skybox_value", Items = SKYBOX_NAMES, Default = SKYBOX_NAMES[1] })
@@ -3867,7 +3956,7 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     EnvScreen:Slider({ Name = "Sun rays intensity", Flag = "sunrays_intensity", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
     EnvScreen:Slider({ Name = "Screen blur", Flag = "camera_blur", Min = 0, Max = 20, Default = 0, Decimals = 0.01 })
 
-    local GunLook, GunChams = VisualsPage:MultiSection({ Sections = { "Viewmodel", "Chams" }, Side = 2 })
+    local GunLook, GunChams = VisualsSubs.Viewmodel:MultiSection({ Sections = { "Viewmodel", "Chams" }, Side = 1 })
 local GunTracerTab = Fx:Section("Tracers", "Bullet tracers", "Tracers")
 local GunTimingTab = Fx:Section("Tracers", "Bullet tracers", "Timing")
 GunLook:Toggle({ Name = "Gun color", Flag = "viewmodel_body_color", Default = false }):Colorpicker({ Name = "Color", Flag = "viewmodel_body_color_value", Default = Color3.fromRGB(202, 161, 13), Alpha = true })
@@ -3885,16 +3974,16 @@ GunTimingTab:Slider({ Name = "Fade time", Flag = "tracers_fade", Suffix = "s", M
 GunTimingTab:Toggle({ Name = "Expand from muzzle", Flag = "tracers_expand", Default = true })
 GunTimingTab:Slider({ Name = "Expand speed", Flag = "tracers_expand_speed", Min = 4, Max = 40, Default = 18, Decimals = 1 })
 
-    local BodyForce, BodyExtra = VisualsPage:MultiSection({ Sections = { "Arms", "Extras" }, Side = 2 })
+    local BodyForce, BodyExtra = VisualsSubs.Viewmodel:MultiSection({ Sections = { "Arms", "Extras" }, Side = 2 })
 BodyForce:Toggle({ Name = "Forcefield material", Flag = "arm_material", Default = false }):Colorpicker({ Name = "Color", Flag = "arm_material_color", Default = Color3.fromRGB(255, 255, 255), Alpha = true })
 BodyForce:Dropdown({ Name = "Forcefield texture", Flag = "arm_material_texture", Items = FORCEFIELD_TEXTURE_NAMES, Default = "Disabled" })
 BodyExtra:Toggle({ Name = "Disable textures", Flag = "arm_disable_textures", Default = false })
 BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories", Default = false })
 
-    local SelfChams = VisualsPage:Section({ Name = "Self chams", Side = 2 })
+    local SelfChams = VisualsSubs.Viewmodel:Section({ Name = "Self chams", Side = 2 })
     SelfChams:Toggle({ Name = "Self chams", Flag = "Self_Chams", Default = false }):Colorpicker({ Name = "Fill", Flag = "Self_ChamsColor1", Default = Color3.fromRGB(80, 160, 255), Alpha = 0.3 }):Colorpicker({ Name = "Outline", Flag = "Self_ChamsColor2", Default = WHITE, Alpha = true })
 
-    local WeatherMain, WeatherLook, WeatherWind, WeatherStrike = WorldPage:MultiSection({ Sections = { "Weather", "Look", "Wind", "Strike" }, Side = 1 })
+    local WeatherMain, WeatherLook, WeatherWind, WeatherStrike = WorldSubs.Weather:MultiSection({ Sections = { "Weather", "Look", "Wind", "Strike" }, Side = 1 })
     WeatherMain:Toggle({ Name = "Weather", Flag = "weather_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "weather_color", Default = Color3.fromRGB(200, 200, 220) })
     WeatherMain:Dropdown({ Name = "Preset", Flag = "weather_preset", Items = WEATHER_NAMES, Default = "Rain" })
     WeatherMain:Slider({ Name = "Intensity", Flag = "weather_intensity", Min = 0.1, Max = 3, Default = 1, Decimals = 0.01 })
@@ -3911,7 +4000,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     WeatherStrike:Slider({ Name = "Flash", Flag = "weather_lightning_flash", Min = 0, Max = 10, Default = 4, Decimals = 0.1 })
     WeatherStrike:Slider({ Name = "Interval", Flag = "weather_lightning_interval", Suffix = "s", Min = 1, Max = 15, Default = 4, Decimals = 0.1 })
 
-    local CrossMain, CrossOutline, CrossMotion, CrossArms = VisualsPage:MultiSection({ Sections = { "Crosshair", "Outline", "Motion", "Arms" }, Side = 1 })
+    local CrossMain, CrossOutline, CrossMotion, CrossArms = VisualsSubs.Screen:MultiSection({ Sections = { "Crosshair", "Outline", "Motion", "Arms" }, Side = 2 })
     CrossMain:Toggle({ Name = "Crosshair", Flag = "crosshair_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "crosshair_color", Default = WHITE })
     CrossMain:Slider({ Name = "Length", Flag = "crosshair_length", Suffix = " px", Min = 1, Max = 40, Default = 12, Decimals = 1 })
     CrossMain:Slider({ Name = "Thickness", Flag = "crosshair_thickness", Suffix = " px", Min = 1, Max = 8, Default = 2, Decimals = 1 })
@@ -3990,7 +4079,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
         end
     end })
 
-    local Reload = WorldPage:Section({ Name = "Reload indicator", Side = 2 })
+    local Reload = WorldSubs.Indicators:Section({ Name = "Reload indicator", Side = 1 })
     Reload:Toggle({ Name = "Reload indicator", Flag = "reload_ind", Default = false, Tooltip = "A progress bar under the cursor while your gun reloads" })
     Reload:Toggle({ Name = "Show time", Flag = "reload_ind_text", Default = true })
     Reload:Slider({ Name = "Width", Flag = "reload_ind_w", Min = 40, Max = 300, Default = 120, Suffix = "px", Decimals = 1 })
@@ -3999,7 +4088,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     Reload:Label({ Name = "Bar color" }):Colorpicker({ Name = "Bar", Flag = "reload_ind_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
     Reload:Label({ Name = "Background color" }):Colorpicker({ Name = "Background", Flag = "reload_ind_back", Default = Color3.fromRGB(0, 0, 0), Alpha = 0.5 })
 
-    local Ammo = WorldPage:Section({ Name = "Ammo indicator", Side = 2 })
+    local Ammo = WorldSubs.Indicators:Section({ Name = "Ammo indicator", Side = 2 })
     Ammo:Toggle({ Name = "Server bullet count", Flag = "ammo_ind", Default = false, Tooltip = "Shows how many bullets the server says your gun has. It turns yellow when that differs from the count your game shows." })
     Ammo:Toggle({ Name = "Show local count", Flag = "ammo_ind_local", Default = false, Tooltip = "Also shows the count your own game shows" })
     Ammo:Slider({ Name = "Text size", Flag = "ammo_ind_size", Min = 10, Max = 32, Default = 16, Decimals = 1 })
@@ -4008,7 +4097,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     Ammo:Label({ Name = "Empty color" }):Colorpicker({ Name = "Empty", Flag = "ammo_ind_c_empty", Default = Color3.fromRGB(255, 80, 80) })
     Ammo:Label({ Name = "Mismatch color" }):Colorpicker({ Name = "Mismatch", Flag = "ammo_ind_c_diff", Default = Color3.fromRGB(255, 200, 60) })
 
-    local Indicator = WorldPage:Section({ Name = "Wallbang indicator", Side = 2 })
+    local Indicator = WorldSubs.Indicators:Section({ Name = "Wallbang indicator", Side = 1 })
     Indicator:Toggle({ Name = "Wallbang indicator", Flag = "wb_ind", Default = false, Tooltip = "Tells you if an enemy is visible, wallbangable with the wallbang method you use now (a spot that can deal damage), or not wallbangable" })
     Indicator:Toggle({ Name = "Show on cursor", Flag = "wb_ind_cursor", Default = true })
     Indicator:Toggle({ Name = "Show on everyone", Flag = "wb_ind_all", Default = false })
@@ -4025,7 +4114,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     AuraBox:Dropdown({ Name = "Aura", Flag = "pa_source", Items = AURA_PACK.items, Default = "angel" })
     AuraBox:Toggle({ Name = "Keep pack colors", Flag = "pa_pack_original", Default = true, Tooltip = "Pack auras keep their own colors. Turn off to paint them with the color above like the other auras." })
 
-    local Avatar = WorldPage:Section({ Name = "Avatar changer", Side = 2 })
+    local Avatar = WorldSubs.Effects:Section({ Name = "Avatar changer", Side = 2 })
     Avatar:Toggle({ Name = "Avatar spoofer window", Flag = "spoof_ui", Default = false, Tooltip = "Opens a window to browse a player's current look and saved outfits" })
     Avatar:Input({ Name = "User", Flag = "spoof_avatar_user", Placeholder = "UserId, username or profile URL" })
     Avatar:Button({ Name = "Apply avatar", Callback = function()
@@ -15209,7 +15298,7 @@ do
             end
 
             local function pickTarget(realPos)
-                local mode = flag("rb_mode", "Closest")
+                local mode = flag("rb_mode", "Target list")
                 local list = flag("rb_targets", {})
                 local range = flag("rb_range", 2000)
                 local nearby = flag("rb_nearby", false)
@@ -15319,6 +15408,89 @@ do
                     R.voidPos = v3(a, main, b)
                 end
                 return R.voidPos
+            end
+
+            local function voidCenter(root)
+                local base = Actions.sp.realPos(root)
+                if flag("rb_pattern", "Under map") == "Under map" then
+                    local destroyAt = workspace.FallenPartsDestroyHeight
+                    if type(destroyAt) ~= "number" or destroyAt ~= destroyAt then destroyAt = -500 end
+                    return v3(base.X, math.min(math.max(destroyAt + 30, -2500), base.Y - 10), base.Z)
+                end
+                if not R.voidPos then voidPoint(clock()) end
+                return R.voidPos
+            end
+
+            local marker, markerLine, markerText
+            local function hideMarker()
+                if marker then marker.Parent = nil end
+                if markerLine then markerLine.Visible = false end
+                if markerText then markerText.Visible = false end
+            end
+            local function destroyMarker()
+                if marker then pcall(function() marker:Destroy() end) marker = nil end
+                if markerLine then pcall(function() markerLine:Remove() end) markerLine = nil end
+                if markerText then pcall(function() markerText:Remove() end) markerText = nil end
+            end
+            local function updateMarker()
+                if not (flag("rb_void_show", false) and flag("rb_void", false)) then hideMarker() return end
+                local cam = Camera()
+                local _, _, root = localParts()
+                if not cam or not root then hideMarker() return end
+                local at = voidCenter(root)
+                if not at then hideMarker() return end
+                local picker = Options.rb_void_color
+                local color = picker and typeof(picker.Value) == "Color3" and picker.Value or Color3.fromRGB(255, 80, 80)
+                if not marker then
+                    marker = Instance.new("Part")
+                    marker.Name = "AsterVoidMarker"
+                    marker.Shape = Enum.PartType.Ball
+                    marker.Size = v3(5, 5, 5)
+                    marker.Anchored = true
+                    marker.CanCollide = false
+                    marker.CanQuery = false
+                    marker.CanTouch = false
+                    marker.CastShadow = false
+                    marker.Material = Enum.Material.Neon
+                    marker.Transparency = 0.25
+                end
+                marker.Color = color
+                marker.Position = at
+                if marker.Parent ~= cam then marker.Parent = cam end
+                if Drawing and type(Drawing.new) == "function" then
+                    if not markerLine then
+                        local ok, line = pcall(Drawing.new, "Line")
+                        if ok and line then markerLine = line table.insert(getgenv().TS_Drawings, line) end
+                    end
+                    if not markerText then
+                        local ok, text = pcall(Drawing.new, "Text")
+                        if ok and text then
+                            markerText = text
+                            text.Size, text.Center, text.Outline, text.Font = 14, true, true, 2
+                            table.insert(getgenv().TS_Drawings, text)
+                        end
+                    end
+                    local view = cam.ViewportSize
+                    local screen = cam:WorldToViewportPoint(at)
+                    local x, y = screen.X, screen.Y
+                    if screen.Z < 0 then x, y = view.X - x, view.Y - y end
+                    x = math.clamp(x, 40, view.X - 40)
+                    y = math.clamp(y, 40, view.Y - 40)
+                    local distance = (at - root.Position).Magnitude
+                    if markerLine then
+                        markerLine.From = Vector2.new(view.X / 2, view.Y)
+                        markerLine.To = Vector2.new(x, y)
+                        markerLine.Color = color
+                        markerLine.Thickness = 1
+                        markerLine.Visible = true
+                    end
+                    if markerText then
+                        markerText.Text = string.format("void %d studs", math.floor(distance))
+                        markerText.Color = color
+                        markerText.Position = Vector2.new(x, y - 20)
+                        markerText.Visible = true
+                    end
+                end
             end
 
             local function wantVoid(now, empty)
@@ -15617,6 +15789,9 @@ do
                     end
                 end))
                 bag.add(RunService.RenderStepped:Connect(function()
+                    pcall(updateMarker)
+                end))
+                bag.add(RunService.RenderStepped:Connect(function()
                     if not flag("rb_status", false) then
                         if statusText then statusText.Visible = false end
                         return
@@ -15628,7 +15803,8 @@ do
                     local line = "ragebot: " .. R.status
                     if e then line = line .. string.format(" | %s %d hp", e.Player.DisplayName ~= "" and e.Player.DisplayName or e.Player.Name, math.floor(e.Humanoid.Health)) end
                     statusText.Text = line
-                    statusText.Position = Vector2.new(cam.ViewportSize.X / 2, 40)
+                    statusText.Size = 16
+                    statusText.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2 + flag("rb_status_y", 40))
                     statusText.Visible = true
                 end))
             end, function()
@@ -15638,6 +15814,7 @@ do
                 if Actions.rageHook then Actions.rageHook(false) end
                 R.target, R.entity, R.center, R.goal, R.safe = nil, nil, nil, nil, false
                 R.status = "off"
+                hideMarker()
                 if R.viewing then
                     R.viewing = false
                     local _, ownHum = localParts()
@@ -15649,6 +15826,7 @@ do
 
             onUnload(function()
                 R.run = false
+                destroyMarker()
                 if statusText then pcall(function() statusText:Remove() end) statusText = nil end
             end)
         end

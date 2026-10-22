@@ -1908,7 +1908,7 @@ Library:UpdateColorsUsingRegistry()
 
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster",
+    Title = "Aster  |  build 0822-B",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,

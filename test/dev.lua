@@ -2199,7 +2199,7 @@ do
         RV:Slider({ Name = "Out of void", Flag = "rb_out_time", Min = 0.05, Max = 2, Default = 0.2, Suffix = "s", Decimals = 0.01 })
         RV:Slider({ Name = "Smart wait", Flag = "rb_smart_wait", Min = 1, Max = 30, Default = 8, Suffix = "s", Decimals = 0.5 })
         RV:Slider({ Name = "Smart void time", Flag = "rb_smart_void", Min = 1, Max = 30, Default = 5, Suffix = "s", Decimals = 0.5 })
-        RV:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "High", "Far", "Extreme" }, Default = "High", Tooltip = "How far the hiding spot is. High is a tall tower above the map. Far and Extreme are much further out" })
+        RV:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "Under map", "High", "Far", "Extreme" }, Default = "Under map", Tooltip = "Under map hides just above the point where the engine destroys parts, below your real position, the same spot the Void desync uses. High, Far and Extreme are far above or beside the map and can be killed by the game's kill planes" })
         RV:Dropdown({ Name = "Direction", Flag = "rb_dir", Items = { "+Y", "+X", "+Z" }, Default = "+Y" })
         RV:Slider({ Name = "Depth multiplier", Flag = "rb_depth", Min = 0.1, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
         RV:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
@@ -15284,7 +15284,15 @@ do
                 if R.voidPos and now - R.voidRoll < flag("rb_switch", 0.05) then return R.voidPos end
                 R.voidRoll = now
                 local depth = flag("rb_depth", 1)
-                local pattern = flag("rb_pattern", "High")
+                local pattern = flag("rb_pattern", "Under map")
+                if pattern == "Under map" then
+                    local base = R.realPos or ZERO
+                    local destroyAt = workspace.FallenPartsDestroyHeight
+                    if type(destroyAt) ~= "number" or destroyAt ~= destroyAt then destroyAt = -500 end
+                    local y = math.min(math.max(destroyAt + 30, -2500), base.Y - 10)
+                    R.voidPos = v3(base.X + math.random(-40, 40), y, base.Z + math.random(-40, 40))
+                    return R.voidPos
+                end
                 local main, a, b
                 if pattern == "Far" then
                     main = randomChoice({ 2e6, 5e6, 1e7, 2e7, 5e7 }) * depth
@@ -15394,6 +15402,7 @@ do
             local function rageRequest(root, realPos)
                 if not R.run then return nil end
                 local now = clock()
+                R.realPos = realPos
                 local _, hum = localParts()
                 local tool, empty = gunState()
                 local voidOn = flag("rb_void", false)

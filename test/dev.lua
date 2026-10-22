@@ -2056,7 +2056,8 @@ function Window:Page(info)
     return wrapPage(LinoriaWindow:AddTab(info.Name))
 end
 
-local CombatTab   = Window:Page({ Name = "Combat",  Columns = 2, Subtabs = false })
+local CombatTab   = Window:Page({ Name = "Legit bot", Columns = 2, Subtabs = false })
+local RageTab     = Window:Page({ Name = "Ragebot", Columns = 2, Subtabs = false })
 local VisualsPage = Window:Page({ Name = "Visuals", Columns = 2, Subtabs = false })
 local WorldPage   = Window:Page({ Name = "World",   Columns = 2, Subtabs = false })
 
@@ -2116,7 +2117,71 @@ do
     Trigger:Toggle({ Name = "Forcefield check", Flag = "trigger_ff", Default = false })
     Trigger:Toggle({ Name = "Hostile only (inmates)", Flag = "trigger_hostile", Default = false })
 
-    local Wall = CombatTab:Section({ Name = "Wallbang", Side = 1 })
+    do
+        local RB = RageTab:Section({ Name = "Ragebot", Side = 1 })
+        RB:Toggle({ Name = "Enabled", Flag = "rb_enabled", Default = false, Tooltip = "Hides in the void, comes out next to the target, shoots and goes back" }):Keybind({ Name = "Ragebot key", Flag = "rb_key", Default = "None", Sync = true })
+        RB:Dropdown({ Name = "Weapon", Flag = "rb_weapon", Items = { "Equipped", "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver" }, Default = "Equipped", Tooltip = "Equipped keeps whatever you hold. A weapon name equips it for you while the ragebot has a target" })
+        RB:Dropdown({ Name = "Hit part", Flag = "rb_part", Items = { "Head", "Torso", "Random" }, Default = "Head" })
+        RB:Slider({ Name = "Shots per second", Flag = "rb_rate", Min = 1, Max = 30, Default = 12, Suffix = "/s", Decimals = 1 })
+        RB:Slider({ Name = "Shot delay after peeking", Flag = "rb_shot_delay", Min = 0, Max = 0.3, Default = 0.03, Suffix = "s", Decimals = 0.01, Tooltip = "How long you stand at the peek spot before the first shot, so the server has your new position" })
+        RB:Toggle({ Name = "Auto reload", Flag = "rb_reload", Default = false, Tooltip = "Reloads when the gun is empty. With void spam on you stay hidden while it reloads" })
+        RB:Toggle({ Name = "Show status", Flag = "rb_status", Default = false, Tooltip = "A line of text at the top of the screen with what the ragebot is doing" })
+        RB:Toggle({ Name = "Safe mode", Flag = "rb_safe", Default = false, Tooltip = "Below the health percentage you stay hidden (or at home when void spam is off) until you healed" })
+        RB:Slider({ Name = "Safe mode health", Flag = "rb_safe_hp", Min = 5, Max = 90, Default = 20, Suffix = "%", Decimals = 1 })
+
+        local RT = RageTab:Section({ Name = "Target", Side = 1 })
+        RT:Dropdown({ Name = "Mode", Flag = "rb_mode", Items = { "Closest", "Closest to cursor", "Target list", "Players tab" }, Default = "Closest", Tooltip = "Closest: nearest player. Target list: only players in the list below. Players tab: the player selected in the Players tab" })
+        local names = {}
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then names[#names + 1] = player.Name end
+        end
+        table.sort(names, function(a, b) return a:lower() < b:lower() end)
+        RT:Dropdown({ Name = "Targets", Flag = "rb_targets", Items = names, Multi = true, Default = {}, Tooltip = "Used by the Target list mode" })
+        RT:Dropdown({ Name = "Whitelist", Flag = "rb_white", Items = names, Multi = true, Default = {}, Tooltip = "These players are never targeted" })
+        RT:Slider({ Name = "Max distance", Flag = "rb_range", Min = 50, Max = 20000, Default = 2000, Suffix = " studs", Decimals = 1 })
+        RT:Toggle({ Name = "Kill all nearby", Flag = "rb_nearby", Default = false, Tooltip = "In Target list and Players tab mode, anyone within the range below is a target too" })
+        RT:Slider({ Name = "Nearby range", Flag = "rb_nearby_range", Min = 10, Max = 300, Default = 60, Suffix = " studs", Decimals = 1 })
+        RT:Toggle({ Name = "Swap targets", Flag = "rb_swap", Default = false, Tooltip = "Moves on to the next player when the current one takes no damage for the time below" })
+        RT:Slider({ Name = "Swap after", Flag = "rb_swap_time", Min = 1, Max = 30, Default = 4, Suffix = "s", Decimals = 0.5 })
+        RT:Toggle({ Name = "Ignore forcefield", Flag = "rb_ff", Default = false })
+        RT:Toggle({ Name = "Ignore tased and arrested", Flag = "rb_down", Default = false })
+        RT:Toggle({ Name = "Ignore friendly team", Flag = "rb_team", Default = false })
+        RT:Toggle({ Name = "Hostile only (inmates)", Flag = "rb_hostile", Default = false })
+        RT:Button({ Name = "Target selected player", Callback = function() if Actions.rageList then Actions.rageList("rb_targets", true) end end })
+        RT:Button({ Name = "Whitelist selected player", Callback = function() if Actions.rageList then Actions.rageList("rb_white", true) end end })
+        RT:Button({ Name = "Clear targets", Callback = function() if Actions.rageList then Actions.rageList("rb_targets", false) end end })
+        RT:Button({ Name = "Clear whitelist", Callback = function() if Actions.rageList then Actions.rageList("rb_white", false) end end })
+        Actions.rageNames = names
+
+        local RV = RageTab:Section({ Name = "Void spam", Side = 2 })
+        RV:Toggle({ Name = "Void spam", Flag = "rb_void", Default = false, Tooltip = "Switches between a hiding spot far outside the map and the peek spot" })
+        RV:Dropdown({ Name = "When", Flag = "rb_void_when", Items = { "While targeting", "While reloading", "Smart", "Always" }, Default = "While targeting", Tooltip = "While targeting: hide between peeks the whole time. While reloading: hide only to reload. Smart: peek normally and hide for a while when the target stops taking damage. Always: also hides without a target" })
+        RV:Slider({ Name = "In void", Flag = "rb_in_time", Min = 0.05, Max = 3, Default = 0.35, Suffix = "s", Decimals = 0.01 })
+        RV:Slider({ Name = "Out of void", Flag = "rb_out_time", Min = 0.05, Max = 2, Default = 0.2, Suffix = "s", Decimals = 0.01 })
+        RV:Slider({ Name = "Smart wait", Flag = "rb_smart_wait", Min = 1, Max = 30, Default = 8, Suffix = "s", Decimals = 0.5 })
+        RV:Slider({ Name = "Smart void time", Flag = "rb_smart_void", Min = 1, Max = 30, Default = 5, Suffix = "s", Decimals = 0.5 })
+        RV:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "High", "Far", "Extreme" }, Default = "High", Tooltip = "How far the hiding spot is. High is a tall tower above the map. Far and Extreme are much further out" })
+        RV:Dropdown({ Name = "Direction", Flag = "rb_dir", Items = { "+Y", "+X", "+Z" }, Default = "+Y" })
+        RV:Slider({ Name = "Depth multiplier", Flag = "rb_depth", Min = 0.1, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
+        RV:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
+
+        local RP = RageTab:Section({ Name = "Peek spot", Side = 2 })
+        RP:Dropdown({ Name = "Position", Flag = "rb_peek_mode", Items = { "Behind", "Above", "Random", "Spiral" }, Default = "Behind", Tooltip = "Where you appear next to the target" })
+        RP:Slider({ Name = "Distance", Flag = "rb_peek_dist", Min = 1, Max = 40, Default = 6, Suffix = " studs", Decimals = 0.5 })
+        RP:Slider({ Name = "Height offset", Flag = "rb_peek_height", Min = -6, Max = 20, Default = 2, Suffix = " studs", Decimals = 0.5 })
+        RP:Slider({ Name = "Spiral speed", Flag = "rb_spiral_speed", Min = 0.5, Max = 30, Default = 6, Suffix = " rad/s", Decimals = 0.5 })
+        RP:Dropdown({ Name = "Line of sight check", Flag = "rb_los", Items = { "Off", "Visible only" }, Default = "Off", Tooltip = "Visible only searches around the target for a spot with a clear line to the head and stays hidden when there is none" })
+
+        local RR = RageTab:Section({ Name = "Prediction and resolver", Side = 2 })
+        RR:Toggle({ Name = "Prediction", Flag = "rb_pred", Default = false, Tooltip = "Aims ahead of a moving target" })
+        RR:Slider({ Name = "Base time", Flag = "rb_pred_base", Min = 0, Max = 0.5, Default = 0.07, Suffix = "s", Decimals = 0.01 })
+        RR:Slider({ Name = "Multiplier", Flag = "rb_pred_mult", Min = 0, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
+        RR:Toggle({ Name = "Resolver", Flag = "rb_res", Default = false, Tooltip = "A target that hides outside the map is aimed at where it was last inside the map. Without it, hidden targets are skipped" })
+        RR:Slider({ Name = "Resolver memory", Flag = "rb_res_time", Min = 0.5, Max = 10, Default = 2, Suffix = "s", Decimals = 0.1 })
+        RR:Slider({ Name = "Map limit", Flag = "rb_bounds", Min = 1000, Max = 20000, Default = 8000, Suffix = " studs", Decimals = 1, Tooltip = "Further from the center than this counts as outside the map" })
+    end
+
+    local Wall = RageTab:Section({ Name = "Wallbang", Side = 1 })
     Wall:Toggle({ Name = "Wallbang", Flag = "silent_wallbang", Default = false })
     Wall:Dropdown({
         Name = "Method", Flag = "wb_method", Items = { "Vape V4", "Aster Origin", "Aster Reach", "Aster Precise" }, Default = "Aster Reach",
@@ -2127,7 +2192,7 @@ do
     Wall:Toggle({ Name = "Damage check", Flag = "wb_damage", Default = true, Tooltip = "Only uses a shot origin and hit point that can deal damage: close enough to you and to the target's body, and inside the gun's range. The indicator, auto fire and assist use the same check." })
     Wall:Slider({ Name = "Max spot distance", Flag = "wb_spot", Min = 5, Max = 20, Default = 7.5, Suffix = " studs", Decimals = 0.1 })
 
-    local Assist = CombatTab:Section({ Name = "Wallbang assist", Side = 1 })
+    local Assist = RageTab:Section({ Name = "Wallbang assist", Side = 1 })
     local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Works on anyone near your cursor, no silent aim needed. If an enemy is behind a wall, it moves the position the server sees up to (or into) the wall so the shot has a line, and sends the shot at that enemy." })
     assistToggle:Keybind({ Name = "Assist key", Flag = "wb_assist_key", Default = "None", Sync = true })
     Assist:Dropdown({ Name = "Move method", Flag = "wb_assist_method", Items = { "Server position", "Velocity" }, Default = "Server position", Tooltip = "Server position: only what the server sees moves (writes the character CFrame). Velocity: you really move there with physics (no CFrame writes) and walls next to you stop colliding on the way, then you return. The visualizer only applies to Server position." })
@@ -2174,7 +2239,7 @@ do
     FovSilent:Toggle({ Name = "Filled", Flag = "silent_fov_filled", Default = false })
     FovSilent:Slider({ Name = "Thickness", Flag = "silent_fov_thick", Min = 1, Max = 5, Default = 1, Decimals = 1 })
 
-    local OrbitSec = CombatTab:Section({ Name = "Orbit target", Side = 2 })
+    local OrbitSec = RageTab:Section({ Name = "Orbit target", Side = 2 })
     OrbitSec:Toggle({ Name = "Orbit target", Flag = "orbit_on", Default = false, Tooltip = "While silent aim has a target, the position the server sees circles that player. You stay where you are, only the server position moves." }):Keybind({ Name = "Orbit key", Flag = "orbit_key", Default = "None", Sync = true })
     OrbitSec:Dropdown({ Name = "Height", Flag = "orbit_mode", Items = { "Under the map", "Below target", "Near void" }, Default = "Under the map", Tooltip = "Under the map: below the lowest floor under the target. Below target: straight below the target's height. Near void: just above the void." })
     OrbitSec:Slider({ Name = "Depth", Flag = "orbit_depth", Min = 0, Max = 500, Default = 15, Suffix = " studs", Decimals = 0.5, Tooltip = "How far below the floor (Under the map) or below the target (Below target). It always stops short of the void" })
@@ -2199,7 +2264,7 @@ do
     TargetSec:Toggle({ Name = "Show team and weapon", Flag = "tinfo_extra", Default = true })
     TargetSec:Toggle({ Name = "Hide without target", Flag = "tinfo_hide", Default = true, Tooltip = "With the menu open the panel always shows so you can move it" })
 
-    local GunMods = CombatTab:Section({ Name = "Gun mods", Side = 2 })
+    local GunMods = RageTab:Section({ Name = "Gun mods", Side = 2 })
     GunMods:Toggle({ Name = "Gun modifications", Flag = "gun_mods", Default = false })
     GunMods:Slider({ Name = "Fire delay (% of stock)", Flag = "gun_fire_rate", Min = 1, Max = 100, Default = 100, Suffix = "%", Decimals = 1 })
     GunMods:Toggle({ Name = "No spread", Flag = "gun_no_spread", Default = false })
@@ -3605,7 +3670,7 @@ do
     Invis:Toggle({ Name = "Move while hidden", Flag = "misc_invis_move", Default = false })
     Invis:Slider({ Name = "Look-up pitch", Flag = "misc_invis_pitch", Min = -90, Max = 90, Default = 90, Suffix = "°", Decimals = 1 })
 
-    local Desync = MiscPage:Section({ Name = "Desync", Side = 2 })
+    local Desync = RageTab:Section({ Name = "Desync", Side = 2 })
     Desync:Toggle({ Name = "Desync", Flag = "misc_desync", Default = false, Tooltip = "The server sees you at another position than the one you play at" }):Keybind({ Name = "Desync key", Flag = "misc_desync_key", Default = "None", Sync = true })
     Desync:Dropdown({
         Name = "Style", Flag = "misc_desync_style", Items = { "Offset", "Void" }, Default = "Offset",
@@ -8837,6 +8902,11 @@ do
             return ok
         end
 
+        Actions.reloadGun = function()
+            local reload = getReload()
+            if reload then task.spawn(reload) else task.spawn(pressReload) end
+        end
+
         local priority = { M4A1 = 1, ["AK-47"] = 1, MP5 = 1, FAL = 1, ["Remington 870"] = 2, M9 = 3, Revolver = 4 }
         local function swapTarget(current)
             local pack = LocalPlayer:FindFirstChildOfClass("Backpack")
@@ -12922,7 +12992,7 @@ do
 
     do
         local SP = Actions.sp
-        local requests, order = {}, { "assist", "orbit", "desync" }
+        local requests, order = {}, { "rage", "assist", "orbit", "desync" }
         local engine = newBag()
         local running = false
         local applied, realCF = nil, nil
@@ -14613,7 +14683,7 @@ do
         do
             local bag = newBag()
             local hookedCast, original = nil, nil
-            local wants = { silent = false, fx = false, auto = false, assist = false }
+            local wants = { silent = false, fx = false, auto = false, assist = false, rage = false }
             local autoNext, loopToken, warnedStack = 0, 0, false
             local lastOrigin, lastNew
 
@@ -14622,7 +14692,7 @@ do
             end
 
             local function anyWanted()
-                return wants.silent or wants.fx or wants.auto or wants.assist
+                return wants.silent or wants.fx or wants.auto or wants.assist or wants.rage
             end
 
             local function redirect(...)
@@ -14792,6 +14862,13 @@ do
                 refresh()
             end
 
+            Actions.rageHook = function(on)
+                wants.rage = on and true or false
+                refresh()
+            end
+            Actions.readyGun = readyGun
+            Actions.gunTool = equippedGun
+
             Actions.fireAt = function(part, position)
                 if not part or not part.Parent then return false end
                 if not hookedCast then
@@ -14926,12 +15003,496 @@ do
             end)
 
             onUnload(function()
-                wants.silent, wants.fx, wants.auto, wants.assist = false, false, false, false
+                wants.silent, wants.fx, wants.auto, wants.assist, wants.rage = false, false, false, false, false
                 loopToken += 1
                 unhook()
                 ShotEvents.hooked = nil
-                Actions.fxHook, Actions.autoHook, Actions.assistHook = noop, noop, noop
+                Actions.fxHook, Actions.autoHook, Actions.assistHook, Actions.rageHook = noop, noop, noop, noop
                 Actions.fireAt = function() return false end
+            end)
+        end
+
+        do
+            local R = {
+                target = nil, entity = nil, center = nil, vel = ZERO, phase = "peek", lastPhase = "", phaseEnd = 0, peekAt = 0,
+                nextShot = 0, voidPos = nil, voidRoll = 0, skip = {}, safe = false, status = "off", lastEval = 0,
+                lastHealth = 0, lastDamage = 0, equipAt = 0, reloadAt = 0, randAngle = 0, goal = nil, goalAt = 0, goalFor = nil,
+                smart = { state = "waiting", t = nil, timer = 0, health = nil, dropped = false },
+            }
+            Actions.rage = R
+            local bag = newBag()
+            local hist = setmetatable({}, { __mode = "k" })
+            local statusText
+            local errors = 0
+            local ALIASES = {
+                ["AK-47"] = { "ak47" }, ["M4A1"] = { "m4a1", "m4" }, ["MP5"] = { "mp5" }, ["FAL"] = { "fal" },
+                ["Remington 870"] = { "remington870", "r870", "remington" }, ["M700"] = { "m700" }, ["M9"] = { "m9" }, ["Revolver"] = { "revolver" },
+            }
+            local HEAD_OFFSET = v3(0, 1.5, 0)
+
+            local function picked(value, key)
+                if type(value) ~= "table" then return false end
+                if value[key] == true then return true end
+                for _, chosen in pairs(value) do
+                    if chosen == key then return true end
+                end
+                return false
+            end
+
+            Actions.rageList = function(listFlag, add)
+                local option = Options[listFlag]
+                if not option or type(option.SetValue) ~= "function" then return end
+                if not add then
+                    pcall(function() option:SetValue({}) end)
+                    return
+                end
+                local player = Actions.selectedPlayer and Actions.selectedPlayer()
+                if not player then say("Select a player in the Players tab first") return end
+                local value = {}
+                if type(option.Value) == "table" then
+                    for key, chosen in pairs(option.Value) do value[key] = chosen end
+                end
+                value[player.Name] = true
+                pcall(function() option:SetValue(value) end)
+                say(player.Name .. " added")
+            end
+
+            local function refreshNames()
+                local names = {}
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player ~= LocalPlayer then names[#names + 1] = player.Name end
+                end
+                table.sort(names, function(a, b) return a:lower() < b:lower() end)
+                for _, listFlag in ipairs({ "rb_targets", "rb_white" }) do
+                    local option = Options[listFlag]
+                    if option and type(option.SetValues) == "function" then pcall(function() option:SetValues(names) end) end
+                end
+            end
+            track(Players.PlayerAdded:Connect(function() task.defer(refreshNames) end))
+            track(Players.PlayerRemoving:Connect(function(player)
+                hist[player] = nil
+                R.skip[player] = nil
+                task.defer(refreshNames)
+            end))
+
+            local function inBounds(position)
+                local limit = flag("rb_bounds", 8000)
+                return math.abs(position.X) < limit and math.abs(position.Z) < limit and position.Y > -400 and position.Y < 4000
+            end
+
+            local function centerOf(e)
+                local position = e.Root.Position
+                local now = clock()
+                if inBounds(position) then
+                    hist[e.Player] = { pos = position, t = now }
+                    return position, e.Root.AssemblyLinearVelocity, true
+                end
+                if flag("rb_res", false) then
+                    local last = hist[e.Player]
+                    if last and now - last.t <= flag("rb_res_time", 2) then return last.pos, ZERO, false end
+                end
+                return nil
+            end
+
+            local function usable(e)
+                local player = e.Player
+                if Relations[player.UserId] == "Friendly" then return false end
+                if picked(flag("rb_white", {}), player.Name) then return false end
+                local until_ = R.skip[player]
+                if until_ and until_ > clock() then return false end
+                if flag("rb_team", false) and relationOf(player) == "Friendly" then return false end
+                if flag("rb_ff", false) and e.Character:FindFirstChildOfClass("ForceField") then return false end
+                if flag("rb_hostile", false) and isPeaceful(player) then return false end
+                if flag("rb_down", false) and (e.Character:GetAttribute("Tased") or e.Character:GetAttribute("Arrested")) then return false end
+                return true
+            end
+
+            local function pickTarget(realPos)
+                local mode = flag("rb_mode", "Closest")
+                local list = flag("rb_targets", {})
+                local range = flag("rb_range", 2000)
+                local nearby = flag("rb_nearby", false)
+                local nearRange = flag("rb_nearby_range", 60)
+                local selected = mode == "Players tab" and Actions.selectedPlayer and Actions.selectedPlayer() or nil
+                local cam = Camera()
+                local mouse = UserInputService:GetMouseLocation()
+                local best, bestScore, bestPos, bestVel, bestLive
+                for _, e in ipairs(otherEntities()) do
+                    if usable(e) then
+                        local position, velocity, live = centerOf(e)
+                        if position then
+                            local distance = (position - realPos).Magnitude
+                            local want
+                            if mode == "Target list" then
+                                want = picked(list, e.Player.Name) or (nearby and distance <= nearRange)
+                            elseif mode == "Players tab" then
+                                want = selected == e.Player or (nearby and distance <= nearRange)
+                            else
+                                want = true
+                            end
+                            if want and distance <= range then
+                                local score = distance
+                                if mode == "Closest to cursor" and cam then
+                                    local screen, onScreen = cam:WorldToViewportPoint(position)
+                                    score = onScreen and (Vector2.new(screen.X, screen.Y) - mouse).Magnitude or (1e6 + distance)
+                                end
+                                if Relations[e.Player.UserId] == "Priority" then score -= 1e7 end
+                                if R.target == e.Player then score -= 12 end
+                                if not bestScore or score < bestScore then
+                                    best, bestScore, bestPos, bestVel, bestLive = e, score, position, velocity, live
+                                end
+                            end
+                        end
+                    end
+                end
+                return best, bestPos, bestVel, bestLive
+            end
+
+            local function findWeapon(label)
+                local aliases = ALIASES[label]
+                if not aliases then return nil end
+                local holders = { LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }
+                for _, holder in ipairs(holders) do
+                    if holder then
+                        for _, child in ipairs(holder:GetChildren()) do
+                            if child:IsA("Tool") then
+                                local key = fxKey(child.Name)
+                                for _, alias in ipairs(aliases) do
+                                    if key == alias then return child end
+                                end
+                            end
+                        end
+                    end
+                end
+                return nil
+            end
+
+            local function gunState()
+                local tool = Actions.gunTool and Actions.gunTool()
+                if not tool then return nil, true, false end
+                local ammo = tool:GetAttribute("Local_CurrentAmmo")
+                local reloading = (tool:GetAttribute("Local_ReloadSession") or 0) > 0
+                return tool, (ammo ~= nil and ammo <= 0) or reloading, reloading
+            end
+
+            local function randomChoice(list)
+                return list[math.random(1, #list)]
+            end
+
+            local function voidPoint(now)
+                if R.voidPos and now - R.voidRoll < flag("rb_switch", 0.05) then return R.voidPos end
+                R.voidRoll = now
+                local depth = flag("rb_depth", 1)
+                local pattern = flag("rb_pattern", "High")
+                local main, a, b
+                if pattern == "Far" then
+                    main = randomChoice({ 2e6, 5e6, 1e7, 2e7, 5e7 }) * depth
+                    a = (randomChoice({ 1e5, 2.5e5, 5e5, 1e6, 2e6 }) + math.random(1e4, 2e4)) * depth
+                    b = (randomChoice({ 1e5, 2.5e5, 5e5, 1e6, 2e6 }) + math.random(1e4, 2e4)) * depth
+                elseif pattern == "Extreme" then
+                    main = randomChoice({ 1e8, 2.5e8, 5e8 }) * depth
+                    a = randomChoice({ 1e7, 2.5e7, 5e7 }) * depth
+                    b = randomChoice({ 1e7, 2.5e7, 5e7 }) * depth
+                else
+                    main = math.random(150000, 250000) * depth
+                    a = math.random(1000, 5000) * depth
+                    b = math.random(1000, 5000) * depth
+                end
+                main = math.clamp(main, -5e8, 5e8)
+                a = math.clamp(a, -5e8, 5e8)
+                b = math.clamp(b, -5e8, 5e8)
+                local direction = flag("rb_dir", "+Y")
+                if direction == "+X" then
+                    R.voidPos = v3(main, a, b)
+                elseif direction == "+Z" then
+                    R.voidPos = v3(a, b, main)
+                else
+                    R.voidPos = v3(a, main, b)
+                end
+                return R.voidPos
+            end
+
+            local function wantVoid(now, empty)
+                if not flag("rb_void", false) then return false end
+                local when = flag("rb_void_when", "While targeting")
+                if when == "While reloading" then return empty end
+                if when ~= "Smart" then return true end
+                local S = R.smart
+                local hum = R.entity and R.entity.Humanoid
+                local health = hum and hum.Health or 100
+                local dt = S.t and (now - S.t) or 0
+                S.t = now
+                if S.health and health < S.health then S.dropped = true end
+                S.health = health
+                S.timer += dt
+                if S.state == "waiting" then
+                    if S.timer >= flag("rb_smart_wait", 8) then
+                        S.timer = 0
+                        if not S.dropped and health > 0 then S.state = "voiding" end
+                        S.dropped = false
+                    end
+                    return false
+                end
+                if S.timer >= flag("rb_smart_void", 5) then
+                    S.state, S.timer = "waiting", 0
+                end
+                return true
+            end
+
+            local function choosePart(e)
+                local mode = flag("rb_part", "Head")
+                if mode == "Random" then mode = math.random(1, 2) == 1 and "Head" or "Torso" end
+                if mode == "Torso" then
+                    return e.Character:FindFirstChild("UpperTorso") or e.Character:FindFirstChild("Torso") or e.Root
+                end
+                return e.Head
+            end
+
+            local function peekAt(e, base, now)
+                local mode = flag("rb_peek_mode", "Behind")
+                local distance = flag("rb_peek_dist", 6)
+                local height = flag("rb_peek_height", 2)
+                local function ring(angle, extra)
+                    return base + v3(math.cos(angle) * distance, height + (extra or 0), math.sin(angle) * distance)
+                end
+                local angle
+                if mode == "Above" then
+                    local goal = base + v3(0, math.max(height, 2), 0)
+                    if flag("rb_los", "Off") ~= "Visible only" then return goal end
+                    local start = 0
+                    if WB.status(goal + HEAD_OFFSET, e.Head, goal) == "visible" then return goal end
+                    angle = start
+                elseif mode == "Behind" then
+                    local look = e.Root.CFrame.LookVector
+                    angle = math.atan2(-look.Z, -look.X)
+                elseif mode == "Random" then
+                    angle = R.randAngle
+                else
+                    angle = now * flag("rb_spiral_speed", 6)
+                end
+                local goal = ring(angle)
+                if flag("rb_los", "Off") ~= "Visible only" then return goal end
+                WB.tick()
+                if WB.status(goal + HEAD_OFFSET, e.Head, goal) == "visible" then return goal end
+                for _, extra in ipairs({ 0, 4, 8 }) do
+                    for step = 1, 8 do
+                        local candidate = ring(angle + step * math.pi / 4, extra)
+                        if WB.status(candidate + HEAD_OFFSET, e.Head, candidate) == "visible" then return candidate end
+                    end
+                end
+                return nil
+            end
+
+            local function fireNow(part, aim)
+                if not R.run then return end
+                if Actions.readyGun and Actions.readyGun() then
+                    Actions.fireAt(part, aim)
+                end
+            end
+
+            local function rageRequest(root, realPos)
+                if not R.run then return nil end
+                local now = clock()
+                local _, hum = localParts()
+                local tool, empty = gunState()
+                local voidOn = flag("rb_void", false)
+                local when = flag("rb_void_when", "While targeting")
+                local e = R.entity
+
+                if flag("rb_safe", false) and hum and hum.MaxHealth > 0 then
+                    local limit = flag("rb_safe_hp", 20) / 100
+                    local fraction = hum.Health / hum.MaxHealth
+                    if fraction <= limit then R.safe = true
+                    elseif fraction >= math.min(limit + 0.25, 1) then R.safe = false end
+                else
+                    R.safe = false
+                end
+
+                if R.safe then
+                    R.status = "safe mode"
+                    if voidOn then return voidPoint(now), 1e9 end
+                    return nil
+                end
+
+                if not e or not R.center then
+                    R.status = "waiting for target"
+                    R.lastPhase = ""
+                    if voidOn and when == "Always" then
+                        if now >= R.phaseEnd then
+                            R.phase = R.phase == "void" and "peek" or "void"
+                            R.phaseEnd = now + (R.phase == "void" and flag("rb_in_time", 0.35) or flag("rb_out_time", 0.2))
+                        end
+                        if R.phase == "void" then return voidPoint(now), 1e9 end
+                    end
+                    return nil
+                end
+
+                if not tool then
+                    R.status = "no gun"
+                    return nil
+                end
+
+                if empty then
+                    R.status = flag("rb_reload", false) and "reloading" or "gun empty"
+                    R.lastPhase = ""
+                    if voidOn then return voidPoint(now), 1e9 end
+                    return nil
+                end
+
+                local hide = wantVoid(now, empty)
+                if hide then
+                    if now >= R.phaseEnd then
+                        if R.phase == "void" then
+                            R.phase = "peek"
+                            R.phaseEnd = now + flag("rb_out_time", 0.2)
+                            R.randAngle = math.random() * math.pi * 2
+                        else
+                            R.phase = "void"
+                            R.phaseEnd = now + flag("rb_in_time", 0.35)
+                        end
+                    end
+                else
+                    R.phase = "peek"
+                    R.phaseEnd = 0
+                end
+
+                if R.phase == "void" then
+                    R.status = "hiding in void"
+                    R.lastPhase = "void"
+                    return voidPoint(now), 1e9
+                end
+
+                if R.lastPhase ~= "peek" then
+                    R.lastPhase = "peek"
+                    R.peekAt = now
+                end
+
+                local lead = 0
+                if flag("rb_pred", false) then lead = flag("rb_pred_base", 0.07) * flag("rb_pred_mult", 1) end
+                local base = R.center + R.vel * lead
+                local goal
+                if R.goal and R.goalFor == e.Player and now - R.goalAt < 0.05 then
+                    goal = R.goal
+                else
+                    goal = peekAt(e, base, now)
+                    R.goal, R.goalAt, R.goalFor = goal, now, e.Player
+                end
+                if not goal then
+                    R.status = "no clear spot"
+                    if voidOn then return voidPoint(now), 1e9 end
+                    return nil
+                end
+
+                R.status = "killing " .. e.Player.Name
+                if now - R.peekAt >= flag("rb_shot_delay", 0.03) and now >= R.nextShot then
+                    R.nextShot = now + 1 / math.max(flag("rb_rate", 12), 1)
+                    local part = choosePart(e)
+                    local aim = part.Position
+                    if not (R.live) then aim = R.center + (part.Position - e.Root.Position) end
+                    aim += R.vel * lead
+                    task.defer(fireNow, part, aim)
+                end
+                return goal, 1e9
+            end
+
+            local function housekeeping(now)
+                local char, hum, root = localParts()
+                if not root then
+                    R.target, R.entity, R.center = nil, nil, nil
+                    return
+                end
+                local realPos = Actions.sp.realPos(root)
+                local e, position, velocity, live = pickTarget(realPos)
+                if e then
+                    if R.target ~= e.Player then
+                        R.target = e.Player
+                        R.lastHealth = e.Humanoid.Health
+                        R.lastDamage = now
+                        R.smart.state, R.smart.timer, R.smart.dropped, R.smart.health, R.smart.t = "waiting", 0, false, nil, nil
+                        R.goal = nil
+                    end
+                    if e.Humanoid.Health < R.lastHealth then R.lastDamage = now end
+                    R.lastHealth = e.Humanoid.Health
+                    if flag("rb_swap", false) and now - R.lastDamage > flag("rb_swap_time", 4) then
+                        R.skip[e.Player] = now + flag("rb_swap_time", 4) * 2
+                        R.lastDamage = now
+                    end
+                else
+                    R.target = nil
+                end
+                R.entity, R.center, R.vel, R.live = e, position, velocity or ZERO, live ~= false
+
+                local label = flag("rb_weapon", "Equipped")
+                if e and label ~= "Equipped" and hum and now >= R.equipAt then
+                    R.equipAt = now + 0.4
+                    local held = char:FindFirstChildOfClass("Tool")
+                    local wanted = findWeapon(label)
+                    if wanted and held ~= wanted then pcall(function() hum:EquipTool(wanted) end) end
+                end
+
+                local tool, empty, reloading = gunState()
+                if tool and empty and not reloading and flag("rb_reload", false) and now >= R.reloadAt then
+                    R.reloadAt = now + 0.6
+                    if Actions.reloadGun then Actions.reloadGun() end
+                end
+            end
+
+            local function newText()
+                if not (Drawing and type(Drawing.new) == "function") then return nil end
+                local ok, text = pcall(Drawing.new, "Text")
+                if not ok or not text then return nil end
+                table.insert(getgenv().TS_Drawings, text)
+                text.Size, text.Center, text.Outline, text.Font = 14, true, true, 2
+                text.Color = Color3.new(1, 1, 1)
+                text.Visible = false
+                return text
+            end
+
+            feature("rb_enabled", function()
+                R.run = true
+                R.phase, R.lastPhase, R.phaseEnd, R.voidPos = "peek", "", 0, nil
+                task.spawn(Gun.find)
+                if Actions.rageHook then Actions.rageHook(true) end
+                Actions.sp.enable("rage", rageRequest)
+                local accumulated = 0
+                bag.add(RunService.Heartbeat:Connect(function(dt)
+                    accumulated += dt
+                    if accumulated < 0.08 then return end
+                    accumulated = 0
+                    local ok, err = pcall(housekeeping, clock())
+                    if not ok then
+                        errors += 1
+                        if errors <= 3 then warnf("ragebot error:", err) end
+                    end
+                end))
+                bag.add(RunService.RenderStepped:Connect(function()
+                    if not flag("rb_status", false) then
+                        if statusText then statusText.Visible = false end
+                        return
+                    end
+                    statusText = statusText or newText()
+                    local cam = Camera()
+                    if not statusText or not cam then return end
+                    local e = R.entity
+                    local line = "ragebot: " .. R.status
+                    if e then line = line .. string.format(" | %s %d hp", e.Player.DisplayName ~= "" and e.Player.DisplayName or e.Player.Name, math.floor(e.Humanoid.Health)) end
+                    statusText.Text = line
+                    statusText.Position = Vector2.new(cam.ViewportSize.X / 2, 40)
+                    statusText.Visible = true
+                end))
+            end, function()
+                R.run = false
+                bag.clear()
+                Actions.sp.disable("rage")
+                if Actions.rageHook then Actions.rageHook(false) end
+                R.target, R.entity, R.center, R.goal, R.safe = nil, nil, nil, nil, false
+                R.status = "off"
+                if statusText then pcall(function() statusText.Visible = false end) end
+            end)
+
+            onUnload(function()
+                R.run = false
+                if statusText then pcall(function() statusText:Remove() end) statusText = nil end
             end)
         end
 

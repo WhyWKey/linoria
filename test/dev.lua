@@ -1721,6 +1721,37 @@ local function patchLibrarySource(source)
             ContainerLabel.TextColor3 = Lit and Library.AccentColor or Library.FontColor;
             Library.RegistryMap[ContainerLabel].Properties.TextColor3 = Lit and 'AccentColor' or 'FontColor';]==])
 
+    swap("        Slider:Display();\n        Groupbox:AddBlank(Info.BlankSize or 6);",
+[==[        local function FitSlider()
+            local Span = SliderOuter.AbsoluteSize.X - 2;
+            if Span > 20 and Span ~= Slider.MaxSize then
+                Slider.MaxSize = Span;
+                Slider:Display();
+            end;
+        end;
+        SliderOuter:GetPropertyChangedSignal('AbsoluteSize'):Connect(FitSlider);
+        task.defer(FitSlider);
+        Slider:Display();
+        Groupbox:AddBlank(Info.BlankSize or 6);]==])
+
+    swap("        Toggle:Display();\n        Groupbox:AddBlank(Info.BlankSize or 5 + 2);",
+[==[        local function FitToggle()
+            local Width = Container.AbsoluteSize.X;
+            if Width < 60 then return; end;
+            ToggleLabel.Size = UDim2.new(0, math.max(Width - 21, 40), 1, 0);
+            local Layout = ToggleLabel:FindFirstChildOfClass('UIListLayout');
+            local Used = Layout and Layout.AbsoluteContentSize.X or 0;
+            ToggleRegion.Size = UDim2.new(0, math.max(Width - 23 - Used, 40), 1, 0);
+        end;
+        Container:GetPropertyChangedSignal('AbsoluteSize'):Connect(FitToggle);
+        do
+            local Layout = ToggleLabel:FindFirstChildOfClass('UIListLayout');
+            if Layout then Layout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(FitToggle); end;
+        end;
+        task.defer(FitToggle);
+        Toggle:Display();
+        Groupbox:AddBlank(Info.BlankSize or 5 + 2);]==])
+
     swap("Cursor.ZIndex = 100;", "Cursor.ZIndex = 5000;")
     swap("CursorOutline.ZIndex = 99;", "CursorOutline.ZIndex = 4999;")
     return source
@@ -1913,6 +1944,9 @@ end
 
 local function wrapElement(linoriaObject)
     local element = {}
+    function element:SetText(text)
+        if linoriaObject.SetText then pcall(function() linoriaObject:SetText(text) end) end
+    end
     function element:Colorpicker(info)
         if not linoriaObject.AddColorPicker then
             warn("Colorpicker skipped (element has no addon support):", info.Flag)
@@ -2121,6 +2155,8 @@ do
         local RB = RageTab:Section({ Name = "Ragebot", Side = 1 })
         RB:Toggle({ Name = "Enabled", Flag = "rb_enabled", Default = false, Tooltip = "Hides in the void, comes out next to the target, shoots and goes back" }):Keybind({ Name = "Ragebot key", Flag = "rb_key", Default = "None", Sync = true })
         RB:Dropdown({ Name = "Weapon", Flag = "rb_weapon", Items = { "Equipped", "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver" }, Default = "Equipped", Tooltip = "Equipped keeps whatever you hold. A weapon name equips it for you while the ragebot has a target" })
+        RB:Dropdown({ Name = "Autoget weapons", Flag = "rb_autoget", Items = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }, Multi = true, Default = {}, Tooltip = "Picks these weapons up from their spawns whenever you do not have them, also after you respawn. The ragebot pauses while you fetch one" })
+        RB:Dropdown({ Name = "Settings", Flag = "rb_settings", Items = { "View target", "Show server position", "Random peek spot" }, Multi = true, Default = {}, Tooltip = "View target: the camera follows the target. Show server position: a highlighted copy of you shows where the server sees you. Random peek spot: a new random spot around the target for every shot" })
         RB:Dropdown({ Name = "Hit part", Flag = "rb_part", Items = { "Head", "Torso", "Random" }, Default = "Head" })
         RB:Slider({ Name = "Shots per second", Flag = "rb_rate", Min = 1, Max = 30, Default = 12, Suffix = "/s", Decimals = 1 })
         RB:Slider({ Name = "Shot delay after peeking", Flag = "rb_shot_delay", Min = 0, Max = 0.3, Default = 0.03, Suffix = "s", Decimals = 0.01, Tooltip = "How long you stand at the peek spot before the first shot, so the server has your new position" })
@@ -2130,6 +2166,7 @@ do
         RB:Slider({ Name = "Safe mode health", Flag = "rb_safe_hp", Min = 5, Max = 90, Default = 20, Suffix = "%", Decimals = 1 })
 
         local RT = RageTab:Section({ Name = "Target", Side = 1 })
+        RT:Toggle({ Name = "Add target to list", Flag = "rb_add", Default = false, Tooltip = "Press the key to add the player closest to your cursor to the target list. Press again on the same player to remove them" }):Keybind({ Name = "Add target key", Flag = "rb_add_key", Default = "G", Sync = false })
         RT:Dropdown({ Name = "Mode", Flag = "rb_mode", Items = { "Closest", "Closest to cursor", "Target list", "Players tab" }, Default = "Closest", Tooltip = "Closest: nearest player. Target list: only players in the list below. Players tab: the player selected in the Players tab" })
         local names = {}
         for _, player in ipairs(Players:GetPlayers()) do
@@ -2147,8 +2184,10 @@ do
         RT:Toggle({ Name = "Ignore tased and arrested", Flag = "rb_down", Default = false })
         RT:Toggle({ Name = "Ignore friendly team", Flag = "rb_team", Default = false })
         RT:Toggle({ Name = "Hostile only (inmates)", Flag = "rb_hostile", Default = false })
-        RT:Button({ Name = "Target selected player", Callback = function() if Actions.rageList then Actions.rageList("rb_targets", true) end end })
-        RT:Button({ Name = "Whitelist selected player", Callback = function() if Actions.rageList then Actions.rageList("rb_white", true) end end })
+        Actions.rageResult = RT:Label({ Name = "Result: none" })
+        RT:Input({ Name = "Player search", Flag = "rb_search", Default = "", Placeholder = "name or display name", Tooltip = "The buttons below use this player. Empty uses the player selected in the Players tab" })
+        RT:Button({ Name = "Target player", Callback = function() if Actions.rageList then Actions.rageList("rb_targets", true) end end })
+        RT:Button({ Name = "Whitelist player", Callback = function() if Actions.rageList then Actions.rageList("rb_white", true) end end })
         RT:Button({ Name = "Clear targets", Callback = function() if Actions.rageList then Actions.rageList("rb_targets", false) end end })
         RT:Button({ Name = "Clear whitelist", Callback = function() if Actions.rageList then Actions.rageList("rb_white", false) end end })
         Actions.rageNames = names
@@ -2591,8 +2630,6 @@ function Fx:Section(tabName, subName, sectionName)
         if width < 60 then return end
         for _, item in ipairs(items) do
             if item.kind == "toggle" then
-                if item.label.Parent then item.label.Size = UDim2.new(0, math.max(width - 21, 40), 1, 0) end
-                if item.region.Parent then item.region.Size = UDim2.new(0, math.max(width - 8, 40), 1, 0) end
             else
                 local option = Options[item.flag]
                 local span = item.outer.AbsoluteSize.X - 2
@@ -12507,6 +12544,7 @@ do
         end
 
         Actions.getWeapon = function(name) task.spawn(getWeapon, name) end
+        Actions.gettingWeapon = function() return busy end
         Actions.getAllWeapons = function()
             task.spawn(function()
                 for _, name in ipairs(ORDER) do
@@ -12995,7 +13033,7 @@ do
         local requests, order = {}, { "rage", "assist", "orbit", "desync" }
         local engine = newBag()
         local running = false
-        local applied, realCF = nil, nil
+        local applied, realCF, realVel = nil, nil, nil
         local lastSpeed, lastStyle, lastWarn = 100, nil, 0
         local RESTORE, GHOST = "AsterServerPosRestore", "AsterServerPosGhost"
         SP.pos = nil
@@ -13184,6 +13222,7 @@ do
             end
             if SP.pos then
                 realCF = real
+                realVel = root.AssemblyLinearVelocity
                 applied = CFrame.new(SP.pos) * (real - realPos)
                 root.CFrame = applied
             else
@@ -13197,8 +13236,16 @@ do
             local char = LocalPlayer.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
 
-            if root and realCF and (root.Position - applied.Position).Magnitude < 0.5 then
-                root.CFrame = realCF
+            if root and realCF then
+                local drift = root.Position - applied.Position
+                if drift.Magnitude < 0.5 then
+                    root.CFrame = realCF
+                else
+                    root.CFrame = realCF + (drift.Magnitude < 40 and drift or Vector3.zero)
+                end
+                if realVel and (applied.Position - realCF.Position).Magnitude > 20 then
+                    root.AssemblyLinearVelocity = realVel
+                end
             end
             applied = nil
         end
@@ -13216,6 +13263,9 @@ do
             RunService:BindToRenderStep(RESTORE, Enum.RenderPriority.First.Value, function()
                 pcall(onRestore)
             end)
+            engine.add(RunService.Stepped:Connect(function()
+                pcall(onRestore)
+            end))
             RunService:BindToRenderStep(GHOST, Enum.RenderPriority.Last.Value, function()
                 local ok, err = pcall(updateGhost)
                 if not ok and clock() - lastWarn > 5 then
@@ -15016,7 +15066,7 @@ do
             local R = {
                 target = nil, entity = nil, center = nil, vel = ZERO, phase = "peek", lastPhase = "", phaseEnd = 0, peekAt = 0,
                 nextShot = 0, voidPos = nil, voidRoll = 0, skip = {}, safe = false, status = "off", lastEval = 0,
-                lastHealth = 0, lastDamage = 0, equipAt = 0, reloadAt = 0, randAngle = 0, goal = nil, goalAt = 0, goalFor = nil,
+                lastHealth = 0, lastDamage = 0, equipAt = 0, reloadAt = 0, getAt = 0, getUntil = 0, viewing = false, shownText = "", randAngle = 0, goal = nil, goalAt = 0, goalFor = nil,
                 smart = { state = "waiting", t = nil, timer = 0, health = nil, dropped = false },
             }
             Actions.rage = R
@@ -15039,6 +15089,22 @@ do
                 return false
             end
 
+            local function findPlayer(text)
+                text = string.lower(tostring(text or ""))
+                if text == "" then return nil end
+                local partial
+                for _, player in ipairs(Players:GetPlayers()) do
+                    local name, display = string.lower(player.Name), string.lower(player.DisplayName)
+                    if name == text or display == text then return player end
+                    if not partial and (string.sub(name, 1, #text) == text or string.sub(display, 1, #text) == text) then partial = player end
+                end
+                if partial then return partial end
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if string.find(string.lower(player.Name), text, 1, true) or string.find(string.lower(player.DisplayName), text, 1, true) then return player end
+                end
+                return nil
+            end
+
             Actions.rageList = function(listFlag, add)
                 local option = Options[listFlag]
                 if not option or type(option.SetValue) ~= "function" then return end
@@ -15046,8 +15112,9 @@ do
                     pcall(function() option:SetValue({}) end)
                     return
                 end
-                local player = Actions.selectedPlayer and Actions.selectedPlayer()
-                if not player then say("Select a player in the Players tab first") return end
+                local player = findPlayer(flag("rb_search", ""))
+                if not player then player = Actions.selectedPlayer and Actions.selectedPlayer() end
+                if not player then say("Type a name or select a player in the Players tab first") return end
                 local value = {}
                 if type(option.Value) == "table" then
                     for key, chosen in pairs(option.Value) do value[key] = chosen end
@@ -15056,6 +15123,40 @@ do
                 pcall(function() option:SetValue(value) end)
                 say(player.Name .. " added")
             end
+
+            local function addAtCursor()
+                if not flag("rb_add", false) or typing() then return end
+                local cam = Camera()
+                if not cam then return end
+                local mouse = UserInputService:GetMouseLocation()
+                local best, bestDist
+                for _, e in ipairs(otherEntities()) do
+                    local screen, onScreen = cam:WorldToViewportPoint(e.Root.Position)
+                    if onScreen then
+                        local d = (Vector2.new(screen.X, screen.Y) - mouse).Magnitude
+                        if d <= 600 and (not bestDist or d < bestDist) then best, bestDist = e.Player, d end
+                    end
+                end
+                if not best then say("No player near the cursor") return end
+                local option = Options.rb_targets
+                if not option or type(option.SetValue) ~= "function" then return end
+                local value = {}
+                if type(option.Value) == "table" then
+                    for key, chosen in pairs(option.Value) do value[key] = chosen end
+                end
+                if value[best.Name] then
+                    value[best.Name] = nil
+                    say(best.Name .. " removed")
+                else
+                    value[best.Name] = true
+                    say(best.Name .. " added")
+                end
+                pcall(function() option:SetValue(value) end)
+            end
+            task.defer(function()
+                local key = Options.rb_add_key
+                if key and type(key.OnClick) == "function" then key:OnClick(addAtCursor) end
+            end)
 
             local function refreshNames()
                 local names = {}
@@ -15249,7 +15350,7 @@ do
             end
 
             local function peekAt(e, base, now)
-                local mode = flag("rb_peek_mode", "Behind")
+                local mode = R.randomSpot and "Random" or flag("rb_peek_mode", "Behind")
                 local distance = flag("rb_peek_dist", 6)
                 local height = flag("rb_peek_height", 2)
                 local function ring(angle, extra)
@@ -15298,6 +15399,14 @@ do
                 local voidOn = flag("rb_void", false)
                 local when = flag("rb_void_when", "While targeting")
                 local e = R.entity
+                local settings = flag("rb_settings", {})
+                local style = picked(settings, "Show server position") and Actions.sp.visualStyle("misc_desync_fill", "misc_desync_line") or nil
+                R.randomSpot = picked(settings, "Random peek spot")
+
+                if now < R.getUntil or (Actions.gettingWeapon and Actions.gettingWeapon()) then
+                    R.status = "getting weapon"
+                    return nil
+                end
 
                 if flag("rb_safe", false) and hum and hum.MaxHealth > 0 then
                     local limit = flag("rb_safe_hp", 20) / 100
@@ -15310,7 +15419,7 @@ do
 
                 if R.safe then
                     R.status = "safe mode"
-                    if voidOn then return voidPoint(now), 1e9 end
+                    if voidOn then return voidPoint(now), 1e9, style end
                     return nil
                 end
 
@@ -15322,7 +15431,7 @@ do
                             R.phase = R.phase == "void" and "peek" or "void"
                             R.phaseEnd = now + (R.phase == "void" and flag("rb_in_time", 0.35) or flag("rb_out_time", 0.2))
                         end
-                        if R.phase == "void" then return voidPoint(now), 1e9 end
+                        if R.phase == "void" then return voidPoint(now), 1e9, style end
                     end
                     return nil
                 end
@@ -15335,7 +15444,7 @@ do
                 if empty then
                     R.status = flag("rb_reload", false) and "reloading" or "gun empty"
                     R.lastPhase = ""
-                    if voidOn then return voidPoint(now), 1e9 end
+                    if voidOn then return voidPoint(now), 1e9, style end
                     return nil
                 end
 
@@ -15359,7 +15468,7 @@ do
                 if R.phase == "void" then
                     R.status = "hiding in void"
                     R.lastPhase = "void"
-                    return voidPoint(now), 1e9
+                    return voidPoint(now), 1e9, style
                 end
 
                 if R.lastPhase ~= "peek" then
@@ -15379,20 +15488,21 @@ do
                 end
                 if not goal then
                     R.status = "no clear spot"
-                    if voidOn then return voidPoint(now), 1e9 end
+                    if voidOn then return voidPoint(now), 1e9, style end
                     return nil
                 end
 
                 R.status = "killing " .. e.Player.Name
                 if now - R.peekAt >= flag("rb_shot_delay", 0.03) and now >= R.nextShot then
                     R.nextShot = now + 1 / math.max(flag("rb_rate", 12), 1)
+                    if R.randomSpot then R.randAngle = math.random() * math.pi * 2 end
                     local part = choosePart(e)
                     local aim = part.Position
                     if not (R.live) then aim = R.center + (part.Position - e.Root.Position) end
                     aim += R.vel * lead
                     task.defer(fireNow, part, aim)
                 end
-                return goal, 1e9
+                return goal, 1e9, style
             end
 
             local function housekeeping(now)
@@ -15428,6 +15538,38 @@ do
                     local held = char:FindFirstChildOfClass("Tool")
                     local wanted = findWeapon(label)
                     if wanted and held ~= wanted then pcall(function() hum:EquipTool(wanted) end) end
+                end
+
+                local settings = flag("rb_settings", {})
+                local cam = Camera()
+                if e and picked(settings, "View target") and cam then
+                    if cam.CameraSubject ~= e.Humanoid then cam.CameraSubject = e.Humanoid end
+                    R.viewing = true
+                elseif R.viewing then
+                    R.viewing = false
+                    if cam and hum then cam.CameraSubject = hum end
+                end
+
+                local wanted = flag("rb_autoget", {})
+                if now >= R.getAt and hum and hum.Health > 0 and not (Actions.gettingWeapon and Actions.gettingWeapon()) then
+                    for _, name in ipairs({ "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }) do
+                        if picked(wanted, name) and not findWeapon(name) then
+                            R.getAt = now + 3
+                            R.getUntil = now + 0.6
+                            if Actions.getWeapon then Actions.getWeapon(name) end
+                            break
+                        end
+                    end
+                end
+
+                local text = "Result: none"
+                if e then
+                    local who = e.Player.DisplayName ~= "" and e.Player.DisplayName or e.Player.Name
+                    text = string.sub("Result: " .. who, 1, 28)
+                end
+                if text ~= R.shownText and Actions.rageResult and Actions.rageResult.SetText then
+                    R.shownText = text
+                    Actions.rageResult:SetText(text)
                 end
 
                 local tool, empty, reloading = gunState()
@@ -15487,6 +15629,12 @@ do
                 if Actions.rageHook then Actions.rageHook(false) end
                 R.target, R.entity, R.center, R.goal, R.safe = nil, nil, nil, nil, false
                 R.status = "off"
+                if R.viewing then
+                    R.viewing = false
+                    local _, ownHum = localParts()
+                    local cam = Camera()
+                    if cam and ownHum then cam.CameraSubject = ownHum end
+                end
                 if statusText then pcall(function() statusText.Visible = false end) end
             end)
 

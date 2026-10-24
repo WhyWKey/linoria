@@ -3063,7 +3063,11 @@ local ATMO_PRESETS = {
 }
 
 local function fxApplyPreset(preset)
-    if fxPart("atmo_part_sky") and preset.sky then
+    if fxPart("atmo_part_sky") and preset.skyIds then
+        fxSet("skybox_custom_ids", preset.skyIds)
+        fxSet("skybox_value", "Custom")
+        fxSet("skybox_enabled", true)
+    elseif fxPart("atmo_part_sky") and preset.sky then
         fxSet("skybox_value", preset.sky)
         fxSet("skybox_enabled", true)
     end
@@ -3194,6 +3198,7 @@ local function fxSnapToPreset(snap)
     if snap.bloom then preset.bloom = { snap.bloom[1], snap.bloom[2], snap.bloom[3] } end
     if snap.cc then preset.cc = { fxUnpack(snap.cc.tint), snap.cc.saturation, snap.cc.contrast, snap.cc.brightness } end
     preset.rays = snap.rays
+    preset.skyIds = snap.skyIds
     return preset
 end
 
@@ -3219,10 +3224,20 @@ function FxAtmo.capture()
     if cc and cc.Enabled then snap.cc = { tint = fxPack(cc.TintColor), saturation = cc.Saturation, contrast = cc.Contrast, brightness = cc.Brightness } end
     local rays = lighting:FindFirstChildOfClass("SunRaysEffect")
     if rays and rays.Enabled then snap.rays = rays.Intensity end
+    local sky = lighting:FindFirstChildOfClass("Sky")
+    if sky then
+        local ids = {}
+        for _, face in ipairs({ "SkyboxUp", "SkyboxDn", "SkyboxFt", "SkyboxBk", "SkyboxLf", "SkyboxRt" }) do
+            local id = string.match(tostring(sky[face]), "(%d%d%d+)")
+            if not id then ids = nil break end
+            ids[#ids + 1] = id
+        end
+        if ids then snap.skyIds = table.concat(ids, " ") end
+    end
     table.insert(FxAtmo.snaps, snap)
     fxAtmoSave()
     if FxAtmo.rebuild then FxAtmo.rebuild() end
-    fxAtmoTell("Captured current lighting as " .. name)
+    fxAtmoTell("Captured current lighting" .. (snap.skyIds and " and skybox" or "") .. " as " .. name)
 end
 
 function FxAtmo.apply(item)

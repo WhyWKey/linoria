@@ -2993,7 +2993,7 @@ local function fxSkyPreview(host)
     end))
 end
 
-local FxAtmo = { selected = nil, saved = {}, rebuild = nil }
+local FxAtmo = { selected = nil, saved = {}, snaps = {}, rebuild = nil }
 local ATMO_PATH = "Aster/atmosphere.json"
 do
     local ok, data = pcall(function()
@@ -3001,6 +3001,13 @@ do
             return game:GetService("HttpService"):JSONDecode(readfile(ATMO_PATH))
         end
     end)
+    if ok and type(data) == "table" and type(data.snapshots) == "table" then
+        for _, entry in ipairs(data.snapshots) do
+            if type(entry) == "table" and type(entry.name) == "string" and type(entry.ambient) == "table" then
+                table.insert(FxAtmo.snaps, entry)
+            end
+        end
+    end
     if ok and type(data) == "table" and type(data.assets) == "table" then
         for _, entry in ipairs(data.assets) do
             if type(entry) == "table" and type(entry.id) == "number" then
@@ -3014,7 +3021,7 @@ local function fxAtmoSave()
     if not writefile then return end
     pcall(function()
         if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
-        writefile(ATMO_PATH, game:GetService("HttpService"):JSONEncode({ assets = FxAtmo.saved }))
+        writefile(ATMO_PATH, game:GetService("HttpService"):JSONEncode({ assets = FxAtmo.saved, snapshots = FxAtmo.snaps }))
     end)
 end
 
@@ -3170,13 +3177,61 @@ local function fxApplyAsset(id)
     end)
 end
 
+local function fxPack(color)
+    return { color.R, color.G, color.B }
+end
+
+local function fxUnpack(list)
+    return Color3.new(list[1], list[2], list[3])
+end
+
+local function fxSnapToPreset(snap)
+    local preset = { ambient = fxUnpack(snap.ambient), outer = fxUnpack(snap.outer), clock = snap.clock }
+    if snap.atmos then
+        local a = snap.atmos
+        preset.atmos = { fxUnpack(a.color), fxUnpack(a.decay), a.density, a.haze, a.glare, a.offset }
+    end
+    if snap.bloom then preset.bloom = { snap.bloom[1], snap.bloom[2], snap.bloom[3] } end
+    if snap.cc then preset.cc = { fxUnpack(snap.cc.tint), snap.cc.saturation, snap.cc.contrast, snap.cc.brightness } end
+    preset.rays = snap.rays
+    return preset
+end
+
+function FxAtmo.capture()
+    local lighting = game:GetService("Lighting")
+    local typed = Options.atmo_capture_name and tostring(Options.atmo_capture_name.Value or "") or ""
+    typed = string.match(typed, "^%s*(.-)%s*$") or ""
+    local name = typed ~= "" and typed or ("Captured " .. (#FxAtmo.snaps + 1))
+    for _, entry in ipairs(FxAtmo.snaps) do
+        if entry.name == name then
+            fxAtmoTell("A captured preset named " .. name .. " already exists")
+            return
+        end
+    end
+    local snap = { name = name, ambient = fxPack(lighting.Ambient), outer = fxPack(lighting.OutdoorAmbient), clock = lighting.ClockTime }
+    local atmos = lighting:FindFirstChildOfClass("Atmosphere")
+    if atmos then
+        snap.atmos = { color = fxPack(atmos.Color), decay = fxPack(atmos.Decay), density = atmos.Density, haze = atmos.Haze, glare = atmos.Glare, offset = atmos.Offset }
+    end
+    local bloom = lighting:FindFirstChildOfClass("BloomEffect")
+    if bloom and bloom.Enabled then snap.bloom = { bloom.Intensity, bloom.Size, bloom.Threshold } end
+    local cc = lighting:FindFirstChildOfClass("ColorCorrectionEffect")
+    if cc and cc.Enabled then snap.cc = { tint = fxPack(cc.TintColor), saturation = cc.Saturation, contrast = cc.Contrast, brightness = cc.Brightness } end
+    local rays = lighting:FindFirstChildOfClass("SunRaysEffect")
+    if rays and rays.Enabled then snap.rays = rays.Intensity end
+    table.insert(FxAtmo.snaps, snap)
+    fxAtmoSave()
+    if FxAtmo.rebuild then FxAtmo.rebuild() end
+    fxAtmoTell("Captured current lighting as " .. name)
+end
+
 function FxAtmo.apply(item)
     if not item then
         fxAtmoTell("Pick a preset or asset first")
         return
     end
     if item.kind == "preset" then
-        fxApplyPreset(ATMO_PRESETS[item.name])
+        fxApplyPreset(item.preset or ATMO_PRESETS[item.name])
         fxAtmoTell("Applied preset " .. item.name)
     else
         fxApplyAsset(item.id)
@@ -3230,6 +3285,18 @@ end
 
 function FxAtmo.remove()
     local item = FxAtmo.selected
+    if item and item.snap then
+        for index, entry in ipairs(FxAtmo.snaps) do
+            if entry == item.snap then
+                table.remove(FxAtmo.snaps, index)
+                break
+            end
+        end
+        FxAtmo.selected = nil
+        fxAtmoSave()
+        if FxAtmo.rebuild then FxAtmo.rebuild() end
+        return
+    end
     if not (item and item.saved) then
         fxAtmoTell("Select one of your saved assets first")
         return
@@ -3294,6 +3361,10 @@ local function fxAtmoPreview(host)
             local preset = ATMO_PRESETS[name]
             local top = preset.atmos and preset.atmos[1] or preset.outer
             add({ kind = "preset", key = "p:" .. name, name = name, top = top, bottom = preset.ambient }, name)
+        end
+        for _, snap in ipairs(FxAtmo.snaps) do
+            local preset = fxSnapToPreset(snap)
+            add({ kind = "preset", key = "c:" .. snap.name, name = snap.name, preset = preset, snap = snap, top = preset.atmos and preset.atmos[1] or preset.outer, bottom = preset.ambient }, snap.name)
         end
         for _, entry in ipairs(FxAtmo.saved) do
             add({ kind = "asset", key = "s:" .. entry.id, id = entry.id, name = entry.name, saved = true }, entry.name)
@@ -3507,6 +3578,9 @@ do
     atmoStore:Input({ Name = "Asset link or id", Flag = "atmo_asset", Default = "", Placeholder = "create.roblox.com/store/asset/123..." })
     atmoStore:Button({ Name = "Save asset", Callback = function() FxAtmo.add() end })
     atmoStore:Button({ Name = "Remove selected asset", Callback = function() FxAtmo.remove() end })
+    local atmoCapture = Fx:Section("Sky", "Atmosphere", "Capture lighting")
+    atmoCapture:Input({ Name = "Preset name", Flag = "atmo_capture_name", Default = "", Placeholder = "optional name..." })
+    atmoCapture:Button({ Name = "Capture current lighting", Callback = function() FxAtmo.capture() end, Tooltip = "Saves this game's lighting, atmosphere and post effects as a preset tile you can apply anywhere. Remove it with Remove selected asset" })
 
     Fx:Preview("Car orbit", "Spawner", function(sub)
         local host = sub.preview
@@ -7227,6 +7301,21 @@ do
                 end
                 if #fresh > 0 and onChunk then onChunk(fresh, #list) end
                 return #fresh
+            end
+
+            local plainStopped
+            for page = 1, 40 do
+                if page > 1 then task.wait(1) end
+                local data, status = httpJsonRetry(string.format("https://avatar.roblox.com/v1/users/%d/outfits?page=%d&itemsPerPage=50", uid, page), onWait, alive)
+                if not data then
+                    if page > 1 then plainStopped = (status == 429) and "limited" or "error" end
+                    break
+                end
+                local added = take(data.data)
+                if #(data.data or {}) < 50 or added == 0 then break end
+            end
+            if #list > 0 then
+                return list, { kind = "public", source = "v1", stopped = plainStopped }
             end
 
             local failed, firstStatus, firstMessage = false, nil, nil
@@ -13456,10 +13545,17 @@ do
             look = look.Unit
             if flag("car_flip", false) then look = -look end
             local model = topCar(seat)
-            local entry = { seat = seat, model = model, spawn = seat.CFrame, forward = look, partsAt = 0 }
+            local reference
+            for _, other in ipairs(cars) do
+                if other.ref and (other.ref.spawn.Position - seat.Position).Magnitude < 40 then reference = other.ref break end
+            end
+            if not reference then reference = { spawn = seat.CFrame, forward = look } end
+            local entry = { seat = seat, model = model, spawn = reference.spawn, forward = reference.forward, ref = reference, drop = 3, partsAt = 0 }
             if model and model:IsA("Model") then
                 local ok, pivot = pcall(model.GetPivot, model)
                 if ok then entry.offset = seat.CFrame:ToObjectSpace(pivot) end
+                local okBox, boxCF, boxSize = pcall(model.GetBoundingBox, model)
+                if okBox then entry.drop = math.clamp(seat.Position.Y - (boxCF.Position.Y - boxSize.Y / 2), 0.5, 10) end
             end
             cars[#cars + 1] = entry
             return entry
@@ -13530,6 +13626,27 @@ do
             state.stripped += #entry.stripped
         end
 
+        local function ghostEntry(entry)
+            if entry.ghost then return end
+            entry.ghost = {}
+            local model = entry.model
+            local source = model and model.Parent and model:GetDescendants() or { entry.seat }
+            for _, part in ipairs(source) do
+                if part:IsA("BasePart") and not part.Anchored then
+                    entry.ghost[#entry.ghost + 1] = { part = part, collide = part.CanCollide }
+                    pcall(function() part.CanCollide = false end)
+                end
+            end
+        end
+
+        local function unghostEntry(entry)
+            if not entry.ghost then return end
+            for _, saved in ipairs(entry.ghost) do
+                if saved.part and saved.part.Parent then pcall(function() saved.part.CanCollide = saved.collide end) end
+            end
+            entry.ghost = nil
+        end
+
         local function unstripEntry(entry)
             if not entry.stripped then return end
             for _, saved in ipairs(entry.stripped) do
@@ -13577,7 +13694,7 @@ do
         end
 
         function api.release()
-            for _, entry in ipairs(cars) do unstripEntry(entry) end
+            for _, entry in ipairs(cars) do unstripEntry(entry) unghostEntry(entry) end
             table.clear(cars)
             state.count, state.owned = 0, 0
             say("Released all cars")
@@ -13767,7 +13884,20 @@ do
             local flat = entry.spawn.Position + forward * (distance + row * 22) + right * ((lane - 2) * 12)
             local lift = tier * 10
             if flag("car_cap", true) then lift = math.min(lift, math.max(flag("car_cap_y", 165) - flat.Y, 0)) end
-            local position = v3(flat.X, entry.spawn.Position.Y + 1 + lift, flat.Z)
+            local key = math.floor(flat.X) .. "|" .. math.floor(flat.Z)
+            if entry.groundKey ~= key then
+                entry.groundKey = key
+                local params = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Exclude
+                local ignore = { workspace.CurrentCamera }
+                local folder = carFolder()
+                if folder then ignore[#ignore + 1] = folder end
+                if LocalPlayer.Character then ignore[#ignore + 1] = LocalPlayer.Character end
+                params.FilterDescendantsInstances = ignore
+                local hit = workspace:Raycast(v3(flat.X, entry.spawn.Position.Y + 25, flat.Z), v3(0, -400, 0), params)
+                entry.ground = hit and hit.Position.Y or entry.spawn.Position.Y - entry.drop
+            end
+            local position = v3(flat.X, entry.ground + entry.drop + 0.4 + lift, flat.Z)
             return CFrame.lookAt(position, position + forward)
         end
 
@@ -13854,6 +13984,7 @@ do
             for index, entry in ipairs(cars) do
                 local seat = entry.seat
                 if seat.Occupant == nil then
+                    if not orbiting then ghostEntry(entry) end
                     local goal = orbiting and orbitCFrame(index, count, middle) or parkCFrame(entry, index - 1)
                     local velocity = ZERO
                     if orbiting and entry.lastGoal and dt > 0 then
@@ -14092,7 +14223,7 @@ do
             spawnToken += 1
             state.spawning = false
             if stripConn then stripConn:Disconnect() stripConn = nil end
-            for _, entry in ipairs(cars) do unstripEntry(entry) end
+            for _, entry in ipairs(cars) do unstripEntry(entry) unghostEntry(entry) end
             bag.clear()
             table.clear(cars)
             Actions.carOrbit = nil

@@ -1,4 +1,4 @@
-local Library, Config = ...
+local function Apply(Library, Config)
 
 assert(type(Library) == 'table' and type(Library.Create) == 'function' and type(Library.CreateWindow) == 'function', 'PerceptionSkin: pass the Linoria Library as the first argument')
 if type(Library.__PerceptionSkin) == 'table' then
@@ -1127,3 +1127,11 @@ function Skin.SetTheme(tbl)
 end
 Library.__PerceptionSkin = Skin
 return Skin
+
+end
+
+local given = ...
+if given ~= nil then
+    return Apply(...)
+end
+return Apply

@@ -64,6 +64,8 @@ local Rows = setmetatable({}, { __mode = 'k' })
 local Popups = setmetatable({}, { __mode = 'k' })
 local Seen = setmetatable({}, { __mode = 'k' })
 local CapStack = {}
+local Cards = setmetatable({}, { __mode = 'k' })
+local Panels = {}
 
 local function New(class, props)
     return OrigCreate(Library, class, props)
@@ -532,6 +534,7 @@ local function SkinGroupbox(Groupbox)
     Strip(BoxOuter)
     BoxOuter.BorderSizePixel = 0
     BoxOuter.BackgroundTransparency = CardTransparency
+    Cards[BoxOuter] = true
     Corner(BoxOuter, 8)
     Stroke(BoxOuter, 'OutlineColor', 1, 0.5)
 
@@ -706,6 +709,7 @@ local function SkinTabboxTab(Tabbox, TabObj)
         Strip(BoxOuter)
         BoxOuter.BorderSizePixel = 0
         BoxOuter.BackgroundTransparency = CardTransparency
+        Cards[BoxOuter] = true
         Corner(BoxOuter, 8)
         Stroke(BoxOuter, 'OutlineColor', 1, 0.5)
         Strip(BoxInner)
@@ -1065,6 +1069,7 @@ local function DressWindow(Window)
     Inner.BorderSizePixel = 0
     Inner.BackgroundColor3 = Library.PanelColor
     Inner.BackgroundTransparency = PanelTransparency
+    Panels[#Panels + 1] = Inner
     Inner.ClipsDescendants = true
     Reg(Inner, { BackgroundColor3 = 'PanelColor' })
     Corner(Inner, Radius)
@@ -1324,17 +1329,186 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = {}
+local Skin = { AutoDerive = true }
+
+local function mix(a, b, t)
+    return Color3.new(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t)
+end
+
+local deriving = false
+function Skin.Derive()
+    if not Skin.AutoDerive then return end
+    deriving = true
+    Library.PanelColor = mix(Library.BackgroundColor, BLACK, 0.2)
+    Library.PillColor = mix(Library.BackgroundColor, BLACK, 0.45)
+    Library.MutedColor = mix(Library.FontColor, Library.BackgroundColor, 0.55)
+    Library:UpdateColorsUsingRegistry()
+    local O = getgenv().Options
+    if O then
+        for _, k in ipairs({ 'PanelColor', 'MutedColor' }) do
+            if O[k] and O[k].SetValueRGB then pcall(O[k].SetValueRGB, O[k], Library[k]) end
+        end
+    end
+    deriving = false
+end
+
+function Skin.SetPanelTransparency(v)
+    PanelTransparency = v
+    for _, p in ipairs(Panels) do
+        if p.Parent then p.BackgroundTransparency = v end
+    end
+end
+
+function Skin.SetCardTransparency(v)
+    CardTransparency = v
+    for c in pairs(Cards) do
+        if c.Parent then c.BackgroundTransparency = v end
+    end
+end
+
 function Skin.SetAccent(color)
     Library.AccentColor = color
     Library.AccentColorDark = Darker(color)
     Library:UpdateColorsUsingRegistry()
 end
+
 function Skin.SetTheme(tbl)
     for k, v in next, tbl do Library[k] = v end
     if tbl.AccentColor then Library.AccentColorDark = Darker(tbl.AccentColor) end
     Library:UpdateColorsUsingRegistry()
 end
+
+local SETTINGS_FLAGS = {
+    'KeybindMenuOpen', 'SkinKeybindMode', 'MenuKeybind', 'LinoriaKeybindTransparency', 'LinoriaUseBlur', 'LinoriaBlurSize',
+    'LinoriaUseDarken', 'LinoriaDarkenAmount', 'SkinWireframe', 'SkinFontSize', 'SkinNotifyAlign', 'SkinNotifySide',
+    'SkinNotifyX', 'SkinNotifyY', 'SkinNotifyAlpha', 'PanelColor', 'MutedColor', 'SkinPanelAlpha', 'SkinCardAlpha',
+}
+
+function Skin.BuildSettings(Window, Opts)
+    Opts = type(Opts) == 'table' and Opts or {}
+    local TM, SM = Opts.ThemeManager, Opts.SaveManager
+    local Tab = Window:AddTab(Opts.TabName or 'Settings')
+    local subs = Tab:SubTabs({ 'Menu', 'Theme', 'Config' })
+
+    local Menu = subs.Menu:AddLeftGroupbox('Menu')
+    Menu:AddLabel('Menu bind'):AddKeyPicker('MenuKeybind', { Default = Opts.MenuKey or 'RightShift', NoUI = true, Text = 'Menu keybind' })
+    Library.ToggleKeybind = getgenv().Options.MenuKeybind
+    Menu:AddToggle('KeybindMenuOpen', {
+        Text = 'Keybind list',
+        Default = false,
+        Callback = function(v) if Library.KeybindFrame then Library.KeybindFrame.Visible = v end end,
+    })
+    Menu:AddDropdown('SkinKeybindMode', {
+        Text = 'Keybind list shows',
+        Values = { 'All', 'Active', 'Toggled' },
+        Default = Library.KeybindMode or 'All',
+        Callback = function(v) Library:SetKeybindMode(v) end,
+    })
+    Library:AddKeybindTransparencySlider(Menu)
+    Menu:AddSlider('SkinFontSize', {
+        Text = 'Font size', Default = Library.FontSize, Min = 11, Max = 18, Rounding = 0, HideMax = true,
+        Callback = function(v) if v ~= Library.FontSize then Library:SetFontSize(v) end end,
+    })
+    Menu:AddButton('Unload', function() Library:Unload() end)
+
+    local Display = subs.Menu:AddRightGroupbox('Display')
+    Library:AddBlurSlider(Display)
+    Library:AddDarkenSlider(Display)
+    Display:AddToggle('SkinWireframe', {
+        Text = 'Wireframe drag', Default = Library.WireframeDrag ~= false,
+        Callback = function(v) Library.WireframeDrag = v end,
+    })
+
+    local Notif = subs.Menu:AddRightGroupbox('Notifications')
+    Notif:AddDropdown('SkinNotifyAlign', {
+        Text = 'Alignment', Values = { 'Left', 'Center', 'Right' }, Default = Library.NotifyConfig.Alignment or 'Center',
+        Callback = function(v) Library:ConfigureNotifications({ Alignment = v }) end,
+    })
+    Notif:AddDropdown('SkinNotifySide', {
+        Text = 'Stack from', Values = { 'Top', 'Bottom' }, Default = Library.NotifyConfig.BarSide == 'Top' and 'Top' or 'Bottom',
+        Callback = function(v) Library:ConfigureNotifications({ BarSide = v }) end,
+    })
+    Notif:AddSlider('SkinNotifyX', {
+        Text = 'Position X', Default = Library.NotifyConfig.PosX, Min = 0, Max = 100, Rounding = 0, HideMax = true, Suffix = '%',
+        Callback = function(v) Library:ConfigureNotifications({ PosX = v }) end,
+    })
+    Notif:AddSlider('SkinNotifyY', {
+        Text = 'Position Y', Default = Library.NotifyConfig.PosY, Min = 0, Max = 100, Rounding = 0, HideMax = true, Suffix = '%',
+        Callback = function(v) Library:ConfigureNotifications({ PosY = v }) end,
+    })
+    Notif:AddSlider('SkinNotifyAlpha', {
+        Text = 'Transparency', Default = Library.NotifyConfig.Transparency or 0, Min = 0, Max = 100, Rounding = 0, HideMax = true, Suffix = '%',
+        Callback = function(v) Library:ConfigureNotifications({ Transparency = v }) end,
+    })
+    Notif:AddButton('Test notification', function() Library:Notify('Notification preview', 3) end)
+
+    if TM then
+        TM:SetLibrary(Library)
+        TM.BuiltInThemes['Perception Teal'] = { 0, {
+            FontColor = 'd2d2d6', MainColor = '202026', AccentColor = '6ec9c8',
+            BackgroundColor = '1a1a1f', OutlineColor = '303038',
+        } }
+        TM.DefaultTheme = 'Perception Teal'
+        if Opts.Folder then TM:SetFolder(Opts.Folder) end
+        local origUpdate = TM.ThemeUpdate
+        TM.ThemeUpdate = function(self, ...)
+            origUpdate(self, ...)
+            Skin.Derive()
+        end
+        TM:ApplyToTab(subs.Theme)
+    end
+
+    local Look = subs.Theme:AddRightGroupbox('Appearance')
+    Look:AddLabel('Panel color'):AddColorPicker('PanelColor', {
+        Default = Library.PanelColor, Title = 'Panel color',
+        Callback = function(c)
+            if deriving then return end
+            Skin.AutoDerive = false
+            Library.PanelColor = c
+            Library:UpdateColorsUsingRegistry()
+        end,
+    })
+    Look:AddLabel('Muted text color'):AddColorPicker('MutedColor', {
+        Default = Library.MutedColor, Title = 'Muted text color',
+        Callback = function(c)
+            if deriving then return end
+            Skin.AutoDerive = false
+            Library.MutedColor = c
+            Library:UpdateColorsUsingRegistry()
+        end,
+    })
+    Look:AddSlider('SkinPanelAlpha', {
+        Text = 'Panel opacity', Default = math.floor((1 - PanelTransparency) * 100 + 0.5), Min = 40, Max = 100,
+        Rounding = 0, HideMax = true, Suffix = '%',
+        Callback = function(v) Skin.SetPanelTransparency(1 - v / 100) end,
+    })
+    Look:AddSlider('SkinCardAlpha', {
+        Text = 'Card opacity', Default = math.floor((1 - CardTransparency) * 100 + 0.5), Min = 0, Max = 100,
+        Rounding = 0, HideMax = true, Suffix = '%',
+        Callback = function(v) Skin.SetCardTransparency(1 - v / 100) end,
+    })
+    Look:AddButton('Auto colors', function()
+        Skin.AutoDerive = true
+        Skin.Derive()
+    end)
+
+    if SM then
+        SM:SetLibrary(Library)
+        if Opts.Folder then SM:SetFolder(Opts.Folder .. '/' .. (Opts.Game or 'configs')) end
+        if SM.IgnoreThemeSettings then SM:IgnoreThemeSettings() end
+        SM:SetIgnoreIndexes(SETTINGS_FLAGS)
+        local About = subs.Config:AddLeftGroupbox('Storage')
+        About:AddLabel('Configs: ' .. tostring(SM.Folder) .. '/settings', true)
+        About:AddLabel('Themes: ' .. tostring(TM and TM.Folder or SM.Folder) .. '/themes', true)
+        SM:BuildConfigSection(subs.Config)
+    else
+        local About = subs.Config:AddLeftGroupbox('Config')
+        About:AddLabel('Pass SaveManager in Skin.BuildSettings options to enable configs.', true)
+    end
+
+    return Tab, subs
+end
+
 Library.__PerceptionSkin = Skin
 return Skin
 

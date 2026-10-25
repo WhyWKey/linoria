@@ -691,6 +691,104 @@ local function BuildIcon(Parent, Name, state)
     end
 end
 
+local TabboxSkinned = setmetatable({}, { __mode = 'k' })
+
+local function SkinTabboxTab(Tabbox, TabObj)
+    PatchFrom(TabObj)
+    local Container = TabObj.Container
+    local BoxInner = Container.Parent
+    local BoxOuter = BoxInner.Parent
+    local Buttons = BoxInner:FindFirstChildOfClass('Frame')
+    if not Buttons then return end
+
+    if not TabboxSkinned[BoxOuter] then
+        TabboxSkinned[BoxOuter] = true
+        Strip(BoxOuter)
+        BoxOuter.BorderSizePixel = 0
+        BoxOuter.BackgroundTransparency = CardTransparency
+        Corner(BoxOuter, 8)
+        Stroke(BoxOuter, 'OutlineColor', 1, 0.5)
+        Strip(BoxInner)
+        BoxInner.BackgroundTransparency = 1
+        BoxInner.BorderSizePixel = 0
+        BoxInner.Position = UDim2.new(0, 0, 0, 0)
+        BoxInner.Size = UDim2.new(1, 0, 1, 0)
+        Buttons.Position = UDim2.new(0, 8, 0, 6)
+        Buttons.Size = UDim2.new(1, -16, 0, 22)
+    end
+
+    local Button
+    for _, c in ipairs(Buttons:GetChildren()) do
+        if c:IsA('Frame') then Button = c end
+    end
+    if not Button then return end
+    Strip(Button)
+    Button.BackgroundTransparency = 1
+    Button.BorderSizePixel = 0
+    local Label, Highlight
+    for _, c in ipairs(Button:GetChildren()) do
+        if c:IsA('TextLabel') then
+            Label = c
+        elseif c:IsA('Frame') then
+            if c.Size.Y.Offset == 2 then
+                Highlight = c
+            else
+                c.Visible = false
+                c.BackgroundTransparency = 1
+            end
+        end
+    end
+    if Highlight then
+        Strip(Highlight)
+        Highlight.AnchorPoint = Vector2.new(0.5, 1)
+        Highlight.Position = UDim2.new(0.5, 0, 1, 0)
+        Highlight.Size = UDim2.new(0, 14, 0, 2)
+        Corner(Highlight, 1)
+    end
+    if Label then
+        Label.TextSize = Library.FontSize - 1
+        Label.Font = Enum.Font.GothamMedium
+    end
+
+    local function style()
+        local active = Container.Visible
+        Button.BackgroundTransparency = 1
+        if Label then
+            Label.TextColor3 = active and Library.FontColor or Library.MutedColor
+            local r = Library.RegistryMap[Label]
+            if r then r.Properties.TextColor3 = active and 'FontColor' or 'MutedColor' end
+        end
+        if Highlight then Highlight.Visible = active end
+    end
+
+    local origShow, origHide, origResize = TabObj.Show, TabObj.Hide, TabObj.Resize
+    TabObj.Show = function(t, ...)
+        origShow(t, ...)
+        for _, other in next, Tabbox.Tabs do
+            if other.__skinStyle then other.__skinStyle() end
+        end
+    end
+    TabObj.Hide = function(t, ...)
+        origHide(t, ...)
+        style()
+    end
+    TabObj.Resize = function(t, ...)
+        origResize(t, ...)
+        if Container.Visible then
+            local Size = 0
+            for _, El in ipairs(Container:GetChildren()) do
+                if El:IsA('GuiObject') and El.Visible then Size = Size + El.Size.Y.Offset end
+            end
+            BoxOuter.Size = UDim2.new(1, 0, 0, 34 + Size + 8)
+        end
+    end
+    TabObj.__skinStyle = style
+    Container.Position = UDim2.new(0, 12, 0, 34)
+    Container.Size = UDim2.new(1, -24, 1, -34)
+    style()
+    TabObj:Resize()
+end
+
 local function SkinTab(ctx, Tab, Name, list)
     local TabButton
     for _, i in ipairs(list) do
@@ -772,6 +870,118 @@ local function SkinTab(ctx, Tab, Name, list)
         sides[2].Size = UDim2.new(0.5, -5, 1, 0)
     end
 
+    local TabFrame
+    for _, i in ipairs(list) do
+        if i.ClassName == 'Frame' and i.Name == 'TabFrame' then TabFrame = i; break end
+    end
+
+    Tab.SubTabs = function(t, names)
+        local bar = { current = names[1], pills = {}, groups = {} }
+        local subs = {}
+        local SUB_H = 34
+        for _, sd in ipairs(sides) do
+            sd.Position = UDim2.new(sd.Position.X.Scale, sd.Position.X.Offset, 0, SUB_H)
+            sd.Size = UDim2.new(sd.Size.X.Scale, sd.Size.X.Offset, 1, -SUB_H)
+        end
+
+        local widths, total = {}, 0
+        for index, name in ipairs(names) do
+            widths[index] = Library:GetTextBounds(name, Enum.Font.GothamMedium, Library.FontSize - 1) + 22
+            total = total + widths[index] + (index > 1 and 4 or 0)
+        end
+
+        local holder = New('Frame', {
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 0, 2),
+            Size = UDim2.fromOffset(total, 24),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 3,
+            Parent = TabFrame,
+        })
+        New('UIListLayout', {
+            FillDirection = Enum.FillDirection.Horizontal,
+            Padding = UDim.new(0, 4),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Parent = holder,
+        })
+
+        local function apply()
+            for name, group in pairs(bar.groups) do
+                for _, frame in ipairs(group) do frame.Visible = name == bar.current end
+            end
+            for name, pill in pairs(bar.pills) do
+                local active = name == bar.current
+                pill.BackgroundTransparency = active and 0 or 1
+                pill.TextColor3 = active and Library.FontColor or Library.MutedColor
+                local r = Library.RegistryMap[pill]
+                if r then
+                    r.Properties.TextColor3 = active and 'FontColor' or 'MutedColor'
+                    r.Properties.BackgroundColor3 = 'MainColor'
+                end
+            end
+        end
+
+        for index, name in ipairs(names) do
+            local pill = New('TextButton', {
+                AutoButtonColor = false,
+                BackgroundColor3 = Library.MainColor,
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                Size = UDim2.fromOffset(widths[index], 24),
+                LayoutOrder = index,
+                Font = Enum.Font.GothamMedium,
+                Text = name,
+                TextSize = Library.FontSize - 1,
+                TextColor3 = Library.MutedColor,
+                ZIndex = 4,
+                Parent = holder,
+            })
+            Corner(pill, 6)
+            Library:AddToRegistry(pill, { BackgroundColor3 = 'MainColor', TextColor3 = 'MutedColor' })
+            pill.MouseButton1Click:Connect(function()
+                if Library:MouseIsOverOpenedFrame() then return end
+                bar.current = name
+                apply()
+            end)
+            bar.pills[name] = pill
+            bar.groups[name] = {}
+
+            local function add(side, title)
+                local g = t:AddGroupbox({ Side = side, Name = title })
+                local outer = g.Container.Parent.Parent
+                table.insert(bar.groups[name], outer)
+                outer.Visible = name == bar.current
+                return g
+            end
+            local sub = {}
+            local function addBox(side)
+                local tb = side == 1 and t:AddLeftTabbox() or t:AddRightTabbox()
+                local registered = false
+                local oa = tb.AddTab
+                tb.AddTab = function(self, title)
+                    local r = oa(self, title)
+                    if not registered then
+                        registered = true
+                        local outer = r.Container.Parent.Parent
+                        table.insert(bar.groups[name], outer)
+                        outer.Visible = name == bar.current
+                    end
+                    return r
+                end
+                return tb
+            end
+            function sub:AddLeftTabbox() return addBox(1) end
+            function sub:AddRightTabbox() return addBox(2) end
+            function sub:AddGroupbox(info) return add(info.Side or 1, info.Name) end
+            function sub:AddLeftGroupbox(title) return add(1, title) end
+            function sub:AddRightGroupbox(title) return add(2, title) end
+            subs[name] = sub
+        end
+        apply()
+        return subs
+    end
+
     local origGroupbox = Tab.AddGroupbox
     Tab.AddGroupbox = function(t, Info)
         local _, res = Capture(origGroupbox, t, Info)
@@ -795,7 +1005,7 @@ local function SkinTab(ctx, Tab, Name, list)
                 Tabbox.AddTab = function(tb, TabName)
                     local _, r2 = Capture(origAdd, tb, TabName)
                     if not r2[1] then error(r2[2], 0) end
-                    Guard('tabbox', PatchFrom, r2[2])
+                    Guard('tabbox', SkinTabboxTab, Tabbox, r2[2])
                     return r2[2]
                 end
             end

@@ -254,12 +254,15 @@ local function WrapFn(tbl, name, post)
     end
 end
 
+local PatchFrom
+
 local function Muted(inst)
     inst.TextColor3 = Library.MutedColor
     Reg(inst, { TextColor3 = 'MutedColor' })
 end
 
 local function SkinToggle(Groupbox, Toggle, list)
+    PatchFrom(Toggle)
     local Label = Toggle.TextLabel
     local Inner = Label.Parent
     local Outer = Inner.Parent
@@ -479,34 +482,501 @@ local function SkinDropdown(Groupbox, Dropdown, list)
     Groupbox:Resize()
 end
 
-local function SkinColorPicker(Parent, ColorPicker)
-    local DF = ColorPicker.DisplayFrame
-    if not DF then return end
-    Strip(DF)
-    DF.BorderSizePixel = 0
-    DF.Size = UDim2.fromOffset(16, 16)
-    Corner(DF, 4)
-    New('UIStroke', {
-        Color = BLACK,
-        Transparency = 0.55,
-        Thickness = 1,
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        Parent = DF,
+local InputService = game:GetService('UserInputService')
+
+local function Drag(frame, update)
+    frame.InputBegan:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+            update(Input.Position.X, Input.Position.Y)
+            local changed = InputService.InputChanged:Connect(function(Change)
+                if Change.UserInputType == Enum.UserInputType.MouseMovement or Change == Input then
+                    update(Change.Position.X, Change.Position.Y)
+                end
+            end)
+            local ended
+            ended = InputService.InputEnded:Connect(function(End)
+                if End == Input or End.UserInputType == Enum.UserInputType.Touch then
+                    changed:Disconnect()
+                    ended:Disconnect()
+                    Library:AttemptSave()
+                end
+            end)
+        end
+    end)
+end
+
+local function frac(pos, size, x)
+    if not size or size <= 0 then return 0 end
+    return math.clamp((x - pos) / size, 0, 1)
+end
+
+local function BuildPopup(CP, Info, Outer)
+    local hasAlpha = type(Info) == 'table' and Info.Transparency ~= nil
+    for _, c in ipairs(Outer:GetChildren()) do
+        if c:IsA('GuiObject') then c.Visible = false end
+    end
+
+    local W = 176
+    local SVH = 120
+    local AY = 34 + SVH + 8
+    local HY = hasAlpha and (AY + 20) or AY
+    Outer.Size = UDim2.fromOffset(W, HY + 12 + 10)
+    Outer.BackgroundColor3 = Library.PanelColor
+    Outer.BackgroundTransparency = 0.03
+    Reg(Outer, { BackgroundColor3 = 'PanelColor' })
+
+    local Box = New('TextBox', {
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 10, 0, 8),
+        Size = UDim2.new(1, -20, 0, 20),
+        Font = Enum.Font.GothamMedium,
+        TextSize = Library.FontSize - 1,
+        TextColor3 = Library.MutedColor,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ClearTextOnFocus = false,
+        Text = '',
+        ZIndex = 18,
+        Parent = Outer,
     })
-    local checker = DF:FindFirstChildOfClass('ImageLabel')
-    if checker then
-        checker.Size = UDim2.new(1, 0, 1, 0)
+    Library:AddToRegistry(Box, { TextColor3 = 'MutedColor' })
+
+    local SV = New('Frame', {
+        Position = UDim2.new(0, 10, 0, 34),
+        Size = UDim2.new(1, -20, 0, SVH),
+        BackgroundColor3 = Color3.new(1, 0, 0),
+        BorderSizePixel = 0,
+        ZIndex = 18,
+        Parent = Outer,
+    })
+    Corner(SV, 6)
+    local White = New('Frame', {
+        Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 19, Parent = SV,
+    })
+    Corner(White, 6)
+    New('UIGradient', { Transparency = NumberSequence.new(0, 1), Parent = White })
+    local Dark = New('Frame', {
+        Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = BLACK, BorderSizePixel = 0, ZIndex = 20, Parent = SV,
+    })
+    Corner(Dark, 6)
+    New('UIGradient', { Rotation = 90, Transparency = NumberSequence.new(1, 0), Parent = Dark })
+    local SVCursor = New('Frame', {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Size = UDim2.fromOffset(10, 10),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ZIndex = 22,
+        Parent = SV,
+    })
+    Corner(SVCursor, 5)
+    New('UIStroke', { Color = WHITE, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = SVCursor })
+
+    local function marker(parent)
+        local m = New('Frame', {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Size = UDim2.fromOffset(4, 16),
+            BackgroundColor3 = WHITE,
+            BorderSizePixel = 0,
+            ZIndex = 22,
+            Parent = parent,
+        })
+        Corner(m, 2)
+        New('UIStroke', { Color = BLACK, Transparency = 0.5, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = m })
+        return m
+    end
+
+    local A, AFill, ACursor
+    if hasAlpha then
+        A = New('Frame', {
+            Position = UDim2.new(0, 10, 0, AY), Size = UDim2.new(1, -20, 0, 12),
+            BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 18, Parent = Outer,
+        })
+        Corner(A, 4)
+        local checker = New('ImageLabel', {
+            Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0,
+            Image = 'http://www.roblox.com/asset/?id=12977615774',
+            ScaleType = Enum.ScaleType.Tile, TileSize = UDim2.fromOffset(8, 8), ZIndex = 19, Parent = A,
+        })
         Corner(checker, 4)
+        AFill = New('Frame', {
+            Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = CP.Value, BorderSizePixel = 0, ZIndex = 20, Parent = A,
+        })
+        Corner(AFill, 4)
+        New('UIGradient', { Transparency = NumberSequence.new(1, 0), Parent = AFill })
+        ACursor = marker(A)
+    end
+
+    local H = New('Frame', {
+        Position = UDim2.new(0, 10, 0, HY), Size = UDim2.new(1, -20, 0, 12),
+        BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 18, Parent = Outer,
+    })
+    Corner(H, 4)
+    local kps = {}
+    for i = 0, 6 do
+        kps[#kps + 1] = ColorSequenceKeypoint.new(i / 6, Color3.fromHSV(i == 6 and 0 or i / 6, 1, 1))
+    end
+    New('UIGradient', { Color = ColorSequence.new(kps), Parent = H })
+    local HCursor = marker(H)
+
+    local function refresh()
+        SV.BackgroundColor3 = Color3.fromHSV(CP.Hue, 1, 1)
+        SVCursor.Position = UDim2.new(CP.Sat, 0, 1 - CP.Vib, 0)
+        HCursor.Position = UDim2.new(CP.Hue, 0, 0.5, 0)
+        if AFill then
+            AFill.BackgroundColor3 = CP.Value
+            ACursor.Position = UDim2.new(1 - CP.Transparency, 0, 0.5, 0)
+        end
+        if not Box:IsFocused() then
+            local v = CP.Value
+            local txt = string.format('%d, %d, %d', math.floor(v.R * 255 + 0.5), math.floor(v.G * 255 + 0.5), math.floor(v.B * 255 + 0.5))
+            if hasAlpha then txt = txt .. string.format(', %d', math.floor((1 - CP.Transparency) * 255 + 0.5)) end
+            Box.Text = txt
+        end
+    end
+
+    Drag(SV, function(x, y)
+        local p, sz = SV.AbsolutePosition, SV.AbsoluteSize
+        CP.Sat = frac(p.X, sz.X, x)
+        CP.Vib = 1 - frac(p.Y, sz.Y, y)
+        CP:Display()
+    end)
+    Drag(H, function(x)
+        local p, sz = H.AbsolutePosition, H.AbsoluteSize
+        CP.Hue = frac(p.X, sz.X, x)
+        CP:Display()
+    end)
+    if A then
+        Drag(A, function(x)
+            local p, sz = A.AbsolutePosition, A.AbsoluteSize
+            CP.Transparency = 1 - frac(p.X, sz.X, x)
+            CP:Display()
+        end)
+    end
+
+    Box.FocusLost:Connect(function()
+        local text = Box.Text
+        local hex = text:match('^%s*#?(%x%x%x%x%x%x)%s*$')
+        if hex then
+            local c = Color3.fromRGB(tonumber(hex:sub(1, 2), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(5, 6), 16))
+            CP.Hue, CP.Sat, CP.Vib = Color3.toHSV(c)
+        else
+            local nums = {}
+            for n in text:gmatch('%-?%d+%.?%d*') do nums[#nums + 1] = tonumber(n) end
+            if #nums >= 3 then
+                local c = Color3.fromRGB(math.clamp(nums[1], 0, 255), math.clamp(nums[2], 0, 255), math.clamp(nums[3], 0, 255))
+                CP.Hue, CP.Sat, CP.Vib = Color3.toHSV(c)
+                if hasAlpha and nums[4] then CP.Transparency = 1 - math.clamp(nums[4], 0, 255) / 255 end
+            end
+        end
+        CP:Display()
+    end)
+
+    local origDisplay = CP.Display
+    CP.Display = function(self, ...)
+        origDisplay(self, ...)
+        Guard('picker refresh', refresh)
+    end
+    refresh()
+end
+
+local function SkinColorPicker(Parent, _, list, Idx, Info)
+    local CP = getgenv().Options and getgenv().Options[Idx]
+    if not CP then return end
+    local DF = CP.DisplayFrame
+    if DF then
+        Strip(DF)
+        DF.BorderSizePixel = 0
+        DF.Size = UDim2.fromOffset(16, 16)
+        Corner(DF, 4)
+        New('UIStroke', {
+            Color = BLACK,
+            Transparency = 0.55,
+            Thickness = 1,
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+            Parent = DF,
+        })
+        local checker = DF:FindFirstChildOfClass('ImageLabel')
+        if checker then
+            checker.Size = UDim2.new(1, 0, 1, 0)
+            Corner(checker, 4)
+        end
     end
     local label = Parent and Parent.TextLabel
     local layout = label and label:FindFirstChildOfClass('UIListLayout')
     if layout then layout.VerticalAlignment = Enum.VerticalAlignment.Center end
+
+    local Outer
+    for _, i in ipairs(list) do
+        if i.ClassName == 'Frame' and i.Name == 'Color' then Outer = i; break end
+    end
+    if Outer then BuildPopup(CP, Info, Outer) end
 end
 
-local function SkinKeyPicker(Parent, KeyPicker, list)
+local ModeNames = { Off = 'Off Hotkey', Hold = 'On Hotkey', Press = 'Single Press', Toggle = 'Toggle', Always = 'Always on' }
+local ModeOrder = { 'Off', 'Hold', 'Press', 'Toggle', 'Always' }
+
+local function SkinKeyPicker(Parent, Idx, Info, list)
+    local KP = getgenv().Options and getgenv().Options[Idx]
+    if not KP then return end
     local label = Parent and Parent.TextLabel
     local layout = label and label:FindFirstChildOfClass('UIListLayout')
     if layout then layout.VerticalAlignment = Enum.VerticalAlignment.Center end
+
+    local PickOuter
+    for _, i in ipairs(list) do
+        if i.ClassName == 'Frame' and i.Parent == label then PickOuter = i; break end
+    end
+    if not PickOuter then return end
+    local PickInner = PickOuter:FindFirstChildOfClass('Frame')
+    if not PickInner then return end
+    local DisplayLabel = PickInner:FindFirstChildOfClass('TextLabel')
+    if DisplayLabel then DisplayLabel.Visible = false end
+    PickOuter.Size = UDim2.fromOffset(24, 16)
+    local ChipStroke = PickInner:FindFirstChildOfClass('UIStroke')
+    local z = PickInner.ZIndex
+
+    local state = { picking = false }
+    local iconItems = {}
+    local function iconColor()
+        return state.picking and Library.AccentColor or Library.MutedColor
+    end
+    local function ink(inst, prop)
+        inst[prop] = iconColor()
+        iconItems[#iconItems + 1] = { inst, prop }
+        Library:AddToRegistry(inst, { [prop] = iconColor })
+    end
+    local function setIcon()
+        for _, it in ipairs(iconItems) do it[1][it[2]] = iconColor() end
+    end
+
+    local K = New('Frame', {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        Size = UDim2.fromOffset(13, 9),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ZIndex = z + 1,
+        Parent = PickInner,
+    })
+    Corner(K, 2)
+    local ks = New('UIStroke', { Thickness = 1.2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = K })
+    ink(ks, 'Color')
+    for _, x in ipairs({ 2, 5, 8 }) do
+        local d = New('Frame', {
+            Position = UDim2.fromOffset(x, 2), Size = UDim2.fromOffset(2, 1.5), BorderSizePixel = 0, ZIndex = z + 1, Parent = K,
+        })
+        ink(d, 'BackgroundColor3')
+    end
+    local sp = New('Frame', {
+        Position = UDim2.fromOffset(3, 5), Size = UDim2.fromOffset(6, 1.5), BorderSizePixel = 0, ZIndex = z + 1, Parent = K,
+    })
+    ink(sp, 'BackgroundColor3')
+
+    local Button = New('TextButton', {
+        BackgroundTransparency = 1,
+        Text = '',
+        AutoButtonColor = false,
+        Active = true,
+        Size = UDim2.new(1, 0, 1, 0),
+        ZIndex = z + 4,
+        Parent = PickOuter,
+    })
+
+    local modes = {}
+    local have = {}
+    for _, m in ipairs(Info and Info.Modes or {}) do have[m] = true end
+    for _, m in ipairs(ModeOrder) do
+        if have[m] then modes[#modes + 1] = m; have[m] = nil end
+    end
+    for _, m in ipairs(Info and Info.Modes or {}) do
+        if have[m] then modes[#modes + 1] = m; have[m] = nil end
+    end
+
+    local MENU_W = 118
+    local ROW = 22
+    local Menu = New('Frame', {
+        AnchorPoint = Vector2.new(1, 0),
+        Size = UDim2.fromOffset(MENU_W, 8 + ROW + 5 + #modes * ROW),
+        BackgroundColor3 = Library.PanelColor,
+        BackgroundTransparency = 0.03,
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 60,
+        Parent = Library.ScreenGui,
+    })
+    Library:AddToRegistry(Menu, { BackgroundColor3 = 'PanelColor' })
+    Corner(Menu, 7)
+    Stroke(Menu, 'OutlineColor', 1, 0.2)
+
+    local function row(y, text)
+        return New('TextButton', {
+            AutoButtonColor = false,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.fromOffset(4, y),
+            Size = UDim2.new(1, -8, 0, ROW),
+            Font = Enum.Font.GothamMedium,
+            Text = text,
+            TextSize = Library.FontSize - 1,
+            TextColor3 = Library.MutedColor,
+            ZIndex = 61,
+            Parent = Menu,
+        })
+    end
+
+    local KeyRow = row(4, '')
+    KeyRow.TextColor3 = Library.FontColor
+    Library:AddToRegistry(KeyRow, { TextColor3 = 'FontColor' })
+    New('Frame', {
+        Position = UDim2.fromOffset(10, 4 + ROW + 2),
+        Size = UDim2.new(1, -20, 0, 1),
+        BackgroundColor3 = Library.OutlineColor,
+        BorderSizePixel = 0,
+        ZIndex = 61,
+        Parent = Menu,
+    })
+    Library:AddToRegistry(Menu:GetChildren()[#Menu:GetChildren()], { BackgroundColor3 = 'OutlineColor' })
+
+    local rows = {}
+    for index, mode in ipairs(modes) do
+        local r = row(4 + ROW + 5 + (index - 1) * ROW, ModeNames[mode] or mode)
+        rows[mode] = r
+        Library:AddToRegistry(r, { TextColor3 = function()
+            return KP.Mode == mode and Library.AccentColor or Library.MutedColor
+        end })
+        r.MouseButton1Click:Connect(function()
+            KP:SetValue({ KP.Value, mode })
+            Menu.Visible = false
+            Library.OpenedFrames[Menu] = nil
+            Library:AttemptSave()
+        end)
+    end
+
+    local function keyText()
+        local k = KP.Value
+        if k == nil or k == 'None' then return '[ ... ]' end
+        if #k == 1 then k = string.lower(k) end
+        return '[' .. k .. ']'
+    end
+
+    local function refreshMenu()
+        KeyRow.Text = keyText()
+        for mode, r in pairs(rows) do
+            r.TextColor3 = KP.Mode == mode and Library.AccentColor or Library.MutedColor
+        end
+    end
+
+    local function close()
+        Menu.Visible = false
+        Library.OpenedFrames[Menu] = nil
+    end
+
+    local function open()
+        refreshMenu()
+        Menu.Position = UDim2.fromOffset(
+            PickOuter.AbsolutePosition.X + PickOuter.AbsoluteSize.X,
+            PickOuter.AbsolutePosition.Y + PickOuter.AbsoluteSize.Y + 4
+        )
+        Menu.Visible = true
+        Library.OpenedFrames[Menu] = true
+    end
+
+    KeyRow.MouseButton1Click:Connect(function()
+        close()
+        if state.picking then return end
+        state.picking = true
+        setIcon()
+        task.spawn(function()
+            task.wait(0.2)
+            local conn
+            conn = InputService.InputBegan:Connect(function(Input)
+                local Key
+                if Input.UserInputType == Enum.UserInputType.Keyboard then
+                    Key = Input.KeyCode == Enum.KeyCode.Escape and 'None' or Input.KeyCode.Name
+                elseif Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    Key = 'MB1'
+                elseif Input.UserInputType == Enum.UserInputType.MouseButton2 then
+                    Key = 'MB2'
+                elseif Input.UserInputType == Enum.UserInputType.Touch then
+                    Key = 'Touch'
+                end
+                if not Key then return end
+                conn:Disconnect()
+                task.delay(0.05, function()
+                    KP.Value = Key
+                    state.picking = false
+                    setIcon()
+                    Library:SafeCallback(KP.ChangedCallback, Input.KeyCode or Input.UserInputType)
+                    Library:SafeCallback(KP.Changed, Input.KeyCode or Input.UserInputType)
+                    Library:AttemptSave()
+                    KP:Update()
+                end)
+            end)
+        end)
+    end)
+
+    Button.MouseButton1Click:Connect(function()
+        if Menu.Visible then close() else open() end
+    end)
+    Button.MouseEnter:Connect(function()
+        if ChipStroke then ChipStroke.Color = Library.AccentColor end
+    end)
+    Button.MouseLeave:Connect(function()
+        if ChipStroke then ChipStroke.Color = Library.OutlineColor end
+    end)
+    Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
+        if not Menu.Visible then return end
+        if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+            if not Library:IsMouseOverFrame(Menu) and not Library:IsMouseOverFrame(PickOuter) then close() end
+        end
+    end))
+
+    local origState = KP.GetState
+    KP.GetState = function(self)
+        local m = self.Mode
+        if m == 'Off' then
+            if self.Value == 'None' then return true end
+            self.Mode = 'Hold'
+            local held = origState(self)
+            self.Mode = m
+            return not held
+        elseif m == 'Press' then
+            return self.Toggled and true or false
+        end
+        return origState(self)
+    end
+
+    Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
+        if KP.Mode ~= 'Press' or state.picking then return end
+        local key = KP.Value
+        if key == nil or key == 'None' then return end
+        local hit = (key == 'MB1' and Input.UserInputType == Enum.UserInputType.MouseButton1)
+            or (key == 'MB2' and Input.UserInputType == Enum.UserInputType.MouseButton2)
+            or (key == 'Touch' and Input.UserInputType == Enum.UserInputType.Touch)
+            or (Input.UserInputType == Enum.UserInputType.Keyboard and Input.KeyCode.Name == key)
+        if hit then
+            KP.Toggled = true
+            KP:DoClick()
+            KP:Update()
+            task.delay(0.1, function()
+                KP.Toggled = false
+                KP:Update()
+            end)
+        end
+    end))
+end
+
+local function WrapKeyPicker(Funcs)
+    local orig = Funcs.AddKeyPicker
+    if type(orig) ~= 'function' then return end
+    Funcs.AddKeyPicker = function(self, Idx, Info, ...)
+        if type(Info) == 'table' and Info.Modes == nil then
+            Info.Modes = { 'Off', 'Hold', 'Press', 'Toggle', 'Always' }
+        end
+        local list, res = Capture(orig, self, Idx, Info, ...)
+        if not res[1] then error(res[2], 0) end
+        Guard('AddKeyPicker', SkinKeyPicker, self, Idx, Info, list)
+        return table.unpack(res, 2, res.n)
+    end
 end
 
 local function PatchFuncs(Funcs)
@@ -516,10 +986,11 @@ local function PatchFuncs(Funcs)
     WrapFn(Funcs, 'AddSlider', SkinSlider)
     WrapFn(Funcs, 'AddDropdown', SkinDropdown)
     WrapFn(Funcs, 'AddColorPicker', SkinColorPicker)
-    WrapFn(Funcs, 'AddKeyPicker', SkinKeyPicker)
+    WrapKeyPicker(Funcs)
+    WrapFn(Funcs, 'AddLabel', function(self, ret) PatchFrom(ret) end)
 end
 
-local function PatchFrom(obj)
+PatchFrom = function(obj)
     local mt = getmetatable(obj)
     if type(mt) == 'table' and type(mt.__index) == 'table' then
         PatchFuncs(mt.__index)

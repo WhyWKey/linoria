@@ -1,102 +1,631 @@
--- MouseUI loader: tries every fetch method the executor has and says exactly what failed.
--- Edit URL (must be a RAW link) and/or FILE, then run.
-local URL  = "https://raw.githubusercontent.com/WhyWKey/linoria/refs/heads/main/ui-test/library.lua"
-local FILE = "MouseUI.lua" -- fallback: file inside the executor's workspace folder
+local LIB_URL = "https://raw.githubusercontent.com/WhyWKey/linoria/refs/heads/main/ui-test/library.lua"
+local SKIN_URL = "https://raw.githubusercontent.com/WhyWKey/linoria/refs/heads/main/ui-test/PerceptionSkin.lua"
 
-local function genvGet(name)
-    local ok, v = pcall(function() return getgenv()[name] end)
-    if ok and v ~= nil then return v end
-    local ok2, v2 = pcall(function() return getfenv()[name] end)
-    if ok2 then return v2 end
-    return nil
+local Library = loadstring(game:HttpGet(LIB_URL))()
+local Skin = loadstring(game:HttpGet(SKIN_URL))()(Library, { Brand = "Aster", Debug = true })
+
+local Window = Library:CreateWindow({ Title = "Aster", Center = true, AutoShow = true })
+
+local Tab_Legit = Window:AddTab("Legit")
+local Tab_Legit_subs = Tab_Legit:SubTabs({ "Aim", "Silent", "Other" })
+do
+    do local g = Tab_Legit_subs["Aim"]:AddLeftGroupbox("Aim assist")
+        g:AddToggle("f1", { Text = "Enabled", Default = false })
+        g:AddDropdown("f2", { Text = "Method", Values = { "Camera", "Mouse" }, Default = 1, AllowNull = true })
+        g:AddSlider("f3", { Text = "FOV", Min = 10, Max = 800, Default = 10, Rounding = 1, HideMax = true, Suffix = "px" })
+        g:AddToggle("f4", { Text = "Dynamic FOV", Default = false })
+        g:AddSlider("f5", { Text = "Dynamic FOV amount", Min = 0, Max = 100, Default = 0, Rounding = 1, HideMax = true, Suffix = "%" })
+        g:AddToggle("f6", { Text = "Lock target", Default = false })
+        g:AddDropdown("f7", { Text = "Hitscan priority", Values = { "Closest", "Head", "Body" }, Default = 1, AllowNull = true })
+        g:AddDropdown("f8", { Text = "Hitscan points", Values = { "Head", "Body" }, Multi = true, AllowNull = true })
+        g:AddSlider("f9", { Text = "Reaction time", Min = 0, Max = 500, Default = 0, Rounding = 1, HideMax = true, Suffix = "ms" })
+        g:AddSlider("f10", { Text = "Max distance", Min = 50, Max = 2000, Default = 50, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f11", { Text = "Team check", Default = false })
+        g:AddToggle("f12", { Text = "Wall check", Default = false })
+        g:AddToggle("f13", { Text = "Forcefield check", Default = false })
+        g:AddToggle("f14", { Text = "Hostile only (inmates)", Default = false })
+        g:AddToggle("f15", { Text = "Ignore tased / arrested", Default = false })
+    end
+    do local g = Tab_Legit_subs["Aim"]:AddLeftGroupbox("Aim smoothing")
+        g:AddToggle("f16", { Text = "Smoothing", Default = false })
+        g:AddSlider("f17", { Text = "Start", Min = 0, Max = 99, Default = 0, Rounding = 1, HideMax = true, Suffix = "%" })
+        g:AddSlider("f18", { Text = "End", Min = 0, Max = 99, Default = 0, Rounding = 1, HideMax = true, Suffix = "%" })
+        g:AddSlider("f19", { Text = "Increment", Min = 0, Max = 200, Default = 0, Rounding = 1, HideMax = true, Suffix = "%/s" })
+        g:AddSlider("f20", { Text = "Randomization", Min = 0, Max = 50, Default = 0, Rounding = 1, HideMax = true, Suffix = "%" })
+    end
+    do local g = Tab_Legit_subs["Other"]:AddLeftGroupbox("Triggerbot")
+        g:AddToggle("f21", { Text = "Enabled", Default = false })
+        g:AddDropdown("f22", { Text = "Hit part", Values = { "Head", "Torso", "Any" }, Default = 1, AllowNull = true })
+        g:AddSlider("f23", { Text = "Delay", Min = 0, Max = 300, Default = 0, Rounding = 1, HideMax = true, Suffix = "ms" })
+        g:AddSlider("f24", { Text = "Reaction time", Min = 0, Max = 200, Default = 0, Rounding = 1, HideMax = true, Suffix = "ms" })
+        g:AddToggle("f25", { Text = "Magnet", Default = false })
+        g:AddToggle("f26", { Text = "Team check", Default = false })
+        g:AddToggle("f27", { Text = "Forcefield check", Default = false })
+        g:AddToggle("f28", { Text = "Hostile only (inmates)", Default = false })
+    end
+    do local g = Tab_Legit_subs["Silent"]:AddLeftGroupbox("Silent aim")
+        g:AddToggle("f29", { Text = "Enabled", Default = false })
+        g:AddSlider("f30", { Text = "FOV", Min = 10, Max = 800, Default = 10, Rounding = 1, HideMax = true, Suffix = "px" })
+        g:AddToggle("f31", { Text = "Dynamic FOV", Default = false })
+        g:AddSlider("f32", { Text = "Dynamic FOV amount", Min = 0, Max = 100, Default = 0, Rounding = 1, HideMax = true, Suffix = "%" })
+        g:AddDropdown("f33", { Text = "Hitscan priority", Values = { "Closest", "Head", "Body" }, Default = 1, AllowNull = true })
+        g:AddDropdown("f34", { Text = "Hitscan points", Values = { "Head", "Body" }, Multi = true, AllowNull = true })
+        g:AddSlider("f35", { Text = "Hit chance", Min = 1, Max = 100, Default = 1, Rounding = 1, HideMax = true, Suffix = "%" })
+        g:AddSlider("f36", { Text = "Max distance", Min = 50, Max = 2000, Default = 50, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f37", { Text = "Wall check", Default = false })
+        g:AddToggle("f38", { Text = "Forcefield check", Default = false })
+        g:AddToggle("f39", { Text = "Hostile only (inmates)", Default = false })
+        g:AddToggle("f40", { Text = "Team check", Default = false })
+        g:AddToggle("f41", { Text = "Ignore tased / arrested", Default = false })
+        g:AddToggle("f42", { Text = "Auto fire", Default = false })
+        g:AddSlider("f43", { Text = "Auto fire rate", Min = 1, Max = 60, Default = 1, Rounding = 1, HideMax = true, Suffix = " hz" })
+        g:AddToggle("f44", { Text = "Auto fire: skip blocked", Default = false })
+        g:AddToggle("f45", { Text = "Auto switch", Default = false })
+        g:AddDropdown("f46", { Text = "Switch weapons", Values = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver", "Taser" }, Multi = true, AllowNull = true })
+        g:AddSlider("f47", { Text = "Switch delay", Min = 0.03, Max = 2, Default = 0.03, Rounding = 0, HideMax = true, Suffix = " s" })
+    end
+    do local g = Tab_Legit_subs["Aim"]:AddRightGroupbox("Aim FOV")
+        g:AddToggle("f48", { Text = "Show FOV circle", Default = false })
+        g:AddToggle("f49", { Text = "Filled", Default = false })
+        g:AddSlider("f50", { Text = "Thickness", Min = 1, Max = 5, Default = 1, Rounding = 1, HideMax = true })
+    end
+    do local g = Tab_Legit_subs["Silent"]:AddLeftGroupbox("Silent FOV")
+        g:AddToggle("f51", { Text = "Show FOV circle", Default = false })
+        g:AddToggle("f52", { Text = "Filled", Default = false })
+        g:AddSlider("f53", { Text = "Thickness", Min = 1, Max = 5, Default = 1, Rounding = 1, HideMax = true })
+    end
+    do local g = Tab_Legit_subs["Silent"]:AddRightGroupbox("Target info")
+        g:AddToggle("f54", { Text = "Target info panel", Default = false })
+        g:AddDropdown("f55", { Text = "Target from", Values = { "Silent aim", "Aim assist" }, Default = 1, AllowNull = true })
+        g:AddToggle("f56", { Text = "Show health", Default = false })
+        g:AddToggle("f57", { Text = "Show distance and line of sight", Default = false })
+        g:AddToggle("f58", { Text = "Show team and weapon", Default = false })
+        g:AddToggle("f59", { Text = "Hide without target", Default = false })
+    end
+    do local g = Tab_Legit_subs["Other"]:AddRightGroupbox("Hit feedback")
+        g:AddToggle("f60", { Text = "Hit notifications", Default = false })
+        g:AddToggle("f61", { Text = "Bullet impacts", Default = false })
+    end
+    do local g = Tab_Legit_subs["Other"]:AddRightGroupbox("Weapon utility")
+        g:AddToggle("f62", { Text = "Auto reload", Default = false })
+        g:AddToggle("f63", { Text = "Auto swap on empty", Default = false })
+        g:AddToggle("f64", { Text = "Shoot through vehicles", Default = false })
+    end
 end
 
-local function fetch()
-    local errors = {}
-    local function note(msg) errors[#errors + 1] = msg end
-
-    -- 1) game:HttpGet (classic)
-    local ok, res = pcall(function() return game:HttpGet(URL) end)
-    if ok and type(res) == "string" and #res > 0 then return res end
-    note("game:HttpGet -> " .. (ok and "returned " .. typeof(res) or tostring(res)))
-
-    -- 2) global httpget / HttpGet (documented form on some executors)
-    local hg = genvGet("httpget") or genvGet("HttpGet")
-    if hg then
-        ok, res = pcall(hg, URL)
-        if ok and type(res) == "string" and #res > 0 then return res end
-        note("httpget -> " .. (ok and "returned " .. typeof(res) or tostring(res)))
+local Tab_Rage = Window:AddTab("Rage")
+local Tab_Rage_subs = Tab_Rage:SubTabs({ "Main", "Void", "Aim", "Other" })
+do
+    do local g = Tab_Rage_subs["Main"]:AddLeftGroupbox("Ragebot")
+        g:AddToggle("f65", { Text = "Enabled", Default = false })
+        g:AddDropdown("f66", { Text = "Weapons", Values = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver" }, Multi = true, AllowNull = true })
+        g:AddSlider("f67", { Text = "Weapon switch delay", Min = 0.05, Max = 2, Default = 0.05, Rounding = 0, HideMax = true, Suffix = "s" })
+        g:AddDropdown("f68", { Text = "Autoget weapons", Values = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }, Multi = true, AllowNull = true })
+        g:AddDropdown("f69", { Text = "Settings", Values = { "View target", "Show server position", "Random peek spot" }, Multi = true, AllowNull = true })
+        g:AddDropdown("f70", { Text = "Hit part", Values = { "Head", "Torso", "Random" }, Default = 1, AllowNull = true })
+        g:AddSlider("f71", { Text = "Shots per second", Min = 1, Max = 30, Default = 1, Rounding = 1, HideMax = true, Suffix = "/s" })
+        g:AddSlider("f72", { Text = "Shot delay after peeking", Min = 0, Max = 0.3, Default = 0, Rounding = 0, HideMax = true, Suffix = "s" })
+        g:AddToggle("f73", { Text = "Auto reload", Default = false })
+        g:AddToggle("f74", { Text = "Show status", Default = false })
+        g:AddSlider("f75", { Text = "Status offset", Min = -300, Max = 300, Default = -300, Rounding = 1, HideMax = true, Suffix = "px" })
+        g:AddToggle("f76", { Text = "Safe mode", Default = false })
+        g:AddSlider("f77", { Text = "Safe mode health", Min = 5, Max = 90, Default = 5, Rounding = 1, HideMax = true, Suffix = "%" })
     end
-
-    -- 3) request / http_request
-    local req = genvGet("request") or genvGet("http_request")
-    if req then
-        ok, res = pcall(req, { Url = URL, Method = "GET" })
-        if ok and type(res) == "table" and type(res.Body) == "string" and #res.Body > 0 and (res.StatusCode == nil or res.StatusCode == 200) then
-            return res.Body
-        end
-        note("request -> " .. (ok and ("status " .. tostring(type(res) == "table" and res.StatusCode)) or tostring(res)))
+    do local g = Tab_Rage_subs["Main"]:AddRightGroupbox("Target")
+        g:AddToggle("f78", { Text = "Add target to list", Default = false })
+        g:AddDropdown("f79", { Text = "Mode", Values = { "Target list", "Players tab", "Closest", "Closest to cursor" }, Default = 1, AllowNull = true })
+        g:AddDropdown("f80", { Text = "Targets", Values = { "Option 1", "Option 2", "Option 3" }, Multi = true, AllowNull = true })
+        g:AddDropdown("f81", { Text = "Whitelist", Values = { "Option 1", "Option 2", "Option 3" }, Multi = true, AllowNull = true })
+        g:AddSlider("f82", { Text = "Max distance", Min = 50, Max = 20000, Default = 50, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f83", { Text = "Kill all nearby", Default = false })
+        g:AddSlider("f84", { Text = "Nearby range", Min = 10, Max = 300, Default = 10, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f85", { Text = "Swap targets", Default = false })
+        g:AddSlider("f86", { Text = "Swap after", Min = 1, Max = 30, Default = 1, Rounding = 0, HideMax = true, Suffix = "s" })
+        g:AddToggle("f87", { Text = "Skip forcefield targets", Default = false })
+        g:AddToggle("f88", { Text = "Ignore tased and arrested", Default = false })
+        g:AddToggle("f89", { Text = "Ignore friendly team", Default = false })
+        g:AddToggle("f90", { Text = "Hostile only (inmates)", Default = false })
+        g:AddLabel("Result: none")
+        g:AddInput("f92", { Text = "Player search", Default = "", Placeholder = "", Finished = false })
+        g:AddButton("Target player", function() end)
+        g:AddButton("Whitelist player", function() end)
+        g:AddButton("Clear targets", function() end)
+        g:AddButton("Clear whitelist", function() end)
     end
-
-    -- 4) local workspace file
-    local rf = genvGet("readfile")
-    if rf then
-        ok, res = pcall(rf, FILE)
-        if ok and type(res) == "string" and #res > 0 then return res end
-        note("readfile(" .. FILE .. ") -> " .. (ok and "returned " .. typeof(res) or tostring(res)))
+    do local g = Tab_Rage_subs["Void"]:AddLeftGroupbox("Void spam")
+        g:AddToggle("f97", { Text = "Void spam", Default = false })
+        g:AddDropdown("f98", { Text = "When", Values = { "While targeting", "While reloading", "Smart", "Always" }, Default = 1, AllowNull = true })
+        g:AddToggle("f99", { Text = "Show void location", Default = false })
+        g:AddSlider("f100", { Text = "In void", Min = 0.05, Max = 3, Default = 0.05, Rounding = 0, HideMax = true, Suffix = "s" })
+        g:AddSlider("f101", { Text = "Out of void", Min = 0.05, Max = 2, Default = 0.05, Rounding = 0, HideMax = true, Suffix = "s" })
+        g:AddSlider("f102", { Text = "Smart wait", Min = 1, Max = 30, Default = 1, Rounding = 0, HideMax = true, Suffix = "s" })
+        g:AddSlider("f103", { Text = "Smart void time", Min = 1, Max = 30, Default = 1, Rounding = 0, HideMax = true, Suffix = "s" })
+        g:AddDropdown("f104", { Text = "Pattern", Values = { "Under map", "High", "Far", "Extreme" }, Default = 1, AllowNull = true })
+        g:AddDropdown("f105", { Text = "Direction", Values = { "+Y", "+X", "+Z" }, Multi = true, AllowNull = true })
+        g:AddSlider("f106", { Text = "Depth multiplier", Min = 0.1, Max = 5, Default = 0.1, Rounding = 0, HideMax = true, Suffix = "x" })
+        g:AddSlider("f107", { Text = "Position change interval", Min = 0.01, Max = 1, Default = 0.01, Rounding = 0, HideMax = true, Suffix = "s" })
     end
-
-    return nil, table.concat(errors, "\n  ")
+    do local g = Tab_Rage_subs["Void"]:AddRightGroupbox("Peek spot")
+        g:AddDropdown("f108", { Text = "Position", Values = { "Behind", "Above", "Random", "Spiral" }, Default = 1, AllowNull = true })
+        g:AddSlider("f109", { Text = "Distance", Min = 1, Max = 40, Default = 1, Rounding = 0, HideMax = true, Suffix = " studs" })
+        g:AddSlider("f110", { Text = "Height offset", Min = -6, Max = 20, Default = -6, Rounding = 0, HideMax = true, Suffix = " studs" })
+        g:AddSlider("f111", { Text = "Spiral speed", Min = 0.5, Max = 30, Default = 0.5, Rounding = 0, HideMax = true, Suffix = " rad/s" })
+        g:AddDropdown("f112", { Text = "Line of sight check", Values = { "Off", "Visible only" }, Default = 1, AllowNull = true })
+    end
+    do local g = Tab_Rage_subs["Aim"]:AddLeftGroupbox("Prediction and resolver")
+        g:AddToggle("f113", { Text = "Prediction", Default = false })
+        g:AddSlider("f114", { Text = "Base time", Min = 0, Max = 0.5, Default = 0, Rounding = 0, HideMax = true, Suffix = "s" })
+        g:AddSlider("f115", { Text = "Multiplier", Min = 0, Max = 5, Default = 0, Rounding = 0, HideMax = true, Suffix = "x" })
+        g:AddToggle("f116", { Text = "Resolver", Default = false })
+        g:AddSlider("f117", { Text = "Resolver memory", Min = 0.5, Max = 10, Default = 0.5, Rounding = 0, HideMax = true, Suffix = "s" })
+        g:AddSlider("f118", { Text = "Map limit", Min = 1000, Max = 20000, Default = 1000, Rounding = 1, HideMax = true, Suffix = " studs" })
+    end
+    do local g = Tab_Rage_subs["Aim"]:AddRightGroupbox("Wallbang")
+        g:AddToggle("f119", { Text = "Wallbang", Default = false })
+        g:AddDropdown("f120", { Text = "Method", Values = { "Vape V4", "Aster Origin", "Aster Reach", "Aster Precise" }, Default = 1, AllowNull = true })
+        g:AddToggle("f121", { Text = "Use hitbox", Default = false })
+        g:AddSlider("f122", { Text = "Scan radius", Min = 1, Max = 10, Default = 1, Rounding = 0, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f123", { Text = "Damage check", Default = false })
+        g:AddSlider("f124", { Text = "Max spot distance", Min = 5, Max = 20, Default = 5, Rounding = 0, HideMax = true, Suffix = " studs" })
+    end
+    do local g = Tab_Rage_subs["Aim"]:AddRightGroupbox("Wallbang assist")
+        g:AddToggle("f125", { Text = "Wallbang assist", Default = false })
+        g:AddDropdown("f126", { Text = "Move method", Values = { "Server position", "Velocity" }, Default = 1, AllowNull = true })
+        g:AddDropdown("f127", { Text = "Mode", Values = { "Tween", "Teleport" }, Default = 1, AllowNull = true })
+        g:AddToggle("f128", { Text = "Inside wall", Default = false })
+        g:AddToggle("f129", { Text = "Only while firing", Default = false })
+        g:AddSlider("f130", { Text = "Assist FOV", Min = 10, Max = 800, Default = 10, Rounding = 1, HideMax = true, Suffix = "px" })
+        g:AddSlider("f131", { Text = "Activation distance", Min = 1, Max = 45, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddSlider("f132", { Text = "Tween speed", Min = 1, Max = 200, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs/s" })
+        g:AddSlider("f133", { Text = "Max target distance", Min = 10, Max = 5000, Default = 10, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f134", { Text = "Visualizer", Default = false })
+    end
+    do local g = Tab_Rage_subs["Other"]:AddRightGroupbox("Orbit target")
+        g:AddToggle("f135", { Text = "Orbit target", Default = false })
+        g:AddDropdown("f136", { Text = "Height", Values = { "Under the map", "Below target", "Near void" }, Default = 1, AllowNull = true })
+        g:AddSlider("f137", { Text = "Depth", Min = 0, Max = 500, Default = 0, Rounding = 0, HideMax = true, Suffix = " studs" })
+        g:AddSlider("f138", { Text = "Radius", Min = 0, Max = 100, Default = 0, Rounding = 0, HideMax = true, Suffix = " studs" })
+        g:AddSlider("f139", { Text = "Orbit speed", Min = 0, Max = 720, Default = 0, Rounding = 1, HideMax = true, Suffix = " deg/s" })
+        g:AddDropdown("f140", { Text = "Direction", Values = { "Clockwise", "Counter clockwise" }, Default = 1, AllowNull = true })
+        g:AddSlider("f141", { Text = "Move speed", Min = 10, Max = 4000, Default = 10, Rounding = 1, HideMax = true, Suffix = " studs/s" })
+        g:AddSlider("f142", { Text = "Max target distance", Min = 10, Max = 5000, Default = 10, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f143", { Text = "Visualizer", Default = false })
+        g:AddToggle("f144", { Text = "Tracer", Default = false })
+        g:AddToggle("f145", { Text = "Show orbit ring", Default = false })
+    end
+    do local g = Tab_Rage_subs["Aim"]:AddLeftGroupbox("Gun mods")
+        g:AddToggle("f146", { Text = "Gun modifications", Default = false })
+        g:AddSlider("f147", { Text = "Fire delay (% of stock)", Min = 1, Max = 100, Default = 1, Rounding = 1, HideMax = true, Suffix = "%" })
+        g:AddToggle("f148", { Text = "No spread", Default = false })
+        g:AddToggle("f149", { Text = "Full automatic", Default = false })
+        g:AddToggle("f150", { Text = "Custom range", Default = false })
+        g:AddSlider("f151", { Text = "Range", Min = 10, Max = 100000, Default = 10, Rounding = 1, HideMax = true, Suffix = " studs" })
+    end
+    do local g = Tab_Rage_subs["Other"]:AddLeftGroupbox("Desync")
+        g:AddToggle("f152", { Text = "Desync", Default = false })
+        g:AddDropdown("f153", { Text = "Style", Values = { "Offset", "Void" }, Default = 1, AllowNull = true })
+        g:AddSlider("f154", { Text = "Y offset", Min = -10, Max = 10, Default = -10, Rounding = 0, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f155", { Text = "Always underground", Default = false })
+        g:AddToggle("f156", { Text = "Filter structures", Default = false })
+        g:AddSlider("f157", { Text = "Follower speed", Min = 1, Max = 500, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs/s" })
+        g:AddToggle("f158", { Text = "Visualizer", Default = false })
+        g:AddToggle("f159", { Text = "Tracer", Default = false })
+    end
 end
 
-local source, why = fetch()
-assert(source, "[MouseUI loader] could not get the library source:\n  " .. tostring(why))
+local Tab_Visuals = Window:AddTab("Visuals")
+local Tab_Visuals_subs = Tab_Visuals:SubTabs({ "ESP", "Viewmodel", "Screen" })
+do
+    local tb = Tab_Visuals_subs["ESP"]:AddLeftTabbox()
+    do local g = tb:AddTab("Players")
+        g:AddToggle("f160", { Text = "Enabled", Default = false })
+        g:AddToggle("f161", { Text = "Name", Default = false })
+        g:AddDropdown("f162", { Text = "Name type", Values = { "Username", "Display name", "Display (@username)" }, Default = 1, AllowNull = true })
+        g:AddToggle("f163", { Text = "Boxes", Default = false })
+        g:AddToggle("f164", { Text = "Outline", Default = false })
+        g:AddToggle("f165", { Text = "Fill", Default = false })
+        g:AddToggle("f166", { Text = "Glow", Default = false })
+        g:AddToggle("f167", { Text = "Health bar", Default = false })
+        g:AddToggle("f168", { Text = "Distance", Default = false })
+        g:AddToggle("f169", { Text = "Weapon", Default = false })
+        g:AddToggle("f170", { Text = "Skeleton", Default = false })
+        g:AddToggle("f171", { Text = "Arrows", Default = false })
+        g:AddToggle("f172", { Text = "Team indicator", Default = false })
+        g:AddToggle("f173", { Text = "Enemies only", Default = false })
+        g:AddToggle("f174", { Text = "Hostile only (inmates)", Default = false })
+        g:AddToggle("f175", { Text = "Team colors", Default = false })
+        g:AddToggle("f176", { Text = "Chams", Default = false })
+    end
+    local tb = Tab_Visuals_subs["ESP"]:AddRightTabbox()
+    do local g = tb:AddTab("General")
+        g:AddToggle("f177", { Text = "Players", Default = false })
+        g:AddToggle("f178", { Text = "Local player", Default = false })
+        g:AddSlider("f179", { Text = "Text size (all text)", Min = 8, Max = 24, Default = 8, Rounding = 1, HideMax = true, Suffix = " px" })
+        g:AddSlider("f180", { Text = "Thickness", Min = 1, Max = 4, Default = 1, Rounding = 0, HideMax = true, Suffix = " px" })
+    end
+    do local g = tb:AddTab("Box")
+        g:AddDropdown("f181", { Text = "Type", Values = { "Normal", "Corner", "Circle" }, Default = 1, AllowNull = true })
+        g:AddSlider("f182", { Text = "Thickness", Min = 1, Max = 5, Default = 1, Rounding = 0, HideMax = true, Suffix = " px" })
+    end
+    do local g = tb:AddTab("Health")
+        g:AddDropdown("f183", { Text = "Position", Values = { "Left", "Right", "Top", "Bottom" }, Default = 1, AllowNull = true })
+        g:AddSlider("f184", { Text = "Width", Min = 1, Max = 6, Default = 1, Rounding = 1, HideMax = true, Suffix = " px" })
+    end
+    do local g = tb:AddTab("Arrows")
+        g:AddSlider("f185", { Text = "Size", Min = 8, Max = 32, Default = 8, Rounding = 1, HideMax = true, Suffix = " px" })
+        g:AddSlider("f186", { Text = "Orbit radius", Min = 50, Max = 300, Default = 50, Rounding = 1, HideMax = true, Suffix = " px" })
+    end
+    local tb = Tab_Visuals_subs["ESP"]:AddLeftTabbox()
+    do local g = tb:AddTab("Layers")
+        g:AddSlider("f187", { Text = "Visible thickness", Min = 0, Max = 0.6, Default = 0, Rounding = 0, HideMax = true })
+    end
+    do local g = tb:AddTab("Glow")
+        g:AddToggle("f188", { Text = "Glow", Default = false })
+        g:AddSlider("f189", { Text = "Glow strength", Min = 1, Max = 2.5, Default = 1, Rounding = 0, HideMax = true })
+        g:AddToggle("f190", { Text = "Round head", Default = false })
+        g:AddSlider("f191", { Text = "Head size", Min = 0.8, Max = 1.6, Default = 0.8, Rounding = 0, HideMax = true })
+    end
+    do local g = Tab_Visuals_subs["Screen"]:AddLeftGroupbox("Camera")
+        g:AddToggle("f192", { Text = "FOV changer", Default = false })
+        g:AddSlider("f193", { Text = "FOV", Min = 40, Max = 140, Default = 40, Rounding = 1, HideMax = true, Suffix = "°" })
+    end
+    local tb = Tab_Visuals_subs["Viewmodel"]:AddLeftTabbox()
+    do local g = tb:AddTab("Viewmodel")
+        g:AddToggle("f194", { Text = "Gun color", Default = false })
+        g:AddDropdown("f195", { Text = "Material", Values = { "Default", "ForceField", "Neon", "Glass", "SmoothPlastic", "Plastic" }, Default = 1, AllowNull = true })
+        g:AddDropdown("f196", { Text = "Forcefield texture", Values = { "Option 1", "Option 2", "Option 3" }, Default = 1, AllowNull = true })
+        g:AddToggle("f197", { Text = "Disable textures", Default = false })
+    end
+    do local g = tb:AddTab("Chams")
+        g:AddToggle("f198", { Text = "Gun chams", Default = false })
+    end
+    local tb = Tab_Visuals_subs["Viewmodel"]:AddRightTabbox()
+    do local g = tb:AddTab("Arms")
+        g:AddToggle("f199", { Text = "Forcefield material", Default = false })
+        g:AddDropdown("f200", { Text = "Forcefield texture", Values = { "Option 1", "Option 2", "Option 3" }, Default = 1, AllowNull = true })
+    end
+    do local g = tb:AddTab("Extras")
+        g:AddToggle("f201", { Text = "Disable textures", Default = false })
+        g:AddToggle("f202", { Text = "Remove accessories", Default = false })
+    end
+    do local g = Tab_Visuals_subs["Viewmodel"]:AddRightGroupbox("Self chams")
+        g:AddToggle("f203", { Text = "Self chams", Default = false })
+    end
+    local tb = Tab_Visuals_subs["Screen"]:AddRightTabbox()
+    do local g = tb:AddTab("Crosshair")
+        g:AddToggle("f204", { Text = "Crosshair", Default = false })
+        g:AddSlider("f205", { Text = "Length", Min = 1, Max = 40, Default = 1, Rounding = 1, HideMax = true, Suffix = " px" })
+        g:AddSlider("f206", { Text = "Thickness", Min = 1, Max = 8, Default = 1, Rounding = 1, HideMax = true, Suffix = " px" })
+        g:AddSlider("f207", { Text = "Gap", Min = 0, Max = 30, Default = 0, Rounding = 1, HideMax = true, Suffix = " px" })
+        g:AddToggle("f208", { Text = "Hide default cursor", Default = false })
+    end
+    do local g = tb:AddTab("Outline")
+        g:AddToggle("f209", { Text = "Outline", Default = false })
+        g:AddSlider("f210", { Text = "Outline thickness", Min = 1, Max = 4, Default = 1, Rounding = 1, HideMax = true, Suffix = " px" })
+    end
+    do local g = tb:AddTab("Motion")
+        g:AddToggle("f211", { Text = "Rotation", Default = false })
+        g:AddSlider("f212", { Text = "Angle", Min = 0, Max = 360, Default = 0, Rounding = 1, HideMax = true, Suffix = "°" })
+        g:AddSlider("f213", { Text = "Spin speed", Min = -360, Max = 360, Default = -360, Rounding = 1, HideMax = true, Suffix = "°/s" })
+        g:AddToggle("f214", { Text = "Pulsing spread", Default = false })
+        g:AddSlider("f215", { Text = "Spread min", Min = 0, Max = 40, Default = 0, Rounding = 1, HideMax = true, Suffix = " px" })
+        g:AddSlider("f216", { Text = "Spread max", Min = 0, Max = 60, Default = 0, Rounding = 1, HideMax = true, Suffix = " px" })
+        g:AddSlider("f217", { Text = "Spread speed", Min = 0, Max = 10, Default = 0, Rounding = 0, HideMax = true })
+    end
+    do local g = tb:AddTab("Arms")
+        g:AddToggle("f218", { Text = "Top arm", Default = false })
+        g:AddToggle("f219", { Text = "Bottom arm", Default = false })
+        g:AddToggle("f220", { Text = "Left arm", Default = false })
+        g:AddToggle("f221", { Text = "Right arm", Default = false })
+    end
+end
 
-local chunk, err = loadstring(source, "=MouseUI")
-assert(chunk, "[MouseUI loader] library failed to compile: " .. tostring(err))
+local Tab_World = Window:AddTab("World")
+local Tab_World_subs = Tab_World:SubTabs({ "Lighting", "Weather", "Effects", "Indicators" })
+do
+    do local g = Tab_World_subs["Effects"]:AddLeftGroupbox("Effects window")
+        g:AddToggle("f222", { Text = "Effects window", Default = false })
+    end
+    local tb = Tab_World_subs["Lighting"]:AddLeftTabbox()
+    do local g = tb:AddTab("Light")
+        g:AddToggle("f223", { Text = "Ambient", Default = false })
+        g:AddToggle("f224", { Text = "Brightness", Default = false })
+        g:AddSlider("f225", { Text = "Brightness value", Min = 0, Max = 5, Default = 0, Rounding = 0, HideMax = true })
+        g:AddToggle("f226", { Text = "Exposure", Default = false })
+        g:AddSlider("f227", { Text = "Exposure value", Min = -5, Max = 5, Default = -5, Rounding = 0, HideMax = true })
+        g:AddToggle("f228", { Text = "Map lights", Default = false })
+        g:AddToggle("f229", { Text = "Always on", Default = false })
+        g:AddToggle("f230", { Text = "Recolor lights", Default = false })
+        g:AddSlider("f231", { Text = "Light brightness", Min = 0, Max = 10, Default = 0, Rounding = 0, HideMax = true })
+        g:AddSlider("f232", { Text = "Light range", Min = 0, Max = 5, Default = 0, Rounding = 0, HideMax = true })
+        g:AddToggle("f233", { Text = "Light shadows", Default = false })
+    end
+    do local g = tb:AddTab("Time")
+        g:AddToggle("f234", { Text = "Clock time", Default = false })
+        g:AddSlider("f235", { Text = "Clock time value", Min = 0, Max = 24, Default = 0, Rounding = 0, HideMax = true })
+    end
+    do local g = tb:AddTab("Fog")
+        g:AddToggle("f236", { Text = "Fog start", Default = false })
+        g:AddSlider("f237", { Text = "Fog start value", Min = 0, Max = 5000, Default = 0, Rounding = 1, HideMax = true, Suffix = " stud(s)" })
+        g:AddToggle("f238", { Text = "Fog end", Default = false })
+        g:AddSlider("f239", { Text = "Fog end value", Min = 0, Max = 5000, Default = 0, Rounding = 1, HideMax = true, Suffix = " stud(s)" })
+        g:AddToggle("f240", { Text = "Fog color", Default = false })
+    end
+    local tb = Tab_World_subs["Lighting"]:AddRightTabbox()
+    do local g = tb:AddTab("Atmos")
+        g:AddToggle("f241", { Text = "Atmosphere", Default = false })
+        g:AddSlider("f242", { Text = "Density", Min = 0, Max = 1, Default = 0, Rounding = 0, HideMax = true })
+        g:AddLabel("Decay color")
+        g:AddSlider("f244", { Text = "Glare", Min = 0, Max = 10, Default = 0, Rounding = 0, HideMax = true })
+        g:AddSlider("f245", { Text = "Haze", Min = 0, Max = 10, Default = 0, Rounding = 0, HideMax = true })
+        g:AddSlider("f246", { Text = "Offset", Min = -1, Max = 1, Default = -1, Rounding = 0, HideMax = true })
+    end
+    do local g = tb:AddTab("Bloom")
+        g:AddToggle("f247", { Text = "Bloom", Default = false })
+        g:AddSlider("f248", { Text = "Intensity", Min = 0, Max = 3, Default = 0, Rounding = 0, HideMax = true })
+        g:AddSlider("f249", { Text = "Size", Min = 0, Max = 56, Default = 0, Rounding = 0, HideMax = true })
+        g:AddSlider("f250", { Text = "Threshold", Min = 0, Max = 2, Default = 0, Rounding = 0, HideMax = true })
+    end
+    do local g = tb:AddTab("Screen")
+        g:AddToggle("f251", { Text = "Color correction", Default = false })
+        g:AddSlider("f252", { Text = "Saturation", Min = -1, Max = 1, Default = -1, Rounding = 0, HideMax = true })
+        g:AddSlider("f253", { Text = "Contrast", Min = -1, Max = 1, Default = -1, Rounding = 0, HideMax = true })
+        g:AddSlider("f254", { Text = "Brightness", Min = -1, Max = 1, Default = -1, Rounding = 0, HideMax = true })
+        g:AddToggle("f255", { Text = "Sun rays", Default = false })
+        g:AddSlider("f256", { Text = "Sun rays intensity", Min = 0, Max = 1, Default = 0, Rounding = 0, HideMax = true })
+        g:AddSlider("f257", { Text = "Screen blur", Min = 0, Max = 20, Default = 0, Rounding = 0, HideMax = true })
+    end
+    local tb = Tab_World_subs["Weather"]:AddLeftTabbox()
+    do local g = tb:AddTab("Weather")
+        g:AddToggle("f258", { Text = "Weather", Default = false })
+        g:AddDropdown("f259", { Text = "Preset", Values = { "Option 1", "Option 2", "Option 3" }, Default = 1, AllowNull = true })
+        g:AddSlider("f260", { Text = "Intensity", Min = 0.1, Max = 3, Default = 0.1, Rounding = 0, HideMax = true })
+        g:AddSlider("f261", { Text = "Height", Min = 10, Max = 120, Default = 10, Rounding = 1, HideMax = true, Suffix = " studs" })
+    end
+    do local g = tb:AddTab("Look")
+        g:AddSlider("f262", { Text = "Speed", Min = 0.2, Max = 3, Default = 0.2, Rounding = 0, HideMax = true })
+        g:AddSlider("f263", { Text = "Size", Min = 0.3, Max = 3, Default = 0.3, Rounding = 0, HideMax = true })
+        g:AddSlider("f264", { Text = "Glow", Min = 0, Max = 1, Default = 0, Rounding = 0, HideMax = true })
+        g:AddSlider("f265", { Text = "Spread", Min = 0.2, Max = 3, Default = 0.2, Rounding = 0, HideMax = true })
+    end
+    do local g = tb:AddTab("Wind")
+        g:AddSlider("f266", { Text = "Strength", Min = 0, Max = 20, Default = 0, Rounding = 0, HideMax = true })
+        g:AddSlider("f267", { Text = "Direction", Min = 0, Max = 360, Default = 0, Rounding = 1, HideMax = true, Suffix = "°" })
+    end
+    do local g = tb:AddTab("Strike")
+        g:AddToggle("f268", { Text = "Lightning (rain only)", Default = false })
+        g:AddSlider("f269", { Text = "Thickness", Min = 0.05, Max = 1, Default = 0.05, Rounding = 0, HideMax = true })
+        g:AddSlider("f270", { Text = "Jaggedness", Min = 1, Max = 15, Default = 1, Rounding = 0, HideMax = true })
+        g:AddSlider("f271", { Text = "Flash", Min = 0, Max = 10, Default = 0, Rounding = 0, HideMax = true })
+        g:AddSlider("f272", { Text = "Interval", Min = 1, Max = 15, Default = 1, Rounding = 0, HideMax = true, Suffix = "s" })
+    end
+    do local g = Tab_World_subs["Indicators"]:AddLeftGroupbox("Reload indicator")
+        g:AddToggle("f273", { Text = "Reload indicator", Default = false })
+        g:AddToggle("f274", { Text = "Show time", Default = false })
+        g:AddSlider("f275", { Text = "Width", Min = 40, Max = 300, Default = 40, Rounding = 1, HideMax = true, Suffix = "px" })
+        g:AddSlider("f276", { Text = "Height", Min = 3, Max = 16, Default = 3, Rounding = 1, HideMax = true, Suffix = "px" })
+        g:AddSlider("f277", { Text = "Vertical offset", Min = -300, Max = 300, Default = -300, Rounding = 1, HideMax = true, Suffix = "px" })
+        g:AddLabel("Bar color")
+        g:AddLabel("Background color")
+    end
+    do local g = Tab_World_subs["Indicators"]:AddRightGroupbox("Ammo indicator")
+        g:AddToggle("f280", { Text = "Server bullet count", Default = false })
+        g:AddToggle("f281", { Text = "Show local count", Default = false })
+        g:AddSlider("f282", { Text = "Text size", Min = 10, Max = 32, Default = 10, Rounding = 1, HideMax = true })
+        g:AddSlider("f283", { Text = "Vertical offset", Min = -300, Max = 300, Default = -300, Rounding = 1, HideMax = true, Suffix = "px" })
+        g:AddLabel("Normal color")
+        g:AddLabel("Empty color")
+        g:AddLabel("Mismatch color")
+    end
+    do local g = Tab_World_subs["Indicators"]:AddLeftGroupbox("Wallbang indicator")
+        g:AddToggle("f287", { Text = "Wallbang indicator", Default = false })
+        g:AddToggle("f288", { Text = "Show on cursor", Default = false })
+        g:AddToggle("f289", { Text = "Show on everyone", Default = false })
+        g:AddToggle("f290", { Text = "Always visible", Default = false })
+        g:AddSlider("f291", { Text = "Text size", Min = 10, Max = 28, Default = 10, Rounding = 1, HideMax = true })
+        g:AddSlider("f292", { Text = "Max distance", Min = 50, Max = 3000, Default = 50, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddLabel("Visible color")
+        g:AddLabel("Wallbangable color")
+        g:AddLabel("Blocked color")
+    end
+    do local g = Tab_World_subs["Effects"]:AddRightGroupbox("Avatar changer")
+        g:AddToggle("f296", { Text = "Avatar spoofer window", Default = false })
+        g:AddInput("f297", { Text = "User", Default = "", Placeholder = "", Finished = false })
+        g:AddButton("Apply avatar", function() end)
+        g:AddButton("Reset to my avatar", function() end)
+        g:AddToggle("f300", { Text = "Re-apply on respawn", Default = false })
+    end
+end
 
-local Library = chunk()
+local Tab_Players = Window:AddTab("Players")
+do
+    do local g = Tab_Players:AddLeftGroupbox("Players")
+        g:AddDropdown("f301", { Text = "Player", Values = { "Player 1", "Player 2" }, Default = 1, AllowNull = true })
+    end
+    do local g = Tab_Players:AddLeftGroupbox("Kick exploit")
+        g:AddButton("Fling selected player", function() end)
+        g:AddToggle("f303", { Text = "Loop fling selected", Default = false })
+        g:AddToggle("f304", { Text = "Loop fling all", Default = false })
+        g:AddToggle("f305", { Text = "Skip players inside the prison", Default = false })
+        g:AddToggle("f306", { Text = "Velocity protection", Default = false })
+        g:AddToggle("f307", { Text = "Fling dropped body parts", Default = false })
+        g:AddToggle("f308", { Text = "Move to the car spawner", Default = false })
+        g:AddToggle("f309", { Text = "Grab a gun first", Default = false })
+        g:AddLabel("Stand on the car spawner plate first or it will not work. Needs isnetworkowner.")
+    end
+    do local g = Tab_Players:AddRightGroupbox("Player")
+        g:AddDropdown("f311", { Text = "Relationship", Values = { "None", "Friendly", "Priority" }, Default = 1, AllowNull = true })
+        g:AddToggle("f312", { Text = "Highlight friendly", Default = false })
+        g:AddToggle("f313", { Text = "Highlight priority", Default = false })
+        g:AddButton("Teleport", function() end)
+        g:AddToggle("f315", { Text = "Spectate", Default = false })
+        g:AddLabel("Selected player controls")
+    end
+end
 
-local Toggles, Options = Library.Toggles, Library.Options
+local Tab_Misc = Window:AddTab("Misc")
+local Tab_Misc_subs = Tab_Misc:SubTabs({ "Movement", "Combat", "Utility" })
+do
+    local tb = Tab_Misc_subs["Movement"]:AddLeftTabbox()
+    do local g = tb:AddTab("Fly")
+        g:AddToggle("f317", { Text = "Fly", Default = false })
+        g:AddDropdown("f318", { Text = "Mode", Values = { "Velocity", "CFrame" }, Default = 1, AllowNull = true })
+        g:AddSlider("f319", { Text = "Speed", Min = 1, Max = 150, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddSlider("f320", { Text = "Vertical speed", Min = 1, Max = 100, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f321", { Text = "Height cap (49.9)", Default = false })
+        g:AddLabel("Up: Space   Down: Left Ctrl")
+    end
+    do local g = tb:AddTab("Speed")
+        g:AddToggle("f323", { Text = "Speed", Default = false })
+        g:AddDropdown("f324", { Text = "Mode", Values = { "Velocity", "CFrame", "WalkSpeed" }, Default = 1, AllowNull = true })
+        g:AddSlider("f325", { Text = "Speed", Min = 1, Max = 150, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+    end
+    do local g = tb:AddTab("Spider")
+        g:AddToggle("f326", { Text = "Spider", Default = false })
+        g:AddDropdown("f327", { Text = "Mode", Values = { "Velocity", "Impulse", "CFrame" }, Default = 1, AllowNull = true })
+        g:AddSlider("f328", { Text = "Climb speed", Min = 1, Max = 100, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f329", { Text = "Climb state", Default = false })
+    end
+    local tb = Tab_Misc_subs["Movement"]:AddRightTabbox()
+    do local g = tb:AddTab("High jump")
+        g:AddToggle("f330", { Text = "High jump", Default = false })
+        g:AddDropdown("f331", { Text = "Mode", Values = { "Velocity", "Impulse", "Instant" }, Default = 1, AllowNull = true })
+        g:AddSlider("f332", { Text = "Power", Min = 1, Max = 150, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f333", { Text = "Auto disable (one jump)", Default = false })
+    end
+    do local g = tb:AddTab("Long jump")
+        g:AddToggle("f334", { Text = "Long jump", Default = false })
+        g:AddDropdown("f335", { Text = "Mode", Values = { "Velocity", "Impulse", "CFrame" }, Default = 1, AllowNull = true })
+        g:AddSlider("f336", { Text = "Speed", Min = 1, Max = 150, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f337", { Text = "Auto disable on landing", Default = false })
+    end
+    do local g = tb:AddTab("Phase")
+        g:AddToggle("f338", { Text = "Phase", Default = false })
+        g:AddDropdown("f339", { Text = "Mode", Values = { "Part", "Character", "CFrame" }, Default = 1, AllowNull = true })
+        g:AddSlider("f340", { Text = "Wall size (CFrame)", Min = 1, Max = 20, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddLabel("Hold Shift to Phase while Spider is on")
+        g:AddToggle("f342", { Text = "Disabler (fixes Character mode)", Default = false })
+    end
+    do local g = Tab_Misc_subs["Utility"]:AddLeftGroupbox("Character")
+        g:AddToggle("f343", { Text = "No jump cooldown", Default = false })
+        g:AddToggle("f344", { Text = "Camera phase", Default = false })
+        g:AddToggle("f345", { Text = "Infinite camera zoom", Default = false })
+        g:AddSlider("f346", { Text = "Max zoom distance", Min = 100, Max = 100000, Default = 100, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f347", { Text = "Gravity", Default = false })
+        g:AddDropdown("f348", { Text = "Gravity mode", Values = { "Workspace", "Local" }, Default = 1, AllowNull = true })
+        g:AddSlider("f349", { Text = "Gravity value", Min = 0, Max = 300, Default = 0, Rounding = 1, HideMax = true })
+    end
+    do local g = Tab_Misc_subs["Utility"]:AddLeftGroupbox("Xray")
+        g:AddToggle("f350", { Text = "Xray", Default = false })
+        g:AddSlider("f351", { Text = "Part transparency", Min = 0, Max = 1, Default = 0, Rounding = 0, HideMax = true })
+        g:AddInput("f352", { Text = "Keep opaque (names)", Default = "", Placeholder = "", Finished = false })
+    end
+    do local g = Tab_Misc_subs["Combat"]:AddLeftGroupbox("Melee aura")
+        g:AddToggle("f353", { Text = "Melee aura", Default = false })
+        g:AddSlider("f354", { Text = "Range", Min = 1, Max = 15, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddSlider("f355", { Text = "Delay", Min = 0.1, Max = 1, Default = 0.1, Rounding = 0, HideMax = true, Suffix = "s" })
+        g:AddToggle("f356", { Text = "Skip friendly players", Default = false })
+        g:AddToggle("f357", { Text = "Skip forcefield", Default = false })
+    end
+    local tb = Tab_Misc_subs["Combat"]:AddRightTabbox()
+    do local g = tb:AddTab("Auto arrest")
+        g:AddToggle("f358", { Text = "Auto arrest", Default = false })
+        g:AddSlider("f359", { Text = "Range", Min = 1, Max = 7.5, Default = 1, Rounding = 0, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f360", { Text = "Equip handcuffs", Default = false })
+        g:AddToggle("f361", { Text = "Arrest inmates", Default = false })
+        g:AddToggle("f362", { Text = "Arrest criminals", Default = false })
+        g:AddToggle("f363", { Text = "Notify on arrest", Default = false })
+    end
+    do local g = tb:AddTab("Auto taze")
+        g:AddToggle("f364", { Text = "Auto taze", Default = false })
+        g:AddSlider("f365", { Text = "Range", Min = 1, Max = 52, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f366", { Text = "Velocity check", Default = false })
+    end
+    do local g = Tab_Misc_subs["Utility"]:AddRightGroupbox("Protection")
+        g:AddToggle("f367", { Text = "Anti taze", Default = false })
+        g:AddToggle("f368", { Text = "Anti fling", Default = false })
+        g:AddToggle("f369", { Text = "Destroy body on death", Default = false })
+        g:AddToggle("f370", { Text = "Anti riot shield", Default = false })
+        g:AddToggle("f371", { Text = "Anti kill plane", Default = false })
+        g:AddToggle("f372", { Text = "Anti invisible", Default = false })
+    end
+    do local g = Tab_Misc_subs["Utility"]:AddRightGroupbox("Cheat detector")
+        g:AddToggle("f373", { Text = "Cheat detector", Default = false })
+        g:AddToggle("f374", { Text = "Teleport check", Default = false })
+        g:AddButton("Clear flags", function() end)
+    end
+    do local g = Tab_Misc_subs["Combat"]:AddLeftGroupbox("Fling cars")
+        g:AddToggle("f376", { Text = "Fling cars", Default = false })
+        g:AddSlider("f377", { Text = "Target range", Min = 20, Max = 1000, Default = 20, Rounding = 1, HideMax = true, Suffix = " studs" })
+    end
+    do local g = Tab_Misc_subs["Utility"]:AddLeftGroupbox("Invisibility")
+        g:AddToggle("f378", { Text = "Invisibility", Default = false })
+        g:AddToggle("f379", { Text = "Hide under the map (look up)", Default = false })
+        g:AddToggle("f380", { Text = "Move while hidden", Default = false })
+        g:AddSlider("f381", { Text = "Look-up pitch", Min = -90, Max = 90, Default = -90, Rounding = 1, HideMax = true, Suffix = "°" })
+    end
+    do local g = Tab_Misc_subs["Movement"]:AddLeftGroupbox("Walk speed")
+        g:AddToggle("f382", { Text = "Walk speed", Default = false })
+        g:AddSlider("f383", { Text = "Walk speed", Min = 16, Max = 200, Default = 16, Rounding = 1, HideMax = true, Suffix = " studs/s" })
+        g:AddToggle("f384", { Text = "No acceleration", Default = false })
+        g:AddToggle("f385", { Text = "Automatic speed", Default = false })
+        g:AddToggle("f386", { Text = "Use custom speed", Default = false })
+        g:AddSlider("f387", { Text = "Speed inside prison", Min = 16, Max = 32, Default = 16, Rounding = 1, HideMax = true, Suffix = " studs/s" })
+        g:AddSlider("f388", { Text = "Speed in prison area", Min = 16, Max = 100, Default = 16, Rounding = 1, HideMax = true, Suffix = " studs/s" })
+        g:AddSlider("f389", { Text = "Speed outside prison", Min = 16, Max = 100, Default = 16, Rounding = 1, HideMax = true, Suffix = " studs/s" })
+        g:AddToggle("f390", { Text = "Notify area changes", Default = false })
+    end
+    do local g = Tab_Misc_subs["Movement"]:AddRightGroupbox("Movement")
+        g:AddToggle("f391", { Text = "Jump multiplier", Default = false })
+        g:AddSlider("f392", { Text = "Jump multiplier (max 3x)", Min = 1, Max = 3, Default = 1, Rounding = 0, HideMax = true, Suffix = "x" })
+        g:AddToggle("f393", { Text = "Spinbot", Default = false })
+        g:AddSlider("f394", { Text = "Spin speed", Min = 1, Max = 40, Default = 1, Rounding = 1, HideMax = true })
+        g:AddToggle("f395", { Text = "Infinite jump", Default = false })
+        g:AddToggle("f396", { Text = "Click teleport", Default = false })
+        g:AddToggle("f397", { Text = "Hold Left Ctrl to teleport", Default = false })
+        g:AddSlider("f398", { Text = "Click teleport range", Min = 10, Max = 2000, Default = 10, Rounding = 1, HideMax = true, Suffix = " studs" })
+    end
+    local tb = Tab_Misc_subs["Movement"]:AddRightTabbox()
+    do local g = tb:AddTab("Vehicle fly")
+        g:AddToggle("f399", { Text = "Vehicle fly", Default = false })
+        g:AddSlider("f400", { Text = "Speed", Min = 1, Max = 100, Default = 1, Rounding = 1, HideMax = true, Suffix = " studs" })
+        g:AddToggle("f401", { Text = "Move along camera", Default = false })
+        g:AddToggle("f402", { Text = "Height cap (49.9)", Default = false })
+        g:AddLabel("Up: E   Down: Q")
+    end
+    do local g = tb:AddTab("Vehicle speed")
+        g:AddToggle("f404", { Text = "Vehicle speed", Default = false })
+        g:AddSlider("f405", { Text = "Max speed", Min = 80, Max = 200, Default = 80, Rounding = 1, HideMax = true })
+    end
+end
 
-local Window = Library:CreateWindow({ Title = "mouse | stage 1", ToggleKey = Enum.KeyCode.RightShift })
+local Tab_Teleport = Window:AddTab("Teleport")
+do
+    do local g = Tab_Teleport:AddLeftGroupbox("Get guns")
+        g:AddDropdown("f406", { Text = "Weapon", Values = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL", "Revolver" }, Default = 1, AllowNull = true })
+        g:AddButton("Get weapon", function() end)
+        g:AddButton("Get all weapons", function() end)
+    end
+    do local g = Tab_Teleport:AddLeftGroupbox("Teleport settings")
+        g:AddToggle("f409", { Text = "Return after pickup", Default = false })
+        g:AddSlider("f410", { Text = "Time at pickup", Min = 0.6, Max = 2, Default = 0.6, Rounding = 0, HideMax = true, Suffix = "s" })
+    end
+    do local g = Tab_Teleport:AddRightGroupbox("Get items")
+        g:AddDropdown("f411", { Text = "Item", Values = { "Key card", "Breakfast", "Lunch", "Dinner", "Soda", "Chips", "Chocolate" }, Default = 1, AllowNull = true })
+        g:AddButton("Get item", function() end)
+    end
+    do local g = Tab_Teleport:AddRightGroupbox("Teleport places")
+        g:AddDropdown("f413", { Text = "Location", Values = { "Yard", "Academy", "Prison", "Armory", "Cafeteria", "Kitchen", "Police car spawner", "Top of the city building" }, Default = 1, AllowNull = true })
+        g:AddButton("Teleport", function() end)
+    end
+end
 
-local Combat = Window:AddTab({ Name = "Combat" })
-local Visuals = Window:AddTab({ Name = "Visuals" })
+local ADDONS = "https://raw.githubusercontent.com/WhyWKey/linoria/refs/heads/main/addons/"
+local ThemeManager = loadstring(game:HttpGet(ADDONS .. "ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(ADDONS .. "SaveManager.lua"))()
 
--- left column: section with a folding toggle, slider, dropdowns
-local Aim = Combat:AddSection({ Name = "Aim Assist", Side = "Left" })
-local Enabled = Aim:AddToggle("AimEnabled", { Text = "Enabled", Default = false, Folding = true })
-Enabled:AddSlider("AimSmooth", { Text = "Smoothing", Min = 0, Max = 100, Default = 20, Suffix = "%" })
-Enabled:AddToggle("AimLock", { Text = "Lock Target" })
-Aim:AddSlider("AimFOV", { Text = "FOV", Min = 0, Max = 360, Default = 90, Rounding = 1, Step = 0.1, Suffix = "°" })
-Aim:AddDropdown("AimPoints", { Text = "Hitscan Points", Values = { "Head", "Torso", "Body" }, Multi = true, Default = { "Head" } })
-Aim:AddDropdown("AimSort", { Text = "Sorting", Values = { "FOV", "Distance", "Health" }, Default = "FOV" })
-Aim:AddButton("Notify", function() Library:Notify("hello from MouseUI", 3) end)
+Skin.BuildSettings(Window, { ThemeManager = ThemeManager, SaveManager = SaveManager, Folder = "Aster", Game = "prison-life" })
+SaveManager:LoadAutoloadConfig()
 
--- right column: tabbed section
-local SilentAim, TriggerBot = Combat:AddMultiSection({ Tabs = { "Silent Aim", "Trigger Bot" }, Side = "Right" })
-SilentAim:AddToggle("SilentEnabled", { Text = "Enabled" })
-SilentAim:AddSlider("SilentHitChance", { Text = "Hit Chance", Min = 0, Max = 100, Default = 30, Suffix = "%" })
-TriggerBot:AddToggle("TriggerEnabled", { Text = "Enabled" })
-TriggerBot:AddSlider("TriggerDelay", { Text = "Delay", Min = 0, Max = 500, Default = 50, Suffix = "ms" })
-
--- icon subtabs (BBot weapon-row look): replace the ids with your own image ids
-local Weapons = Visuals:AddSection({ Name = "Preview", Side = "Left" })
-Weapons:AddImage({ Source = 6031094678, Height = 48 })
-local Pistol = Visuals:AddSubTab({ Name = "Pistol", Icon = 6031094678, IconOnly = true })
-local Rifle = Visuals:AddSubTab({ Name = "Rifle", Icon = 6031094670, IconOnly = true })
-Pistol:AddSection({ Name = "Pistol", Side = "Left" }):AddToggle("PistolESP", { Text = "ESP" })
-Rifle:AddSection({ Name = "Rifle", Side = "Left" }):AddToggle("RifleESP", { Text = "ESP" })
-
--- theme presets: Purple, Teal, Orange
-local Settings = Window:AddTab({ Name = "Settings" })
-local Theme = Settings:AddSection({ Name = "Theme", Side = "Left" })
-Theme:AddDropdown("ThemePreset", {
-    Text = "Preset", Values = { "Purple", "Teal", "Orange" }, Default = "Purple",
-    Callback = function(v) Library:SetPreset(v) end,
-})
-Theme:AddButton("Unload", function() Library:Unload() end)
-
-Toggles.AimEnabled:OnChanged(function(v) print("aim enabled:", v) end)
-Library:Notify("loaded on " .. Library.Executor, 4)
+Library:SetWatermarkVisibility(false)
+Library:Notify("Layout loaded", 3)

@@ -55,7 +55,7 @@ local function mix(a, b, t)
     return Color3.new(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t)
 end
 local function Bright()
-    return mix(Library.FontColor, WHITE, 0.5)
+    return Library.ActiveColor or mix(Library.FontColor, WHITE, 0.5)
 end
 local function pickFont(name, fallback)
     local ok, f = pcall(function() return Enum.Font[name] end)
@@ -107,11 +107,17 @@ local function Reg(inst, props, hud)
     Library:AddToRegistry(inst, props, hud)
 end
 
-local function Corner(inst, r)
-    return New('UICorner', { CornerRadius = UDim.new(0, r), Parent = inst })
+local Shadows, Chips = {}, {}
+local Corners = { window = {}, card = {}, control = {}, pill = {} }
+local Borders = {}
+
+local function Corner(inst, r, cat)
+    local c = New('UICorner', { CornerRadius = UDim.new(0, r), Parent = inst })
+    if cat and Corners[cat] then Corners[cat][#Corners[cat] + 1] = c end
+    return c
 end
 
-local function Stroke(inst, colorName, thickness, transparency)
+local function Stroke(inst, colorName, thickness, transparency, track)
     local s = New('UIStroke', {
         Color = Library[colorName] or Library.OutlineColor,
         Thickness = thickness or 1,
@@ -120,6 +126,7 @@ local function Stroke(inst, colorName, thickness, transparency)
         Parent = inst,
     })
     Library:AddToRegistry(s, { Color = colorName })
+    if track then Borders[#Borders + 1] = s end
     return s
 end
 
@@ -181,7 +188,7 @@ local function Generic(inst, props)
     if parent and Wrappers[parent] and not Inners[parent] then
         Inners[parent] = inst
         inst.BorderSizePixel = 0
-        Corner(inst, 4)
+        Corner(inst, 4, 'control')
         if bc == Library.OutlineColor then
             Stroke(inst, 'OutlineColor', 1, 0)
         else
@@ -208,7 +215,7 @@ local function Generic(inst, props)
 
     inst.BorderSizePixel = 0
     if bc ~= BLACK then
-        Corner(inst, 3)
+        Corner(inst, 3, 'control')
         Stroke(inst, 'OutlineColor', 1, 0.2)
     end
 end
@@ -308,7 +315,7 @@ local function SkinToggle(Groupbox, Toggle, list)
     end
     if Region then
         Region.Size = UDim2.new(1, 0, 1, 0)
-        Regions[Label] = Region
+        Regions[Label] = { Region = Region, Toggle = Toggle, Inner = Inner }
     end
 
     local Box = New('Frame', {
@@ -320,7 +327,7 @@ local function SkinToggle(Groupbox, Toggle, list)
         ZIndex = 7,
         Parent = Inner,
     })
-    Corner(Box, 4)
+    Corner(Box, 4, 'control')
     local BoxStroke = New('UIStroke', {
         Color = Library.OutlineColor,
         Thickness = 1,
@@ -382,6 +389,8 @@ local function SkinToggle(Groupbox, Toggle, list)
     apply()
 
     if Region then
+        local entry = Regions[Label]
+        if entry then entry.Hover = function(v) hover = v; apply() end end
         Region.MouseEnter:Connect(function() hover = true; apply() end)
         Region.MouseLeave:Connect(function() hover = false; apply() end)
     end
@@ -737,7 +746,28 @@ end
 local function ShrinkRegion(Parent, amount)
     local label = Parent and Parent.TextLabel
     local R = label and Regions[label]
-    if R then R.Size = UDim2.new(1, R.Size.X.Offset - amount, 1, 0) end
+    if not R then return end
+    local Region = R.Region
+    Region.Size = UDim2.new(1, Region.Size.X.Offset - amount, 1, 0)
+    if not R.Button then
+        R.Button = New('TextButton', {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, 2, 0.5, 0),
+            Size = UDim2.fromOffset(20, 22),
+            BackgroundTransparency = 1,
+            Text = '',
+            AutoButtonColor = false,
+            Active = true,
+            ZIndex = 12,
+            Parent = R.Inner,
+        })
+        R.Button.MouseButton1Click:Connect(function()
+            if Library:MouseIsOverOpenedFrame() then return end
+            R.Toggle:SetValue(not R.Toggle.Value)
+        end)
+        R.Button.MouseEnter:Connect(function() if R.Hover then R.Hover(true) end end)
+        R.Button.MouseLeave:Connect(function() if R.Hover then R.Hover(false) end end)
+    end
 end
 
 local function SkinColorPicker(Parent, _, list, Idx, Info)
@@ -1091,8 +1121,8 @@ local function SkinGroupbox(Groupbox)
     BoxOuter.BorderSizePixel = 0
     BoxOuter.BackgroundTransparency = CardTransparency
     Cards[BoxOuter] = true
-    Corner(BoxOuter, 6)
-    Stroke(BoxOuter, 'OutlineColor', 1, 0.6)
+    Corner(BoxOuter, 6, 'card')
+    Stroke(BoxOuter, 'OutlineColor', 1, 0.6, true)
 
     Strip(BoxInner)
     BoxInner.BackgroundTransparency = 1
@@ -1338,8 +1368,8 @@ local function SkinTabboxTab(Tabbox, TabObj)
         BoxOuter.BorderSizePixel = 0
         BoxOuter.BackgroundTransparency = CardTransparency
         Cards[BoxOuter] = true
-        Corner(BoxOuter, 6)
-        Stroke(BoxOuter, 'OutlineColor', 1, 0.6)
+        Corner(BoxOuter, 6, 'card')
+        Stroke(BoxOuter, 'OutlineColor', 1, 0.6, true)
         Strip(BoxInner)
         BoxInner.BackgroundTransparency = 1
         BoxInner.BorderSizePixel = 0
@@ -1534,8 +1564,8 @@ local function SkinTab(ctx, Tab, Name, list)
             Parent = TabFrame,
         })
         Library:AddToRegistry(holder, { BackgroundColor3 = 'PillColor' })
-        Corner(holder, 6)
-        Stroke(holder, 'OutlineColor', 1, 0.65)
+        Corner(holder, 6, 'pill')
+        Stroke(holder, 'OutlineColor', 1, 0.65, true)
         New('UIPadding', { PaddingLeft = UDim.new(0, 4), Parent = holder })
         New('UIListLayout', {
             FillDirection = Enum.FillDirection.Horizontal,
@@ -1690,7 +1720,7 @@ local function DressWindow(Window)
     Outer.ClipsDescendants = false
     Outer.BackgroundTransparency = 1
 
-    local Shadow = opt('Shadow', false) and New('ImageLabel', {
+    local Shadow = New('ImageLabel', {
         Name = 'Shadow',
         AnchorPoint = Vector2.new(0.5, 0.5),
         BackgroundTransparency = 1,
@@ -1699,6 +1729,7 @@ local function DressWindow(Window)
         Image = 'rbxassetid://6014261993',
         ImageColor3 = BLACK,
         ImageTransparency = 0.55,
+        Visible = opt('Shadow', false),
         ScaleType = Enum.ScaleType.Slice,
         SliceCenter = Rect.new(49, 49, 450, 450),
         ZIndex = 0,
@@ -1706,6 +1737,7 @@ local function DressWindow(Window)
         Parent = Outer,
     })
 
+    Shadows[#Shadows + 1] = Shadow
     Strip(Inner)
     Inner.Position = UDim2.new(0, 0, 0, 0)
     Inner.Size = UDim2.new(1, 0, 1, 0)
@@ -1715,8 +1747,8 @@ local function DressWindow(Window)
     Panels[#Panels + 1] = Inner
     Inner.ClipsDescendants = true
     Reg(Inner, { BackgroundColor3 = 'PanelColor' })
-    Corner(Inner, Radius)
-    Stroke(Inner, 'OutlineColor', 1, 0.15)
+    Corner(Inner, Radius, 'window')
+    Stroke(Inner, 'OutlineColor', 1, 0.15, true)
 
     local brand = opt('Brand', nil)
     if brand then TitleLabel.Text = brand end
@@ -1796,8 +1828,8 @@ local function DressWindow(Window)
     TabBarOuter.BackgroundTransparency = 0
     TabBarOuter.ZIndex = 2
     Reg(TabBarOuter, { BackgroundColor3 = 'PillColor' })
-    Corner(TabBarOuter, 10)
-    Stroke(TabBarOuter, 'OutlineColor', 1, 0.6)
+    Corner(TabBarOuter, 10, 'pill')
+    Stroke(TabBarOuter, 'OutlineColor', 1, 0.6, true)
     Flat(TabBarInner)
     TabArea.Position = UDim2.new(0, 7, 0, 3)
     TabArea.Size = UDim2.new(1, -14, 1, -6)
@@ -1815,8 +1847,9 @@ local function DressWindow(Window)
         Parent = Inner,
     })
     Library:AddToRegistry(Chip, { BackgroundColor3 = 'PillColor' })
-    Corner(Chip, 10)
-    Stroke(Chip, 'OutlineColor', 1, 0.6)
+    Chips[#Chips + 1] = Chip
+    Corner(Chip, 10, 'pill')
+    Stroke(Chip, 'OutlineColor', 1, 0.6, true)
 
     local uid = LocalPlayer and LocalPlayer.UserId or 0
     local uname = opt('UserName', LocalPlayer and (LocalPlayer.DisplayName or LocalPlayer.Name) or 'user')
@@ -2022,6 +2055,67 @@ function Skin.SetCardTransparency(v)
     end
 end
 
+function Skin.SetRadius(cat, r)
+    for _, c in ipairs(Corners[cat] or {}) do
+        if c.Parent then c.CornerRadius = UDim.new(0, r) end
+    end
+end
+
+function Skin.SetBorderOpacity(v)
+    for _, st in ipairs(Borders) do
+        if st.Parent then st.Transparency = 1 - v end
+    end
+end
+
+function Skin.SetShadow(on)
+    for _, sh in ipairs(Shadows) do
+        if sh.Parent then sh.Visible = on and true or false end
+    end
+end
+
+function Skin.SetUserChip(on)
+    for _, c in ipairs(Chips) do
+        if c.Parent then c.Visible = on and true or false end
+    end
+end
+
+function Skin.SetActiveColor(c)
+    Library.ActiveColor = c
+    Library:UpdateColorsUsingRegistry()
+end
+
+local FontSets = {
+    ['Builder Sans'] = { 'BuilderSans', 'BuilderSansMedium', 'BuilderSansBold' },
+    ['Gotham'] = { 'Gotham', 'GothamMedium', 'GothamBold' },
+    ['Source Sans'] = { 'SourceSans', 'SourceSansSemibold', 'SourceSansBold' },
+    ['Ubuntu'] = { 'Ubuntu', 'Ubuntu', 'Ubuntu' },
+    ['Roboto'] = { 'Roboto', 'Roboto', 'Roboto' },
+    ['Montserrat'] = { 'Montserrat', 'Montserrat', 'Montserrat' },
+    ['Code'] = { 'Code', 'Code', 'Code' },
+}
+local FontNames = { 'Builder Sans', 'Gotham', 'Source Sans', 'Ubuntu', 'Roboto', 'Montserrat', 'Code' }
+
+function Skin.SetFont(name)
+    local set = FontSets[name]
+    if not set then return end
+    local new = {}
+    for i, n in ipairs(set) do
+        local ok, f = pcall(function() return Enum.Font[n] end)
+        if not (ok and f) then return end
+        new[i] = f
+    end
+    local old = { Fonts.Regular, Fonts.Medium, Fonts.Bold }
+    for _, d in ipairs(Library.ScreenGui:GetDescendants()) do
+        if d:IsA('TextLabel') or d:IsA('TextButton') or d:IsA('TextBox') then
+            for i = 1, 3 do
+                if d.Font == old[i] then d.Font = new[i] break end
+            end
+        end
+    end
+    Fonts.Regular, Fonts.Medium, Fonts.Bold = new[1], new[2], new[3]
+    Library.Font = new[1]
+end
+
 function Skin.SetAccent(color)
     Library.AccentColor = color
     Library.AccentColorDark = Darker(color)
@@ -2037,7 +2131,7 @@ end
 local SETTINGS_FLAGS = {
     'KeybindMenuOpen', 'SkinKeybindMode', 'MenuKeybind', 'LinoriaKeybindTransparency', 'LinoriaUseBlur', 'LinoriaBlurSize',
     'LinoriaUseDarken', 'LinoriaDarkenAmount', 'SkinWireframe', 'SkinFontSize', 'SkinNotifyAlign', 'SkinNotifySide',
-    'SkinNotifyX', 'SkinNotifyY', 'SkinNotifyAlpha', 'PanelColor', 'MutedColor', 'CheckColor', 'SkinPanelAlpha', 'SkinCardAlpha',
+    'SkinNotifyX', 'SkinNotifyY', 'SkinNotifyAlpha', 'PanelColor', 'MutedColor', 'CheckColor', 'ActiveColor', 'SkinPanelAlpha', 'SkinCardAlpha', 'SkinWindowRadius', 'SkinCardRadius', 'SkinControlRadius', 'SkinBorderAlpha', 'SkinShadow', 'SkinUserChip', 'SkinFont',
 }
 
 local function BindEnv(tbl)
@@ -2175,10 +2269,44 @@ function Skin.BuildSettings(Window, Opts)
         Rounding = 0, HideMax = true, Suffix = '%',
         Callback = function(v) Skin.SetCardTransparency(1 - v / 100) end,
     })
+    Look:AddLabel('Active icon color'):AddColorPicker('ActiveColor', {
+        Default = Bright(), Title = 'Active icon / tab color',
+        Callback = function(c) Skin.SetActiveColor(c) end,
+    })
     Look:AddButton('Auto colors', function()
         Skin.AutoDerive = true
         Skin.Derive()
     end)
+
+    local Shape = subs.Theme:AddRightGroupbox('Shape')
+    Shape:AddSlider('SkinWindowRadius', {
+        Text = 'Window rounding', Default = Radius, Min = 0, Max = 20, Rounding = 0, HideMax = true, Suffix = 'px',
+        Callback = function(v) Skin.SetRadius('window', v) end,
+    })
+    Shape:AddSlider('SkinCardRadius', {
+        Text = 'Card rounding', Default = 6, Min = 0, Max = 16, Rounding = 0, HideMax = true, Suffix = 'px',
+        Callback = function(v) Skin.SetRadius('card', v) end,
+    })
+    Shape:AddSlider('SkinControlRadius', {
+        Text = 'Control rounding', Default = 4, Min = 0, Max = 10, Rounding = 0, HideMax = true, Suffix = 'px',
+        Callback = function(v) Skin.SetRadius('control', v) end,
+    })
+    Shape:AddSlider('SkinBorderAlpha', {
+        Text = 'Border opacity', Default = 40, Min = 0, Max = 100, Rounding = 0, HideMax = true, Suffix = '%',
+        Callback = function(v) Skin.SetBorderOpacity(v / 100) end,
+    })
+    Shape:AddDropdown('SkinFont', {
+        Text = 'Font', Values = FontNames, Default = 1,
+        Callback = function(v) Skin.SetFont(v) end,
+    })
+    Shape:AddToggle('SkinShadow', {
+        Text = 'Window shadow', Default = opt('Shadow', false),
+        Callback = function(v) Skin.SetShadow(v) end,
+    })
+    Shape:AddToggle('SkinUserChip', {
+        Text = 'User chip', Default = true,
+        Callback = function(v) Skin.SetUserChip(v) end,
+    })
 
     if SM then
         BindEnv(SM)

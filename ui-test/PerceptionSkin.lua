@@ -389,7 +389,9 @@ local function SkinToggle(Groupbox, Toggle, list)
 
     if Region then
         Region.Visible = false
+        Region.Active = false
         Region.Size = UDim2.new(0, 0, 0, 0)
+        Region.Parent = nil
     end
     local Button = New('TextButton', {
         AnchorPoint = Vector2.new(1, 0.5),
@@ -1956,6 +1958,37 @@ local function DressWindow(Window)
     end
 end
 
+local CursorState = { Native = opt('NativeCursor', true) }
+local OrigToggle = Library.Toggle
+if type(OrigToggle) == 'function' then
+    Library.Toggle = function(self, ...)
+        local before = {}
+        for _, c in ipairs(Library.ScreenGui:GetChildren()) do before[c] = true end
+        local res = table.pack(OrigToggle(self, ...))
+        Guard('cursor', function()
+            if not Library.Toggled then return end
+            local mine = {}
+            for _, c in ipairs(Library.ScreenGui:GetChildren()) do
+                if not before[c] and c:IsA('ImageLabel') and tostring(c.Image):find('4292970642') then
+                    mine[#mine + 1] = c
+                end
+            end
+            if #mine == 0 then return end
+            local RunService = game:GetService('RunService')
+            task.spawn(function()
+                while Library.Toggled and Library.ScreenGui.Parent do
+                    for _, c in ipairs(mine) do
+                        if c.Parent then c.Visible = not CursorState.Native end
+                    end
+                    if CursorState.Native then InputService.MouseIconEnabled = true end
+                    RunService.RenderStepped:Wait()
+                end
+            end)
+        end)
+        return table.unpack(res, 1, res.n)
+    end
+end
+
 Library.CreateWindow = function(self, ...)
     local args = { ... }
     local cfg = {}
@@ -2011,7 +2044,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true }
+local Skin = { AutoDerive = true, Version = 'build-1026-e' }
 
 local deriving = false
 function Skin.Derive()
@@ -2055,6 +2088,10 @@ function Skin.SetBorderOpacity(v)
     for _, st in ipairs(Borders) do
         if st.Parent then st.Transparency = 1 - v end
     end
+end
+
+function Skin.SetNativeCursor(on)
+    CursorState.Native = on and true or false
 end
 
 function Skin.SetShadow(on)
@@ -2121,7 +2158,7 @@ end
 local SETTINGS_FLAGS = {
     'KeybindMenuOpen', 'SkinKeybindMode', 'MenuKeybind', 'LinoriaKeybindTransparency', 'LinoriaUseBlur', 'LinoriaBlurSize',
     'LinoriaUseDarken', 'LinoriaDarkenAmount', 'SkinWireframe', 'SkinFontSize', 'SkinNotifyAlign', 'SkinNotifySide',
-    'SkinNotifyX', 'SkinNotifyY', 'SkinNotifyAlpha', 'PanelColor', 'MutedColor', 'CheckColor', 'ActiveColor', 'SkinPanelAlpha', 'SkinCardAlpha', 'SkinWindowRadius', 'SkinCardRadius', 'SkinControlRadius', 'SkinBorderAlpha', 'SkinShadow', 'SkinUserChip', 'SkinFont',
+    'SkinNotifyX', 'SkinNotifyY', 'SkinNotifyAlpha', 'PanelColor', 'MutedColor', 'CheckColor', 'ActiveColor', 'SkinPanelAlpha', 'SkinCardAlpha', 'SkinWindowRadius', 'SkinCardRadius', 'SkinControlRadius', 'SkinBorderAlpha', 'SkinShadow', 'SkinUserChip', 'SkinFont', 'SkinNativeCursor',
 }
 
 local function BindEnv(tbl)
@@ -2170,6 +2207,11 @@ function Skin.BuildSettings(Window, Opts)
     Menu:AddSlider('SkinFontSize', {
         Text = 'Font size', Default = Library.FontSize, Min = 11, Max = 18, Rounding = 0, HideMax = true,
         Callback = function(v) if v ~= Library.FontSize then Library:SetFontSize(v) end end,
+    })
+    Menu:AddToggle('SkinNativeCursor', {
+        Text = 'System cursor',
+        Default = CursorState.Native,
+        Callback = function(v) Skin.SetNativeCursor(v) end,
     })
     Menu:AddButton('Unload', function() Library:Unload() end)
 
@@ -2305,6 +2347,7 @@ function Skin.BuildSettings(Window, Opts)
         if SM.IgnoreThemeSettings then SM:IgnoreThemeSettings() end
         SM:SetIgnoreIndexes(SETTINGS_FLAGS)
         local About = subs.Config:AddLeftGroupbox('Storage')
+        About:AddLabel('Skin build: ' .. Skin.Version)
         About:AddLabel('Configs: ' .. tostring(SM.Folder) .. '/settings', true)
         About:AddLabel('Themes: ' .. tostring(TM and TM.Folder or SM.Folder) .. '/themes', true)
         Safe('SaveManager', SM.BuildConfigSection, SM, subs.Config)

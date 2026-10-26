@@ -18,12 +18,12 @@ end
 
 local BLACK = Color3.new(0, 0, 0)
 local WHITE = Color3.new(1, 1, 1)
-local HEADER = 66
-local PILL_H = 40
-local TAB_W = 42
+local HEADER = 72
+local PILL_H = 46
+local TAB_W = 46
 local TAB_GAP = 2
-local SUB_H = 32
-local CARD_TOP = 36
+local SUB_H = 36
+local CARD_TOP = 40
 local CARD_PAD = 14
 
 local Theme = {
@@ -68,7 +68,7 @@ local Fonts = {
     Bold = pickFont('BuilderSansBold', Enum.Font.GothamBold),
 }
 Library.Font = Fonts.Regular
-Library.FontSize = opt('FontSize', 12)
+Library.FontSize = opt('FontSize', 13)
 
 local Radius = opt('Radius', 10)
 local PanelTransparency = opt('PanelTransparency', 0.02)
@@ -283,6 +283,7 @@ local function WrapFn(tbl, name, post)
 end
 
 local PatchFrom
+local GroupboxMT
 
 local function Muted(inst)
     inst.TextColor3 = Library.MutedColor
@@ -301,12 +302,12 @@ local function SkinToggle(Groupbox, Toggle, list)
         if c ~= Inner and c:IsA('Frame') then Region = c end
     end
 
-    Outer.Size = UDim2.new(1, -4, 0, 22)
+    Outer.Size = UDim2.new(1, -4, 0, 26)
     Strip(Inner)
     Inner.BackgroundTransparency = 1
     Inner.BorderSizePixel = 0
     Label.Position = UDim2.new(0, 0, 0, 0)
-    Label.Size = UDim2.new(1, -26, 1, 0)
+    Label.Size = UDim2.new(1, -30, 1, 0)
     Label.TextXAlignment = Enum.TextXAlignment.Left
     local layout = Label:FindFirstChildOfClass('UIListLayout')
     if layout then
@@ -320,7 +321,7 @@ local function SkinToggle(Groupbox, Toggle, list)
     local Box = New('Frame', {
         AnchorPoint = Vector2.new(1, 0.5),
         Position = UDim2.new(1, 0, 0.5, 0),
-        Size = UDim2.fromOffset(16, 16),
+        Size = UDim2.fromOffset(18, 18),
         BackgroundColor3 = Library.CheckColor,
         BorderSizePixel = 0,
         ZIndex = 7,
@@ -344,7 +345,7 @@ local function SkinToggle(Groupbox, Toggle, list)
     })
     New('Frame', {
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromOffset(5.3, 9),
+        Position = UDim2.fromOffset(6.3, 10),
         Size = UDim2.fromOffset(2, 5),
         Rotation = -45,
         BackgroundColor3 = Color3.fromRGB(240, 240, 240),
@@ -354,7 +355,7 @@ local function SkinToggle(Groupbox, Toggle, list)
     })
     New('Frame', {
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromOffset(9.6, 7.4),
+        Position = UDim2.fromOffset(10.6, 8.4),
         Size = UDim2.fromOffset(2, 10),
         Rotation = 45,
         BackgroundColor3 = Color3.fromRGB(240, 240, 240),
@@ -396,7 +397,7 @@ local function SkinToggle(Groupbox, Toggle, list)
     local Button = New('TextButton', {
         AnchorPoint = Vector2.new(1, 0.5),
         Position = UDim2.new(1, 3, 0.5, 0),
-        Size = UDim2.fromOffset(22, 22),
+        Size = UDim2.fromOffset(26, 26),
         BackgroundTransparency = 1,
         Text = '',
         AutoButtonColor = false,
@@ -432,9 +433,9 @@ local function SkinSlider(Groupbox, Slider, list, Idx, Info)
     local Hide = Fill:FindFirstChildOfClass('Frame')
 
     local compact = Info and Info.Compact
-    local OH = 22
-    local yc = compact and 25 or 17
-    Outer.Size = UDim2.new(1, -4, 0, compact and 30 or OH)
+    local OH = 26
+    local yc = compact and 29 or 20
+    Outer.Size = UDim2.new(1, -4, 0, compact and 34 or OH)
     Strip(Inner)
     Inner.BackgroundTransparency = 1
     Inner.BorderSizePixel = 0
@@ -460,12 +461,12 @@ local function SkinSlider(Groupbox, Slider, list, Idx, Info)
 
     local Value
     if Label then
-        Label.Size = UDim2.new(1, -4, 0, 14)
+        Label.Size = UDim2.new(1, -4, 0, 16)
         Label.TextYAlignment = Enum.TextYAlignment.Center
         Value = Library:CreateLabel({
             AnchorPoint = Vector2.new(0, 0),
             Position = UDim2.new(0, 0, 0, 0),
-            Size = UDim2.fromOffset(40, 11),
+            Size = UDim2.fromOffset(40, 12),
             TextSize = Library.FontSize - 3,
             TextXAlignment = Enum.TextXAlignment.Center,
             Text = '',
@@ -528,11 +529,11 @@ local function SkinDropdown(Groupbox, Dropdown, list)
         end
     end
     if Label then
-        Label.Size = UDim2.new(1, -4, 0, 14)
+        Label.Size = UDim2.new(1, -4, 0, 16)
         Label.TextYAlignment = Enum.TextYAlignment.Center
     end
     if not Outer then return end
-    Outer.Size = UDim2.new(1, -4, 0, 24)
+    Outer.Size = UDim2.new(1, -4, 0, 28)
     local Inner = Outer:FindFirstChildOfClass('Frame')
     if not Inner then return end
     local Arrow = Inner:FindFirstChildOfClass('ImageLabel')
@@ -770,7 +771,7 @@ local function SkinColorPicker(Parent, _, list, Idx, Info)
     if DF then
         Strip(DF)
         DF.BorderSizePixel = 0
-        DF.Size = UDim2.fromOffset(16, 16)
+        DF.Size = UDim2.fromOffset(18, 18)
         Corner(DF, 4)
         New('UIStroke', {
             Color = BLACK,
@@ -816,7 +817,7 @@ local function SkinKeyPicker(Parent, Idx, Info, list)
     if not PickInner then return end
     local DisplayLabel = PickInner:FindFirstChildOfClass('TextLabel')
     if DisplayLabel then DisplayLabel.Visible = false end
-    PickOuter.Size = UDim2.fromOffset(24, 16)
+    PickOuter.Size = UDim2.fromOffset(28, 18)
     for _, o in ipairs({ PickOuter, PickInner }) do
         for _, c in ipairs(o:GetChildren()) do
             if c:IsA('UIStroke') then Library:RemoveFromRegistry(c); c:Destroy() end
@@ -1151,6 +1152,7 @@ local function SkinGroupbox(Groupbox)
 end
 
 local IconData = {
+    logo = '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',
     eye = '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',
     half = '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',
     gear = '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',
@@ -1241,6 +1243,9 @@ local function BuildIcon(Parent, Name, state)
         ZIndex = 3,
         Parent = Parent,
     })
+    if not (type(Glyphs[string.lower(Name)]) == 'string' and ImageKeys[Glyphs[string.lower(Name)]] and IconAsset(ImageKeys[Glyphs[string.lower(Name)]])) then
+        New('UIScale', { Scale = 1.2, Parent = P })
+    end
 
     local function ring(w, h, x, y, th, cr)
         local f = New('Frame', {
@@ -1275,7 +1280,7 @@ local function BuildIcon(Parent, Name, state)
     local key = Glyphs[string.lower(Name)]
     local asset = type(key) == 'string' and ImageKeys[key] and IconAsset(ImageKeys[key])
     if asset then
-        P.Size = UDim2.fromOffset(20, 20)
+        P.Size = UDim2.fromOffset(25, 25)
         local img = New('ImageLabel', {
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(0.5, 0, 0.5, 0),
@@ -1656,6 +1661,7 @@ local function SkinTab(ctx, Tab, Name, list)
         local _, res = Capture(origGroupbox, t, Info)
         if not res[1] then error(res[2], 0) end
         local Groupbox = res[2]
+        GroupboxMT = GroupboxMT or getmetatable(Groupbox)
         Guard('groupbox', function()
             PatchFrom(Groupbox)
             SkinGroupbox(Groupbox)
@@ -1681,6 +1687,54 @@ local function SkinTab(ctx, Tab, Name, list)
             return Tabbox
         end
     end
+end
+
+local function AttachDrag(area, Outer)
+    area.InputBegan:Connect(function(Input)
+        if Input.UserInputType ~= Enum.UserInputType.MouseButton1 and Input.UserInputType ~= Enum.UserInputType.Touch then return end
+        if Library:MouseIsOverOpenedFrame() then return end
+        local StartPos = Outer.Position
+        local DragStart = Input.Position
+        local moved, wire = false, nil
+        local changedConn, endedConn
+        changedConn = InputService.InputChanged:Connect(function(Change)
+            if Change.UserInputType ~= Enum.UserInputType.MouseMovement and Change ~= Input then return end
+            local Delta = Change.Position - DragStart
+            local pos = UDim2.new(StartPos.X.Scale, StartPos.X.Offset + Delta.X, StartPos.Y.Scale, StartPos.Y.Offset + Delta.Y)
+            if Library.WireframeDrag then
+                if not moved and Delta.Magnitude > 2 then
+                    moved = true
+                    wire = New('Frame', {
+                        Size = Outer.Size,
+                        Position = Outer.Position,
+                        AnchorPoint = Outer.AnchorPoint,
+                        BackgroundColor3 = Library.MainColor,
+                        BackgroundTransparency = 0.5,
+                        BorderSizePixel = 0,
+                        Active = false,
+                        ZIndex = 100000,
+                        Parent = Library.ScreenGui,
+                    })
+                    Corner(wire, Radius)
+                    New('UIStroke', { Color = Library.AccentColor, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = wire })
+                end
+                if wire then wire.Position = pos end
+            else
+                Outer.Position = pos
+            end
+        end)
+        endedConn = InputService.InputEnded:Connect(function(End)
+            if End == Input or End.UserInputType == Enum.UserInputType.Touch then
+                changedConn:Disconnect()
+                endedConn:Disconnect()
+                if wire then
+                    Outer.Position = wire.Position
+                    wire:Destroy()
+                    wire = nil
+                end
+            end
+        end)
+    end)
 end
 
 local function DressWindow(Window)
@@ -1748,7 +1802,7 @@ local function DressWindow(Window)
     local Logo = New('Frame', {
         AnchorPoint = Vector2.new(0, 0.5),
         Position = UDim2.new(0, 18, 0, HEADER / 2),
-        Size = UDim2.fromOffset(34, 34),
+        Size = UDim2.fromOffset(38, 38),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ZIndex = 3,
@@ -1765,8 +1819,19 @@ local function DressWindow(Window)
         })
         img.ImageColor3 = Library.FontColor
         Library:AddToRegistry(img, { ImageColor3 = 'FontColor' })
+    elseif IconAsset('logo') then
+        local img = New('ImageLabel', {
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Image = IconAsset('logo'),
+            ZIndex = 3,
+            Parent = Logo,
+        })
+        img.ImageColor3 = Bright()
+        Library:AddToRegistry(img, { ImageColor3 = Bright })
     else
-        local function ringPart(size, thick, parent)
+        local function ringPart(size, thick)
             local f = New('Frame', {
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 Position = UDim2.new(0.5, 0, 0.5, 0),
@@ -1774,33 +1839,30 @@ local function DressWindow(Window)
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
                 ZIndex = 3,
-                Parent = parent,
+                Parent = Logo,
             })
             New('UICorner', { CornerRadius = UDim.new(1, 0), Parent = f })
-            local st = New('UIStroke', {
-                Color = Library.FontColor, Thickness = thick,
-                ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = f,
-            })
-            Library:AddToRegistry(st, { Color = 'FontColor' })
-            return f
+            local st = New('UIStroke', { Color = Bright(), Thickness = thick, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = f })
+            Library:AddToRegistry(st, { Color = Bright })
         end
-        ringPart(28, 3, Logo)
-        ringPart(14, 2, Logo)
-        local dot = New('Frame', {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(0.5, 0, 0.5, 0),
-            Size = UDim2.fromOffset(5, 5),
-            BackgroundColor3 = Library.FontColor,
-            BorderSizePixel = 0,
-            ZIndex = 3,
-            Parent = Logo,
-        })
-        New('UICorner', { CornerRadius = UDim.new(1, 0), Parent = dot })
-        Library:AddToRegistry(dot, { BackgroundColor3 = 'FontColor' })
+        ringPart(26, 2)
+        for _, dims in ipairs({ { 3, 38 }, { 38, 3 } }) do
+            local bar = New('Frame', {
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.new(0.5, 0, 0.5, 0),
+                Size = UDim2.fromOffset(dims[1], dims[2]),
+                BackgroundColor3 = Bright(),
+                BorderSizePixel = 0,
+                ZIndex = 4,
+                Parent = Logo,
+            })
+            New('UICorner', { CornerRadius = UDim.new(1, 0), Parent = bar })
+            Library:AddToRegistry(bar, { BackgroundColor3 = Bright })
+        end
     end
 
     TitleLabel.AnchorPoint = Vector2.new(0, 0.5)
-    TitleLabel.Position = UDim2.new(0, 62, 0, HEADER / 2)
+    TitleLabel.Position = UDim2.new(0, 66, 0, HEADER / 2)
     TitleLabel.Size = UDim2.new(0, 120, 0, 22)
     TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
     TitleLabel.Font = Fonts.Bold
@@ -1828,7 +1890,7 @@ local function DressWindow(Window)
     TabList.Padding = UDim.new(0, TAB_GAP)
     TabList.VerticalAlignment = Enum.VerticalAlignment.Center
 
-    local CHIP_W = 156
+    local CHIP_W = 164
     local Chip = New('Frame', {
         AnchorPoint = Vector2.new(1, 0.5),
         Position = UDim2.new(1, -16, 0, HEADER / 2),
@@ -1848,7 +1910,7 @@ local function DressWindow(Window)
     local Avatar = New('ImageLabel', {
         AnchorPoint = Vector2.new(0, 0.5),
         Position = UDim2.new(0, 6, 0.5, 0),
-        Size = UDim2.fromOffset(30, 30),
+        Size = UDim2.fromOffset(34, 34),
         BackgroundColor3 = Library.MainColor,
         BorderSizePixel = 0,
         Image = opt('Avatar', ''),
@@ -1868,8 +1930,8 @@ local function DressWindow(Window)
 
     local UserLabel = Library:CreateLabel({
         AnchorPoint = Vector2.new(0, 0.5),
-        Position = UDim2.new(0, 44, 0.5, MapLabel and -7 or 0),
-        Size = UDim2.new(1, -50, 0, 16),
+        Position = UDim2.new(0, 49, 0.5, MapLabel and -8 or 0),
+        Size = UDim2.new(1, -54, 0, 16),
         Text = tostring(uname),
         TextSize = Library.FontSize,
         TextXAlignment = Enum.TextXAlignment.Left,
@@ -1881,14 +1943,25 @@ local function DressWindow(Window)
     if MapLabel then
         MapLabel.Parent = Chip
         MapLabel.AnchorPoint = Vector2.new(0, 0.5)
-        MapLabel.Position = UDim2.new(0, 44, 0.5, 8)
-        MapLabel.Size = UDim2.new(1, -50, 0, 13)
+        MapLabel.Position = UDim2.new(0, 49, 0.5, 9)
+        MapLabel.Size = UDim2.new(1, -54, 0, 13)
         MapLabel.TextXAlignment = Enum.TextXAlignment.Left
         MapLabel.TextSize = Library.FontSize - 3
         MapLabel.TextTruncate = Enum.TextTruncate.AtEnd
         MapLabel.ZIndex = 3
         Muted(MapLabel)
     end
+
+    local DragArea = New('Frame', {
+        Name = 'DragArea',
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Active = true,
+        Size = UDim2.new(1, 0, 0, HEADER),
+        ZIndex = 1,
+        Parent = Inner,
+    })
+    AttachDrag(DragArea, Outer)
 
     Flat(MainOuter)
     MainOuter.Position = UDim2.new(0, 0, 0, HEADER)
@@ -1958,7 +2031,7 @@ local function DressWindow(Window)
     end
 end
 
-local CursorState = { Native = opt('NativeCursor', true) }
+local CursorState = { Native = opt('NativeCursor', false) }
 local OrigToggle = Library.Toggle
 if type(OrigToggle) == 'function' then
     Library.Toggle = function(self, ...)
@@ -1970,22 +2043,104 @@ if type(OrigToggle) == 'function' then
             local mine = {}
             for _, c in ipairs(Library.ScreenGui:GetChildren()) do
                 if not before[c] and c:IsA('ImageLabel') and tostring(c.Image):find('4292970642') then
+                    c.Visible = false
                     mine[#mine + 1] = c
                 end
             end
-            if #mine == 0 then return end
             local RunService = game:GetService('RunService')
+            local gui = Instance.new('ScreenGui')
+            gui.Name = 'PerceptionCursor'
+            gui.ResetOnSpawn = false
+            gui.IgnoreGuiInset = true
+            gui.DisplayOrder = 2147483647
+            pcall(function() gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling end)
+            pcall(function()
+                local protect = (syn and syn.protect_gui) or protect_gui
+                if protect then protect(gui) end
+            end)
+            gui.Parent = Library.ScreenGui.Parent
+            local function arrow(size, z, color)
+                local img = Instance.new('ImageLabel')
+                img.Image = 'http://www.roblox.com/asset/?id=4292970642'
+                img.BackgroundTransparency = 1
+                img.Size = UDim2.fromOffset(size, size)
+                img.Rotation = -45
+                img.ZIndex = z
+                img.ImageColor3 = color
+                img.Active = false
+                img.Parent = gui
+                return img
+            end
+            local outline = arrow(19, 1, BLACK)
+            local fill = arrow(17, 2, Library.AccentColor)
             task.spawn(function()
                 while Library.Toggled and Library.ScreenGui.Parent do
                     for _, c in ipairs(mine) do
-                        if c.Parent then c.Visible = not CursorState.Native end
+                        if c.Parent then c.Visible = false end
                     end
-                    if CursorState.Native then InputService.MouseIconEnabled = true end
+                    local native = CursorState.Native
+                    outline.Visible = not native
+                    fill.Visible = not native
+                    if native then
+                        InputService.MouseIconEnabled = true
+                    else
+                        InputService.MouseIconEnabled = false
+                        local m = InputService:GetMouseLocation()
+                        fill.Position = UDim2.fromOffset(m.X, m.Y)
+                        outline.Position = UDim2.fromOffset(m.X - 1, m.Y - 1)
+                        fill.ImageColor3 = Library.AccentColor
+                    end
                     RunService.RenderStepped:Wait()
                 end
+                gui:Destroy()
             end)
         end)
         return table.unpack(res, 1, res.n)
+    end
+end
+
+local OrigSpawnNotify = Library.SpawnNotify
+if type(OrigSpawnNotify) == 'function' then
+    Library.SpawnNotify = function(self, Text, Time)
+        local list, res = Capture(OrigSpawnNotify, self, Text, Time)
+        if not res[1] then error(res[2], 0) end
+        Guard('notify', function()
+            local Outer = list[1]
+            if not Outer then return end
+            local Inner = Outer:FindFirstChildOfClass('Frame')
+            if not Inner then return end
+            Reg(Inner, { BackgroundColor3 = 'PanelColor' })
+            Inner.BackgroundColor3 = Library.PanelColor
+            Corner(Inner, 8)
+            local Grad = Inner:FindFirstChildOfClass('Frame')
+            if Grad then
+                for _, c in ipairs(Grad:GetChildren()) do
+                    if c:IsA('UIGradient') then Library:RemoveFromRegistry(c); c:Destroy() end
+                end
+                Library:RemoveFromRegistry(Grad)
+                Grad.BackgroundTransparency = 1
+                for _, c in ipairs(Grad:GetChildren()) do
+                    if c:IsA('TextLabel') then
+                        c.Position = UDim2.new(0, 18, 0, 0)
+                        c.Size = UDim2.new(1, -22, 1, 0)
+                        c.TextSize = Library.FontSize
+                        c.Font = Fonts.Medium
+                    end
+                end
+            end
+            for _, c in ipairs(Outer:GetChildren()) do
+                if c:IsA('Frame') and c ~= Inner then
+                    c.AnchorPoint = Vector2.new(0, 0.5)
+                    c.Position = UDim2.new(0, 8, 0.5, 0)
+                    c.Size = UDim2.fromOffset(3, 12)
+                    Corner(c, 2)
+                end
+            end
+            local w = Library:GetTextBounds(tostring(Text), Fonts.Medium, Library.FontSize)
+            Outer.Size = UDim2.fromOffset(Outer.Size.X.Offset, 26)
+            pcall(Outer.TweenSize, Outer, UDim2.fromOffset(w + 42, 26), 'Out', 'Quad', 0.35, true)
+        end)
+        return table.unpack(res, 2, res.n)
     end
 end
 
@@ -1998,7 +2153,7 @@ Library.CreateWindow = function(self, ...)
         cfg.Title = args[1]
         cfg.AutoShow = args[2] or false
     end
-    if typeof(cfg.Size) ~= 'UDim2' then cfg.Size = opt('Size', UDim2.fromOffset(720, 520)) end
+    if typeof(cfg.Size) ~= 'UDim2' then cfg.Size = opt('Size', UDim2.fromOffset(760, 640)) end
     if type(cfg.TabPadding) ~= 'number' then cfg.TabPadding = 0 end
     local Window = OrigCreateWindow(self, cfg)
     Guard('window', DressWindow, Window)
@@ -2044,7 +2199,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, Version = 'build-1026-e' }
+local Skin = { AutoDerive = true, Version = 'build-1027-a' }
 
 local deriving = false
 function Skin.Derive()
@@ -2092,6 +2247,345 @@ end
 
 function Skin.SetNativeCursor(on)
     CursorState.Native = on and true or false
+end
+
+
+local DOCK_GAP = 10
+local P_HEAD = 56
+local Docks = setmetatable({}, { __mode = 'k' })
+
+local function BuildGroupbox(Parent, Name)
+    assert(GroupboxMT, 'PerceptionSkin: add one tab groupbox before creating docked panels')
+    local Groupbox = {}
+    local BoxOuter = Library:Create('Frame', {
+        BackgroundColor3 = Library.BackgroundColor,
+        BorderColor3 = Library.OutlineColor,
+        BorderMode = Enum.BorderMode.Inset,
+        Size = UDim2.new(1, 0, 0, 100),
+        ZIndex = 2,
+        Parent = Parent,
+    })
+    Library:AddToRegistry(BoxOuter, { BackgroundColor3 = 'BackgroundColor', BorderColor3 = 'OutlineColor' })
+    local BoxInner = Library:Create('Frame', {
+        BackgroundColor3 = Library.BackgroundColor,
+        BorderColor3 = BLACK,
+        Size = UDim2.new(1, -2, 1, -2),
+        Position = UDim2.new(0, 1, 0, 1),
+        ZIndex = 4,
+        Parent = BoxOuter,
+    })
+    Library:AddToRegistry(BoxInner, { BackgroundColor3 = 'BackgroundColor' })
+    local Highlight = Library:Create('Frame', {
+        BackgroundColor3 = Library.AccentColor,
+        BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, 2),
+        ZIndex = 5,
+        Parent = BoxInner,
+    })
+    Library:AddToRegistry(Highlight, { BackgroundColor3 = 'AccentColor' })
+    Library:CreateLabel({
+        Size = UDim2.new(1, 0, 0, 18),
+        Position = UDim2.new(0, 0, 0, 2),
+        TextSize = Library.FontSize,
+        Text = Name,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        ZIndex = 5,
+        Parent = BoxInner,
+    })
+    local Container = Library:Create('Frame', {
+        BackgroundTransparency = 1,
+        Position = UDim2.new(0, 4, 0, 20),
+        Size = UDim2.new(1, -4, 1, -20),
+        ZIndex = 1,
+        Parent = BoxInner,
+    })
+    Library:Create('UIListLayout', {
+        FillDirection = Enum.FillDirection.Vertical,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent = Container,
+    })
+    Groupbox.Container = Container
+    function Groupbox:Resize()
+        local Size = 0
+        for _, El in next, Container:GetChildren() do
+            if (not El:IsA('UIListLayout')) and El.Visible then Size = Size + El.Size.Y.Offset end
+        end
+        BoxOuter.Size = UDim2.new(1, 0, 0, 24 + Size)
+    end
+    setmetatable(Groupbox, GroupboxMT)
+    Groupbox:AddBlank(3)
+    Groupbox:Resize()
+    Guard('panel groupbox', function()
+        PatchFrom(Groupbox)
+        SkinGroupbox(Groupbox)
+    end)
+    return Groupbox
+end
+
+local function TextBar(parent, names, current, y, onSelect)
+    local holder = New('ScrollingFrame', {
+        Position = UDim2.new(0, 12, 0, y),
+        Size = UDim2.new(1, -24, 0, SUB_H),
+        BackgroundColor3 = Library.PillColor,
+        BackgroundTransparency = 0.25,
+        BorderSizePixel = 0,
+        CanvasSize = UDim2.new(),
+        AutomaticCanvasSize = Enum.AutomaticSize.X,
+        ScrollBarThickness = 0,
+        ScrollingDirection = Enum.ScrollingDirection.X,
+        TopImage = '',
+        BottomImage = '',
+        ZIndex = 3,
+        Parent = parent,
+    })
+    Library:AddToRegistry(holder, { BackgroundColor3 = 'PillColor' })
+    Corner(holder, 6, 'pill')
+    Stroke(holder, 'OutlineColor', 1, 0.65, true)
+    New('UIPadding', { PaddingLeft = UDim.new(0, 2), Parent = holder })
+    New('UIListLayout', {
+        FillDirection = Enum.FillDirection.Horizontal,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent = holder,
+    })
+    local pills = {}
+    local function paint()
+        for name, pill in pairs(pills) do
+            local on = name == current
+            pill.TextColor3 = on and Bright() or Library.MutedColor
+            local r = Library.RegistryMap[pill]
+            if r then r.Properties.TextColor3 = on and Bright or 'MutedColor' end
+            local u = pill:FindFirstChild('Underline')
+            if u then u.Visible = on end
+        end
+    end
+    for index, name in ipairs(names) do
+        local pill = New('TextButton', {
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Size = UDim2.fromOffset(Library:GetTextBounds(name, Fonts.Medium, Library.FontSize) + 24, SUB_H),
+            LayoutOrder = index,
+            Font = Fonts.Medium,
+            Text = name,
+            TextSize = Library.FontSize,
+            TextColor3 = Library.MutedColor,
+            AutoButtonColor = false,
+            ZIndex = 4,
+            Parent = holder,
+        })
+        Library:AddToRegistry(pill, { TextColor3 = 'MutedColor' })
+        local u = New('Frame', {
+            Name = 'Underline',
+            AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.new(0.5, 0, 1, -3),
+            Size = UDim2.fromOffset(14, 2),
+            BackgroundColor3 = Bright(),
+            BorderSizePixel = 0,
+            Visible = false,
+            ZIndex = 5,
+            Parent = pill,
+        })
+        Corner(u, 1)
+        Library:AddToRegistry(u, { BackgroundColor3 = Bright })
+        pill.MouseButton1Click:Connect(function()
+            current = name
+            paint()
+            onSelect(name)
+        end)
+        pills[name] = pill
+    end
+    paint()
+    return holder
+end
+
+function Skin.CreatePanel(Window, o)
+    o = type(o) == 'table' and o or {}
+    local Holder = Window.Holder
+    local Panel = {
+        Side = (o.Side == 'Left') and 'Left' or 'Right',
+        Width = o.Width or 300,
+        Shown = false,
+        Pages = {},
+        Current = nil,
+    }
+    local list = Docks[Window]
+    if not list then list = {}; Docks[Window] = list end
+    list[#list + 1] = Panel
+
+    local Frame = New('Frame', {
+        Name = 'DockPanel',
+        Size = UDim2.new(0, Panel.Width, 1, 0),
+        BackgroundColor3 = Library.PanelColor,
+        BackgroundTransparency = PanelTransparency,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        Visible = false,
+        ZIndex = 1,
+        Parent = Holder,
+    })
+    Panel.Frame = Frame
+    Panels[#Panels + 1] = Frame
+    Reg(Frame, { BackgroundColor3 = 'PanelColor' })
+    Corner(Frame, Radius, 'window')
+    Stroke(Frame, 'OutlineColor', 1, 0.15, true)
+
+    local Drag = New('Frame', {
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Active = true,
+        Size = UDim2.new(1, 0, 0, P_HEAD),
+        ZIndex = 1,
+        Parent = Frame,
+    })
+    AttachDrag(Drag, Holder)
+
+    local Title = Library:CreateLabel({
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 18, 0, P_HEAD / 2),
+        Size = UDim2.new(1, -90, 0, 22),
+        Text = o.Title or 'Panel',
+        TextSize = Library.FontSize + 3,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Font = Fonts.Bold,
+        ZIndex = 3,
+        Parent = Frame,
+    })
+    Library:RemoveFromRegistry(Title)
+    Title.TextColor3 = Bright()
+    Library:AddToRegistry(Title, { TextColor3 = Bright })
+    Panel.TitleLabel = Title
+
+    local function headButton(text, fromRight)
+        local b = New('TextButton', {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -fromRight, 0, P_HEAD / 2),
+            Size = UDim2.fromOffset(26, 26),
+            BackgroundColor3 = Library.PillColor,
+            BorderSizePixel = 0,
+            AutoButtonColor = false,
+            Font = Fonts.Bold,
+            Text = text,
+            TextSize = Library.FontSize + 3,
+            TextColor3 = Library.MutedColor,
+            ZIndex = 4,
+            Parent = Frame,
+        })
+        Library:AddToRegistry(b, { BackgroundColor3 = 'PillColor', TextColor3 = 'MutedColor' })
+        Corner(b, 7, 'pill')
+        Stroke(b, 'OutlineColor', 1, 0.6, true)
+        b.MouseEnter:Connect(function() b.TextColor3 = Bright() end)
+        b.MouseLeave:Connect(function() b.TextColor3 = Library.MutedColor end)
+        return b
+    end
+    local Swap = headButton(Panel.Side == 'Right' and '<' or '>', 48)
+    local Close = headButton('x', 14)
+
+    local function dock()
+        local left, right = 0, 0
+        for _, p in ipairs(list) do
+            if p.Shown then
+                if p.Side == 'Left' then
+                    p.Frame.Position = UDim2.new(0, -(left + DOCK_GAP + p.Width), 0, 0)
+                    left = left + DOCK_GAP + p.Width
+                else
+                    p.Frame.Position = UDim2.new(1, right + DOCK_GAP, 0, 0)
+                    right = right + DOCK_GAP + p.Width
+                end
+            end
+            p.Frame.Visible = p.Shown
+        end
+    end
+    Panel.Dock = dock
+
+    local bar
+    local function layout()
+        if bar then bar:Destroy(); bar = nil end
+        local top = P_HEAD
+        if #Panel.Pages > 1 then
+            local names = {}
+            for _, p in ipairs(Panel.Pages) do names[#names + 1] = p.Name end
+            bar = TextBar(Frame, names, Panel.Current and Panel.Current.Name or names[1], P_HEAD, function(name)
+                for _, p in ipairs(Panel.Pages) do
+                    p.Scroll.Visible = p.Name == name
+                    if p.Name == name then Panel.Current = p end
+                end
+            end)
+            top = P_HEAD + SUB_H + 10
+        end
+        for _, p in ipairs(Panel.Pages) do
+            p.Scroll.Position = UDim2.new(0, 12, 0, top)
+            p.Scroll.Size = UDim2.new(1, -24, 1, -(top + 12))
+            p.Scroll.Visible = p == Panel.Current
+        end
+    end
+
+    function Panel:AddPage(name)
+        local page = { Name = name }
+        page.Scroll = New('ScrollingFrame', {
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            CanvasSize = UDim2.new(),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            ScrollBarThickness = 2,
+            ScrollBarImageColor3 = Library.AccentColor,
+            TopImage = '',
+            BottomImage = '',
+            ZIndex = 2,
+            Visible = false,
+            Parent = Frame,
+        })
+        New('UIListLayout', {
+            Padding = UDim.new(0, 8),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            HorizontalAlignment = Enum.HorizontalAlignment.Center,
+            Parent = page.Scroll,
+        })
+        function page:AddGroupbox(title)
+            return BuildGroupbox(page.Scroll, title)
+        end
+        Panel.Pages[#Panel.Pages + 1] = page
+        Panel.Current = Panel.Current or page
+        layout()
+        return page
+    end
+
+    function Panel:AddGroupbox(title)
+        Panel.Main = Panel.Main or Panel:AddPage('Main')
+        return Panel.Main:AddGroupbox(title)
+    end
+
+    function Panel:SetVisible(v)
+        Panel.Shown = v and true or false
+        dock()
+    end
+    function Panel:Toggle() Panel:SetVisible(not Panel.Shown) end
+    function Panel:SetSide(side)
+        Panel.Side = side == 'Left' and 'Left' or 'Right'
+        Swap.Text = Panel.Side == 'Right' and '<' or '>'
+        dock()
+    end
+    function Panel:SetTitle(t) Title.Text = t end
+    function Panel:SetWidth(w)
+        Panel.Width = w
+        Frame.Size = UDim2.new(0, w, 1, 0)
+        dock()
+    end
+    function Panel:Destroy()
+        for i, p in ipairs(list) do if p == Panel then table.remove(list, i) break end end
+        Frame:Destroy()
+        dock()
+    end
+
+    Swap.MouseButton1Click:Connect(function()
+        Panel:SetSide(Panel.Side == 'Right' and 'Left' or 'Right')
+    end)
+    Close.MouseButton1Click:Connect(function()
+        Panel:SetVisible(false)
+        if type(o.OnClose) == 'function' then pcall(o.OnClose, Panel) end
+    end)
+
+    if o.Visible then Panel:SetVisible(true) end
+    return Panel
 end
 
 function Skin.SetShadow(on)

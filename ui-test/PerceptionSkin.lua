@@ -282,6 +282,8 @@ local function Muted(inst)
     Reg(inst, { TextColor3 = 'MutedColor' })
 end
 
+local Regions = setmetatable({}, { __mode = 'k' })
+
 local function SkinToggle(Groupbox, Toggle, list)
     PatchFrom(Toggle)
     local Label = Toggle.TextLabel
@@ -304,7 +306,10 @@ local function SkinToggle(Groupbox, Toggle, list)
         layout.VerticalAlignment = Enum.VerticalAlignment.Center
         layout.Padding = UDim.new(0, 5)
     end
-    if Region then Region.Size = UDim2.new(1, 0, 1, 0) end
+    if Region then
+        Region.Size = UDim2.new(1, 0, 1, 0)
+        Regions[Label] = Region
+    end
 
     local Box = New('Frame', {
         AnchorPoint = Vector2.new(1, 0.5),
@@ -401,8 +406,8 @@ local function SkinSlider(Groupbox, Slider, list, Idx, Info)
     local Hide = Fill:FindFirstChildOfClass('Frame')
 
     local compact = Info and Info.Compact
-    local OH = 18
-    local yc = compact and 25 or 10
+    local OH = 22
+    local yc = compact and 25 or 17
     Outer.Size = UDim2.new(1, -4, 0, compact and 30 or OH)
     Strip(Inner)
     Inner.BackgroundTransparency = 1
@@ -427,33 +432,23 @@ local function SkinSlider(Groupbox, Slider, list, Idx, Info)
     Corner(Fill, 1)
     if Hide then Hide.Visible = false end
 
-    local Nub = New('Frame', {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0, 0, 0, yc),
-        Size = UDim2.fromOffset(8, 8),
-        BackgroundColor3 = Library.AccentColor,
-        BorderSizePixel = 0,
-        ZIndex = Fill.ZIndex + 1,
-        Parent = Inner,
-    })
-    Corner(Nub, 4)
-    Library:AddToRegistry(Nub, { BackgroundColor3 = 'AccentColor' })
-
     local Value
     if Label then
         Label.Size = UDim2.new(1, -4, 0, 14)
         Label.TextYAlignment = Enum.TextYAlignment.Center
         Value = Library:CreateLabel({
-            Size = UDim2.new(1, 0, 1, 0),
-            TextSize = Library.FontSize - 1,
-            TextXAlignment = Enum.TextXAlignment.Right,
+            AnchorPoint = Vector2.new(0, 0),
+            Position = UDim2.new(0, 0, 0, 0),
+            Size = UDim2.fromOffset(40, 11),
+            TextSize = Library.FontSize - 3,
+            TextXAlignment = Enum.TextXAlignment.Center,
             Text = '',
-            ZIndex = Label.ZIndex,
-            Parent = Label,
+            ZIndex = Fill.ZIndex + 1,
+            Parent = Inner,
         })
         Library:RemoveFromRegistry(Value)
-        Value.TextColor3 = Library.AccentColor
-        Library:AddToRegistry(Value, { TextColor3 = 'AccentColor' })
+        Value.TextColor3 = Library.MutedColor
+        Library:AddToRegistry(Value, { TextColor3 = 'MutedColor' })
         DisplayLabel.Visible = false
     else
         DisplayLabel.Size = UDim2.new(1, 0, 0, 14)
@@ -464,11 +459,17 @@ local function SkinSlider(Groupbox, Slider, list, Idx, Info)
     local function sync()
         local x = Fill.Size.X.Offset
         Fill.Size = UDim2.new(0, x, 0, 2)
-        Nub.Position = UDim2.new(0, x, 0, yc)
         if Hide then Hide.Visible = false end
         if Value then
             local txt = DisplayLabel.Text
-            Value.Text = txt:match('^(.-)/') or txt
+            txt = txt:match('^(.-)/') or txt
+            Value.Text = txt
+            local w = Library:GetTextBounds(txt, Library.Font, Library.FontSize - 3) + 6
+            local total = Inner.AbsoluteSize.X
+            if total <= 8 then total = Slider.MaxSize end
+            local left = math.clamp(x - w / 2, 0, math.max(total - w, 0))
+            Value.Size = UDim2.fromOffset(w, 11)
+            Value.Position = UDim2.new(0, left, 0, 0)
         end
     end
 
@@ -681,8 +682,8 @@ local function BuildPopup(CP, Info, Outer)
         end
         if not Box:IsFocused() then
             local v = CP.Value
-            local txt = string.format('%d, %d, %d', math.floor(v.R * 255 + 0.5), math.floor(v.G * 255 + 0.5), math.floor(v.B * 255 + 0.5))
-            if hasAlpha then txt = txt .. string.format(', %d', math.floor((1 - CP.Transparency) * 255 + 0.5)) end
+            local txt = string.format('#%02X%02X%02X', math.floor(v.R * 255 + 0.5), math.floor(v.G * 255 + 0.5), math.floor(v.B * 255 + 0.5))
+            if hasAlpha then txt = txt .. string.format('%02X', math.floor((1 - CP.Transparency) * 255 + 0.5)) end
             Box.Text = txt
         end
     end
@@ -708,10 +709,11 @@ local function BuildPopup(CP, Info, Outer)
 
     Box.FocusLost:Connect(function()
         local text = Box.Text
-        local hex = text:match('^%s*#?(%x%x%x%x%x%x)%s*$')
+        local hex = text:match('^%s*#?(%x%x%x%x%x%x)%s*$') or text:match('^%s*#?(%x%x%x%x%x%x%x%x)%s*$')
         if hex then
             local c = Color3.fromRGB(tonumber(hex:sub(1, 2), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(5, 6), 16))
             CP.Hue, CP.Sat, CP.Vib = Color3.toHSV(c)
+            if hasAlpha and #hex == 8 then CP.Transparency = 1 - tonumber(hex:sub(7, 8), 16) / 255 end
         else
             local nums = {}
             for n in text:gmatch('%-?%d+%.?%d*') do nums[#nums + 1] = tonumber(n) end
@@ -732,7 +734,14 @@ local function BuildPopup(CP, Info, Outer)
     refresh()
 end
 
+local function ShrinkRegion(Parent, amount)
+    local label = Parent and Parent.TextLabel
+    local R = label and Regions[label]
+    if R then R.Size = UDim2.new(1, R.Size.X.Offset - amount, 1, 0) end
+end
+
 local function SkinColorPicker(Parent, _, list, Idx, Info)
+    ShrinkRegion(Parent, 24)
     local CP = getgenv().Options and getgenv().Options[Idx]
     if not CP then return end
     local DF = CP.DisplayFrame
@@ -769,6 +778,7 @@ local ModeNames = { Off = 'Off Hotkey', Hold = 'On Hotkey', Press = 'Single Pres
 local ModeOrder = { 'Off', 'Hold', 'Press', 'Toggle', 'Always' }
 
 local function SkinKeyPicker(Parent, Idx, Info, list)
+    ShrinkRegion(Parent, 29)
     local KP = getgenv().Options and getgenv().Options[Idx]
     if not KP then return end
     local label = Parent and Parent.TextLabel
@@ -785,7 +795,15 @@ local function SkinKeyPicker(Parent, Idx, Info, list)
     local DisplayLabel = PickInner:FindFirstChildOfClass('TextLabel')
     if DisplayLabel then DisplayLabel.Visible = false end
     PickOuter.Size = UDim2.fromOffset(24, 16)
-    local ChipStroke = PickInner:FindFirstChildOfClass('UIStroke')
+    for _, o in ipairs({ PickOuter, PickInner }) do
+        for _, c in ipairs(o:GetChildren()) do
+            if c:IsA('UIStroke') then Library:RemoveFromRegistry(c); c:Destroy() end
+        end
+        o.BackgroundTransparency = 1
+        o.BorderSizePixel = 0
+        Library:RemoveFromRegistry(o)
+    end
+    local ChipStroke = nil
     local z = PickInner.ZIndex
 
     local state = { picking = false }
@@ -891,6 +909,7 @@ local function SkinKeyPicker(Parent, Idx, Info, list)
     Library:AddToRegistry(Menu:GetChildren()[#Menu:GetChildren()], { BackgroundColor3 = 'OutlineColor' })
 
     local rows = {}
+    local refreshMenu
     for index, mode in ipairs(modes) do
         local r = row(4 + ROW + 5 + (index - 1) * ROW, ModeNames[mode] or mode)
         rows[mode] = r
@@ -899,8 +918,7 @@ local function SkinKeyPicker(Parent, Idx, Info, list)
         end })
         r.MouseButton1Click:Connect(function()
             KP:SetValue({ KP.Value, mode })
-            Menu.Visible = false
-            Library.OpenedFrames[Menu] = nil
+            refreshMenu()
             Library:AttemptSave()
         end)
     end
@@ -912,7 +930,7 @@ local function SkinKeyPicker(Parent, Idx, Info, list)
         return '[' .. k .. ']'
     end
 
-    local function refreshMenu()
+    refreshMenu = function()
         KeyRow.Text = keyText()
         for mode, r in pairs(rows) do
             r.TextColor3 = KP.Mode == mode and Library.AccentColor or Library.MutedColor
@@ -924,18 +942,37 @@ local function SkinKeyPicker(Parent, Idx, Info, list)
         Library.OpenedFrames[Menu] = nil
     end
 
-    local function open()
-        refreshMenu()
+    local function shown()
+        local p = PickOuter
+        while p and p ~= Library.ScreenGui do
+            if p:IsA('GuiObject') and not p.Visible then return false end
+            p = p.Parent
+        end
+        return p ~= nil
+    end
+
+    local function place()
         Menu.Position = UDim2.fromOffset(
             PickOuter.AbsolutePosition.X + PickOuter.AbsoluteSize.X,
             PickOuter.AbsolutePosition.Y + PickOuter.AbsoluteSize.Y + 4
         )
+    end
+
+    local function open()
+        refreshMenu()
+        place()
         Menu.Visible = true
         Library.OpenedFrames[Menu] = true
+        task.spawn(function()
+            while Menu.Visible do
+                if not Library.Toggled or not shown() then close() break end
+                place()
+                task.wait()
+            end
+        end)
     end
 
     KeyRow.MouseButton1Click:Connect(function()
-        close()
         if state.picking then return end
         state.picking = true
         setIcon()
@@ -963,6 +1000,7 @@ local function SkinKeyPicker(Parent, Idx, Info, list)
                     Library:SafeCallback(KP.Changed, Input.KeyCode or Input.UserInputType)
                     Library:AttemptSave()
                     KP:Update()
+                    refreshMenu()
                 end)
             end)
         end)
@@ -977,13 +1015,6 @@ local function SkinKeyPicker(Parent, Idx, Info, list)
     Button.MouseLeave:Connect(function()
         if ChipStroke then ChipStroke.Color = Library.OutlineColor end
     end)
-    Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
-        if not Menu.Visible then return end
-        if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-            if not Library:IsMouseOverFrame(Menu) and not Library:IsMouseOverFrame(PickOuter) then close() end
-        end
-    end))
-
     local origState = KP.GetState
     KP.GetState = function(self)
         local m = self.Mode
@@ -1659,7 +1690,7 @@ local function DressWindow(Window)
     Outer.ClipsDescendants = false
     Outer.BackgroundTransparency = 1
 
-    local Shadow = New('ImageLabel', {
+    local Shadow = opt('Shadow', false) and New('ImageLabel', {
         Name = 'Shadow',
         AnchorPoint = Vector2.new(0.5, 0.5),
         BackgroundTransparency = 1,

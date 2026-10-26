@@ -315,7 +315,6 @@ local function SkinToggle(Groupbox, Toggle, list)
     end
     if Region then
         Region.Size = UDim2.new(1, 0, 1, 0)
-        Regions[Label] = { Region = Region, Toggle = Toggle, Inner = Inner }
     end
 
     local Box = New('Frame', {
@@ -389,11 +388,27 @@ local function SkinToggle(Groupbox, Toggle, list)
     apply()
 
     if Region then
-        local entry = Regions[Label]
-        if entry then entry.Hover = function(v) hover = v; apply() end end
-        Region.MouseEnter:Connect(function() hover = true; apply() end)
-        Region.MouseLeave:Connect(function() hover = false; apply() end)
+        Region.Visible = false
+        Region.Size = UDim2.new(0, 0, 0, 0)
     end
+    local Button = New('TextButton', {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, 3, 0.5, 0),
+        Size = UDim2.fromOffset(22, 22),
+        BackgroundTransparency = 1,
+        Text = '',
+        AutoButtonColor = false,
+        Active = true,
+        ZIndex = 12,
+        Parent = Inner,
+    })
+    Button.MouseButton1Click:Connect(function()
+        if Library:MouseIsOverOpenedFrame() then return end
+        Toggle:SetValue(not Toggle.Value)
+    end)
+    Button.MouseEnter:Connect(function() hover = true; apply() end)
+    Button.MouseLeave:Connect(function() hover = false; apply() end)
+    Regions[Label] = { Region = Region, Toggle = Toggle, Inner = Inner, Button = Button }
     Groupbox:Resize()
 end
 
@@ -743,32 +758,7 @@ local function BuildPopup(CP, Info, Outer)
     refresh()
 end
 
-local function ShrinkRegion(Parent, amount)
-    local label = Parent and Parent.TextLabel
-    local R = label and Regions[label]
-    if not R then return end
-    local Region = R.Region
-    Region.Size = UDim2.new(1, Region.Size.X.Offset - amount, 1, 0)
-    if not R.Button then
-        R.Button = New('TextButton', {
-            AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, 2, 0.5, 0),
-            Size = UDim2.fromOffset(20, 22),
-            BackgroundTransparency = 1,
-            Text = '',
-            AutoButtonColor = false,
-            Active = true,
-            ZIndex = 12,
-            Parent = R.Inner,
-        })
-        R.Button.MouseButton1Click:Connect(function()
-            if Library:MouseIsOverOpenedFrame() then return end
-            R.Toggle:SetValue(not R.Toggle.Value)
-        end)
-        R.Button.MouseEnter:Connect(function() if R.Hover then R.Hover(true) end end)
-        R.Button.MouseLeave:Connect(function() if R.Hover then R.Hover(false) end end)
-    end
-end
+local function ShrinkRegion() end
 
 local function SkinColorPicker(Parent, _, list, Idx, Info)
     ShrinkRegion(Parent, 24)

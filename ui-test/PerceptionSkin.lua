@@ -1215,12 +1215,12 @@ local ImageKeys = { crosshair = 'cross', eye = 'eye', globe = 'half', people = '
 
 local Glyphs = {
     legit = 'crosshair', aim = 'crosshair', aimbot = 'crosshair', combat = 'crosshair',
-    rage = 'target', ragebot = 'target', main = 'target',
+    rage = 'bolt', ragebot = 'bolt', main = 'target',
     visuals = 'eye', visual = 'eye', esp = 'eye', render = 'eye',
     world = 'globe', environment = 'globe', lighting = 'globe',
     players = 'people', player = 'people', users = 'people', entity = 'people',
-    misc = 'bomb', miscellaneous = 'bomb', exploits = 'bomb', other = 'bomb',
-    teleport = 'diamond', teleports = 'diamond', movement = 'diamond', locations = 'diamond',
+    misc = 'grid', miscellaneous = 'grid', exploits = 'grid', other = 'grid',
+    teleport = 'portal', teleports = 'portal', movement = 'diamond', locations = 'portal',
     settings = 'gear', config = 'gear', configs = 'gear', ['ui settings'] = 'gear', options = 'gear',
 }
 if type(Config.Icons) == 'table' then
@@ -1318,6 +1318,23 @@ local function BuildIcon(Parent, Name, state)
     elseif key == 'people' then
         ring(6, 6, 0, -4)
         ring(13, 8, 0, 5)
+    elseif key == 'bolt' then
+        solid(3, 11, 1.5, -4.5, 34)
+        solid(8, 3, 0.5, 0)
+        solid(3, 11, -0.5, 4.5, 34)
+    elseif key == 'grid' then
+        for _, gx in ipairs({ -4.5, 4.5 }) do
+            for _, gy in ipairs({ -4.5, 4.5 }) do
+                local sq = solid(6, 6, gx, gy)
+                New('UICorner', { CornerRadius = UDim.new(0, 2), Parent = sq })
+            end
+        end
+    elseif key == 'portal' then
+        ring(11, 18, 4, 0, 1.5)
+        ring(4, 9, 4, 0, 1.5)
+        solid(8, 2, -6, 0)
+        solid(5, 2, -3, -2.2, 45)
+        solid(5, 2, -3, 2.2, -45)
     elseif key == 'bomb' then
         solid(12, 12, -1, 2, 0, true)
         solid(2, 6, 5, -6, 45)
@@ -2207,7 +2224,7 @@ Library.CreateWindow = function(self, ...)
         cfg.Title = args[1]
         cfg.AutoShow = args[2] or false
     end
-    if typeof(cfg.Size) ~= 'UDim2' then cfg.Size = opt('Size', UDim2.fromOffset(760, 640)) end
+    if typeof(cfg.Size) ~= 'UDim2' then cfg.Size = opt('Size', UDim2.fromOffset(650, 700)) end
     if type(cfg.TabPadding) ~= 'number' then cfg.TabPadding = 0 end
     local Window = OrigCreateWindow(self, cfg)
     Guard('window', DressWindow, Window)
@@ -2253,7 +2270,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, Version = 'build-1027-e' }
+local Skin = { AutoDerive = true, Version = 'build-1027-g' }
 
 local deriving = false
 function Skin.Derive()

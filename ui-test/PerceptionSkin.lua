@@ -54,6 +54,9 @@ Library.AccentColorDark = Darker(Library.AccentColor)
 local function mix(a, b, t)
     return Color3.new(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t)
 end
+local function Active()
+    return Library.ActiveColor or Library.AccentColor
+end
 local function Bright()
     return Library.ActiveColor or mix(Library.FontColor, WHITE, 0.5)
 end
@@ -108,6 +111,7 @@ local function Reg(inst, props, hud)
 end
 
 local Shadows, Chips = {}, {}
+local HeaderLayouts = {}
 local Corners = { window = {}, card = {}, control = {}, pill = {} }
 local Borders = {}
 
@@ -1226,7 +1230,7 @@ end
 local function BuildIcon(Parent, Name, state)
     local items = {}
     local function color()
-        return state.active and Bright() or Library.MutedColor
+        return state.active and Active() or Library.MutedColor
     end
     local function ink(inst, prop)
         inst[prop] = color()
@@ -1475,9 +1479,9 @@ local function SkinTab(ctx, Tab, Name, list)
         Indicator.Position = UDim2.new(0.5, 0, 1, 0)
         Indicator.Size = UDim2.fromOffset(14, 2)
         Indicator.Position = UDim2.new(0.5, 0, 1, -3)
-        Indicator.BackgroundColor3 = Bright()
+        Indicator.BackgroundColor3 = Active()
         Library:RemoveFromRegistry(Indicator)
-        Library:AddToRegistry(Indicator, { BackgroundColor3 = Bright })
+        Library:AddToRegistry(Indicator, { BackgroundColor3 = Active })
         Corner(Indicator, 1)
     end
 
@@ -1518,7 +1522,8 @@ local function SkinTab(ctx, Tab, Name, list)
     end)
 
     ctx.Count = ctx.Count + 1
-    ctx.Pill.Size = UDim2.new(0, 14 + ctx.Count * TAB_W + (ctx.Count - 1) * TAB_GAP, 0, PILL_H)
+    ctx.Tabs[#ctx.Tabs + 1] = TabButton
+    if ctx.Relayout then ctx.Relayout() end
 
     local sides = {}
     for _, i in ipairs(list) do
@@ -1577,9 +1582,9 @@ local function SkinTab(ctx, Tab, Name, list)
             end
             for name, pill in pairs(bar.pills) do
                 local active = name == bar.current
-                pill.TextColor3 = active and Bright() or Library.MutedColor
+                pill.TextColor3 = active and Active() or Library.MutedColor
                 local r = Library.RegistryMap[pill]
-                if r then r.Properties.TextColor3 = active and Bright or 'MutedColor' end
+                if r then r.Properties.TextColor3 = active and Active or 'MutedColor' end
                 local u = pill:FindFirstChild('Underline')
                 if u then u.Visible = active end
             end
@@ -1605,14 +1610,14 @@ local function SkinTab(ctx, Tab, Name, list)
                 AnchorPoint = Vector2.new(0.5, 1),
                 Position = UDim2.new(0.5, 0, 1, -3),
                 Size = UDim2.fromOffset(14, 2),
-                BackgroundColor3 = Bright(),
+                BackgroundColor3 = Active(),
                 BorderSizePixel = 0,
                 Visible = false,
                 ZIndex = 5,
                 Parent = pill,
             })
             Corner(underline, 1)
-            Library:AddToRegistry(underline, { BackgroundColor3 = Bright })
+            Library:AddToRegistry(underline, { BackgroundColor3 = Active })
             pill.MouseButton1Click:Connect(function()
                 if Library:MouseIsOverOpenedFrame() then return end
                 bar.current = name
@@ -1801,8 +1806,8 @@ local function DressWindow(Window)
 
     local Logo = New('Frame', {
         AnchorPoint = Vector2.new(0, 0.5),
-        Position = UDim2.new(0, 18, 0, HEADER / 2),
-        Size = UDim2.fromOffset(38, 38),
+        Position = UDim2.new(0, 16, 0, HEADER / 2),
+        Size = UDim2.fromOffset(50, 50),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ZIndex = 3,
@@ -1845,8 +1850,8 @@ local function DressWindow(Window)
             local st = New('UIStroke', { Color = Bright(), Thickness = thick, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = f })
             Library:AddToRegistry(st, { Color = Bright })
         end
-        ringPart(26, 2)
-        for _, dims in ipairs({ { 3, 38 }, { 38, 3 } }) do
+        ringPart(34, 2)
+        for _, dims in ipairs({ { 3, 50 }, { 50, 3 } }) do
             local bar = New('Frame', {
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 Position = UDim2.new(0.5, 0, 0.5, 0),
@@ -1862,11 +1867,11 @@ local function DressWindow(Window)
     end
 
     TitleLabel.AnchorPoint = Vector2.new(0, 0.5)
-    TitleLabel.Position = UDim2.new(0, 66, 0, HEADER / 2)
-    TitleLabel.Size = UDim2.new(0, 120, 0, 22)
+    TitleLabel.Position = UDim2.new(0, 74, 0, HEADER / 2)
+    TitleLabel.Size = UDim2.new(0, 150, 0, 28)
     TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
     TitleLabel.Font = Fonts.Bold
-    TitleLabel.TextSize = Library.FontSize + 4
+    TitleLabel.TextSize = Library.FontSize + 8
     TitleLabel.TextTruncate = Enum.TextTruncate.AtEnd
     TitleLabel.ZIndex = 3
     Library:RemoveFromRegistry(TitleLabel)
@@ -1998,7 +2003,56 @@ local function DressWindow(Window)
         end
     end
 
-    local ctx = { Count = 0, TabArea = TabArea, Pill = TabBarOuter, Inner = Inner }
+    local ctx = { Count = 0, TabArea = TabArea, Pill = TabBarOuter, Inner = Inner, Tabs = {} }
+
+    local TAB_MIN, TAB_MAX, HEAD_GAP = 34, 70, 14
+    local relaying = false
+    local function titleWidth()
+        local ok, w = pcall(function()
+            return Library:GetTextBounds(TitleLabel.Text, TitleLabel.Font, TitleLabel.TextSize)
+        end)
+        if ok and type(w) == 'number' then return math.min(220, math.ceil(w) + 6) end
+        return 80
+    end
+    local function leftEdge() return 74 + titleWidth() + HEAD_GAP end
+    local function rightEdge() return (Chip.Visible and (16 + CHIP_W) or 0) + 16 end
+    function ctx.MinWidth()
+        local n = math.max(ctx.Count, 1)
+        return math.max(420, leftEdge() + 14 + n * TAB_MIN + (n - 1) * TAB_GAP + HEAD_GAP + rightEdge())
+    end
+    function ctx.Relayout()
+        if relaying then return end
+        relaying = true
+        local W = Outer.Size.X.Offset
+        local minW = ctx.MinWidth()
+        if W < minW then
+            W = minW
+            Outer.Size = UDim2.fromOffset(minW, Outer.Size.Y.Offset)
+        end
+        local n = ctx.Count
+        TitleLabel.Size = UDim2.new(0, titleWidth(), 0, 28)
+        if n > 0 then
+            local left, right = leftEdge(), rightEdge()
+            local avail = W - left - right - 14 - HEAD_GAP - (n - 1) * TAB_GAP
+            local tw = math.clamp(math.floor(avail * 0.62 / n), TAB_MIN, TAB_MAX)
+            tw = math.min(tw, math.max(TAB_MIN, math.floor(avail / n)))
+            for _, tb in ipairs(ctx.Tabs) do
+                if tb.Parent then tb.Size = UDim2.new(0, tw, 1, 0) end
+            end
+            local pw = 14 + n * tw + (n - 1) * TAB_GAP
+            ctx.Pill.Size = UDim2.new(0, pw, 0, PILL_H)
+            local cx
+            if Chip.Visible then
+                cx = math.clamp(W / 2, left + pw / 2, W - right - pw / 2)
+            else
+                cx = W - 16 - pw / 2
+            end
+            ctx.Pill.Position = UDim2.new(0, math.floor(cx + 0.5), 0, HEADER / 2)
+        end
+        relaying = false
+    end
+    HeaderLayouts[#HeaderLayouts + 1] = ctx.Relayout
+    Outer:GetPropertyChangedSignal('Size'):Connect(ctx.Relayout)
 
     local TipFrame = New('Frame', {
         AnchorPoint = Vector2.new(0.5, 0),
@@ -2199,7 +2253,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, Version = 'build-1027-a' }
+local Skin = { AutoDerive = true, Version = 'build-1027-e' }
 
 local deriving = false
 function Skin.Derive()
@@ -2252,6 +2306,7 @@ end
 
 local DOCK_GAP = 10
 local P_HEAD = 56
+local MIN_PW, MAX_PW, MIN_PH, MAX_PH = 240, 720, 260, 1000
 local Docks = setmetatable({}, { __mode = 'k' })
 
 local function BuildGroupbox(Parent, Name)
@@ -2347,13 +2402,19 @@ local function TextBar(parent, names, current, y, onSelect)
         SortOrder = Enum.SortOrder.LayoutOrder,
         Parent = holder,
     })
+    holder.InputChanged:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseWheel then
+            local maxX = math.max(holder.AbsoluteCanvasSize.X - holder.AbsoluteSize.X, 0)
+            holder.CanvasPosition = Vector2.new(math.clamp(holder.CanvasPosition.X - Input.Position.Z * 48, 0, maxX), 0)
+        end
+    end)
     local pills = {}
     local function paint()
         for name, pill in pairs(pills) do
             local on = name == current
-            pill.TextColor3 = on and Bright() or Library.MutedColor
+            pill.TextColor3 = on and Active() or Library.MutedColor
             local r = Library.RegistryMap[pill]
-            if r then r.Properties.TextColor3 = on and Bright or 'MutedColor' end
+            if r then r.Properties.TextColor3 = on and Active or 'MutedColor' end
             local u = pill:FindFirstChild('Underline')
             if u then u.Visible = on end
         end
@@ -2378,14 +2439,14 @@ local function TextBar(parent, names, current, y, onSelect)
             AnchorPoint = Vector2.new(0.5, 1),
             Position = UDim2.new(0.5, 0, 1, -3),
             Size = UDim2.fromOffset(14, 2),
-            BackgroundColor3 = Bright(),
+            BackgroundColor3 = Active(),
             BorderSizePixel = 0,
             Visible = false,
             ZIndex = 5,
             Parent = pill,
         })
         Corner(u, 1)
-        Library:AddToRegistry(u, { BackgroundColor3 = Bright })
+        Library:AddToRegistry(u, { BackgroundColor3 = Active })
         pill.MouseButton1Click:Connect(function()
             current = name
             paint()
@@ -2497,31 +2558,9 @@ function Skin.CreatePanel(Window, o)
     end
     Panel.Dock = dock
 
-    local bar
-    local function layout()
-        if bar then bar:Destroy(); bar = nil end
-        local top = P_HEAD
-        if #Panel.Pages > 1 then
-            local names = {}
-            for _, p in ipairs(Panel.Pages) do names[#names + 1] = p.Name end
-            bar = TextBar(Frame, names, Panel.Current and Panel.Current.Name or names[1], P_HEAD, function(name)
-                for _, p in ipairs(Panel.Pages) do
-                    p.Scroll.Visible = p.Name == name
-                    if p.Name == name then Panel.Current = p end
-                end
-            end)
-            top = P_HEAD + SUB_H + 10
-        end
-        for _, p in ipairs(Panel.Pages) do
-            p.Scroll.Position = UDim2.new(0, 12, 0, top)
-            p.Scroll.Size = UDim2.new(1, -24, 1, -(top + 12))
-            p.Scroll.Visible = p == Panel.Current
-        end
-    end
-
-    function Panel:AddPage(name)
-        local page = { Name = name }
-        page.Scroll = New('ScrollingFrame', {
+    local mainBar
+    local function newScroll()
+        local scroll = New('ScrollingFrame', {
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             CanvasSize = UDim2.new(),
@@ -2538,10 +2577,76 @@ function Skin.CreatePanel(Window, o)
             Padding = UDim.new(0, 8),
             SortOrder = Enum.SortOrder.LayoutOrder,
             HorizontalAlignment = Enum.HorizontalAlignment.Center,
-            Parent = page.Scroll,
+            Parent = scroll,
         })
+        return scroll
+    end
+
+    local function show()
+        for _, p in ipairs(Panel.Pages) do
+            local active = p == Panel.Current
+            local hasSubs = #p.Subs > 0
+            p.Scroll.Visible = active and not hasSubs
+            if p.SubBar then p.SubBar.Visible = active end
+            for _, sub in ipairs(p.Subs) do
+                sub.Scroll.Visible = active and sub == p.CurrentSub
+            end
+        end
+    end
+
+    local function layout()
+        if mainBar then mainBar:Destroy(); mainBar = nil end
+        local top = P_HEAD
+        if #Panel.Pages > 1 then
+            local names = {}
+            for _, p in ipairs(Panel.Pages) do names[#names + 1] = p.Name end
+            mainBar = TextBar(Frame, names, Panel.Current and Panel.Current.Name or names[1], P_HEAD, function(name)
+                for _, p in ipairs(Panel.Pages) do
+                    if p.Name == name then Panel.Current = p end
+                end
+                show()
+            end)
+            top = P_HEAD + SUB_H + 10
+        end
+        for _, p in ipairs(Panel.Pages) do
+            if p.SubBar then p.SubBar:Destroy(); p.SubBar = nil end
+            local ptop = top
+            if #p.Subs > 1 then
+                local names = {}
+                for _, sub in ipairs(p.Subs) do names[#names + 1] = sub.Name end
+                p.SubBar = TextBar(Frame, names, p.CurrentSub.Name, top, function(name)
+                    for _, sub in ipairs(p.Subs) do
+                        if sub.Name == name then p.CurrentSub = sub end
+                    end
+                    show()
+                end)
+                ptop = top + SUB_H + 10
+            end
+            local pos = UDim2.new(0, 12, 0, ptop)
+            local size = UDim2.new(1, -24, 1, -(ptop + 12))
+            p.Scroll.Position, p.Scroll.Size = pos, size
+            for _, sub in ipairs(p.Subs) do
+                sub.Scroll.Position, sub.Scroll.Size = pos, size
+            end
+        end
+        show()
+    end
+
+    local placeHandles
+    function Panel:AddPage(name)
+        local page = { Name = name, Subs = {}, Scroll = newScroll() }
         function page:AddGroupbox(title)
             return BuildGroupbox(page.Scroll, title)
+        end
+        function page:AddSub(subName)
+            local sub = { Name = subName, Scroll = newScroll() }
+            function sub:AddGroupbox(title)
+                return BuildGroupbox(sub.Scroll, title)
+            end
+            page.Subs[#page.Subs + 1] = sub
+            page.CurrentSub = page.CurrentSub or sub
+            layout()
+            return sub
         end
         Panel.Pages[#Panel.Pages + 1] = page
         Panel.Current = Panel.Current or page
@@ -2562,19 +2667,121 @@ function Skin.CreatePanel(Window, o)
     function Panel:SetSide(side)
         Panel.Side = side == 'Left' and 'Left' or 'Right'
         Swap.Text = Panel.Side == 'Right' and '<' or '>'
+        placeHandles()
         dock()
     end
     function Panel:SetTitle(t) Title.Text = t end
-    function Panel:SetWidth(w)
-        Panel.Width = w
-        Frame.Size = UDim2.new(0, w, 1, 0)
+    local function applySize()
+        Frame.Size = UDim2.new(0, Panel.Width, Panel.Height and 0 or 1, Panel.Height or 0)
         dock()
+    end
+    function Panel:SetWidth(w)
+        Panel.Width = math.clamp(w, MIN_PW, MAX_PW)
+        applySize()
+    end
+    function Panel:SetHeight(h)
+        Panel.Height = h and math.clamp(h, MIN_PH, MAX_PH) or nil
+        applySize()
     end
     function Panel:Destroy()
         for i, p in ipairs(list) do if p == Panel then table.remove(list, i) break end end
         Frame:Destroy()
         dock()
     end
+
+    local Edge = New('TextButton', {
+        Name = 'ResizeEdge',
+        BackgroundTransparency = 1,
+        Text = '',
+        AutoButtonColor = false,
+        Active = true,
+        Size = UDim2.new(0, 8, 1, -40),
+        ZIndex = 20,
+        Parent = Frame,
+    })
+    local EdgeLine = New('Frame', {
+        BackgroundColor3 = Library.AccentColor,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Size = UDim2.new(0, 2, 1, 0),
+        ZIndex = 21,
+        Active = false,
+        Parent = Edge,
+    })
+    Library:AddToRegistry(EdgeLine, { BackgroundColor3 = 'AccentColor' })
+    local Grip = New('TextButton', {
+        Name = 'ResizeGrip',
+        BackgroundTransparency = 1,
+        Text = '',
+        AutoButtonColor = false,
+        Active = true,
+        Size = UDim2.fromOffset(22, 22),
+        ZIndex = 22,
+        Parent = Frame,
+    })
+    for i = 0, 2 do
+        for j = 0, i do
+            local dot = New('Frame', {
+                AnchorPoint = Vector2.new(1, 1),
+                Position = UDim2.new(1, -5 - j * 4, 1, -5 - (2 - i) * 4),
+                Size = UDim2.fromOffset(2, 2),
+                BackgroundColor3 = Library.MutedColor,
+                BorderSizePixel = 0,
+                ZIndex = 23,
+                Active = false,
+                Parent = Grip,
+            })
+            Library:AddToRegistry(dot, { BackgroundColor3 = 'MutedColor' })
+        end
+    end
+    placeHandles = function()
+        local right = Panel.Side == 'Right'
+        Edge.AnchorPoint = Vector2.new(right and 1 or 0, 0)
+        Edge.Position = UDim2.new(right and 1 or 0, 0, 0, 20)
+        EdgeLine.AnchorPoint = Vector2.new(right and 1 or 0, 0)
+        EdgeLine.Position = UDim2.new(right and 1 or 0, 0, 0, 0)
+        Grip.AnchorPoint = Vector2.new(right and 1 or 0, 1)
+        Grip.Position = UDim2.new(right and 1 or 0, 0, 1, 0)
+        Grip.Rotation = 0
+        for _, d in ipairs(Grip:GetChildren()) do
+            if d:IsA('Frame') then
+                d.AnchorPoint = Vector2.new(right and 1 or 0, 1)
+                local p = d.Position
+                d.Position = UDim2.new(right and 1 or 0, (right and -1 or 1) * math.abs(p.X.Offset), p.Y.Scale, p.Y.Offset)
+            end
+        end
+    end
+    placeHandles()
+    local function beginResize(Input, width, height)
+        if Input.UserInputType ~= Enum.UserInputType.MouseButton1 and Input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local startW = Panel.Width
+        local startH = Frame.AbsoluteSize.Y
+        local startPos = Input.Position
+        EdgeLine.BackgroundTransparency = 0.3
+        local changedConn, endedConn
+        changedConn = InputService.InputChanged:Connect(function(Change)
+            if Change.UserInputType ~= Enum.UserInputType.MouseMovement and Change ~= Input then return end
+            local delta = Change.Position - startPos
+            if width then
+                Panel:SetWidth(startW + (Panel.Side == 'Right' and delta.X or -delta.X))
+            end
+            if height then
+                Panel:SetHeight(startH + delta.Y)
+            end
+        end)
+        endedConn = InputService.InputEnded:Connect(function(End)
+            if End == Input or End.UserInputType == Enum.UserInputType.Touch then
+                changedConn:Disconnect()
+                endedConn:Disconnect()
+                EdgeLine.BackgroundTransparency = 1
+            end
+        end)
+    end
+    Edge.InputBegan:Connect(function(Input) beginResize(Input, true, false) end)
+    Grip.InputBegan:Connect(function(Input) beginResize(Input, true, true) end)
+    Edge.MouseEnter:Connect(function() EdgeLine.BackgroundTransparency = 0.5 end)
+    Edge.MouseLeave:Connect(function() EdgeLine.BackgroundTransparency = 1 end)
+    Grip.MouseButton2Click:Connect(function() Panel:SetHeight(nil) end)
 
     Swap.MouseButton1Click:Connect(function()
         Panel:SetSide(Panel.Side == 'Right' and 'Left' or 'Right')
@@ -2598,6 +2805,7 @@ function Skin.SetUserChip(on)
     for _, c in ipairs(Chips) do
         if c.Parent then c.Visible = on and true or false end
     end
+    for _, fn in ipairs(HeaderLayouts) do pcall(fn) end
 end
 
 function Skin.SetActiveColor(c)
@@ -2796,7 +3004,7 @@ function Skin.BuildSettings(Window, Opts)
         Callback = function(v) Skin.SetCardTransparency(1 - v / 100) end,
     })
     Look:AddLabel('Active icon color'):AddColorPicker('ActiveColor', {
-        Default = Bright(), Title = 'Active icon / tab color',
+        Default = Library.AccentColor, Title = 'Active tab color (default: accent)',
         Callback = function(c) Skin.SetActiveColor(c) end,
     })
     Look:AddButton('Auto colors', function()

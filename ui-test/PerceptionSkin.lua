@@ -2273,24 +2273,49 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, Version = 'build-1027-h' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-i' }
 
 local deriving = false
-function Skin.Derive()
-    if not Skin.AutoDerive then return end
-    deriving = true
-    Library.PanelColor = mix(Library.BackgroundColor, BLACK, 0.35)
-    Library.PillColor = mix(Library.BackgroundColor, BLACK, 0.17)
-    Library.MutedColor = mix(Library.FontColor, Library.BackgroundColor, 0.45)
-    Library.CheckColor = mix(Library.BackgroundColor, WHITE, 0.1)
-    Library:UpdateColorsUsingRegistry()
+local function setPicker(key, color)
     local O = LiveOptions or getgenv().Options
-    if O then
-        for _, k in ipairs({ 'PanelColor', 'MutedColor', 'CheckColor' }) do
-            if O[k] and O[k].SetValueRGB then pcall(O[k].SetValueRGB, O[k], Library[k]) end
-        end
+    local o = O and O[key]
+    if o and o.SetValueRGB then
+        local was = deriving
+        deriving = true
+        pcall(o.SetValueRGB, o, color)
+        deriving = was
     end
-    deriving = false
+end
+
+function Skin.SyncActive()
+    if not Skin.ActiveFollow then return end
+    local changed = Library.ActiveColor ~= nil
+    Library.ActiveColor = nil
+    setPicker('ActiveColor', Library.AccentColor)
+    if changed then Library:UpdateColorsUsingRegistry() end
+end
+
+function Skin.Derive()
+    Skin.SyncActive()
+    if not Skin.AutoDerive then return end
+    local M = Skin.Manual
+    local was = deriving
+    deriving = true
+    if not M.PanelColor then Library.PanelColor = mix(Library.BackgroundColor, BLACK, 0.35) end
+    if not M.PillColor then Library.PillColor = mix(Library.BackgroundColor, BLACK, 0.17) end
+    if not M.MutedColor then Library.MutedColor = mix(Library.FontColor, Library.BackgroundColor, 0.45) end
+    if not M.CheckColor then Library.CheckColor = mix(Library.BackgroundColor, WHITE, 0.1) end
+    Library:UpdateColorsUsingRegistry()
+    for _, k in ipairs({ 'PanelColor', 'MutedColor', 'CheckColor' }) do
+        if not M[k] then setPicker(k, Library[k]) end
+    end
+    deriving = was
+end
+
+function Skin.ResetColors()
+    Skin.Manual = {}
+    Skin.ActiveFollow = true
+    Skin.Derive()
 end
 
 function Skin.SetPanelTransparency(v)
@@ -2869,12 +2894,14 @@ function Skin.SetAccent(color)
     Library.AccentColor = color
     Library.AccentColorDark = Darker(color)
     Library:UpdateColorsUsingRegistry()
+    Skin.SyncActive()
 end
 
 function Skin.SetTheme(tbl)
     for k, v in next, tbl do Library[k] = v end
     if tbl.AccentColor then Library.AccentColorDark = Darker(tbl.AccentColor) end
     Library:UpdateColorsUsingRegistry()
+    Skin.SyncActive()
 end
 
 local SETTINGS_FLAGS = {
@@ -2968,6 +2995,32 @@ function Skin.BuildSettings(Window, Opts)
     })
     Notif:AddButton('Test notification', function() Library:Notify('Notification preview', 3) end)
 
+    local function AddThemeExtras(g)
+        local function derived(label, key, title)
+            g:AddLabel(label):AddColorPicker(key, {
+                Default = Library[key], Title = title or label,
+                Callback = function(c)
+                    if deriving then return end
+                    Skin.Manual[key] = true
+                    Library[key] = c
+                    Library:UpdateColorsUsingRegistry()
+                end,
+            })
+        end
+        derived('Panel color', 'PanelColor')
+        derived('Muted text color', 'MutedColor')
+        derived('Control color', 'CheckColor')
+        g:AddLabel('Active icon color'):AddColorPicker('ActiveColor', {
+            Default = Library.AccentColor, Title = 'Active icon color (follows accent)',
+            Callback = function(c)
+                if deriving then return end
+                Skin.ActiveFollow = false
+                Skin.SetActiveColor(c)
+            end,
+        })
+    end
+
+    local extrasDone = false
     if TM then
         TM:SetLibrary(Library)
         BindEnv(TM)
@@ -2982,37 +3035,39 @@ function Skin.BuildSettings(Window, Opts)
             origUpdate(self, ...)
             Skin.Derive()
         end
+        local origApply = TM.ApplyTheme
+        TM.ApplyTheme = function(self, ...)
+            Skin.Manual = {}
+            Skin.ActiveFollow = true
+            return origApply(self, ...)
+        end
+        local ownHook = rawget(subs.Theme, 'AddLeftGroupbox')
+        local viaMeta = subs.Theme.AddLeftGroupbox
+        subs.Theme.AddLeftGroupbox = function(self, name, ...)
+            local gb = viaMeta(self, name, ...)
+            if name == 'Themes' and not extrasDone then
+                local origDiv = gb.AddDivider
+                gb.AddDivider = function(g, ...)
+                    g.AddDivider = nil
+                    if not extrasDone then
+                        extrasDone = true
+                        Safe('ThemeExtras', AddThemeExtras, g)
+                    end
+                    return origDiv(g, ...)
+                end
+            end
+            return gb
+        end
         Safe('ThemeManager', TM.ApplyToTab, TM, subs.Theme)
+        subs.Theme.AddLeftGroupbox = ownHook
+    end
+    if not extrasDone then
+        extrasDone = true
+        local Fallback = subs.Theme:AddLeftGroupbox('Colors')
+        Safe('ThemeExtras', AddThemeExtras, Fallback)
     end
 
     local Look = subs.Theme:AddRightGroupbox('Appearance')
-    Look:AddLabel('Panel color'):AddColorPicker('PanelColor', {
-        Default = Library.PanelColor, Title = 'Panel color',
-        Callback = function(c)
-            if deriving then return end
-            Skin.AutoDerive = false
-            Library.PanelColor = c
-            Library:UpdateColorsUsingRegistry()
-        end,
-    })
-    Look:AddLabel('Muted text color'):AddColorPicker('MutedColor', {
-        Default = Library.MutedColor, Title = 'Muted text color',
-        Callback = function(c)
-            if deriving then return end
-            Skin.AutoDerive = false
-            Library.MutedColor = c
-            Library:UpdateColorsUsingRegistry()
-        end,
-    })
-    Look:AddLabel('Control color'):AddColorPicker('CheckColor', {
-        Default = Library.CheckColor, Title = 'Control color',
-        Callback = function(c)
-            if deriving then return end
-            Skin.AutoDerive = false
-            Library.CheckColor = c
-            Library:UpdateColorsUsingRegistry()
-        end,
-    })
     Look:AddSlider('SkinPanelAlpha', {
         Text = 'Panel opacity', Default = math.floor((1 - PanelTransparency) * 100 + 0.5), Min = 40, Max = 100,
         Rounding = 0, HideMax = true, Suffix = '%',
@@ -3023,14 +3078,7 @@ function Skin.BuildSettings(Window, Opts)
         Rounding = 0, HideMax = true, Suffix = '%',
         Callback = function(v) Skin.SetCardTransparency(1 - v / 100) end,
     })
-    Look:AddLabel('Active icon color'):AddColorPicker('ActiveColor', {
-        Default = Library.AccentColor, Title = 'Active tab color (default: accent)',
-        Callback = function(c) Skin.SetActiveColor(c) end,
-    })
-    Look:AddButton('Auto colors', function()
-        Skin.AutoDerive = true
-        Skin.Derive()
-    end)
+    Look:AddButton('Match theme colors', function() Skin.ResetColors() end)
 
     local Shape = subs.Theme:AddRightGroupbox('Shape')
     Shape:AddSlider('SkinWindowRadius', {

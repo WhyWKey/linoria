@@ -1385,7 +1385,57 @@ local function BuildIcon(Parent, Name, state)
     end
 end
 
+local BAR_W, BAR_H = 16, 3
+local function NewSlider(parent, y, z)
+    local S = { Tweens = {}, Gen = 0 }
+    S.Bar = New('Frame', {
+        Size = UDim2.fromOffset(BAR_W, BAR_H),
+        Position = UDim2.fromOffset(0, y),
+        BackgroundColor3 = Active(),
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = z or 6,
+        Parent = parent,
+    })
+    Corner(S.Bar, 3)
+    Library:AddToRegistry(S.Bar, { BackgroundColor3 = Active })
+    function S:Hide() S.Bar.Visible = false end
+    function S:Move(x, snap)
+        local from = S.X
+        S.X = x
+        S.Gen = S.Gen + 1
+        local gen = S.Gen
+        for _, tw in ipairs(S.Tweens) do pcall(function() tw:Cancel() end) end
+        table.clear(S.Tweens)
+        S.Bar.Visible = true
+        local function settle()
+            S.Bar.Position = UDim2.fromOffset(x, y)
+            S.Bar.Size = UDim2.fromOffset(BAR_W, BAR_H)
+        end
+        if snap or not Animate or from == nil then settle() return end
+        local l, r = math.min(from, x), math.max(from, x) + BAR_W
+        local ok = pcall(function()
+            local t1 = TweenService:Create(S.Bar, TweenInfo.new(0.13, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Position = UDim2.fromOffset(l, y), Size = UDim2.fromOffset(r - l, BAR_H),
+            })
+            S.Tweens[#S.Tweens + 1] = t1
+            t1.Completed:Connect(function(state)
+                if state ~= Enum.PlaybackState.Completed or S.Gen ~= gen then return end
+                local t2 = TweenService:Create(S.Bar, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+                    Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(BAR_W, BAR_H),
+                })
+                S.Tweens[#S.Tweens + 1] = t2
+                t2:Play()
+            end)
+            t1:Play()
+        end)
+        if not ok then settle() end
+    end
+    return S
+end
+
 local TabboxSkinned = setmetatable({}, { __mode = 'k' })
+local TabboxState = setmetatable({}, { __mode = 'k' })
 
 local function SkinTabboxTab(Tabbox, TabObj)
     PatchFrom(TabObj)
@@ -1410,7 +1460,17 @@ local function SkinTabboxTab(Tabbox, TabObj)
         BoxInner.Size = UDim2.new(1, 0, 1, 0)
         Buttons.Position = UDim2.new(0, 8, 0, 8)
         Buttons.Size = UDim2.new(1, -16, 0, 24)
+        local TS = { Slider = NewSlider(BoxInner, 8 + 24 - 6, 6) }
+        function TS.Place(snap)
+            local btn = TS.Active
+            if not (btn and btn.Parent) or btn.AbsoluteSize.X <= 0 then return end
+            local x = btn.AbsolutePosition.X - BoxInner.AbsolutePosition.X + btn.AbsoluteSize.X / 2 - BAR_W / 2
+            TS.Slider:Move(x, snap)
+        end
+        Buttons:GetPropertyChangedSignal('AbsoluteSize'):Connect(function() TS.Place(true) end)
+        TabboxState[BoxOuter] = TS
     end
+    local TS = TabboxState[BoxOuter]
 
     local Button
     for _, c in ipairs(Buttons:GetChildren()) do
@@ -1435,11 +1495,11 @@ local function SkinTabboxTab(Tabbox, TabObj)
     end
     if Highlight then
         Strip(Highlight)
-        Highlight.AnchorPoint = Vector2.new(0.5, 1)
-        Highlight.Position = UDim2.new(0.5, 0, 1, 0)
-        Highlight.Size = UDim2.new(0, 14, 0, 2)
-        Corner(Highlight, 1)
+        Highlight.BackgroundTransparency = 1
     end
+    Button:GetPropertyChangedSignal('AbsolutePosition'):Connect(function()
+        if TS and TS.Active == Button then TS.Place(true) end
+    end)
     if Label then
         Label.TextSize = Library.FontSize + 1
         Label.Font = Fonts.Medium
@@ -1453,7 +1513,11 @@ local function SkinTabboxTab(Tabbox, TabObj)
             local r = Library.RegistryMap[Label]
             if r then r.Properties.TextColor3 = active and 'FontColor' or 'MutedColor' end
         end
-        if Highlight then Highlight.Visible = active end
+        if Highlight then Highlight.Visible = false end
+        if active and TS then
+            TS.Active = Button
+            TS.Place(false)
+        end
     end
 
     local origShow, origHide, origResize = TabObj.Show, TabObj.Hide, TabObj.Resize
@@ -1618,17 +1682,25 @@ local function SkinTab(ctx, Tab, Name, list)
             Parent = holder,
         })
 
+        local starts, cursor = {}, 4
+        for index = 1, #names do
+            starts[index] = cursor + widths[index] / 2 - BAR_W / 2
+            cursor = cursor + widths[index]
+        end
+        local slider = NewSlider(TabFrame, SUB_H - 6, 6)
         local function apply()
             for name, group in pairs(bar.groups) do
                 for _, frame in ipairs(group) do frame.Visible = name == bar.current end
             end
-            for name, pill in pairs(bar.pills) do
-                local active = name == bar.current
-                pill.TextColor3 = active and Active() or Library.MutedColor
-                local r = Library.RegistryMap[pill]
-                if r then r.Properties.TextColor3 = active and Active or 'MutedColor' end
-                local u = pill:FindFirstChild('Underline')
-                if u then u.Visible = active end
+            for index, name in ipairs(names) do
+                local pill = bar.pills[name]
+                if pill then
+                    local active = name == bar.current
+                    pill.TextColor3 = active and Active() or Library.MutedColor
+                    local r = Library.RegistryMap[pill]
+                    if r then r.Properties.TextColor3 = active and Active or 'MutedColor' end
+                    if active then slider:Move(starts[index]) end
+                end
             end
         end
 
@@ -1647,19 +1719,6 @@ local function SkinTab(ctx, Tab, Name, list)
                 Parent = holder,
             })
             Library:AddToRegistry(pill, { TextColor3 = 'MutedColor' })
-            local underline = New('Frame', {
-                Name = 'Underline',
-                AnchorPoint = Vector2.new(0.5, 1),
-                Position = UDim2.new(0.5, 0, 1, -3),
-                Size = UDim2.fromOffset(14, 2),
-                BackgroundColor3 = Active(),
-                BorderSizePixel = 0,
-                Visible = false,
-                ZIndex = 5,
-                Parent = pill,
-            })
-            Corner(underline, 1)
-            Library:AddToRegistry(underline, { BackgroundColor3 = Active })
             pill.MouseButton1Click:Connect(function()
                 if Library:MouseIsOverOpenedFrame() then return end
                 bar.current = name
@@ -2047,61 +2106,20 @@ local function DressWindow(Window)
 
     local ctx = { Count = 0, TabArea = TabArea, Pill = TabBarOuter, Inner = Inner, Tabs = {} }
 
-    local Bar = New('Frame', {
-        Size = UDim2.fromOffset(14, 2),
-        Position = UDim2.fromOffset(0, PILL_H - 8),
-        BackgroundColor3 = Active(),
-        BorderSizePixel = 0,
-        Visible = false,
-        ZIndex = 6,
-        Parent = TabBarOuter,
-    })
-    Corner(Bar, 1)
-    Library:AddToRegistry(Bar, { BackgroundColor3 = Active })
-    local barTweens = {}
+    local Slider = NewSlider(TabBarOuter, PILL_H - 9, 6)
     local function barSlot(btn)
         for i, t in ipairs(ctx.Tabs) do
             if t == btn then
                 local tw = btn.Size.X.Offset
-                return 7 + (i - 1) * (tw + TAB_GAP) + tw / 2 - 7
+                return 7 + (i - 1) * (tw + TAB_GAP) + tw / 2 - BAR_W / 2
             end
         end
     end
     function ctx.MoveBar(btn, snap)
         local x = barSlot(btn)
         if not x then return end
-        local y = PILL_H - 8
-        local from = ctx.BarX
         ctx.BarTarget = btn
-        ctx.BarX = x
-        for _, tw in ipairs(barTweens) do pcall(function() tw:Cancel() end) end
-        table.clear(barTweens)
-        Bar.Visible = true
-        if snap or not Animate or from == nil then
-            Bar.Position = UDim2.fromOffset(x, y)
-            Bar.Size = UDim2.fromOffset(14, 2)
-            return
-        end
-        local l, r = math.min(from, x), math.max(from, x) + 14
-        local ok = pcall(function()
-            local t1 = TweenService:Create(Bar, TweenInfo.new(0.13, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Position = UDim2.fromOffset(l, y), Size = UDim2.fromOffset(r - l, 2),
-            })
-            barTweens[#barTweens + 1] = t1
-            t1.Completed:Connect(function(state)
-                if state ~= Enum.PlaybackState.Completed or ctx.BarTarget ~= btn then return end
-                local t2 = TweenService:Create(Bar, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-                    Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(14, 2),
-                })
-                barTweens[#barTweens + 1] = t2
-                t2:Play()
-            end)
-            t1:Play()
-        end)
-        if not ok then
-            Bar.Position = UDim2.fromOffset(x, y)
-            Bar.Size = UDim2.fromOffset(14, 2)
-        end
+        Slider:Move(x, snap)
     end
 
     local TAB_MIN, TAB_MAX, HEAD_GAP = 34, 70, 14
@@ -2374,7 +2392,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-l' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-m' }
 
 local deriving = false
 local function setPicker(key, color)
@@ -2555,16 +2573,26 @@ local function TextBar(parent, names, current, y, onSelect)
         end
     end)
     local pills = {}
-    local function paint()
+    local widthOf, startOf, cursor = {}, {}, 2
+    for index, name in ipairs(names) do
+        widthOf[name] = Library:GetTextBounds(name, Fonts.Medium, Library.FontSize) + 24
+        startOf[name] = cursor + widthOf[name] / 2 - BAR_W / 2
+        cursor = cursor + widthOf[name]
+    end
+    local slider = NewSlider(parent, y + SUB_H - 6, 6)
+    local function barX(name)
+        return holder.Position.X.Offset + startOf[name] - holder.CanvasPosition.X
+    end
+    local function paint(snap)
         for name, pill in pairs(pills) do
             local on = name == current
             pill.TextColor3 = on and Active() or Library.MutedColor
             local r = Library.RegistryMap[pill]
             if r then r.Properties.TextColor3 = on and Active or 'MutedColor' end
-            local u = pill:FindFirstChild('Underline')
-            if u then u.Visible = on end
+            if on then slider:Move(barX(name), snap) end
         end
     end
+    holder:GetPropertyChangedSignal('CanvasPosition'):Connect(function() slider:Move(barX(current), true) end)
     for index, name in ipairs(names) do
         local pill = New('TextButton', {
             BackgroundTransparency = 1,
@@ -2580,19 +2608,6 @@ local function TextBar(parent, names, current, y, onSelect)
             Parent = holder,
         })
         Library:AddToRegistry(pill, { TextColor3 = 'MutedColor' })
-        local u = New('Frame', {
-            Name = 'Underline',
-            AnchorPoint = Vector2.new(0.5, 1),
-            Position = UDim2.new(0.5, 0, 1, -3),
-            Size = UDim2.fromOffset(14, 2),
-            BackgroundColor3 = Active(),
-            BorderSizePixel = 0,
-            Visible = false,
-            ZIndex = 5,
-            Parent = pill,
-        })
-        Corner(u, 1)
-        Library:AddToRegistry(u, { BackgroundColor3 = Active })
         pill.MouseButton1Click:Connect(function()
             current = name
             paint()

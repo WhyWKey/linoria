@@ -7,6 +7,8 @@ end
 Config = type(Config) == 'table' and Config or {}
 
 local Players = game:GetService('Players')
+local TweenService = game:GetService('TweenService')
+local Animate = true
 local LocalPlayer = Players.LocalPlayer
 local LiveOptions, LiveToggles = getgenv().Options, getgenv().Toggles
 
@@ -1370,7 +1372,15 @@ local function BuildIcon(Parent, Name, state)
     return function(active)
         state.active = active and true or false
         for _, it in ipairs(items) do
-            it[1][it[2]] = color()
+            local c = color()
+            if Animate then
+                local ok = pcall(function()
+                    TweenService:Create(it[1], TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { [it[2]] = c }):Play()
+                end)
+                if not ok then it[1][it[2]] = c end
+            else
+                it[1][it[2]] = c
+            end
         end
     end
 end
@@ -1501,18 +1511,26 @@ local function SkinTab(ctx, Tab, Name, list)
         Indicator.Position = UDim2.new(0.5, 0, 1, 0)
         Indicator.Size = UDim2.fromOffset(14, 2)
         Indicator.Position = UDim2.new(0.5, 0, 1, -3)
-        Indicator.BackgroundColor3 = Active()
+        Indicator.BackgroundTransparency = 1
         Library:RemoveFromRegistry(Indicator)
-        Library:AddToRegistry(Indicator, { BackgroundColor3 = Active })
         Corner(Indicator, 1)
     end
 
     local state = { active = false }
     local setIcon = BuildIcon(TabButton, Name, state)
 
-    local function style(active)
-        TabButton.BackgroundTransparency = active and 0 or 1
+    local function style(active, initial)
+        local goal = active and 0 or 1
+        if Animate and not initial then
+            local ok = pcall(function()
+                TweenService:Create(TabButton, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = goal }):Play()
+            end)
+            if not ok then TabButton.BackgroundTransparency = goal end
+        else
+            TabButton.BackgroundTransparency = goal
+        end
         setIcon(active)
+        if active and not initial and ctx.MoveBar then ctx.MoveBar(TabButton) end
     end
 
     local origShow, origHide = Tab.ShowTab, Tab.HideTab
@@ -1524,7 +1542,8 @@ local function SkinTab(ctx, Tab, Name, list)
         origHide(t, ...)
         style(false)
     end
-    style(Indicator and Indicator.Visible or false)
+    local initialActive = Indicator and Indicator.Visible or false
+    style(initialActive, true)
 
     TabButton.MouseEnter:Connect(function()
         local tip = ctx.Tip
@@ -1546,6 +1565,7 @@ local function SkinTab(ctx, Tab, Name, list)
     ctx.Count = ctx.Count + 1
     ctx.Tabs[#ctx.Tabs + 1] = TabButton
     if ctx.Relayout then ctx.Relayout() end
+    if initialActive and ctx.MoveBar then ctx.MoveBar(TabButton, true) end
 
     local sides = {}
     for _, i in ipairs(list) do
@@ -2027,6 +2047,63 @@ local function DressWindow(Window)
 
     local ctx = { Count = 0, TabArea = TabArea, Pill = TabBarOuter, Inner = Inner, Tabs = {} }
 
+    local Bar = New('Frame', {
+        Size = UDim2.fromOffset(14, 2),
+        Position = UDim2.fromOffset(0, PILL_H - 8),
+        BackgroundColor3 = Active(),
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 6,
+        Parent = TabBarOuter,
+    })
+    Corner(Bar, 1)
+    Library:AddToRegistry(Bar, { BackgroundColor3 = Active })
+    local barTweens = {}
+    local function barSlot(btn)
+        for i, t in ipairs(ctx.Tabs) do
+            if t == btn then
+                local tw = btn.Size.X.Offset
+                return 7 + (i - 1) * (tw + TAB_GAP) + tw / 2 - 7
+            end
+        end
+    end
+    function ctx.MoveBar(btn, snap)
+        local x = barSlot(btn)
+        if not x then return end
+        local y = PILL_H - 8
+        local from = ctx.BarX
+        ctx.BarTarget = btn
+        ctx.BarX = x
+        for _, tw in ipairs(barTweens) do pcall(function() tw:Cancel() end) end
+        table.clear(barTweens)
+        Bar.Visible = true
+        if snap or not Animate or from == nil then
+            Bar.Position = UDim2.fromOffset(x, y)
+            Bar.Size = UDim2.fromOffset(14, 2)
+            return
+        end
+        local l, r = math.min(from, x), math.max(from, x) + 14
+        local ok = pcall(function()
+            local t1 = TweenService:Create(Bar, TweenInfo.new(0.13, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Position = UDim2.fromOffset(l, y), Size = UDim2.fromOffset(r - l, 2),
+            })
+            barTweens[#barTweens + 1] = t1
+            t1.Completed:Connect(function(state)
+                if state ~= Enum.PlaybackState.Completed or ctx.BarTarget ~= btn then return end
+                local t2 = TweenService:Create(Bar, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+                    Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(14, 2),
+                })
+                barTweens[#barTweens + 1] = t2
+                t2:Play()
+            end)
+            t1:Play()
+        end)
+        if not ok then
+            Bar.Position = UDim2.fromOffset(x, y)
+            Bar.Size = UDim2.fromOffset(14, 2)
+        end
+    end
+
     local TAB_MIN, TAB_MAX, HEAD_GAP = 34, 70, 14
     local relaying = false
     local function titleWidth()
@@ -2072,6 +2149,7 @@ local function DressWindow(Window)
             ctx.Pill.Position = UDim2.new(0, math.floor(cx + 0.5), 0, HEADER / 2)
         end
         relaying = false
+        if ctx.BarTarget then ctx.MoveBar(ctx.BarTarget, true) end
     end
     HeaderLayouts[#HeaderLayouts + 1] = ctx.Relayout
     Outer:GetPropertyChangedSignal('Size'):Connect(ctx.Relayout)
@@ -2296,7 +2374,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-k' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-l' }
 
 local deriving = false
 local function setPicker(key, color)
@@ -3210,7 +3288,7 @@ end
 local SETTINGS_FLAGS = {
     'KeybindMenuOpen', 'SkinKeybindMode', 'MenuKeybind', 'LinoriaKeybindTransparency', 'LinoriaUseBlur', 'LinoriaBlurSize',
     'LinoriaUseDarken', 'LinoriaDarkenAmount', 'SkinWireframe', 'SkinFontSize', 'SkinNotifyAlign', 'SkinNotifySide',
-    'SkinNotifyX', 'SkinNotifyY', 'SkinNotifyAlpha', 'PanelColor', 'MutedColor', 'CheckColor', 'ActiveColor', 'SkinPanelAlpha', 'SkinCardAlpha', 'SkinWindowRadius', 'SkinCardRadius', 'SkinControlRadius', 'SkinBorderAlpha', 'SkinShadow', 'SkinUserChip', 'SkinFont', 'SkinNativeCursor',
+    'SkinNotifyX', 'SkinNotifyY', 'SkinNotifyAlpha', 'PanelColor', 'MutedColor', 'CheckColor', 'ActiveColor', 'SkinPanelAlpha', 'SkinCardAlpha', 'SkinWindowRadius', 'SkinCardRadius', 'SkinControlRadius', 'SkinBorderAlpha', 'SkinShadow', 'SkinUserChip', 'SkinFont', 'SkinNativeCursor', 'SkinAnimations',
 }
 
 local function BindEnv(tbl)
@@ -3259,6 +3337,11 @@ function Skin.BuildSettings(Window, Opts)
     Menu:AddSlider('SkinFontSize', {
         Text = 'Font size', Default = Library.FontSize, Min = 11, Max = 18, Rounding = 0, HideMax = true,
         Callback = function(v) if v ~= Library.FontSize then Library:SetFontSize(v) end end,
+    })
+    Menu:AddToggle('SkinAnimations', {
+        Text = 'Tab animations',
+        Default = Animate,
+        Callback = function(v) Animate = v and true or false end,
     })
     Menu:AddToggle('SkinNativeCursor', {
         Text = 'System cursor',

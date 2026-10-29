@@ -1460,7 +1460,7 @@ local function SkinTabboxTab(Tabbox, TabObj)
         BoxInner.Size = UDim2.new(1, 0, 1, 0)
         Buttons.Position = UDim2.new(0, 8, 0, 8)
         Buttons.Size = UDim2.new(1, -16, 0, 24)
-        local TS = { Slider = NewSlider(BoxInner, 8 + 24 - 6, 6) }
+        local TS = { Slider = NewSlider(BoxInner, 8 + 24 - 2, 6) }
         function TS.Place(snap)
             local btn = TS.Active
             if not (btn and btn.Parent) or btn.AbsoluteSize.X <= 0 then return end
@@ -1687,7 +1687,7 @@ local function SkinTab(ctx, Tab, Name, list)
             starts[index] = cursor + widths[index] / 2 - BAR_W / 2
             cursor = cursor + widths[index]
         end
-        local slider = NewSlider(TabFrame, SUB_H - 6, 6)
+        local slider = NewSlider(TabFrame, SUB_H - 5, 6)
         local function apply()
             for name, group in pairs(bar.groups) do
                 for _, frame in ipairs(group) do frame.Visible = name == bar.current end
@@ -2392,7 +2392,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-m' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-n' }
 
 local deriving = false
 local function setPicker(key, color)
@@ -2549,7 +2549,6 @@ local function TextBar(parent, names, current, y, onSelect)
         BackgroundTransparency = 0.25,
         BorderSizePixel = 0,
         CanvasSize = UDim2.new(),
-        AutomaticCanvasSize = Enum.AutomaticSize.X,
         ScrollBarThickness = 0,
         ScrollingDirection = Enum.ScrollingDirection.X,
         TopImage = '',
@@ -2560,12 +2559,6 @@ local function TextBar(parent, names, current, y, onSelect)
     Library:AddToRegistry(holder, { BackgroundColor3 = 'PillColor' })
     Corner(holder, 6, 'pill')
     Stroke(holder, 'OutlineColor', 1, 0.65, true)
-    New('UIPadding', { PaddingLeft = UDim.new(0, 2), Parent = holder })
-    New('UIListLayout', {
-        FillDirection = Enum.FillDirection.Horizontal,
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Parent = holder,
-    })
     holder.InputChanged:Connect(function(Input)
         if Input.UserInputType == Enum.UserInputType.MouseWheel then
             local maxX = math.max(holder.AbsoluteCanvasSize.X - holder.AbsoluteSize.X, 0)
@@ -2579,9 +2572,10 @@ local function TextBar(parent, names, current, y, onSelect)
         startOf[name] = cursor + widthOf[name] / 2 - BAR_W / 2
         cursor = cursor + widthOf[name]
     end
-    local slider = NewSlider(parent, y + SUB_H - 6, 6)
+    holder.CanvasSize = UDim2.fromOffset(cursor + 2, 0)
+    local slider = NewSlider(holder, SUB_H - 5, 6)
     local function barX(name)
-        return holder.Position.X.Offset + startOf[name] - holder.CanvasPosition.X
+        return startOf[name]
     end
     local function paint(snap)
         for name, pill in pairs(pills) do
@@ -2592,12 +2586,12 @@ local function TextBar(parent, names, current, y, onSelect)
             if on then slider:Move(barX(name), snap) end
         end
     end
-    holder:GetPropertyChangedSignal('CanvasPosition'):Connect(function() slider:Move(barX(current), true) end)
     for index, name in ipairs(names) do
         local pill = New('TextButton', {
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Size = UDim2.fromOffset(Library:GetTextBounds(name, Fonts.Medium, Library.FontSize) + 24, SUB_H),
+            Position = UDim2.fromOffset(startOf[name] + BAR_W / 2 - widthOf[name] / 2, 0),
+            Size = UDim2.fromOffset(widthOf[name], SUB_H),
             LayoutOrder = index,
             Font = Fonts.Medium,
             Text = name,

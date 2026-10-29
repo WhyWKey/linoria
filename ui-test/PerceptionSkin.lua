@@ -1156,6 +1156,8 @@ local function SkinGroupbox(Groupbox)
 end
 
 local IconData = {
+    curfill = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAADcElEQVR42u3by4scVRTH8U+NncTo4ECCokyEgAo+NiarEBAFESEg6ka3Ety5UUERBI0gbtzHP8BFIrhQdKGgKGqiEBE3ii98IMTxAeNojJqJXS76FNwUk8k0TNet6q4LTUH17eq633vO7zyquyjL0iyPOTM+egA9gB5AD6AH0AMYfxSzCqDAAOW0gBgXwI14CPtxUYAoph1AtcCtuBfP4Hncg0u6DmEwxtwd2IuFsIDLcRVexEpAKKfZBXZgMRY5xHV4Ag9jVxcXPy6ArdgWO13t9iIexWPY3UVhHFcEy5o2lLgMB/FsuEg5zQDWEsgS87gfT4c+DLpiDZuRCVYQBjgQEeJAki8U0w4g3elBWMChsIj5tkOYRC1QYk9owsHQiNZCmASAaqG78XhEidaGyUlWg1WYfKTNYXKSADoRJifdD2h9mGyiIdLqMNlUR6i1YTJHS6xVYTIHgFaFyZxN0fOFyZkBsFaY3DNLAFJLmMd9eAo3z5ILFIkmbMHdeNCo+9RInjDI7AJn8Fccf8dv+LFJQcwF4A8cw0f4DqfwK37GEv5MrGTqAPyLo5ER/oDVnAI02GSfXs9vK5//CS/jm3Xmd8oF6mLmApndSph79Zlhl2qBYp0dPxuvC6l3mRyzl8bjWMAZ/JPc+Fz482c4EeIFV+JWXH+e62zHpW3pB4wDYDlUujLdk3gJR/AlTsf5i3EHnowGSH1cYfRU6VjXAKzg61Dtr3A4Fr9cm7eKVyPFfc7o+WGqCQvYh1ci9md9prgRANXNnY6b/g/v4a1wgbouzMWcN3Fn1P319/fjBnzYJQsQicsn+DvZ1fruDeP8Et4Id9hZm3dtwPk0rtWZKHA2LKHcgOmWOB7A6hXg9gBzTVM5/2YWQ8UGkpXqve/xdiKQ6Wduwm3O/clNJwCUY4BaxTv4Yg0rWDBqjl6d0wqaKIc/x/shjPVF7o2IMJVN0UonToUVnKydLyMnuCuOWRqjTTVETkQEWctN9snQCmsKQKUXS5E3LCe7X+32LtwSGWTjVtDUk6Eh3sXHCZhhcg9bplkEKyv4NmqHX+J75xL3eD0SosbT4qY6QkUkUa9FlfhAnPsALyQpceP5QJHhT1OLuD1c4LhRTzBbIlT0/xrLAD05Zv99QI6ucJnL39tiATPvAj2AHkAPoAfQA2jL+B+h4tbrNdoapAAAAABJRU5ErkJggg==',
+    curout = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAD6ElEQVR42u3b3WscZRTH8c8kG5KmxrdaX2OLxpcqYvENUfAFr7zwyksFb/snieidF3qrqHihoCJUqrYIVoXqRU1ibRLb1KZpkjVZL+YMDsumuyuZl+zmwLDDMMzM853znN85Z55NJicnDbONGHLbA7AHYMit0ce5SYdjrWEC0BpmDxjDrbgt9i9jARexOegARvAI3sBjAeAifsSn+BZXdiuA0bGxsW5zfgqv4xgext24H49iBldxDquDCuAuvIYncscSjOdgbGEWK4MI4F68Gr/54y2MRlyYCSB/4MKgATiMVzDddjz/ezMexATmA8LWoACYxssdALSfOxWecDAU4s/dAGGnAGS2PwdhCefRHCYAIhYcju1SBMeNQcgE+7H9eAH7cB0+iWkxNACy7PFp3ICb8H7EhdagT4H2LPJgSGgtZbJoALWXyTIA1FomywJQW5ksG0DtZLJR0X1rI5ONCr2vFjJZxRSolUxWDaBymawDgO1k8rwS+o11AdAukwdwVtpqKzQmVBkEt7OpAL4YAM4WebM6fhlq4Xq8JO1Djg4bgAzC7dKG63iRU69RowHn95N4tvGiX1JdACQd9pfa0uTWoALYlH5ZWsE6/g4Z/Cq25iB7wAK+wcl425eln90WclnhwMrgCj7EmziDtfCGUnsEVQDIgtxV6QfW0+H6neJB4YXRyA4PrJ+AN4UHcEscG8ldp1VWVbiTAJI+YU3gqSiCqKg91guAjZif17JlfI+f+uzu3IfncGMJdcb/LoYm8SyOdNDrLfyG9/AWfsAduLML3Ow6E+ENp6IMLh1AL0FwOQa5Km1fZbYeA34XH2AuqrmJSGNnegyGD+GZCIZX4lirDh6QWTO2ffGAc1GhfYl38FHU7km4/6UY/JEuhUzewzYiF1gs2wt68YB/IlmZl/buktDrxUhW2uf8LL7A8ziUe9PbecEojuJJ/NomibXwgAzCXwFhLga+3KFjk8S5W9KFVTM9xoLJ8K6Tcd2kbgCyh23fthvQasSBx2Nw3bygIe0Snw4v2KojgH6sGW/+aEyDbhKXRPCcDTldK8sLiqi1syj+C070ENnz0+BQm9LsSgDZQC/geMSMXp+lUXaXqqibZcHwVLh0s4okp0oAmc3ja/9992t18ZzSiqCiAeRL3uMhb5vXGLQ4d07JS26L9IBsYGfwMX7vMA2SXAZ5Ap9HHqAsTyhKBtslcSlS6emQu6yQyhZaf4a3Y7qslekBSUl/mxvBPXhRusr8QEyJc/gZ31WRBpcJILNx6VefrAzOusGVLZMpuye4HkXUdsnTwAPolBK3VLh4sqqu8NAkQrW3PQB7AIbc/gX8ZwIYLlkjtAAAAABJRU5ErkJggg==',
     rage = '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',
     misc = 'iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAQAAABIkb+zAAAEnklEQVR42u2bwW8bRRSHv9lxHWJSibYRSnMAKhDQCxWCXOAGhQOF/wAhceiVO0g9VEj8A3DpBbhwRggJUZDoEUoRHChSGk6VClIrUZHaEjTrnR8H1qsktuNd+82uI3nmENuKnfnNe/PmvS/PThzukbAQsBCwELAQsBAww2hN/U6X/9ThE+DwiCx/5nEEQlMCXOUN9PnSPUeB+/yTPwvN2KKaAAeIhznH6zzNSaDLJt/yJTeApBE7qPxMhNAF3db+8a8+1gkhL+qe1ZZ/XF9LklL1lSkoKFNfqSRpSxtNSCj7i05OJ/SjpB2FIQsE7Ui6q43CTrXNcWdgf5D0iMucJeXIGF/M8NzhDLdxxVlwxt5e8gy4IUfwQu9J2tFBI5V0OaINklGfPGwBh4AObaBPL9/HVTZ5CDdhTzM8L3ElD7VLdJCJFQSI7WJ1B1xkDrHORV5lmRbvcgmPo88bHCebmHgI8TZX8pB6mm/wZm7U53s+4OpQsB46qid1s3CKl4W8vNDnCnm0OWgESbe0nLvRMfVkO1Kd3R/pkn2pnXifR7hPIHCPLUAEljmNK5H4OcQqp/LHPX5D9M0OwQ4tPqS91wLJnj+fcZRziDaOhD73ciMts1Yypogl1gGHI6WLM5xtAk/xLMKPT6dbLO0SlEwIYZPCXYxkvTO+HhCev7mKI80FDI54Srd0tjSwGyS7d8pgZIi/+HnXPTO0R0JcINBG9Fnh8dwOXTZRiVRNOLa5kZ+cDk8SEMFoejwX2SbZ7Q97BQQcP/Eav5LQosWZwpG+G47AI0ZAXKOXf+pjrJHQIjGaf/AOH5EUlciYdDohkPAcD+K4xe84HIEnuM6RUhfZm3xGiwyxyjOGNULGL3RHbOOIeOVHvvLpxFSiL2lLD8jJRUomfNlkbhB/Bn7vcBzjGqfIxh7MADhe4IfirnTGUWh0zVehGnhed/OUbdTuB0nn668IqplvQ39KypQqK6qCkJc0qc4Ltea3Ivtfwrq+KnY92yXjul5sYvnVBAwy/Vf0iW6qny/9jr7QW2o3UxGrMlZxearQ4VHWgB5bbBfh91BwIfCw5zJJSMimivgGdM9N+V5XXGphyqUb0T3XCE4zpHv1C7CmezVHDXO6V//yjelencuPQvcmkTlLojYr3ZuBzFmlwrPRvSnInDPYewu6xzRkbsXAjTK8Gd2bisxZDEu6V4HMWbi9Nd2rSOYspi3dq0zmbBIHa7pXgczZCLCje5XInAVJs6Z7FcmcxbSlexXJ3IpJEmFH92Yic1apxKx0rzKZs0nlrOjeTGTOqhowp3v1FjQR6F7dJaU53aufpRnTvSawiindsxVQnrSZ0T0rAdOQtlnpnqGABvvoZhfQdB/dvJG2uP/gmMM+urkjbdY9czFJW409c3FIWw09cy4SaXNT7L0JmbMkbbX0zMUmbRF75uogbZF75uKTtug9c/WQtog9c7FJW9SeuTpIW+SeufikLXLP3Epk0lZrz1ws0ha9Zy4uaau1Z25u++jmjrTVK2AO+ujmjrQ1QeYa7aOzAlt2fXQNokUT0nY4euYMx+Ir6QsBCwELAQsBM43/AOEXWYY4CDReAAAAAElFTkSuQmCC',
     tele = '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',
@@ -2145,8 +2147,29 @@ if type(OrigToggle) == 'function' then
                 img.Parent = gui
                 return img
             end
-            local outline = arrow(19, 1, BLACK)
-            local fill = arrow(17, 2, Library.AccentColor)
+            local outline, fill
+            local useSprite = false
+            local assetOut, assetFill = IconAsset('curout'), IconAsset('curfill')
+            if assetOut and assetFill then
+                local function sprite(asset, z, color)
+                    local img = Instance.new('ImageLabel')
+                    img.Image = asset
+                    img.BackgroundTransparency = 1
+                    img.AnchorPoint = Vector2.new(10 / 64, 7 / 64)
+                    img.Size = UDim2.fromOffset(30, 30)
+                    img.ZIndex = z
+                    img.ImageColor3 = color
+                    img.Active = false
+                    img.Parent = gui
+                    return img
+                end
+                outline = sprite(assetOut, 1, Color3.new(1, 1, 1))
+                fill = sprite(assetFill, 2, Library.AccentColor)
+                useSprite = true
+            else
+                outline = arrow(19, 1, BLACK)
+                fill = arrow(17, 2, Library.AccentColor)
+            end
             task.spawn(function()
                 while Library.Toggled and Library.ScreenGui.Parent do
                     for _, c in ipairs(mine) do
@@ -2161,8 +2184,8 @@ if type(OrigToggle) == 'function' then
                         InputService.MouseIconEnabled = false
                         local m = InputService:GetMouseLocation()
                         fill.Position = UDim2.fromOffset(m.X, m.Y)
-                        outline.Position = UDim2.fromOffset(m.X - 1, m.Y - 1)
-                        fill.ImageColor3 = Library.AccentColor
+                        outline.Position = useSprite and UDim2.fromOffset(m.X, m.Y) or UDim2.fromOffset(m.X - 1, m.Y - 1)
+                        fill.ImageColor3 = Active()
                     end
                     RunService.RenderStepped:Wait()
                 end
@@ -2273,7 +2296,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-i' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-j' }
 
 local deriving = false
 local function setPicker(key, color)
@@ -2844,6 +2867,289 @@ function Skin.SetShadow(on)
     for _, sh in ipairs(Shadows) do
         if sh.Parent then sh.Visible = on and true or false end
     end
+end
+
+local TI_GOOD, TI_WARN, TI_BAD = Color3.fromRGB(110, 220, 120), Color3.fromRGB(240, 200, 90), Color3.fromRGB(230, 95, 95)
+local function toHex(c)
+    return string.format('#%02x%02x%02x', math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+end
+
+Guard('watermark', function()
+    local WM = Library.Watermark
+    local label = Library.WatermarkText
+    if not (WM and label) then return end
+    local inner = WM:FindFirstChildOfClass('Frame')
+    for _, c in ipairs(WM:GetDescendants()) do
+        if c:IsA('UIGradient') or c:IsA('UIStroke') or c:IsA('UICorner') then
+            Library:RemoveFromRegistry(c)
+            c:Destroy()
+        end
+    end
+    if inner then
+        for _, c in ipairs(inner:GetChildren()) do
+            if c:IsA('Frame') then c.Visible = false end
+        end
+        Library:RemoveFromRegistry(inner)
+        inner.BackgroundTransparency = 1
+        inner.BorderSizePixel = 0
+    end
+    WM.BorderSizePixel = 0
+    WM.BackgroundColor3 = Library.PanelColor
+    WM.BackgroundTransparency = PanelTransparency
+    Panels[#Panels + 1] = WM
+    Reg(WM, { BackgroundColor3 = 'PanelColor' })
+    Corner(WM, 8, 'card')
+    Stroke(WM, 'OutlineColor', 1, 0.3, true)
+    local bar = New('Frame', {
+        Position = UDim2.new(0, 10, 1, -3),
+        Size = UDim2.new(0, 14, 0, 2),
+        BackgroundColor3 = Active(),
+        BorderSizePixel = 0,
+        ZIndex = 204,
+        Parent = WM,
+    })
+    Corner(bar, 1)
+    Library:AddToRegistry(bar, { BackgroundColor3 = Active })
+    label.Parent = WM
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.Size = UDim2.new(1, -20, 1, -2)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Fonts.Medium
+    label.TextSize = Library.FontSize
+    label.ZIndex = 204
+    local origSet = Library.SetWatermark
+    Library.SetWatermark = function(self, Text)
+        local x, y = Library:GetTextBounds(Text, Fonts.Medium, Library.FontSize)
+        WM.Size = UDim2.new(0, math.ceil(x) + 22, 0, 28)
+        Library:SetWatermarkVisibility(true)
+        label.Text = Text
+    end
+    if label.Text ~= '' then Library:SetWatermark(label.Text) end
+end)
+
+function Skin.CreateTargetInfo(o)
+    o = o or {}
+    local W = o.Width or 330
+    local TI = { Options = { Health = true, Status = true, Extra = true } }
+    local Outer = New('Frame', {
+        Name = 'PerceptionTargetInfo',
+        Position = o.Position or UDim2.new(1, -W - 24, 0.35, 0),
+        Size = UDim2.fromOffset(W, 120),
+        BackgroundColor3 = Library.PanelColor,
+        BackgroundTransparency = PanelTransparency,
+        BorderSizePixel = 0,
+        Active = true,
+        Visible = false,
+        ZIndex = 100,
+        Parent = Library.ScreenGui,
+    })
+    Panels[#Panels + 1] = Outer
+    Reg(Outer, { BackgroundColor3 = 'PanelColor' })
+    Corner(Outer, 10, 'card')
+    Stroke(Outer, 'OutlineColor', 1, 0.3, true)
+    TI.Outer = Outer
+    TI.Frame = Outer
+
+    local avatarBack = New('Frame', {
+        Position = UDim2.fromOffset(12, 12),
+        Size = UDim2.fromOffset(48, 48),
+        BackgroundColor3 = Library.PillColor,
+        BorderSizePixel = 0,
+        ZIndex = 101,
+        Parent = Outer,
+    })
+    Library:AddToRegistry(avatarBack, { BackgroundColor3 = 'PillColor' })
+    Corner(avatarBack, 24)
+    local avatar = New('ImageLabel', {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = '',
+        ZIndex = 102,
+        Parent = avatarBack,
+    })
+    Corner(avatar, 24)
+    Stroke(avatarBack, 'OutlineColor', 1, 0.5, true)
+
+    local nameLabel = Library:CreateLabel({
+        Position = UDim2.fromOffset(70, 13),
+        Size = UDim2.new(1, -170, 0, 18),
+        TextSize = Library.FontSize + 2,
+        Font = Fonts.Bold,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Text = 'No target',
+        ZIndex = 102,
+        Parent = Outer,
+    })
+    Library:RemoveFromRegistry(nameLabel)
+    nameLabel.TextColor3 = Bright()
+    Library:AddToRegistry(nameLabel, { TextColor3 = Bright })
+    local subLabel = Library:CreateLabel({
+        Position = UDim2.fromOffset(70, 34),
+        Size = UDim2.new(1, -82, 0, 16),
+        TextSize = Library.FontSize - 1,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        RichText = true,
+        Text = '',
+        ZIndex = 102,
+        Parent = Outer,
+    })
+    Muted(subLabel)
+
+    local chip = New('Frame', {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -12, 0, 12),
+        Size = UDim2.fromOffset(74, 20),
+        BackgroundColor3 = Library.PillColor,
+        BorderSizePixel = 0,
+        ZIndex = 101,
+        Parent = Outer,
+    })
+    Library:AddToRegistry(chip, { BackgroundColor3 = 'PillColor' })
+    Corner(chip, 10)
+    Stroke(chip, 'OutlineColor', 1, 0.5, true)
+    local chipDot = New('Frame', {
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 8, 0.5, 0),
+        Size = UDim2.fromOffset(6, 6),
+        BackgroundColor3 = Library.MutedColor,
+        BorderSizePixel = 0,
+        ZIndex = 102,
+        Parent = chip,
+    })
+    Corner(chipDot, 3)
+    local chipText = Library:CreateLabel({
+        Position = UDim2.fromOffset(18, 0),
+        Size = UDim2.new(1, -22, 1, 0),
+        TextSize = Library.FontSize - 2,
+        Font = Fonts.Medium,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = '',
+        ZIndex = 102,
+        Parent = chip,
+    })
+
+    local function makeRow(caption)
+        local row = {}
+        row.caption = Library:CreateLabel({
+            Size = UDim2.new(0.5, -12, 0, 14),
+            TextSize = Library.FontSize - 1,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Text = caption,
+            ZIndex = 102,
+            Parent = Outer,
+        })
+        Muted(row.caption)
+        row.value = Library:CreateLabel({
+            Size = UDim2.new(0.5, -12, 0, 14),
+            TextSize = Library.FontSize - 1,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            RichText = true,
+            Text = '',
+            ZIndex = 102,
+            Parent = Outer,
+        })
+        row.track = New('Frame', {
+            Size = UDim2.new(1, -24, 0, 4),
+            BackgroundColor3 = Library.PillColor,
+            BorderSizePixel = 0,
+            ZIndex = 101,
+            Parent = Outer,
+        })
+        Library:AddToRegistry(row.track, { BackgroundColor3 = 'PillColor' })
+        Corner(row.track, 2)
+        row.fill = New('Frame', {
+            Size = UDim2.new(0, 0, 1, 0),
+            BackgroundColor3 = Active(),
+            BorderSizePixel = 0,
+            ZIndex = 102,
+            Parent = row.track,
+        })
+        Corner(row.fill, 2)
+        Library:AddToRegistry(row.fill, { BackgroundColor3 = Active })
+        return row
+    end
+    local health = makeRow('Health')
+    local range = makeRow('Distance')
+
+    local function place(row, y, on)
+        row.caption.Visible, row.value.Visible, row.track.Visible = on, on, on
+        if on then
+            row.caption.Position = UDim2.fromOffset(12, y)
+            row.value.Position = UDim2.new(0.5, 0, 0, y)
+            row.track.Position = UDim2.fromOffset(12, y + 18)
+        end
+    end
+    function TI:Layout()
+        local y = 70
+        place(health, y, TI.Options.Health)
+        if TI.Options.Health then y = y + 30 end
+        place(range, y, TI.Options.Status)
+        if TI.Options.Status then y = y + 30 end
+        subLabel.Visible = TI.Options.Extra
+        chip.Visible = TI.Options.Status
+        Outer.Size = UDim2.fromOffset(W, y + 8)
+    end
+    TI:Layout()
+
+    function TI:SetOption(name, v)
+        TI.Options[name] = v and true or false
+        TI:Layout()
+    end
+    function TI:SetVisible(v)
+        Outer.Visible = v and true or false
+    end
+    local lastId
+    function TI:Update(d)
+        if not d then
+            nameLabel.Text = 'No target'
+            subLabel.Text = ''
+            health.value.Text, range.value.Text = '', ''
+            health.fill.Size = UDim2.new(0, 0, 1, 0)
+            range.fill.Size = UDim2.new(0, 0, 1, 0)
+            chipText.Text = 'Idle'
+            chipText.TextColor3 = Library.MutedColor
+            chipDot.BackgroundColor3 = Library.MutedColor
+            if lastId then lastId = nil; avatar.Image = '' end
+            return
+        end
+        local display = d.Display or d.Name or 'Target'
+        nameLabel.Text = (d.Name and d.Name ~= display) and (display .. '  @' .. d.Name) or display
+        if d.UserId and d.UserId ~= lastId then
+            lastId = d.UserId
+            avatar.Image = string.format('rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150', d.UserId)
+        end
+        local accent = toHex(Active())
+        local muted = toHex(Library.MutedColor)
+        subLabel.Text = string.format('<font color="%s">team</font> <font color="%s">%s</font>   <font color="%s">tool</font> <font color="%s">%s</font>',
+            muted, d.TeamColor and toHex(d.TeamColor) or accent, tostring(d.Team or 'none'), muted, accent, tostring(d.Tool or 'none'))
+        if d.Health then
+            local max = math.max(d.MaxHealth or 100, 1)
+            local ratio = math.clamp(d.Health / max, 0, 1)
+            health.fill.Size = UDim2.new(ratio, 0, 1, 0)
+            health.fill.BackgroundColor3 = ratio < 0.35 and TI_BAD or Active()
+            Library.RegistryMap[health.fill].Properties.BackgroundColor3 = ratio < 0.35 and TI_BAD or Active
+            health.value.Text = string.format('%d / %d', math.floor(d.Health + 0.5), math.floor(max + 0.5))
+        end
+        local sight = d.Sight or 'Blocked'
+        local color = sight == 'Visible' and TI_GOOD or (sight == 'Blocked' and TI_BAD or TI_WARN)
+        local limit = math.max(d.Range or 1000, 1)
+        local dist = d.Distance or 0
+        range.fill.Size = UDim2.new(math.clamp(1 - dist / limit, 0, 1), 0, 1, 0)
+        range.fill.BackgroundColor3 = color
+        Library.RegistryMap[range.fill].Properties.BackgroundColor3 = color
+        range.value.Text = string.format('%d studs', math.floor(dist + 0.5))
+        chipText.Text = sight
+        chipText.TextColor3 = color
+        chipDot.BackgroundColor3 = color
+    end
+    TI:Update(nil)
+
+    AttachDrag(Outer, Outer)
+    function TI:Destroy() Outer:Destroy() end
+    return TI
 end
 
 function Skin.SetUserChip(on)

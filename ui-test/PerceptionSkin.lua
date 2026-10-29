@@ -2296,7 +2296,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-j' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-k' }
 
 local deriving = false
 local function setPicker(key, color)
@@ -3031,8 +3031,8 @@ function Skin.CreateTargetInfo(o)
         Parent = chip,
     })
 
-    local function makeRow(caption)
-        local row = {}
+    local function makeRow(caption, bar)
+        local row = { bar = bar }
         row.caption = Library:CreateLabel({
             Size = UDim2.new(0.5, -12, 0, 14),
             TextSize = Library.FontSize - 1,
@@ -3052,6 +3052,7 @@ function Skin.CreateTargetInfo(o)
             Parent = Outer,
         })
         row.track = New('Frame', {
+            Visible = bar,
             Size = UDim2.new(1, -24, 0, 4),
             BackgroundColor3 = Library.PillColor,
             BorderSizePixel = 0,
@@ -3071,11 +3072,11 @@ function Skin.CreateTargetInfo(o)
         Library:AddToRegistry(row.fill, { BackgroundColor3 = Active })
         return row
     end
-    local health = makeRow('Health')
-    local range = makeRow('Distance')
+    local health = makeRow('Health', true)
+    local range = makeRow('Distance', false)
 
     local function place(row, y, on)
-        row.caption.Visible, row.value.Visible, row.track.Visible = on, on, on
+        row.caption.Visible, row.value.Visible, row.track.Visible = on, on, on and row.bar
         if on then
             row.caption.Position = UDim2.fromOffset(12, y)
             row.value.Position = UDim2.new(0.5, 0, 0, y)
@@ -3087,7 +3088,7 @@ function Skin.CreateTargetInfo(o)
         place(health, y, TI.Options.Health)
         if TI.Options.Health then y = y + 30 end
         place(range, y, TI.Options.Status)
-        if TI.Options.Status then y = y + 30 end
+        if TI.Options.Status then y = y + 24 end
         subLabel.Visible = TI.Options.Extra
         chip.Visible = TI.Options.Status
         Outer.Size = UDim2.fromOffset(W, y + 8)
@@ -3108,7 +3109,6 @@ function Skin.CreateTargetInfo(o)
             subLabel.Text = ''
             health.value.Text, range.value.Text = '', ''
             health.fill.Size = UDim2.new(0, 0, 1, 0)
-            range.fill.Size = UDim2.new(0, 0, 1, 0)
             chipText.Text = 'Idle'
             chipText.TextColor3 = Library.MutedColor
             chipDot.BackgroundColor3 = Library.MutedColor
@@ -3137,9 +3137,6 @@ function Skin.CreateTargetInfo(o)
         local color = sight == 'Visible' and TI_GOOD or (sight == 'Blocked' and TI_BAD or TI_WARN)
         local limit = math.max(d.Range or 1000, 1)
         local dist = d.Distance or 0
-        range.fill.Size = UDim2.new(math.clamp(1 - dist / limit, 0, 1), 0, 1, 0)
-        range.fill.BackgroundColor3 = color
-        Library.RegistryMap[range.fill].Properties.BackgroundColor3 = color
         range.value.Text = string.format('%d studs', math.floor(dist + 0.5))
         chipText.Text = sight
         chipText.TextColor3 = color

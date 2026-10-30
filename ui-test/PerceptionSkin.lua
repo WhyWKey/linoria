@@ -2392,7 +2392,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1027-n' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1028-b' }
 
 local deriving = false
 local function setPicker(key, color)
@@ -2747,6 +2747,20 @@ function Skin.CreatePanel(Window, o)
                 sub.Scroll.Visible = active and sub == p.CurrentSub
             end
         end
+        local cur
+        for _, p in ipairs(Panel.Pages) do
+            if p == Panel.Current then cur = (#p.Subs > 0) and p.CurrentSub or p end
+        end
+        if Panel.Shown then
+            if cur ~= Panel.Notified then
+                Panel.Notified = cur
+                if cur and cur.OnShow then
+                    task.defer(function() pcall(cur.OnShow, cur) end)
+                end
+            end
+        else
+            Panel.Notified = nil
+        end
     end
 
     local function layout()
@@ -2817,6 +2831,7 @@ function Skin.CreatePanel(Window, o)
     function Panel:SetVisible(v)
         Panel.Shown = v and true or false
         dock()
+        show()
     end
     function Panel:Toggle() Panel:SetVisible(not Panel.Shown) end
     function Panel:SetSide(side)
@@ -3296,7 +3311,7 @@ end
 
 local SETTINGS_FLAGS = {
     'KeybindMenuOpen', 'SkinKeybindMode', 'MenuKeybind', 'LinoriaKeybindTransparency', 'LinoriaUseBlur', 'LinoriaBlurSize',
-    'LinoriaUseDarken', 'LinoriaDarkenAmount', 'SkinWireframe', 'SkinFontSize', 'SkinNotifyAlign', 'SkinNotifySide',
+    'LinoriaUseDarken', 'LinoriaDarkenAmount', 'SkinWireframe', 'SkinWatermark', 'SkinFontSize', 'SkinNotifyAlign', 'SkinNotifySide',
     'SkinNotifyX', 'SkinNotifyY', 'SkinNotifyAlpha', 'PanelColor', 'MutedColor', 'CheckColor', 'ActiveColor', 'SkinPanelAlpha', 'SkinCardAlpha', 'SkinWindowRadius', 'SkinCardRadius', 'SkinControlRadius', 'SkinBorderAlpha', 'SkinShadow', 'SkinUserChip', 'SkinFont', 'SkinNativeCursor', 'SkinAnimations',
 }
 
@@ -3362,6 +3377,10 @@ function Skin.BuildSettings(Window, Opts)
     local Display = subs.Menu:AddRightGroupbox('Display')
     Library:AddBlurSlider(Display)
     Library:AddDarkenSlider(Display)
+    Display:AddToggle('SkinWatermark', {
+        Text = 'Watermark', Default = true,
+        Callback = function(v) Library:SetWatermarkVisibility(v) end,
+    })
     Display:AddToggle('SkinWireframe', {
         Text = 'Wireframe drag', Default = Library.WireframeDrag ~= false,
         Callback = function(v) Library.WireframeDrag = v end,

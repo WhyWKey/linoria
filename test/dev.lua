@@ -1759,6 +1759,151 @@ end
 
 local Library = loadstring(patchLibrarySource(game:HttpGet(UI_REPO .. "Library.lua")))()
 local Skin = loadstring(game:HttpGet(UI_REPO .. "ui-test/PerceptionSkin.lua?t=" .. os.time()))()(Library, { Brand = "Aster" })
+for _, name in ipairs({ "CreatePanel", "BuildSettings", "CreateTargetInfo" }) do
+    if type(Skin[name]) ~= "function" then
+        error("PerceptionSkin.lua on GitHub is outdated (" .. tostring(Skin.Version) .. ", missing " .. name .. "). Upload the newest build-1028-b to ui-test/", 0)
+    end
+end
+local ThemeManager = loadstring(game:HttpGet(UI_REPO .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(UI_REPO .. "addons/SaveManager.lua"))()
+
+pcall(function()
+    SaveManager.Parser.ColorPicker.Load = function(idx, data)
+        local picker = getgenv().Options and getgenv().Options[idx]
+        if picker then picker:SetValueRGB(Color3.fromHex(data.value), tonumber(data.transparency) or 0) end
+    end
+end)
+do
+    local Http = game:GetService("HttpService")
+    local cfg = { pending = {} }
+    getgenv().AsterCfg = cfg
+
+    function cfg.on(idx, default)
+        local toggle = getgenv().Toggles and getgenv().Toggles[idx]
+        if toggle then return toggle.Value == true end
+        local entry = cfg.pending[idx]
+        if entry and type(entry.value) == "boolean" then return entry.value end
+        return default
+    end
+
+    function cfg.color(idx)
+        local picker = getgenv().Options and getgenv().Options[idx]
+        if picker and typeof(picker.Value) == "Color3" then return picker.Value end
+        local entry = cfg.pending[idx]
+        if entry and type(entry.value) == "string" then
+            local ok, color = pcall(Color3.fromHex, entry.value)
+            if ok then return color end
+        end
+        return nil
+    end
+
+    function cfg.apply(prefix)
+        local toggles, options = getgenv().Toggles or {}, getgenv().Options or {}
+        for idx, entry in pairs(cfg.pending) do
+            if string.sub(idx, 1, #prefix) == prefix and (toggles[idx] or options[idx]) then
+                cfg.pending[idx] = nil
+                local parser = SaveManager.Parser[entry.type]
+                if parser then
+                    task.spawn(function() pcall(parser.Load, idx, entry) end)
+                end
+            end
+        end
+    end
+
+    local originalLoad, originalSave = SaveManager.Load, SaveManager.Save
+
+    function SaveManager:Load(name)
+        local ok, message = originalLoad(self, name)
+        if ok then
+            pcall(function()
+                local decoded = Http:JSONDecode(readfile(self.Folder .. "/settings/" .. name .. ".json"))
+                local toggles, options = getgenv().Toggles or {}, getgenv().Options or {}
+                for _, entry in ipairs(decoded.objects) do
+                    local idx = entry.idx
+                    if idx and not self.Ignore[idx] and not toggles[idx] and not options[idx] then
+                        cfg.pending[idx] = entry
+                    end
+                end
+            end)
+        end
+        return ok, message
+    end
+
+    function SaveManager:Save(name)
+        local ok, message = originalSave(self, name)
+        if ok and next(cfg.pending) then
+            pcall(function()
+                local path = self.Folder .. "/settings/" .. name .. ".json"
+                local data = Http:JSONDecode(readfile(path))
+                local present = {}
+                for _, entry in ipairs(data.objects) do present[entry.idx] = true end
+                for idx, entry in pairs(cfg.pending) do
+                    if not present[idx] then table.insert(data.objects, entry) end
+                end
+                writefile(path, Http:JSONEncode(data))
+            end)
+        end
+        return ok, message
+    end
+end
+
+Loader.step("UI library ready", 0.34)
+getgenv().Library = Library
+
+local Options = getgenv().Options
+local Toggles = getgenv().Toggles
+
+local cleanupTasks = {}
+local function onUnload(fn)
+    table.insert(cleanupTasks, fn)
+end
+
+Library:OnUnload(function()
+    for _, fn in ipairs(cleanupTasks) do pcall(fn) end
+
+    for _, connection in ipairs(getgenv().TS_Connections or {}) do
+        pcall(function() connection:Disconnect() end)
+    end
+    getgenv().TS_Connections = {}
+
+    for _, drawing in ipairs(getgenv().TS_Drawings or {}) do
+        pcall(function() drawing:Remove() end)
+    end
+    getgenv().TS_Drawings = {}
+end)
+
+local function readFlag(name, default)
+    local object = Toggles[name]
+    if object == nil then object = Options[name] end
+    if object == nil or object.Value == nil then return default end
+    return object.Value
+end
+
+local Relations = {}
+local function isEnemy(player)
+    if not player or player == LocalPlayer then return false end
+    local explicit = Relations[player.UserId]
+    if explicit == "Friendly" then return false end
+    if explicit == "Priority" then return true end
+    local mine, theirs = LocalPlayer.Team, player.Team
+    if not mine or not theirs then return true end
+    if mine == theirs then return false end
+    return true
+end
+local function relationOf(player)
+    local explicit = Relations[player.UserId]
+    if explicit then return explicit end
+    return isEnemy(player) and "Enemy" or "Friendly"
+end
+
+local function isPeaceful(player)
+    if not player or Relations[player.UserId] == "Priority" then return false end
+    local team = player.Team
+    if not team or team.Name ~= "Inmates" then return false end
+    local char = player.Character
+    return not (char and char:GetAttribute("Hostile") == true)
+end
+
 
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
@@ -2016,11 +2161,6 @@ do
     Aim:Dropdown({ Name = "Hitscan points", Flag = "aim_points", Items = { "Head", "Body" }, Multi = true, Default = { "Head", "Body" } })
     Aim:Slider({ Name = "Reaction time", Flag = "aim_reaction", Min = 0, Max = 500, Default = 0, Suffix = "ms", Decimals = 1 })
     Aim:Slider({ Name = "Max distance", Flag = "aim_max_dist", Min = 50, Max = 2000, Default = 1000, Suffix = " studs", Decimals = 1 })
-    Aim:Toggle({ Name = "Team check", Flag = "aim_team", Default = false })
-    Aim:Toggle({ Name = "Wall check", Flag = "aim_wall", Default = false })
-    Aim:Toggle({ Name = "Forcefield check", Flag = "aim_ff", Default = false })
-    Aim:Toggle({ Name = "Hostile only (inmates)", Flag = "aim_hostile", Default = false })
-    Aim:Toggle({ Name = "Ignore tased / arrested", Flag = "aim_ignore_down", Default = false })
 
     local Smooth = CombatSubs.Aim:Section({ Name = "Aim smoothing", Side = 1 })
     Smooth:Toggle({ Name = "Smoothing", Flag = "aim_smooth", Default = true })
@@ -2051,10 +2191,17 @@ do
         RB:Slider({ Name = "Shots per second", Flag = "rb_rate", Min = 1, Max = 30, Default = 12, Suffix = "/s", Decimals = 1 })
         RB:Slider({ Name = "Shot delay after peeking", Flag = "rb_shot_delay", Min = 0, Max = 0.3, Default = 0.03, Suffix = "s", Decimals = 0.01, Tooltip = "How long you stand at the peek spot before the first shot, so the server has your new position" })
         RB:Toggle({ Name = "Auto reload", Flag = "rb_reload", Default = false, Tooltip = "Reloads when the gun is empty. With void spam on you stay hidden while it reloads" })
-        RB:Toggle({ Name = "Show status", Flag = "rb_status", Default = false, Tooltip = "A line of text at the top of the screen with what the ragebot is doing" })
-        RB:Slider({ Name = "Status offset", Flag = "rb_status_y", Min = -300, Max = 300, Default = 40, Suffix = "px", Decimals = 1, Tooltip = "Vertical distance of the status text from the middle of the screen" })
-        RB:Toggle({ Name = "Safe mode", Flag = "rb_safe", Default = false, Tooltip = "Below the health percentage you stay hidden (or at home when void spam is off) until you healed" })
-        RB:Slider({ Name = "Safe mode health", Flag = "rb_safe_hp", Min = 5, Max = 90, Default = 20, Suffix = "%", Decimals = 1 })
+
+        local RTR = RageSubs.Main:Section({ Name = "Target rules", Side = 1 })
+        RTR:Slider({ Name = "Max distance", Flag = "rb_range", Min = 50, Max = 20000, Default = 2000, Suffix = " studs", Decimals = 1 })
+        RTR:Toggle({ Name = "Kill all nearby", Flag = "rb_nearby", Default = false, Tooltip = "In Target list and Players tab mode, anyone within the range below is a target too" })
+        RTR:Slider({ Name = "Nearby range", Flag = "rb_nearby_range", Min = 10, Max = 300, Default = 60, Suffix = " studs", Decimals = 1 })
+        RTR:Toggle({ Name = "Swap targets", Flag = "rb_swap", Default = false, Tooltip = "Moves on to the next player when the current one takes no damage for the time below" })
+        RTR:Slider({ Name = "Swap after", Flag = "rb_swap_time", Min = 1, Max = 30, Default = 4, Suffix = "s", Decimals = 0.5 })
+        RTR:Toggle({ Name = "Skip forcefield targets", Flag = "rb_ff", Default = false, Tooltip = "Picks another target while one has a forcefield. Off: you stay hidden in the void until the forcefield is gone" })
+        RTR:Toggle({ Name = "Ignore tased and arrested", Flag = "rb_down", Default = false })
+        RTR:Toggle({ Name = "Ignore friendly team", Flag = "rb_team", Default = false })
+        RTR:Toggle({ Name = "Hostile only (inmates)", Flag = "rb_hostile", Default = false })
 
         local RT = RageSubs.Main:Section({ Name = "Target", Side = 2 })
         RT:Toggle({ Name = "Add target to list", Flag = "rb_add", Default = false, Tooltip = "Press the key to add the player closest to your cursor to the target list. Press again on the same player to remove them" }):Keybind({ Name = "Add target key", Flag = "rb_add_key", Default = "G", Sync = false })
@@ -2066,21 +2213,19 @@ do
         table.sort(names, function(a, b) return a:lower() < b:lower() end)
         RT:Dropdown({ Name = "Targets", Flag = "rb_targets", Items = names, Multi = true, Default = {}, Tooltip = "Used by the Target list mode" })
         RT:Dropdown({ Name = "Whitelist", Flag = "rb_white", Items = names, Multi = true, Default = {}, Tooltip = "These players are never targeted" })
-        RT:Slider({ Name = "Max distance", Flag = "rb_range", Min = 50, Max = 20000, Default = 2000, Suffix = " studs", Decimals = 1 })
-        RT:Toggle({ Name = "Kill all nearby", Flag = "rb_nearby", Default = false, Tooltip = "In Target list and Players tab mode, anyone within the range below is a target too" })
-        RT:Slider({ Name = "Nearby range", Flag = "rb_nearby_range", Min = 10, Max = 300, Default = 60, Suffix = " studs", Decimals = 1 })
-        RT:Toggle({ Name = "Swap targets", Flag = "rb_swap", Default = false, Tooltip = "Moves on to the next player when the current one takes no damage for the time below" })
-        RT:Slider({ Name = "Swap after", Flag = "rb_swap_time", Min = 1, Max = 30, Default = 4, Suffix = "s", Decimals = 0.5 })
-        RT:Toggle({ Name = "Skip forcefield targets", Flag = "rb_ff", Default = false, Tooltip = "Picks another target while one has a forcefield. Off: you stay hidden in the void until the forcefield is gone" })
-        RT:Toggle({ Name = "Ignore tased and arrested", Flag = "rb_down", Default = false })
-        RT:Toggle({ Name = "Ignore friendly team", Flag = "rb_team", Default = false })
-        RT:Toggle({ Name = "Hostile only (inmates)", Flag = "rb_hostile", Default = false })
         Actions.rageResult = RT:Label({ Name = "Result: none" })
         RT:Input({ Name = "Player search", Flag = "rb_search", Default = "", Placeholder = "name or display name", Tooltip = "The buttons below use this player. Empty uses the player selected in the Players tab" })
         RT:Button({ Name = "Target player", Callback = function() if Actions.rageList then Actions.rageList("rb_targets", true) end end })
         RT:Button({ Name = "Whitelist player", Callback = function() if Actions.rageList then Actions.rageList("rb_white", true) end end })
         RT:Button({ Name = "Clear targets", Callback = function() if Actions.rageList then Actions.rageList("rb_targets", false) end end })
         RT:Button({ Name = "Clear whitelist", Callback = function() if Actions.rageList then Actions.rageList("rb_white", false) end end })
+
+        local RS = RageSubs.Main:Section({ Name = "Status and safety", Side = 2 })
+        RS:Toggle({ Name = "Show status", Flag = "rb_status", Default = false, Tooltip = "A line of text at the top of the screen with what the ragebot is doing" })
+        RS:Slider({ Name = "Status offset", Flag = "rb_status_y", Min = -300, Max = 300, Default = 40, Suffix = "px", Decimals = 1, Tooltip = "Vertical distance of the status text from the middle of the screen" })
+        RS:Toggle({ Name = "Safe mode", Flag = "rb_safe", Default = false, Tooltip = "Below the health percentage you stay hidden (or at home when void spam is off) until you healed" })
+        RS:Slider({ Name = "Safe mode health", Flag = "rb_safe_hp", Min = 5, Max = 90, Default = 20, Suffix = "%", Decimals = 1 })
+
         Actions.rageNames = names
 
         local RV = RageSubs.Void:Section({ Name = "Void spam", Side = 1 })
@@ -2089,12 +2234,14 @@ do
         RV:Toggle({ Name = "Show void location", Flag = "rb_void_show", Default = false, Tooltip = "A marker, a line and a distance text show where your hiding spot is" }):Colorpicker({ Name = "Void marker", Flag = "rb_void_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
         RV:Slider({ Name = "In void", Flag = "rb_in_time", Min = 0.05, Max = 3, Default = 0.35, Suffix = "s", Decimals = 0.01 })
         RV:Slider({ Name = "Out of void", Flag = "rb_out_time", Min = 0.05, Max = 2, Default = 0.2, Suffix = "s", Decimals = 0.01 })
-        RV:Slider({ Name = "Smart wait", Flag = "rb_smart_wait", Min = 1, Max = 30, Default = 8, Suffix = "s", Decimals = 0.5 })
-        RV:Slider({ Name = "Smart void time", Flag = "rb_smart_void", Min = 1, Max = 30, Default = 5, Suffix = "s", Decimals = 0.5 })
-        RV:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "Under map", "High", "Far", "Extreme" }, Default = "Under map", Tooltip = "Under map hides just above the point where the engine destroys parts, below your real position, the same spot the Void desync uses. High, Far and Extreme are far above or beside the map and can be killed by the game's kill planes" })
-        RV:Dropdown({ Name = "Direction", Flag = "rb_dir", Items = { "+Y", "+X", "+Z" }, Multi = true, Default = { "+Y" }, Tooltip = "Every position change picks one of the selected directions at random. Does not affect the Under map pattern" })
-        RV:Slider({ Name = "Depth multiplier", Flag = "rb_depth", Min = 0.1, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
-        RV:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
+
+        local RVP = RageSubs.Void:Section({ Name = "Void pattern", Side = 1 })
+        RVP:Slider({ Name = "Smart wait", Flag = "rb_smart_wait", Min = 1, Max = 30, Default = 8, Suffix = "s", Decimals = 0.5 })
+        RVP:Slider({ Name = "Smart void time", Flag = "rb_smart_void", Min = 1, Max = 30, Default = 5, Suffix = "s", Decimals = 0.5 })
+        RVP:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "Under map", "High", "Far", "Extreme" }, Default = "Under map", Tooltip = "Under map hides just above the point where the engine destroys parts, below your real position, the same spot the Void desync uses. High, Far and Extreme are far above or beside the map and can be killed by the game's kill planes" })
+        RVP:Dropdown({ Name = "Direction", Flag = "rb_dir", Items = { "+Y", "+X", "+Z" }, Multi = true, Default = { "+Y" }, Tooltip = "Every position change picks one of the selected directions at random. Does not affect the Under map pattern" })
+        RVP:Slider({ Name = "Depth multiplier", Flag = "rb_depth", Min = 0.1, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
+        RVP:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
 
         local RP = RageSubs.Void:Section({ Name = "Peek spot", Side = 2 })
         RP:Dropdown({ Name = "Position", Flag = "rb_peek_mode", Items = { "Behind", "Above", "Random", "Spiral" }, Default = "Behind", Tooltip = "Where you appear next to the target" })
@@ -2148,28 +2295,41 @@ do
     Silent:Dropdown({ Name = "Hitscan points", Flag = "silent_points", Items = { "Head", "Body" }, Multi = true, Default = { "Head", "Body" } })
     Silent:Slider({ Name = "Hit chance", Flag = "Silent_Global_HitChance", Min = 1, Max = 100, Default = 100, Suffix = "%", Decimals = 1 })
     Silent:Slider({ Name = "Max distance", Flag = "silent_max_dist", Min = 50, Max = 2000, Default = 1000, Suffix = " studs", Decimals = 1 })
-    Silent:Toggle({ Name = "Wall check", Flag = "silent_wall", Default = false })
-    Silent:Toggle({ Name = "Forcefield check", Flag = "silent_ff", Default = false })
-    Silent:Toggle({ Name = "Hostile only (inmates)", Flag = "silent_hostile", Default = false })
-    Silent:Toggle({ Name = "Team check", Flag = "silent_team", Default = false })
-    Silent:Toggle({ Name = "Ignore tased / arrested", Flag = "silent_ignore_down", Default = false })
-    Silent:Toggle({ Name = "Auto fire", Flag = "silent_autofire", Default = false })
-    Silent:Slider({ Name = "Auto fire rate", Flag = "silent_autofire_rate", Min = 1, Max = 60, Default = 15, Suffix = " hz", Decimals = 1 })
-    Silent:Toggle({ Name = "Auto fire: skip blocked", Flag = "silent_autofire_check", Default = true, Tooltip = "With wallbang on, auto fire only shoots targets you can see or wallbang" })
-    Silent:Toggle({ Name = "Auto switch", Flag = "silent_switch", Default = false, Tooltip = "While auto fire has a target, switches between the weapons picked below. Weapons you do not have are skipped, and so are empty ones when another is ready" })
-    Silent:Dropdown({ Name = "Switch weapons", Flag = "silent_switch_weapons", Items = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver", "Taser" }, Multi = true, Default = {}, Tooltip = "The weapons to cycle through, in this order" })
-    Silent:Slider({ Name = "Switch delay", Flag = "silent_switch_delay", Min = 0.03, Max = 2, Default = 0.3, Suffix = " s", Decimals = 0.01, Tooltip = "Time between weapon switches" })
+
+    local SilentChk = CombatSubs.Silent:Section({ Name = "Silent checks", Side = 1 })
+    SilentChk:Toggle({ Name = "Wall check", Flag = "silent_wall", Default = false })
+    SilentChk:Toggle({ Name = "Forcefield check", Flag = "silent_ff", Default = false })
+    SilentChk:Toggle({ Name = "Hostile only (inmates)", Flag = "silent_hostile", Default = false })
+    SilentChk:Toggle({ Name = "Team check", Flag = "silent_team", Default = false })
+    SilentChk:Toggle({ Name = "Ignore tased / arrested", Flag = "silent_ignore_down", Default = false })
 
     local FovAim = CombatSubs.Aim:Section({ Name = "Aim FOV", Side = 2 })
-    local FovSilent = CombatSubs.Silent:Section({ Name = "Silent FOV", Side = 1 })
+    local FovSilent = CombatSubs.Silent:Section({ Name = "Silent FOV", Side = 2 })
     local aimCircle = FovAim:Toggle({ Name = "Show FOV circle", Flag = "aim_fov_show", Default = false })
     aimCircle:Colorpicker({ Name = "Color", Flag = "aim_fov_color", Default = Color3.new(1, 1, 1), Alpha = true })
     FovAim:Toggle({ Name = "Filled", Flag = "aim_fov_filled", Default = false })
     FovAim:Slider({ Name = "Thickness", Flag = "aim_fov_thick", Min = 1, Max = 5, Default = 1, Decimals = 1 })
+
+    local AimChk = CombatSubs.Aim:Section({ Name = "Aim checks", Side = 2 })
+    AimChk:Toggle({ Name = "Team check", Flag = "aim_team", Default = false })
+    AimChk:Toggle({ Name = "Wall check", Flag = "aim_wall", Default = false })
+    AimChk:Toggle({ Name = "Forcefield check", Flag = "aim_ff", Default = false })
+    AimChk:Toggle({ Name = "Hostile only (inmates)", Flag = "aim_hostile", Default = false })
+    AimChk:Toggle({ Name = "Ignore tased / arrested", Flag = "aim_ignore_down", Default = false })
     local silentCircle = FovSilent:Toggle({ Name = "Show FOV circle", Flag = "silent_fov_show", Default = false })
     silentCircle:Colorpicker({ Name = "Color", Flag = "silent_fov_color", Default = Color3.fromRGB(255, 120, 120), Alpha = true })
     FovSilent:Toggle({ Name = "Filled", Flag = "silent_fov_filled", Default = false })
     FovSilent:Slider({ Name = "Thickness", Flag = "silent_fov_thick", Min = 1, Max = 5, Default = 1, Decimals = 1 })
+
+    local AutoFire = CombatSubs.Silent:Section({ Name = "Auto fire", Side = 2 })
+    AutoFire:Toggle({ Name = "Auto fire", Flag = "silent_autofire", Default = false })
+    AutoFire:Slider({ Name = "Auto fire rate", Flag = "silent_autofire_rate", Min = 1, Max = 60, Default = 15, Suffix = " hz", Decimals = 1 })
+    AutoFire:Toggle({ Name = "Auto fire: skip blocked", Flag = "silent_autofire_check", Default = true, Tooltip = "With wallbang on, auto fire only shoots targets you can see or wallbang" })
+
+    local Switch = CombatSubs.Silent:Section({ Name = "Weapon switching", Side = 2 })
+    Switch:Toggle({ Name = "Auto switch", Flag = "silent_switch", Default = false, Tooltip = "While auto fire has a target, switches between the weapons picked below. Weapons you do not have are skipped, and so are empty ones when another is ready" })
+    Switch:Dropdown({ Name = "Switch weapons", Flag = "silent_switch_weapons", Items = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver", "Taser" }, Multi = true, Default = {}, Tooltip = "The weapons to cycle through, in this order" })
+    Switch:Slider({ Name = "Switch delay", Flag = "silent_switch_delay", Min = 0.03, Max = 2, Default = 0.3, Suffix = " s", Decimals = 0.01, Tooltip = "Time between weapon switches" })
 
     local OrbitSec = RageSubs.Other:Section({ Name = "Orbit target", Side = 2 })
     OrbitSec:Toggle({ Name = "Orbit target", Flag = "orbit_on", Default = false, Tooltip = "While silent aim has a target, the position the server sees circles that player. You stay where you are, only the server position moves." }):Keybind({ Name = "Orbit key", Flag = "orbit_key", Default = "None", Sync = true })
@@ -3411,7 +3571,7 @@ do
     Character:Dropdown({ Name = "Gravity mode", Flag = "misc_gravity_mode", Items = { "Workspace", "Local" }, Default = "Workspace" })
     Character:Slider({ Name = "Gravity value", Flag = "misc_gravity_value", Min = 0, Max = 300, Default = 196, Decimals = 1 })
 
-    local World = MiscSubs.Utility:Section({ Name = "Xray", Side = 1 })
+    local World = MiscSubs.Utility:Section({ Name = "Xray", Side = 2 })
     World:Toggle({ Name = "Xray", Flag = "misc_xray", Default = false })
     World:Slider({ Name = "Part transparency", Flag = "misc_xray_alpha", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
     World:Input({ Name = "Keep opaque (names)", Flag = "misc_xray_ignore", Default = "", Placeholder = "Door, Fence" })
@@ -3571,8 +3731,9 @@ EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpic
 CamFov:Toggle({ Name = "FOV changer", Flag = "camera_fov_changer", Default = false })
 CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max = 140, Default = 100, Suffix = "°", Decimals = 1 })
 
-    local EffectsBox = WorldSubs.Effects:Section({ Name = "Effects window", Side = 1 })
+    local EffectsBox = WorldSubs.Effects:Section({ Name = "Windows", Side = 1 })
     EffectsBox:Toggle({ Name = "Effects window", Flag = "fx_ui", Default = false, Tooltip = "Opens the window with sounds, visual effects and tracers" })
+    EffectsBox:Toggle({ Name = "Avatar spoofer window", Flag = "spoof_ui", Default = false, Tooltip = "Opens a window to browse a player's current look and saved outfits" })
 
     local LightMain, LightTime, LightFog = WorldSubs.Lighting:MultiSection({ Sections = { "Light", "Time", "Fog" }, Side = 1 })
     LightMain:Toggle({ Name = "Ambient", Flag = "lighting_toggle_Ambient", Default = false }):Colorpicker({ Name = "Inner ambient", Flag = "lighting_colorAmbient", Default = WHITE }):Colorpicker({ Name = "Outer ambient", Flag = "lighting_colorOutdoorAmbient", Default = WHITE })
@@ -3645,7 +3806,8 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     local SelfChams = VisualsSubs.Viewmodel:Section({ Name = "Self chams", Side = 2 })
     SelfChams:Toggle({ Name = "Self chams", Flag = "Self_Chams", Default = false }):Colorpicker({ Name = "Fill", Flag = "Self_ChamsColor1", Default = Color3.fromRGB(80, 160, 255), Alpha = 0.3 }):Colorpicker({ Name = "Outline", Flag = "Self_ChamsColor2", Default = WHITE, Alpha = true })
 
-    local WeatherMain, WeatherLook, WeatherWind, WeatherStrike = WorldSubs.Weather:MultiSection({ Sections = { "Weather", "Look", "Wind", "Strike" }, Side = 1 })
+    local WeatherMain, WeatherLook = WorldSubs.Weather:MultiSection({ Sections = { "Weather", "Look" }, Side = 1 })
+    local WeatherWind, WeatherStrike = WorldSubs.Weather:MultiSection({ Sections = { "Wind", "Strike" }, Side = 2 })
     WeatherMain:Toggle({ Name = "Weather", Flag = "weather_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "weather_color", Default = Color3.fromRGB(200, 200, 220) })
     WeatherMain:Dropdown({ Name = "Preset", Flag = "weather_preset", Items = WEATHER_NAMES, Default = "Rain" })
     WeatherMain:Slider({ Name = "Intensity", Flag = "weather_intensity", Min = 0.1, Max = 3, Default = 1, Decimals = 0.01 })
@@ -3750,7 +3912,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     Reload:Label({ Name = "Bar color" }):Colorpicker({ Name = "Bar", Flag = "reload_ind_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
     Reload:Label({ Name = "Background color" }):Colorpicker({ Name = "Background", Flag = "reload_ind_back", Default = Color3.fromRGB(0, 0, 0), Alpha = 0.5 })
 
-    local Ammo = WorldSubs.Indicators:Section({ Name = "Ammo indicator", Side = 2 })
+    local Ammo = WorldSubs.Indicators:Section({ Name = "Ammo indicator", Side = 1 })
     Ammo:Toggle({ Name = "Server bullet count", Flag = "ammo_ind", Default = false, Tooltip = "Shows how many bullets the server says your gun has. It turns yellow when that differs from the count your game shows." })
     Ammo:Toggle({ Name = "Show local count", Flag = "ammo_ind_local", Default = false, Tooltip = "Also shows the count your own game shows" })
     Ammo:Slider({ Name = "Text size", Flag = "ammo_ind_size", Min = 10, Max = 32, Default = 16, Decimals = 1 })
@@ -3759,7 +3921,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     Ammo:Label({ Name = "Empty color" }):Colorpicker({ Name = "Empty", Flag = "ammo_ind_c_empty", Default = Color3.fromRGB(255, 80, 80) })
     Ammo:Label({ Name = "Mismatch color" }):Colorpicker({ Name = "Mismatch", Flag = "ammo_ind_c_diff", Default = Color3.fromRGB(255, 200, 60) })
 
-    local Indicator = WorldSubs.Indicators:Section({ Name = "Wallbang indicator", Side = 1 })
+    local Indicator = WorldSubs.Indicators:Section({ Name = "Wallbang indicator", Side = 2 })
     Indicator:Toggle({ Name = "Wallbang indicator", Flag = "wb_ind", Default = false, Tooltip = "Tells you if an enemy is visible, wallbangable with the wallbang method you use now (a spot that can deal damage), or not wallbangable" })
     Indicator:Toggle({ Name = "Show on cursor", Flag = "wb_ind_cursor", Default = true })
     Indicator:Toggle({ Name = "Show on everyone", Flag = "wb_ind_all", Default = false })
@@ -3777,7 +3939,6 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     AuraBox:Toggle({ Name = "Keep pack colors", Flag = "pa_pack_original", Default = true, Tooltip = "Pack auras keep their own colors. Turn off to paint them with the color above like the other auras." })
 
     local Avatar = WorldSubs.Effects:Section({ Name = "Avatar changer", Side = 2 })
-    Avatar:Toggle({ Name = "Avatar spoofer window", Flag = "spoof_ui", Default = false, Tooltip = "Opens a window to browse a player's current look and saved outfits" })
     Avatar:Input({ Name = "User", Flag = "spoof_avatar_user", Placeholder = "UserId, username or profile URL" })
     Avatar:Button({ Name = "Apply avatar", Callback = function()
         task.spawn(function() SpooferActions.apply() end)

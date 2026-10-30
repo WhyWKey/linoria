@@ -1905,9 +1905,10 @@ local function isPeaceful(player)
 end
 
 
+print("[Aster] AsterPerception build perception-1030-a | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  build 0823-B",
+    Title = "Aster  |  perception-1030-a",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,

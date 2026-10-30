@@ -1128,9 +1128,339 @@ local HIT_SOUNDS = {
     ["TF2"] = "rbxassetid://8255306220",
     ["Windows"] = "rbxassetid://9066167010",
 }
+HIT_SOUNDS["PF Hitmarker"] = "rbxassetid://287062939"
+HIT_SOUNDS["PF Killshot"] = { "rbxassetid://898398768", "rbxassetid://898398730", "rbxassetid://898398743" }
+HIT_SOUNDS["PF Headshot kill"] = { "rbxassetid://898398768", "rbxassetid://898398785", "rbxassetid://898398795", "rbxassetid://898398809", "rbxassetid://898398817", "rbxassetid://898398837" }
+
+local FX_WEAPONS = {
+    { key = "ak47", label = "AK-47", tools = { "ak47" } },
+    { key = "m4a1", label = "M4A1", tools = { "m4a1", "m4" } },
+    { key = "mp5", label = "MP5", tools = { "mp5" } },
+    { key = "fal", label = "FAL", tools = { "fal" } },
+    { key = "r870", label = "Remington 870", tools = { "remington870", "r870", "remington" } },
+    { key = "m700", label = "M700", tools = { "m700" } },
+    { key = "m9", label = "M9", tools = { "m9" } },
+    { key = "revolver", label = "Revolver", tools = { "revolver" } },
+}
+
+local FxAudio = { ok = {}, checked = {}, reported = {}, failedAt = {} }
+
+local FxLog = {}
+pcall(function()
+    track(game:GetService("LogService").MessageOut:Connect(function(message)
+        if type(message) ~= "string" then return end
+        local lower = string.lower(message)
+        if string.find(lower, "sound", 1, true) or string.find(lower, "asset", 1, true) or string.find(lower, "audio", 1, true) then
+            FxLog[#FxLog + 1] = message
+            if #FxLog > 60 then table.remove(FxLog, 1) end
+        end
+    end))
+end)
+
+local function fxBlockedText(id)
+    local reason
+    for index = #FxLog, 1, -1 do
+        if string.find(FxLog[index], tostring(id), 1, true) then
+            reason = string.sub(FxLog[index], 1, 140)
+            break
+        end
+    end
+    return "Sound " .. id .. " did not load: " .. (reason or "Roblox logged no reason") .. ". Put an .mp3 in Aster/sounds and type its file name to use a local file"
+end
+
+local function fxReport(key, message)
+    if FxAudio.reported[key] then return end
+    FxAudio.reported[key] = true
+    pcall(function() Library:Notify(message, 6) end)
+end
+
+local function fxAssetNumber(entry)
+    if type(entry) ~= "string" then return nil end
+    return tonumber(string.match(entry, "^rbxassetid://(%d+)"))
+end
+
+local FX_SOUND_DIR = "Aster/sounds/"
+local fxLocalCache = {}
+local function fxLocalAsset(file)
+    if type(file) ~= "string" or file == "" then return nil end
+    if fxLocalCache[file] then return fxLocalCache[file] end
+    if type(getcustomasset) ~= "function" or type(isfile) ~= "function" then return nil end
+    local candidates = { file }
+    if not string.find(file, "%.%a%a%a?%a?$") then
+        for _, extension in ipairs({ ".mp3", ".ogg", ".wav" }) do candidates[#candidates + 1] = file .. extension end
+    end
+    for _, name in ipairs(candidates) do
+        local ok, exists = pcall(isfile, FX_SOUND_DIR .. name)
+        if ok and exists then
+            local made, asset = pcall(getcustomasset, FX_SOUND_DIR .. name)
+            if made and type(asset) == "string" and asset ~= "" then
+                fxLocalCache[file] = asset
+                return asset
+            end
+        end
+    end
+    return nil
+end
+
+local function fxParseSource(text)
+    if type(text) ~= "string" then return nil end
+    text = string.match(text, "^%s*(.-)%s*$")
+    if text == "" then return nil end
+    local linkId = string.match(text, "[?&]id=(%d+)") or string.match(text, "/asset/(%d+)") or string.match(text, "rbxassetid://(%d+)") or string.match(text, "store/asset/(%d+)")
+    if linkId then return { id = tonumber(linkId) } end
+    if string.match(text, "^%d%d%d+$") then return { id = tonumber(text) } end
+    if fxLocalAsset(text) then return { file = text } end
+    return { missing = text }
+end
+
+local function fxProbe(ids)
+    local probes = {}
+    for _, id in ipairs(ids) do
+        local probe = Instance.new("Sound")
+        probe.SoundId = "rbxassetid://" .. id
+        probes[#probes + 1] = probe
+    end
+    pcall(function() game:GetService("ContentProvider"):PreloadAsync(probes) end)
+    for index, probe in ipairs(probes) do
+        FxAudio.ok[ids[index]] = probe.IsLoaded or probe.TimeLength > 0
+        if FxAudio.ok[ids[index]] == false then FxAudio.failedAt[ids[index]] = os.clock() end
+        probe:Destroy()
+    end
+end
+
+local function fxEnsure(entry)
+    local id = fxAssetNumber(entry)
+    if not id then return end
+    if FxAudio.ok[id] == false then
+        if os.clock() - (FxAudio.failedAt[id] or 0) > 30 then
+            FxAudio.ok[id] = nil
+            FxAudio.checked[id] = nil
+        else
+            fxReport("block" .. id, fxBlockedText(id))
+            return
+        end
+    end
+    if FxAudio.ok[id] ~= nil or FxAudio.checked[id] then return end
+    FxAudio.checked[id] = true
+    task.spawn(function()
+        fxProbe({ id })
+        if FxAudio.ok[id] == false then
+            fxReport("block" .. id, fxBlockedText(id))
+        end
+    end)
+end
+
+local FxSaved = { weapons = {}, path = "Aster/sounds.json" }
+do
+    local ok, data = pcall(function()
+        if isfile and readfile and isfile(FxSaved.path) then
+            return game:GetService("HttpService"):JSONDecode(readfile(FxSaved.path))
+        end
+    end)
+    if ok and type(data) == "table" and type(data.weapons) == "table" then
+        for key, list in pairs(data.weapons) do
+            if type(list) == "table" then
+                local clean = {}
+                for _, row in ipairs(list) do
+                    if type(row) == "table" and type(row.name) == "string" then
+                        if tonumber(row.id) then
+                            clean[#clean + 1] = { name = row.name, id = math.floor(tonumber(row.id)) }
+                        elseif type(row.file) == "string" and row.file ~= "" then
+                            clean[#clean + 1] = { name = row.name, file = row.file }
+                        end
+                    end
+                end
+                FxSaved.weapons[key] = clean
+            end
+        end
+    end
+end
+
+function FxSaved.write()
+    if not writefile then return end
+    pcall(function()
+        if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
+        writefile(FxSaved.path, game:GetService("HttpService"):JSONEncode({ weapons = FxSaved.weapons }))
+    end)
+end
+
+function FxSaved.list(key)
+    local list = FxSaved.weapons[key]
+    if not list then
+        list = {}
+        FxSaved.weapons[key] = list
+    end
+    return list
+end
+
+function FxSaved.names(key)
+    local names = {}
+    for _, row in ipairs(FxSaved.list(key)) do names[#names + 1] = row.name end
+    return names
+end
+
+function FxSaved.row(key, name)
+    for _, row in ipairs(FxSaved.list(key)) do
+        if row.name == name then return row end
+    end
+    return nil
+end
+
+function FxSaved.entry(key, name)
+    local row = FxSaved.row(key, name)
+    if not row then return nil end
+    if row.id then return "rbxassetid://" .. row.id end
+    return fxLocalAsset(row.file)
+end
+
+function FxSaved.label(key, name)
+    local row = FxSaved.row(key, name)
+    if not row then return nil end
+    return row.id and tostring(row.id) or row.file
+end
+
+function FxSaved.add(key, name, source)
+    local list = FxSaved.list(key)
+    local row = FxSaved.row(key, name)
+    if not row then
+        row = { name = name }
+        list[#list + 1] = row
+    end
+    row.id, row.file = source.id, source.file
+    FxSaved.write()
+end
+
+function FxSaved.remove(key, name)
+    local list = FxSaved.list(key)
+    for index, row in ipairs(list) do
+        if row.name == name then
+            table.remove(list, index)
+            FxSaved.write()
+            return true
+        end
+    end
+    return false
+end
+
+local function fxWeaponEntry(key)
+    local options = getgenv().Options or {}
+    local selected = options[key .. "_sound"]
+    local name = selected and selected.Value
+    if type(name) == "string" and name ~= "" and name ~= "None" then
+        local entry = FxSaved.entry(key, name)
+        if entry then return entry end
+    end
+    local custom = options[key .. "_custom"]
+    local source = fxParseSource(custom and custom.Value)
+    if source and source.id then return "rbxassetid://" .. source.id end
+    if source and source.file then return fxLocalAsset(source.file) end
+    return nil
+end
+
+local function fxPlaySound(entry, volume, pitch, variation)
+    if type(entry) == "table" then entry = entry[math.random(1, #entry)] end
+    if type(entry) ~= "string" or entry == "" then return nil end
+    fxEnsure(entry)
+    local sound = Instance.new("Sound")
+    sound.SoundId = entry
+    sound.Volume = tonumber(volume) or 1
+    local speed = tonumber(pitch) or 1
+    if variation and variation > 0 then speed = speed * (1 + (math.random() * 2 - 1) * variation) end
+    sound.PlaybackSpeed = math.max(speed, 0.05)
+    sound.Parent = game:GetService("SoundService")
+    sound:Play()
+    game:GetService("Debris"):AddItem(sound, 8)
+    local id = fxAssetNumber(entry)
+    if id then
+        task.delay(1.5, function()
+            if sound.Parent and not sound.IsLoaded and sound.TimeLength <= 0 then
+                FxAudio.ok[id] = false
+                FxAudio.failedAt[id] = os.clock()
+                fxReport("block" .. id, fxBlockedText(id))
+            end
+        end)
+    end
+    return sound
+end
+local FX_KILL_NAMES = { "Stone", "Gold Statue", "Fade", "Ghost", "Shrink", "Blackhole", "Cosmic Strike", "Cyberspace", "Darkheart", "Deleted", "Galactic Pull", "Game Over", "Glitter Bomb", "Heartbreak", "Infinite Portal", "Lightning", "Northern Aurora Burst", "Paper Surprise", "Scorch", "Soul Grasp", "Sparkle", "Stereo" }
+local FX_HIT_NAMES = { "nova", "sparks", "bubble", "orbs", "air", "blood", "glitch", "slash", "cosmic", "crescentslash", "Burst: Mutants Rage", "Burst: Armageddon", "Burst: Solar Flare", "Burst: Heaven", "Burst: Gravity God", "Burst: Red Ring of Death", "Burst: Blue Heat", "Burst: Stardust Fragment", "Burst: Fiery Ritual of Hallownest", "Burst: Midnight Blues", "Burst: Susanoo Arms", "Burst: Atomic", "Burst: Kurama" }
+local FX_ENCH_NAMES = { "Afterimage", "BloodStained", "Bubblegum", "Cinder", "Cinderfall", "Contrail", "Frost", "Gilded", "Guillotine", "Ink", "Lightning", "Meteor", "Mirage", "Molten", "Monochrome", "Nightshade", "Pollen", "Prismatic", "Rust", "Seafoam", "Shadow", "Solar", "Soundwave", "Starfall", "StormFront", "Supporter", "Tidal", "Toxic", "UltraHardSteel", "Void", "Whetstone" }
+local FX_MUZZLE_NAMES = { "Blue Black Hole", "Gold Black Hole", "Orange Black Hole", "Purple Black Hole", "Red Black Hole", "White Black Hole" }
+local function fxKey(text)
+    return string.lower((string.gsub(tostring(text or ""), "[^%w]", "")))
+end
+
+local FxColor = {
+    classes = { ParticleEmitter = "Particle", Beam = "Beam", Trail = "Trail", PointLight = "Light", SpotLight = "Light", SurfaceLight = "Light", Sparkles = "Sparkles", Fire = "Fire", Smoke = "Smoke" },
+}
+
+function FxColor.dominant(sequence)
+    local best, bestScore = nil, -1
+    for _, keypoint in ipairs(sequence.Keypoints) do
+        local _, saturation, value = keypoint.Value:ToHSV()
+        local score = saturation * 0.6 + value * 0.4
+        if score > bestScore then
+            best, bestScore = keypoint.Value, score
+        end
+    end
+    return best or Color3.new(1, 1, 1)
+end
+
+function FxColor.read(inst)
+    local class = inst.ClassName
+    if class == "ParticleEmitter" or class == "Beam" or class == "Trail" then
+        local ok, color = pcall(FxColor.dominant, inst.Color)
+        if ok then return color end
+    elseif class == "Sparkles" then
+        return inst.SparkleColor
+    elseif class == "Smoke" or class == "Fire" or inst:IsA("Light") then
+        return inst.Color
+    end
+    return Color3.new(1, 1, 1)
+end
+
+function FxColor.retint(sequence, color)
+    local keypoints = sequence.Keypoints
+    local top = 0
+    for _, keypoint in ipairs(keypoints) do
+        local _, _, value = keypoint.Value:ToHSV()
+        top = math.max(top, value)
+    end
+    if top <= 0.001 or #keypoints < 2 then return ColorSequence.new(color) end
+    local hue, saturation, brightness = color:ToHSV()
+    local out = {}
+    for _, keypoint in ipairs(keypoints) do
+        local _, _, value = keypoint.Value:ToHSV()
+        out[#out + 1] = ColorSequenceKeypoint.new(keypoint.Time, Color3.fromHSV(hue, saturation, math.clamp(brightness * (value / top), 0, 1)))
+    end
+    return ColorSequence.new(out)
+end
+
+function FxColor.apply(inst, color)
+    local class = inst.ClassName
+    if class == "ParticleEmitter" or class == "Beam" or class == "Trail" then
+        inst.Color = FxColor.retint(inst.Color, color)
+    elseif class == "Sparkles" then
+        inst.SparkleColor = color
+    elseif class == "Fire" then
+        inst.Color = color
+        inst.SecondaryColor = color:Lerp(Color3.new(1, 1, 1), 0.25)
+    elseif class == "Smoke" or inst:IsA("Light") then
+        inst.Color = color
+    end
+end
+
+function FxColor.label(name, kind, count)
+    if count and count > 1 then return string.format("%s (%s x%d)", name, kind, count) end
+    return string.format("%s (%s)", name, kind)
+end
 local HIT_SOUND_NAMES = {}
 for name in pairs(HIT_SOUNDS) do table.insert(HIT_SOUND_NAMES, name) end
 table.sort(HIT_SOUND_NAMES)
+
+local function fxHitEntry(group, name)
+    return FxSaved.entry(group, name) or HIT_SOUNDS[name]
+end
 local playHitSound
 local function noop() end
 local SpooferActions = { apply = noop, reset = noop, applyUser = noop, applyOutfit = noop }
@@ -1330,6 +1660,98 @@ local function patchLibrarySource(source)
     swap("                local Key = KeyPicker.Value;\n                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then\n                    return Key == 'MB1' and",
          "                local Key = KeyPicker.Value;\n                if Key == 'MB3' or Key == 'MB4' or Key == 'MB5' then\n                    return (Library.ButtonDown and Library.ButtonDown(Key)) == true;\n                end;\n                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then\n                    return Key == 'MB1' and")
 
+    swap([==[        if KeyPicker.SyncToggleState then
+            Info.Modes = { 'Toggle' }
+            Info.Mode = 'Toggle'
+        end]==],
+         [==[        if KeyPicker.SyncToggleState then
+            Info.Modes = { 'Toggle', 'Hold', 'Always' }
+        end]==])
+
+    swap([==[                KeyPicker.Mode = Mode;
+]==],
+         [==[                KeyPicker.Mode = Mode;
+                if KeyPicker.SyncToggleState and Mode == 'Hold' and KeyPicker.Value ~= 'None' then
+                    task.defer(function()
+                        pcall(function() ParentObj:SetValue(KeyPicker:GetState() == true) end)
+                    end)
+                end
+]==])
+
+    swap([==[        KeyPicker:Update();
+        Options[Idx] = KeyPicker;
+]==],
+         [==[        if KeyPicker.SyncToggleState then
+            local HeldBefore = false
+            Library:GiveSignal(RunService.Heartbeat:Connect(function()
+                if KeyPicker.Mode ~= 'Hold' or KeyPicker.Value == 'None' or Picking or InputService:GetFocusedTextBox() then
+                    HeldBefore = false
+                    return
+                end
+                local Down = KeyPicker:GetState() == true
+                if Down ~= HeldBefore then
+                    HeldBefore = Down
+                    ParentObj:SetValue(Down)
+                end
+            end))
+        end
+
+        KeyPicker:Update();
+        Options[Idx] = KeyPicker;
+]==])
+
+    swap([==[                if Addon.Type == 'KeyPicker' and Addon.SyncToggleState then
+                    Addon.Toggled = Bool
+                    Addon:Update()
+                end]==],
+         [==[                if Addon.Type == 'KeyPicker' and Addon.SyncToggleState then
+                    Addon.Toggled = Bool
+                    Addon:Update()
+                elseif Addon.Type == 'KeyPicker' then
+                    Addon:Update()
+                end]==])
+
+    swap([==[            ContainerLabel.TextColor3 = State and Library.AccentColor or Library.FontColor;
+            Library.RegistryMap[ContainerLabel].Properties.TextColor3 = State and 'AccentColor' or 'FontColor';]==],
+         [==[            local ParentOn = true
+            if ParentObj and ParentObj.Type == 'Toggle' then ParentOn = ParentObj.Value == true end
+            local Lit = State == true and ParentOn
+            if KeyPicker.Value == 'None' then KeybindEntry.Visible = false end
+
+            ContainerLabel.TextColor3 = Lit and Library.AccentColor or Library.FontColor;
+            Library.RegistryMap[ContainerLabel].Properties.TextColor3 = Lit and 'AccentColor' or 'FontColor';]==])
+
+    swap("        Slider:Display();\n        Groupbox:AddBlank(Info.BlankSize or 6);",
+[==[        local function FitSlider()
+            local Span = SliderOuter.AbsoluteSize.X - 2;
+            if Span > 20 and Span ~= Slider.MaxSize then
+                Slider.MaxSize = Span;
+                Slider:Display();
+            end;
+        end;
+        SliderOuter:GetPropertyChangedSignal('AbsoluteSize'):Connect(FitSlider);
+        task.defer(FitSlider);
+        Slider:Display();
+        Groupbox:AddBlank(Info.BlankSize or 6);]==])
+
+    swap("        Toggle:Display();\n        Groupbox:AddBlank(Info.BlankSize or 5 + 2);",
+[==[        local function FitToggle()
+            local Width = Container.AbsoluteSize.X;
+            if Width < 60 then return; end;
+            ToggleLabel.Size = UDim2.new(0, math.max(Width - 21, 40), 1, 0);
+            local Layout = ToggleLabel:FindFirstChildOfClass('UIListLayout');
+            local Used = Layout and Layout.AbsoluteContentSize.X or 0;
+            ToggleRegion.Size = UDim2.new(0, math.max(Width - 23 - Used, 40), 1, 0);
+        end;
+        Container:GetPropertyChangedSignal('AbsoluteSize'):Connect(FitToggle);
+        do
+            local Layout = ToggleLabel:FindFirstChildOfClass('UIListLayout');
+            if Layout then Layout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(FitToggle); end;
+        end;
+        task.defer(FitToggle);
+        Toggle:Display();
+        Groupbox:AddBlank(Info.BlankSize or 5 + 2);]==])
+
     swap("Cursor.ZIndex = 100;", "Cursor.ZIndex = 5000;")
     swap("CursorOutline.ZIndex = 99;", "CursorOutline.ZIndex = 4999;")
     return source
@@ -1345,6 +1767,80 @@ pcall(function()
         if picker then picker:SetValueRGB(Color3.fromHex(data.value), tonumber(data.transparency) or 0) end
     end
 end)
+do
+    local Http = game:GetService("HttpService")
+    local cfg = { pending = {} }
+    getgenv().AsterCfg = cfg
+
+    function cfg.on(idx, default)
+        local toggle = getgenv().Toggles and getgenv().Toggles[idx]
+        if toggle then return toggle.Value == true end
+        local entry = cfg.pending[idx]
+        if entry and type(entry.value) == "boolean" then return entry.value end
+        return default
+    end
+
+    function cfg.color(idx)
+        local picker = getgenv().Options and getgenv().Options[idx]
+        if picker and typeof(picker.Value) == "Color3" then return picker.Value end
+        local entry = cfg.pending[idx]
+        if entry and type(entry.value) == "string" then
+            local ok, color = pcall(Color3.fromHex, entry.value)
+            if ok then return color end
+        end
+        return nil
+    end
+
+    function cfg.apply(prefix)
+        local toggles, options = getgenv().Toggles or {}, getgenv().Options or {}
+        for idx, entry in pairs(cfg.pending) do
+            if string.sub(idx, 1, #prefix) == prefix and (toggles[idx] or options[idx]) then
+                cfg.pending[idx] = nil
+                local parser = SaveManager.Parser[entry.type]
+                if parser then
+                    task.spawn(function() pcall(parser.Load, idx, entry) end)
+                end
+            end
+        end
+    end
+
+    local originalLoad, originalSave = SaveManager.Load, SaveManager.Save
+
+    function SaveManager:Load(name)
+        local ok, message = originalLoad(self, name)
+        if ok then
+            pcall(function()
+                local decoded = Http:JSONDecode(readfile(self.Folder .. "/settings/" .. name .. ".json"))
+                local toggles, options = getgenv().Toggles or {}, getgenv().Options or {}
+                for _, entry in ipairs(decoded.objects) do
+                    local idx = entry.idx
+                    if idx and not self.Ignore[idx] and not toggles[idx] and not options[idx] then
+                        cfg.pending[idx] = entry
+                    end
+                end
+            end)
+        end
+        return ok, message
+    end
+
+    function SaveManager:Save(name)
+        local ok, message = originalSave(self, name)
+        if ok and next(cfg.pending) then
+            pcall(function()
+                local path = self.Folder .. "/settings/" .. name .. ".json"
+                local data = Http:JSONDecode(readfile(path))
+                local present = {}
+                for _, entry in ipairs(data.objects) do present[entry.idx] = true end
+                for idx, entry in pairs(cfg.pending) do
+                    if not present[idx] then table.insert(data.objects, entry) end
+                end
+                writefile(path, Http:JSONEncode(data))
+            end)
+        end
+        return ok, message
+    end
+end
+
 Loader.step("UI library ready", 0.34)
 getgenv().Library = Library
 
@@ -1412,7 +1908,7 @@ Library:UpdateColorsUsingRegistry()
 
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster",
+    Title = "Aster  |  build 0823-B",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -1448,6 +1944,9 @@ end
 
 local function wrapElement(linoriaObject)
     local element = {}
+    function element:SetText(text)
+        if linoriaObject.SetText then pcall(function() linoriaObject:SetText(text) end) end
+    end
     function element:Colorpicker(info)
         if not linoriaObject.AddColorPicker then
             warn("Colorpicker skipped (element has no addon support):", info.Flag)
@@ -1553,6 +2052,7 @@ local function wrapGroup(group, page, side)
     return wrapped
 end
 
+local GroupMeta
 local function wrapPage(tab)
     local page = { load = { 0, 0 } }
     local function pickSide(side)
@@ -1563,6 +2063,7 @@ local function wrapPage(tab)
     function page:Section(info)
         local side = pickSide(info.Side)
         local group = side == 1 and tab:AddLeftGroupbox(info.Name) or tab:AddRightGroupbox(info.Name)
+        GroupMeta = GroupMeta or getmetatable(group)
         return wrapGroup(group, page, side)
     end
 
@@ -1574,6 +2075,88 @@ local function wrapPage(tab)
             sections[index] = wrapGroup(box:AddTab(name), page, side)
         end
         return table.unpack(sections)
+    end
+
+    function page:SubTabs(names)
+        local bar = { buttons = {}, current = names[1], built = false, groups = {} }
+        local subs = {}
+
+        local function apply()
+            for name, list in pairs(bar.groups) do
+                for _, frame in ipairs(list) do frame.Visible = name == bar.current end
+            end
+            for name, button in pairs(bar.buttons) do
+                local active = name == bar.current
+                button.BackgroundColor3 = active and Library.AccentColor or Library.MainColor
+                pcall(function()
+                    Library.RegistryMap[button].Properties.BackgroundColor3 = active and "AccentColor" or "MainColor"
+                end)
+            end
+        end
+
+        local function build(container)
+            if bar.built then return end
+            bar.built = true
+            local box = container.Parent.Parent
+            local tabFrame = box.Parent.Parent
+            for _, side in ipairs(tabFrame:GetChildren()) do
+                if side:IsA("ScrollingFrame") then
+                    side.Position = UDim2.new(side.Position.X.Scale, side.Position.X.Offset, 0, side.Position.Y.Offset + 28)
+                    side.Size = UDim2.new(side.Size.X.Scale, side.Size.X.Offset, 1, side.Size.Y.Offset - 28)
+                end
+            end
+            local holder = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 7, 0, 6), Size = UDim2.new(1, -14, 0, 22), ZIndex = 3, Parent = tabFrame })
+            Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = holder })
+            for index, name in ipairs(names) do
+                local width = Library:GetTextBounds(name, Library.Font, Library.FontSize) + 22
+                local frame = Library:Create("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(0, width, 1, 0), LayoutOrder = index, ZIndex = 3, Parent = holder })
+                Library:AddToRegistry(frame, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+                Library:CreateLabel({ Size = UDim2.new(1, 0, 1, 0), Text = name, ZIndex = 4, Parent = frame })
+                local hit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 6, Parent = frame })
+                hit.MouseButton1Click:Connect(function()
+                    if Library:MouseIsOverOpenedFrame() then return end
+                    bar.current = name
+                    apply()
+                end)
+                bar.buttons[name] = frame
+            end
+            apply()
+        end
+
+        local function register(name, container)
+            build(container)
+            local frame = container.Parent.Parent
+            bar.groups[name] = bar.groups[name] or {}
+            table.insert(bar.groups[name], frame)
+            frame.Visible = name == bar.current
+        end
+
+        for _, name in ipairs(names) do
+            local sub = { load = { 0, 0 } }
+            local function pick(side)
+                if side == 1 or side == 2 then return side end
+                return sub.load[1] <= sub.load[2] and 1 or 2
+            end
+            function sub:Section(info)
+                local side = pick(info.Side)
+                local group = side == 1 and tab:AddLeftGroupbox(info.Name) or tab:AddRightGroupbox(info.Name)
+                GroupMeta = GroupMeta or getmetatable(group)
+                register(name, group.Container)
+                return wrapGroup(group, sub, side)
+            end
+            function sub:MultiSection(info)
+                local side = pick(info.Side)
+                local box = side == 1 and tab:AddLeftTabbox() or tab:AddRightTabbox()
+                local sections = {}
+                for index, title in ipairs(info.Sections) do
+                    sections[index] = wrapGroup(box:AddTab(title), sub, side)
+                end
+                register(name, sections[1].Container or box.Tabs[info.Sections[1]].Container)
+                return table.unpack(sections)
+            end
+            subs[name] = sub
+        end
+        return subs
     end
 
     return page
@@ -1589,12 +2172,18 @@ function Window:Page(info)
     return wrapPage(LinoriaWindow:AddTab(info.Name))
 end
 
-local CombatTab   = Window:Page({ Name = "Combat",  Columns = 2, Subtabs = false })
+local CombatTab   = Window:Page({ Name = "Legit", Columns = 2, Subtabs = false })
+local CombatSubs  = CombatTab:SubTabs({ "Aim", "Silent", "Other" })
+local RageTab     = Window:Page({ Name = "Rage", Columns = 2, Subtabs = false })
+local RageSubs    = RageTab:SubTabs({ "Main", "Void", "Aim", "Other" })
 local VisualsPage = Window:Page({ Name = "Visuals", Columns = 2, Subtabs = false })
+local VisualsSubs = VisualsPage:SubTabs({ "ESP", "Viewmodel", "Screen" })
 local WorldPage   = Window:Page({ Name = "World",   Columns = 2, Subtabs = false })
+local WorldSubs   = WorldPage:SubTabs({ "Lighting", "Weather", "Effects", "Indicators" })
 
 local PlayersPage  = Window:Page({ Name = "Players", Columns = 2, Subtabs = false })
 local MiscPage     = Window:Page({ Name = "Misc",    Columns = 2, Subtabs = false })
+local MiscSubs     = MiscPage:SubTabs({ "Movement", "Combat", "Utility" })
 local MiscActions  = { clearCheats = noop }
 local TeleportPage = Window:Page({ Name = "Teleport", Columns = 2, Subtabs = false })
 local ShotEvents = { shot = {}, hit = {}, cast = {}, kill = {} }
@@ -1607,12 +2196,13 @@ local Actions = {
 
 local WHITE = Color3.fromRGB(255, 255, 255)
 local BLACK = Color3.fromRGB(0, 0, 0)
+local Fx
 
 do
 
 do
 
-    local Aim = CombatTab:Section({ Name = "Aim assist", Side = 1 })
+    local Aim = CombatSubs.Aim:Section({ Name = "Aim assist", Side = 1 })
     local aimEnabled = Aim:Toggle({ Name = "Enabled", Flag = "Aim_Global_Enabled", Default = false })
     aimEnabled:Keybind({ Name = "Aim key", Flag = "Aim_Global_Key", Default = "MB2", Mode = "Hold" })
     Aim:Dropdown({ Name = "Method", Flag = "aim_method", Items = { "Camera", "Mouse" }, Default = "Camera" })
@@ -1630,24 +2220,97 @@ do
     Aim:Toggle({ Name = "Hostile only (inmates)", Flag = "aim_hostile", Default = false })
     Aim:Toggle({ Name = "Ignore tased / arrested", Flag = "aim_ignore_down", Default = false })
 
-    local Smooth = CombatTab:Section({ Name = "Aim smoothing", Side = 1 })
+    local Smooth = CombatSubs.Aim:Section({ Name = "Aim smoothing", Side = 1 })
     Smooth:Toggle({ Name = "Smoothing", Flag = "aim_smooth", Default = true })
     Smooth:Slider({ Name = "Start", Flag = "aim_smooth_start", Min = 0, Max = 99, Default = 85, Suffix = "%", Decimals = 1 })
     Smooth:Slider({ Name = "End", Flag = "aim_smooth_end", Min = 0, Max = 99, Default = 20, Suffix = "%", Decimals = 1 })
     Smooth:Slider({ Name = "Increment", Flag = "aim_smooth_inc", Min = 0, Max = 200, Default = 50, Suffix = "%/s", Decimals = 1 })
     Smooth:Slider({ Name = "Randomization", Flag = "aim_smooth_rand", Min = 0, Max = 50, Default = 5, Suffix = "%", Decimals = 1 })
 
-    local Trigger = CombatTab:Section({ Name = "Triggerbot", Side = 1 })
+    local Trigger = CombatSubs.Other:Section({ Name = "Triggerbot", Side = 1 })
     local triggerEnabled = Trigger:Toggle({ Name = "Enabled", Flag = "Trigger_Global_Enabled", Default = false })
     triggerEnabled:Keybind({ Name = "Trigger key", Flag = "Trigger_Global_Key", Default = "None", Mode = "Always" })
     Trigger:Dropdown({ Name = "Hit part", Flag = "Trigger_Global_HitPart", Items = { "Head", "Torso", "Any" }, Default = "Head" })
     Trigger:Slider({ Name = "Delay", Flag = "Trigger_Global_Delay", Min = 0, Max = 300, Default = 40, Suffix = "ms", Decimals = 1 })
     Trigger:Slider({ Name = "Reaction time", Flag = "Trigger_Global_Reaction", Min = 0, Max = 200, Default = 0, Suffix = "ms", Decimals = 1 })
+    Trigger:Toggle({ Name = "Magnet", Flag = "trigger_magnet", Default = false, Tooltip = "While the trigger key is held, the aim assist (its FOV, hitscan, smoothing and method settings) pulls onto the target as well, and the triggerbot fires once the crosshair is on it. Set the trigger key mode to Hold so it only works while held. The aim assist toggle itself can stay off." })
     Trigger:Toggle({ Name = "Team check", Flag = "trigger_team", Default = false })
     Trigger:Toggle({ Name = "Forcefield check", Flag = "trigger_ff", Default = false })
     Trigger:Toggle({ Name = "Hostile only (inmates)", Flag = "trigger_hostile", Default = false })
 
-    local Wall = CombatTab:Section({ Name = "Wallbang", Side = 1 })
+    do
+        local RB = RageSubs.Main:Section({ Name = "Ragebot", Side = 1 })
+        RB:Toggle({ Name = "Enabled", Flag = "rb_enabled", Default = false, Tooltip = "Hides in the void, comes out next to the target, shoots and goes back" }):Keybind({ Name = "Ragebot key", Flag = "rb_key", Default = "None", Sync = true })
+        RB:Dropdown({ Name = "Weapons", Flag = "rb_weapons", Items = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver" }, Multi = true, Default = {}, Tooltip = "The ragebot cycles through these weapons while it shoots and equips them for you. Nothing selected keeps whatever you hold" })
+        RB:Slider({ Name = "Weapon switch delay", Flag = "rb_switch_delay", Min = 0.05, Max = 2, Default = 0.15, Suffix = "s", Decimals = 0.01, Tooltip = "How long each weapon is held before the next one. An empty or reloading weapon is swapped out at once" })
+        RB:Dropdown({ Name = "Autoget weapons", Flag = "rb_autoget", Items = { "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }, Multi = true, Default = {}, Tooltip = "Picks these weapons up from their spawns whenever you do not have them, also after you respawn. The ragebot pauses while you fetch one" })
+        RB:Dropdown({ Name = "Settings", Flag = "rb_settings", Items = { "View target", "Show server position", "Random peek spot" }, Multi = true, Default = {}, Tooltip = "View target: the camera follows the target. Show server position: a highlighted copy of you shows where the server sees you. Random peek spot: a new random spot around the target for every shot" })
+        RB:Dropdown({ Name = "Hit part", Flag = "rb_part", Items = { "Head", "Torso", "Random" }, Default = "Head" })
+        RB:Slider({ Name = "Shots per second", Flag = "rb_rate", Min = 1, Max = 30, Default = 12, Suffix = "/s", Decimals = 1 })
+        RB:Slider({ Name = "Shot delay after peeking", Flag = "rb_shot_delay", Min = 0, Max = 0.3, Default = 0.03, Suffix = "s", Decimals = 0.01, Tooltip = "How long you stand at the peek spot before the first shot, so the server has your new position" })
+        RB:Toggle({ Name = "Auto reload", Flag = "rb_reload", Default = false, Tooltip = "Reloads when the gun is empty. With void spam on you stay hidden while it reloads" })
+        RB:Toggle({ Name = "Show status", Flag = "rb_status", Default = false, Tooltip = "A line of text at the top of the screen with what the ragebot is doing" })
+        RB:Slider({ Name = "Status offset", Flag = "rb_status_y", Min = -300, Max = 300, Default = 40, Suffix = "px", Decimals = 1, Tooltip = "Vertical distance of the status text from the middle of the screen" })
+        RB:Toggle({ Name = "Safe mode", Flag = "rb_safe", Default = false, Tooltip = "Below the health percentage you stay hidden (or at home when void spam is off) until you healed" })
+        RB:Slider({ Name = "Safe mode health", Flag = "rb_safe_hp", Min = 5, Max = 90, Default = 20, Suffix = "%", Decimals = 1 })
+
+        local RT = RageSubs.Main:Section({ Name = "Target", Side = 2 })
+        RT:Toggle({ Name = "Add target to list", Flag = "rb_add", Default = false, Tooltip = "Press the key to add the player closest to your cursor to the target list. Press again on the same player to remove them" }):Keybind({ Name = "Add target key", Flag = "rb_add_key", Default = "G", Sync = false })
+        RT:Dropdown({ Name = "Mode", Flag = "rb_tmode", Items = { "Target list", "Players tab", "Closest", "Closest to cursor" }, Default = "Target list", Tooltip = "Target list: only the players in the list below, nobody else. Players tab: only the player selected in the Players tab. Closest and Closest to cursor shoot anyone" })
+        local names = {}
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then names[#names + 1] = player.Name end
+        end
+        table.sort(names, function(a, b) return a:lower() < b:lower() end)
+        RT:Dropdown({ Name = "Targets", Flag = "rb_targets", Items = names, Multi = true, Default = {}, Tooltip = "Used by the Target list mode" })
+        RT:Dropdown({ Name = "Whitelist", Flag = "rb_white", Items = names, Multi = true, Default = {}, Tooltip = "These players are never targeted" })
+        RT:Slider({ Name = "Max distance", Flag = "rb_range", Min = 50, Max = 20000, Default = 2000, Suffix = " studs", Decimals = 1 })
+        RT:Toggle({ Name = "Kill all nearby", Flag = "rb_nearby", Default = false, Tooltip = "In Target list and Players tab mode, anyone within the range below is a target too" })
+        RT:Slider({ Name = "Nearby range", Flag = "rb_nearby_range", Min = 10, Max = 300, Default = 60, Suffix = " studs", Decimals = 1 })
+        RT:Toggle({ Name = "Swap targets", Flag = "rb_swap", Default = false, Tooltip = "Moves on to the next player when the current one takes no damage for the time below" })
+        RT:Slider({ Name = "Swap after", Flag = "rb_swap_time", Min = 1, Max = 30, Default = 4, Suffix = "s", Decimals = 0.5 })
+        RT:Toggle({ Name = "Skip forcefield targets", Flag = "rb_ff", Default = false, Tooltip = "Picks another target while one has a forcefield. Off: you stay hidden in the void until the forcefield is gone" })
+        RT:Toggle({ Name = "Ignore tased and arrested", Flag = "rb_down", Default = false })
+        RT:Toggle({ Name = "Ignore friendly team", Flag = "rb_team", Default = false })
+        RT:Toggle({ Name = "Hostile only (inmates)", Flag = "rb_hostile", Default = false })
+        Actions.rageResult = RT:Label({ Name = "Result: none" })
+        RT:Input({ Name = "Player search", Flag = "rb_search", Default = "", Placeholder = "name or display name", Tooltip = "The buttons below use this player. Empty uses the player selected in the Players tab" })
+        RT:Button({ Name = "Target player", Callback = function() if Actions.rageList then Actions.rageList("rb_targets", true) end end })
+        RT:Button({ Name = "Whitelist player", Callback = function() if Actions.rageList then Actions.rageList("rb_white", true) end end })
+        RT:Button({ Name = "Clear targets", Callback = function() if Actions.rageList then Actions.rageList("rb_targets", false) end end })
+        RT:Button({ Name = "Clear whitelist", Callback = function() if Actions.rageList then Actions.rageList("rb_white", false) end end })
+        Actions.rageNames = names
+
+        local RV = RageSubs.Void:Section({ Name = "Void spam", Side = 1 })
+        RV:Toggle({ Name = "Void spam", Flag = "rb_void", Default = false, Tooltip = "Switches between a hiding spot far outside the map and the peek spot" })
+        RV:Dropdown({ Name = "When", Flag = "rb_void_when", Items = { "While targeting", "While reloading", "Smart", "Always" }, Default = "While targeting", Tooltip = "While targeting: hide between peeks the whole time. While reloading: hide only to reload. Smart: peek normally and hide for a while when the target stops taking damage. Always: also hides without a target" })
+        RV:Toggle({ Name = "Show void location", Flag = "rb_void_show", Default = false, Tooltip = "A marker, a line and a distance text show where your hiding spot is" }):Colorpicker({ Name = "Void marker", Flag = "rb_void_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
+        RV:Slider({ Name = "In void", Flag = "rb_in_time", Min = 0.05, Max = 3, Default = 0.35, Suffix = "s", Decimals = 0.01 })
+        RV:Slider({ Name = "Out of void", Flag = "rb_out_time", Min = 0.05, Max = 2, Default = 0.2, Suffix = "s", Decimals = 0.01 })
+        RV:Slider({ Name = "Smart wait", Flag = "rb_smart_wait", Min = 1, Max = 30, Default = 8, Suffix = "s", Decimals = 0.5 })
+        RV:Slider({ Name = "Smart void time", Flag = "rb_smart_void", Min = 1, Max = 30, Default = 5, Suffix = "s", Decimals = 0.5 })
+        RV:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "Under map", "High", "Far", "Extreme" }, Default = "Under map", Tooltip = "Under map hides just above the point where the engine destroys parts, below your real position, the same spot the Void desync uses. High, Far and Extreme are far above or beside the map and can be killed by the game's kill planes" })
+        RV:Dropdown({ Name = "Direction", Flag = "rb_dir", Items = { "+Y", "+X", "+Z" }, Multi = true, Default = { "+Y" }, Tooltip = "Every position change picks one of the selected directions at random. Does not affect the Under map pattern" })
+        RV:Slider({ Name = "Depth multiplier", Flag = "rb_depth", Min = 0.1, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
+        RV:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
+
+        local RP = RageSubs.Void:Section({ Name = "Peek spot", Side = 2 })
+        RP:Dropdown({ Name = "Position", Flag = "rb_peek_mode", Items = { "Behind", "Above", "Random", "Spiral" }, Default = "Behind", Tooltip = "Where you appear next to the target" })
+        RP:Slider({ Name = "Distance", Flag = "rb_peek_dist", Min = 1, Max = 40, Default = 6, Suffix = " studs", Decimals = 0.5 })
+        RP:Slider({ Name = "Height offset", Flag = "rb_peek_height", Min = -6, Max = 20, Default = 2, Suffix = " studs", Decimals = 0.5 })
+        RP:Slider({ Name = "Spiral speed", Flag = "rb_spiral_speed", Min = 0.5, Max = 30, Default = 6, Suffix = " rad/s", Decimals = 0.5 })
+        RP:Dropdown({ Name = "Line of sight check", Flag = "rb_los", Items = { "Off", "Visible only" }, Default = "Off", Tooltip = "Visible only searches around the target for a spot with a clear line to the head and stays hidden when there is none" })
+
+        local RR = RageSubs.Aim:Section({ Name = "Prediction and resolver", Side = 1 })
+        RR:Toggle({ Name = "Prediction", Flag = "rb_pred", Default = false, Tooltip = "Aims ahead of a moving target" })
+        RR:Slider({ Name = "Base time", Flag = "rb_pred_base", Min = 0, Max = 0.5, Default = 0.07, Suffix = "s", Decimals = 0.01 })
+        RR:Slider({ Name = "Multiplier", Flag = "rb_pred_mult", Min = 0, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
+        RR:Toggle({ Name = "Resolver", Flag = "rb_res", Default = false, Tooltip = "A target that hides outside the map is aimed at where it was last inside the map. Without it, hidden targets are skipped" })
+        RR:Slider({ Name = "Resolver memory", Flag = "rb_res_time", Min = 0.5, Max = 10, Default = 2, Suffix = "s", Decimals = 0.1 })
+        RR:Slider({ Name = "Map limit", Flag = "rb_bounds", Min = 1000, Max = 20000, Default = 8000, Suffix = " studs", Decimals = 1, Tooltip = "Further from the center than this counts as outside the map" })
+    end
+
+    local Wall = RageSubs.Aim:Section({ Name = "Wallbang", Side = 2 })
     Wall:Toggle({ Name = "Wallbang", Flag = "silent_wallbang", Default = false })
     Wall:Dropdown({
         Name = "Method", Flag = "wb_method", Items = { "Vape V4", "Aster Origin", "Aster Reach", "Aster Precise" }, Default = "Aster Reach",
@@ -1658,7 +2321,7 @@ do
     Wall:Toggle({ Name = "Damage check", Flag = "wb_damage", Default = true, Tooltip = "Only uses a shot origin and hit point that can deal damage: close enough to you and to the target's body, and inside the gun's range. The indicator, auto fire and assist use the same check." })
     Wall:Slider({ Name = "Max spot distance", Flag = "wb_spot", Min = 5, Max = 20, Default = 7.5, Suffix = " studs", Decimals = 0.1 })
 
-    local Assist = CombatTab:Section({ Name = "Wallbang assist", Side = 1 })
+    local Assist = RageSubs.Aim:Section({ Name = "Wallbang assist", Side = 2 })
     local assistToggle = Assist:Toggle({ Name = "Wallbang assist", Flag = "wb_assist", Default = false, Tooltip = "Works on anyone near your cursor, no silent aim needed. If an enemy is behind a wall, it moves the position the server sees up to (or into) the wall so the shot has a line, and sends the shot at that enemy." })
     assistToggle:Keybind({ Name = "Assist key", Flag = "wb_assist_key", Default = "None", Sync = true })
     Assist:Dropdown({ Name = "Move method", Flag = "wb_assist_method", Items = { "Server position", "Velocity" }, Default = "Server position", Tooltip = "Server position: only what the server sees moves (writes the character CFrame). Velocity: you really move there with physics (no CFrame writes) and walls next to you stop colliding on the way, then you return. The visualizer only applies to Server position." })
@@ -1673,7 +2336,7 @@ do
     assistVisual:Colorpicker({ Name = "Fill", Flag = "wb_assist_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0.6 })
     assistVisual:Colorpicker({ Name = "Outline", Flag = "wb_assist_line", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
 
-    local Silent = CombatTab:Section({ Name = "Silent aim", Side = 2 })
+    local Silent = CombatSubs.Silent:Section({ Name = "Silent aim", Side = 1 })
     local silentEnabled = Silent:Toggle({ Name = "Enabled", Flag = "Silent_Global_Enabled", Default = false })
     silentEnabled:Keybind({ Name = "Silent key", Flag = "Silent_Global_Key", Default = "None", Mode = "Always" })
     Silent:Slider({ Name = "FOV", Flag = "silent_fov", Min = 10, Max = 800, Default = 150, Suffix = "px", Decimals = 1 })
@@ -1691,8 +2354,12 @@ do
     Silent:Toggle({ Name = "Auto fire", Flag = "silent_autofire", Default = false })
     Silent:Slider({ Name = "Auto fire rate", Flag = "silent_autofire_rate", Min = 1, Max = 60, Default = 15, Suffix = " hz", Decimals = 1 })
     Silent:Toggle({ Name = "Auto fire: skip blocked", Flag = "silent_autofire_check", Default = true, Tooltip = "With wallbang on, auto fire only shoots targets you can see or wallbang" })
+    Silent:Toggle({ Name = "Auto switch", Flag = "silent_switch", Default = false, Tooltip = "While auto fire has a target, switches between the weapons picked below. Weapons you do not have are skipped, and so are empty ones when another is ready" })
+    Silent:Dropdown({ Name = "Switch weapons", Flag = "silent_switch_weapons", Items = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver", "Taser" }, Multi = true, Default = {}, Tooltip = "The weapons to cycle through, in this order" })
+    Silent:Slider({ Name = "Switch delay", Flag = "silent_switch_delay", Min = 0.03, Max = 2, Default = 0.3, Suffix = " s", Decimals = 0.01, Tooltip = "Time between weapon switches" })
 
-    local FovAim, FovSilent = CombatTab:MultiSection({ Sections = { "Aim FOV", "Silent FOV" }, Side = 2 })
+    local FovAim = CombatSubs.Aim:Section({ Name = "Aim FOV", Side = 2 })
+    local FovSilent = CombatSubs.Silent:Section({ Name = "Silent FOV", Side = 1 })
     local aimCircle = FovAim:Toggle({ Name = "Show FOV circle", Flag = "aim_fov_show", Default = false })
     aimCircle:Colorpicker({ Name = "Color", Flag = "aim_fov_color", Default = Color3.new(1, 1, 1), Alpha = true })
     FovAim:Toggle({ Name = "Filled", Flag = "aim_fov_filled", Default = false })
@@ -1702,36 +2369,1445 @@ do
     FovSilent:Toggle({ Name = "Filled", Flag = "silent_fov_filled", Default = false })
     FovSilent:Slider({ Name = "Thickness", Flag = "silent_fov_thick", Min = 1, Max = 5, Default = 1, Decimals = 1 })
 
-    local GunMods = CombatTab:Section({ Name = "Gun mods", Side = 2 })
+    local OrbitSec = RageSubs.Other:Section({ Name = "Orbit target", Side = 2 })
+    OrbitSec:Toggle({ Name = "Orbit target", Flag = "orbit_on", Default = false, Tooltip = "While silent aim has a target, the position the server sees circles that player. You stay where you are, only the server position moves." }):Keybind({ Name = "Orbit key", Flag = "orbit_key", Default = "None", Sync = true })
+    OrbitSec:Dropdown({ Name = "Height", Flag = "orbit_mode", Items = { "Under the map", "Below target", "Near void" }, Default = "Under the map", Tooltip = "Under the map: below the lowest floor under the target. Below target: straight below the target's height. Near void: just above the void." })
+    OrbitSec:Slider({ Name = "Depth", Flag = "orbit_depth", Min = 0, Max = 500, Default = 15, Suffix = " studs", Decimals = 0.5, Tooltip = "How far below the floor (Under the map) or below the target (Below target). It always stops short of the void" })
+    OrbitSec:Slider({ Name = "Radius", Flag = "orbit_radius", Min = 0, Max = 100, Default = 6, Suffix = " studs", Decimals = 0.5 })
+    OrbitSec:Slider({ Name = "Orbit speed", Flag = "orbit_spin", Min = 0, Max = 720, Default = 180, Suffix = " deg/s", Decimals = 1 })
+    OrbitSec:Dropdown({ Name = "Direction", Flag = "orbit_dir", Items = { "Clockwise", "Counter clockwise" }, Default = "Clockwise" })
+    OrbitSec:Slider({ Name = "Move speed", Flag = "orbit_speed", Min = 10, Max = 4000, Default = 150, Suffix = " studs/s", Decimals = 1, Tooltip = "How fast the server position travels to the orbit. 4000 jumps instantly" })
+    OrbitSec:Slider({ Name = "Max target distance", Flag = "orbit_max", Min = 10, Max = 5000, Default = 500, Suffix = " studs", Decimals = 1 })
+    local orbitVisual = OrbitSec:Toggle({ Name = "Visualizer", Flag = "orbit_visual", Default = false, Tooltip = "A highlighted copy of your character shows where the server sees you" })
+    orbitVisual:Colorpicker({ Name = "Fill", Flag = "orbit_fill", Default = Color3.fromRGB(180, 120, 255), Alpha = 0.6 })
+    orbitVisual:Colorpicker({ Name = "Outline", Flag = "orbit_line", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
+    local orbitTracer = OrbitSec:Toggle({ Name = "Tracer", Flag = "orbit_tracer", Default = false, Tooltip = "A line from you to where the server sees you" })
+    orbitTracer:Colorpicker({ Name = "Color", Flag = "orbit_tracer_color", Default = Color3.fromRGB(180, 120, 255), Alpha = 0 })
+    local orbitRing = OrbitSec:Toggle({ Name = "Show orbit ring", Flag = "orbit_ring", Default = false, Tooltip = "Draws the circle the server position travels on" })
+    orbitRing:Colorpicker({ Name = "Color", Flag = "orbit_ring_color", Default = Color3.fromRGB(180, 120, 255), Alpha = 0.3 })
+
+    local TargetSec = CombatSubs.Silent:Section({ Name = "Target info", Side = 2 })
+    TargetSec:Toggle({ Name = "Target info panel", Flag = "tinfo_on", Default = false, Tooltip = "A small draggable panel about the player silent aim (or the aim assist) is locked onto. Drag it by its top part." })
+    TargetSec:Dropdown({ Name = "Target from", Flag = "tinfo_source", Items = { "Silent aim", "Aim assist" }, Default = "Silent aim" })
+    TargetSec:Toggle({ Name = "Show health", Flag = "tinfo_health", Default = true })
+    TargetSec:Toggle({ Name = "Show distance and line of sight", Flag = "tinfo_status", Default = true, Tooltip = "Visible, Wallbang (a wallbang spot exists) or Blocked" })
+    TargetSec:Toggle({ Name = "Show team and weapon", Flag = "tinfo_extra", Default = true })
+    TargetSec:Toggle({ Name = "Hide without target", Flag = "tinfo_hide", Default = true, Tooltip = "With the menu open the panel always shows so you can move it" })
+
+    local GunMods = RageSubs.Aim:Section({ Name = "Gun mods", Side = 1 })
     GunMods:Toggle({ Name = "Gun modifications", Flag = "gun_mods", Default = false })
     GunMods:Slider({ Name = "Fire delay (% of stock)", Flag = "gun_fire_rate", Min = 1, Max = 100, Default = 100, Suffix = "%", Decimals = 1 })
     GunMods:Toggle({ Name = "No spread", Flag = "gun_no_spread", Default = false })
     GunMods:Toggle({ Name = "Full automatic", Flag = "gun_full_auto", Default = false })
     GunMods:Toggle({ Name = "Custom range", Flag = "gun_range_on", Default = false })
     GunMods:Slider({ Name = "Range", Flag = "gun_range", Min = 10, Max = 100000, Default = 1000, Suffix = " studs", Decimals = 1 })
-    local Hits = CombatTab:Section({ Name = "Hit feedback", Side = 2 })
+    local Hits = CombatSubs.Other:Section({ Name = "Hit feedback", Side = 2 })
     Hits:Toggle({ Name = "Hit notifications", Flag = "World_HitNotify", Default = false })
-    Hits:Toggle({ Name = "Hit sounds", Flag = "World_HitSound", Default = false })
-    Hits:Dropdown({ Name = "Hit sound", Flag = "World_HitSoundId", Items = HIT_SOUND_NAMES, Default = "Gamesense" })
-    Hits:Slider({ Name = "Hit volume", Flag = "World_HitVolume", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
-    Hits:Button({ Name = "Preview sound", Callback = function() if playHitSound then playHitSound() end end })
     Hits:Toggle({ Name = "Bullet impacts", Flag = "World_Impacts", Default = false })
-    local Utility = CombatTab:Section({ Name = "Weapon utility", Side = 2 })
+    local Utility = CombatSubs.Other:Section({ Name = "Weapon utility", Side = 2 })
     Utility:Toggle({ Name = "Auto reload", Flag = "gun_auto_reload", Default = false })
     Utility:Toggle({ Name = "Auto swap on empty", Flag = "gun_auto_swap", Default = false })
     Utility:Toggle({ Name = "Shoot through vehicles", Flag = "gun_vehicle_wallbang", Default = false })
+end
+
+do
+Fx = { tabs = {}, order = { "SFX", "VFX", "Tracers", "Sky", "Car orbit" }, built = false, size = Vector2.new(600, 740), minSize = Vector2.new(480, 560) }
+for _, name in ipairs(Fx.order) do Fx.tabs[name] = { name = name, subs = {}, subOrder = {} } end
+
+local function fxCreate(class, props, registry)
+    local instance = Library:Create(class, props)
+    if registry then Library:AddToRegistry(instance, registry) end
+    return instance
+end
+
+local function fxLabel(props)
+    props.ZIndex = props.ZIndex or 5
+    return Library:CreateLabel(props)
+end
+
+local function fxBorder(item, colorName)
+    if not (item and item.Parent) then return end
+    item.BorderColor3 = Library[colorName]
+    local entry = Library.RegistryMap and Library.RegistryMap[item]
+    if entry then entry.Properties.BorderColor3 = colorName end
+end
+
+local function fxBackground(item, colorName)
+    if not (item and item.Parent) then return end
+    item.BackgroundColor3 = Library[colorName]
+    local entry = Library.RegistryMap and Library.RegistryMap[item]
+    if entry then entry.Properties.BackgroundColor3 = colorName end
+end
+
+local function fxBevel(parent, z, size, position, order)
+    local outer = fxCreate("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BorderColor3 = Color3.new(0, 0, 0), Size = size, Position = position or UDim2.new(), LayoutOrder = order or 0, ZIndex = z, Parent = parent }, { BorderColor3 = "Black" })
+    local inner = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = z + 1, Parent = outer }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+    Library:Create("UIGradient", {
+        Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)), ColorSequenceKeypoint.new(1, Color3.fromRGB(212, 212, 212)) }),
+        Rotation = 90,
+        Parent = inner,
+    })
+    return outer, inner
+end
+
+local function fxPanel(parent, name, position, size)
+    local outer = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = position, Size = size, ZIndex = 2, Parent = parent }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+    local inner = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 3, Parent = outer }, { BackgroundColor3 = "BackgroundColor" })
+    fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = 4, Parent = inner }, { BackgroundColor3 = "AccentColor" })
+    fxLabel({ Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0, 2), TextSize = Library.FontSize, Text = name, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 4, Parent = inner })
+    return inner
+end
+
+local function fxTabButton(parent, text, order)
+    local width = Library:GetTextBounds(text, Library.Font, Library.FontSize + 2) + 14
+    local frame = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(0, width, 1, 0), LayoutOrder = order, ZIndex = 1, Parent = parent }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+    fxLabel({ Size = UDim2.new(1, 0, 1, -1), Text = text, ZIndex = 1, Parent = frame })
+    local indicator = fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), Visible = false, ZIndex = 4, Parent = frame }, { BackgroundColor3 = "AccentColor" })
+    local hit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 6, Parent = frame })
+    return { frame = frame, indicator = indicator, hit = hit }
+end
+
+local function fxSetActive(button, on)
+    if not button then return end
+    fxBackground(button.frame, on and "MainColor" or "BackgroundColor")
+    button.indicator.Visible = on
+end
+
+local function fxBar(parent, position, size)
+    local outer = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = position, Size = size, ZIndex = 1, Parent = parent }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+    local inner = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Color3.new(0, 0, 0), BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 1, Parent = outer }, { BackgroundColor3 = "BackgroundColor" })
+    return inner
+end
+
+function Fx:Build()
+    if self.built or not Library.ScreenGui then return end
+    self.built = true
+    local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+    local size = Vector2.new(math.min(self.size.X, viewport.X - 20), math.min(self.size.Y, viewport.Y - 20))
+    self.size = size
+    local main = fxCreate("Frame", { Name = "AsterEffects", BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, Position = UDim2.new(0.5, -size.X / 2 + 40, 0.5, -size.Y / 2), Size = UDim2.fromOffset(size.X, size.Y), Visible = false, ZIndex = 1, Parent = Library.ScreenGui })
+    Library:MakeDraggable(main, 25, true)
+    local settle = 0
+    main:GetPropertyChangedSignal("Position"):Connect(function()
+        settle += 1
+        local ticket = settle
+        if self.previewHost then self.previewHost.Visible = false end
+        if self.settingsHost then self.settingsHost.Visible = false end
+        task.delay(0.15, function()
+            if settle ~= ticket then return end
+            if self.previewHost then self.previewHost.Visible = true end
+            if self.settingsHost then self.settingsHost.Visible = true end
+        end)
+    end)
+    self.main = main
+    main.Active = true
+    local LIFT = 30
+    local lifted = setmetatable({}, { __mode = "k" })
+    local function lift(inst)
+        if lifted[inst] or not inst:IsA("GuiObject") then return end
+        lifted[inst] = true
+        inst.ZIndex += LIFT
+    end
+    lift(main)
+    main.DescendantAdded:Connect(function(descendant)
+        task.defer(lift, descendant)
+    end)
+    local popups = {}
+    local function raisePopup(frame)
+        local entry = { list = {}, conn = nil }
+        local function add(inst)
+            if inst:IsA("GuiObject") then
+                entry.list[#entry.list + 1] = inst
+                inst.ZIndex += LIFT
+            end
+        end
+        add(frame)
+        for _, descendant in ipairs(frame:GetDescendants()) do add(descendant) end
+        entry.conn = frame.DescendantAdded:Connect(function(descendant)
+            task.defer(function()
+                if popups[frame] == entry then add(descendant) end
+            end)
+        end)
+        popups[frame] = entry
+    end
+    local function lowerPopup(frame)
+        local entry = popups[frame]
+        popups[frame] = nil
+        if not entry then return end
+        if entry.conn then entry.conn:Disconnect() end
+        for _, inst in ipairs(entry.list) do
+            if inst.Parent then pcall(function() inst.ZIndex -= LIFT end) end
+        end
+    end
+    track(RunService.Heartbeat:Connect(function()
+        local opened = Library.OpenedFrames
+        for frame in pairs(popups) do
+            if not frame.Parent or not frame.Visible or not opened or not opened[frame] or not main.Visible then lowerPopup(frame) end
+        end
+        if not main.Visible or not opened then return end
+        local origin, extent = main.AbsolutePosition, main.AbsoluteSize
+        for frame in pairs(opened) do
+            if not popups[frame] and typeof(frame) == "Instance" and frame.Parent and frame.Visible then
+                local at = frame.AbsolutePosition
+                if at.X >= origin.X - 6 and at.X <= origin.X + extent.X and at.Y >= origin.Y - 6 and at.Y <= origin.Y + extent.Y + 40 then
+                    raisePopup(frame)
+                end
+            end
+        end
+    end))
+    onUnload(function()
+        for frame in pairs(popups) do lowerPopup(frame) end
+    end)
+    local frame = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 1, Parent = main }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+    fxLabel({ Size = UDim2.new(1, 0, 0, 25), Text = "Effects", TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 1, Parent = frame })
+
+    local tabInner = fxBar(frame, UDim2.new(0, 8, 0, 25), UDim2.new(1, -16, 0, 29))
+    local tabArea = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 4, 0, 4), Size = UDim2.new(1, -8, 1, -8), ZIndex = 1, Parent = tabInner })
+    Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Parent = tabArea })
+    for index, name in ipairs(self.order) do
+        local tab = self.tabs[name]
+        tab.button = fxTabButton(tabArea, name, index)
+        tab.button.hit.MouseButton1Click:Connect(function() self:Select(name) end)
+    end
+
+    local subInner = fxBar(frame, UDim2.new(0, 8, 0, 58), UDim2.new(1, -16, 0, 27))
+    self.subArea = Library:Create("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.new(0, 4, 0, 4), Size = UDim2.new(1, -8, 1, -8), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, TopImage = "", BottomImage = "", ZIndex = 1, Parent = subInner })
+    Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Parent = self.subArea })
+
+    local bodyInner = fxBar(frame, UDim2.new(0, 8, 0, 89), UDim2.new(1, -16, 1, -97))
+    local previewInner = fxPanel(bodyInner, "Preview", UDim2.new(0, 8, 0, 8), UDim2.new(1, -16, 0.45, -12))
+    local settingsInner = fxPanel(bodyInner, "Settings", UDim2.new(0, 8, 0.45, 4), UDim2.new(1, -16, 0.55, -12))
+    self.previewHost = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 4, 0, 22), Size = UDim2.new(1, -8, 1, -26), ZIndex = 4, Parent = previewInner })
+    self.settingsHost = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 4, 0, 22), Size = UDim2.new(1, -8, 1, -26), ZIndex = 3, Parent = settingsInner })
+
+    local grip = fxLabel({ Text = "//", TextSize = 12, Size = UDim2.fromOffset(16, 16), Position = UDim2.new(1, -16, 1, -16), ZIndex = 9, Parent = main })
+    local gripHit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 10, Parent = grip })
+    gripHit.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local from, origin = main.AbsoluteSize, input.Position
+        local move, finish
+        move = UserInputService.InputChanged:Connect(function(change)
+            if change.UserInputType ~= Enum.UserInputType.MouseMovement and change.UserInputType ~= Enum.UserInputType.Touch then return end
+            local cam = workspace.CurrentCamera
+            local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+            local w = math.clamp(from.X + (change.Position.X - origin.X), self.minSize.X, math.max(self.minSize.X, vp.X - 20))
+            local h = math.clamp(from.Y + (change.Position.Y - origin.Y), self.minSize.Y, math.max(self.minSize.Y, vp.Y - 20))
+            main.Size = UDim2.fromOffset(w, h)
+            self.size = Vector2.new(w, h)
+        end)
+        finish = UserInputService.InputEnded:Connect(function(ended)
+            if ended.UserInputType == Enum.UserInputType.MouseButton1 or ended.UserInputType == Enum.UserInputType.Touch then
+                move:Disconnect()
+                finish:Disconnect()
+            end
+        end)
+    end)
+
+    track(RunService.Heartbeat:Connect(function()
+        local toggle = Toggles and Toggles.fx_ui
+        local want = toggle ~= nil and toggle.Value == true and Library.Toggled ~= false
+        if main.Visible ~= want then main.Visible = want end
+    end))
+    onUnload(function()
+        pcall(function() main:Destroy() end)
+        self.main = nil
+    end)
+
+    self:Select("SFX")
+end
+
+function Fx:RefreshSubBar()
+    local tab = self.activeTab
+    if not (tab and self.subArea) then return end
+    for _, child in ipairs(self.subArea:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+    for index, sub in ipairs(tab.subOrder) do
+        sub.button = fxTabButton(self.subArea, sub.name, index)
+        fxSetActive(sub.button, tab.current == sub)
+        sub.button.hit.MouseButton1Click:Connect(function() self:SelectSub(sub) end)
+    end
+end
+
+function Fx:SelectSub(sub)
+    local tab = self.activeTab
+    if not (tab and sub) then return end
+    tab.current = sub
+    for _, other in ipairs(tab.subOrder) do
+        other.preview.Visible = other == sub
+        other.settings.Visible = other == sub
+        fxSetActive(other.button, other == sub)
+    end
+    if not sub.previewBuilt and sub.builder then
+        sub.previewBuilt = true
+        local ok, err = pcall(sub.builder, sub.preview, sub)
+        if not ok then warn("Effects preview failed:", err) end
+    end
+    if sub.relayouts then
+        task.defer(function()
+            for _, relayout in ipairs(sub.relayouts) do pcall(relayout) end
+        end)
+    end
+    if sub.onShow then
+        local ok, err = pcall(sub.onShow, sub)
+        if not ok then warn("Effects preview failed:", err) end
+    end
+end
+
+function Fx:Select(tabName)
+    local tab = self.tabs[tabName]
+    if not tab then return end
+    self.activeTab = tab
+    for _, other in pairs(self.tabs) do
+        fxSetActive(other.button, other == tab)
+        for _, sub in ipairs(other.subOrder) do
+            if other ~= tab then
+                sub.preview.Visible = false
+                sub.settings.Visible = false
+            end
+        end
+    end
+    self:RefreshSubBar()
+    self:SelectSub(tab.current or tab.subOrder[1])
+end
+
+function Fx:Sub(tabName, subName)
+    self:Build()
+    local tab = self.tabs[tabName]
+    local existing
+    for _, sub in ipairs(tab.subOrder) do
+        if sub.name == subName then existing = sub break end
+    end
+    if existing then return existing end
+    local sub = { name = subName, tab = tab, sections = 0 }
+    sub.preview = Library:Create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), Visible = false, ClipsDescendants = true, ZIndex = 4, Parent = self.previewHost })
+    sub.settings = fxCreate("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 1, 0), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", Visible = false, ZIndex = 3, Parent = self.settingsHost }, { ScrollBarImageColor3 = "AccentColor" })
+    Library:Create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Center, Parent = sub.settings })
+    Library:Create("UIPadding", { PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 4), Parent = sub.settings })
+    table.insert(tab.subOrder, sub)
+    if tab == self.activeTab then
+        self:RefreshSubBar()
+        if not tab.current then self:SelectSub(sub) end
+    end
+    return sub
+end
+
+function Fx:Preview(tabName, subName, builder, onShow)
+    local sub = self:Sub(tabName, subName)
+    sub.builder = builder
+    sub.onShow = onShow
+    if self.activeTab and self.activeTab.current == sub then self:SelectSub(sub) end
+end
+
+function Fx:Section(tabName, subName, sectionName)
+    local sub = self:Sub(tabName, subName)
+    sub.sections += 1
+    local outer = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, -8, 0, 40), LayoutOrder = sub.sections, ZIndex = 3, Parent = sub.settings }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+    local inner = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.new(0, 1, 0, 1), Size = UDim2.new(1, -2, 1, -2), ZIndex = 4, Parent = outer }, { BackgroundColor3 = "BackgroundColor" })
+    fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = 5, Parent = inner }, { BackgroundColor3 = "AccentColor" })
+    fxLabel({ Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0, 2), TextSize = Library.FontSize, Text = sectionName, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 5, Parent = inner })
+    local container = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 4, 0, 20), Size = UDim2.new(1, -4, 1, -20), ZIndex = 1, Parent = inner })
+    local layout = Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder, Parent = container })
+    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        outer.Size = UDim2.new(1, -8, 0, layout.AbsoluteContentSize.Y + 24)
+    end)
+    local fake = setmetatable({ Container = container, Resize = function() end }, GroupMeta)
+    fake:AddBlank(3)
+    local group = wrapGroup(fake, { load = { 0, 0 } }, 1)
+    group.frame = outer
+    local items = {}
+    local function relayout()
+        local width = container.AbsoluteSize.X
+        if width < 60 then return end
+        for _, item in ipairs(items) do
+            if item.kind == "toggle" then
+            else
+                local option = Options[item.flag]
+                local span = item.outer.AbsoluteSize.X - 2
+                if option and span > 20 then
+                    option.MaxSize = span
+                    option:Display()
+                end
+            end
+        end
+    end
+    container:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
+    group.relayout = relayout
+    sub.relayouts = sub.relayouts or {}
+    table.insert(sub.relayouts, relayout)
+    local function watch(kind, original)
+        return function(self, info)
+            local before = {}
+            for _, child in ipairs(container:GetChildren()) do before[child] = true end
+            local result = original(self, info)
+            for _, child in ipairs(container:GetChildren()) do
+                if not before[child] and child:IsA("Frame") then
+                    if kind == "toggle" and child.Size.X.Scale == 0 and child.Size.X.Offset == 13 then
+                        local label = child:FindFirstChildWhichIsA("TextLabel", true)
+                        local region
+                        for _, inner in ipairs(child:GetChildren()) do
+                            if inner:IsA("Frame") and inner.Size.X.Offset == 170 then region = inner end
+                        end
+                        if label and region then table.insert(items, { kind = "toggle", label = label, region = region }) end
+                    elseif kind == "slider" and child.Size.X.Scale == 1 and child.Size.X.Offset == -4 and child.Size.Y.Offset == 13 then
+                        table.insert(items, { kind = "slider", outer = child, flag = info.Flag })
+                    end
+                end
+            end
+            task.defer(relayout)
+            return result
+        end
+    end
+    group.Toggle = watch("toggle", group.Toggle)
+    group.Slider = watch("slider", group.Slider)
+    return group
+end
+
+local function fxSoundList(initial)
+    local STRIDE = 24
+    local state = { config = initial }
+    local frame = Library:Create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), ZIndex = 5 })
+    state.frame = frame
+    local searchOuter, searchFace = fxBevel(frame, 5, UDim2.new(1, 0, 0, 20), UDim2.fromOffset(0, 0))
+    local clip = Library:Create("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.new(0, 5, 0, 0), Size = UDim2.new(1, -5, 1, 0), ZIndex = 7, Parent = searchFace })
+    local box = Library:Create("TextBox", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 0), Size = UDim2.fromScale(5, 1), Font = Library.Font, PlaceholderColor3 = Color3.fromRGB(190, 190, 190), PlaceholderText = initial.placeholder or "search sounds...", ClearTextOnFocus = false, Text = "", TextColor3 = Library.FontColor, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8, Parent = clip })
+    Library:AddToRegistry(box, { TextColor3 = "FontColor" })
+    Library:ApplyTextStroke(box)
+    local list = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 1, -24), CanvasSize = UDim2.new(), ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = frame }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+
+    local pool = {}
+    local filtered = {}
+    local shown
+    local dirty = true
+    local lastFirst, lastCount = -1, -1
+
+    local function value(flag, default)
+        local option = flag and Options[flag]
+        if option and option.Value ~= nil then return option.Value end
+        return default
+    end
+    local function play(name)
+        local config = state.config
+        if config.play then config.play(name) return end
+        fxPlaySound(config.lookup(name), value(config.volumeFlag, 1), value(config.pitchFlag, 1), value(config.varFlag, 0))
+    end
+
+    local function makeRow()
+        local buttonWidth = initial.buttonWidth or 38
+        local row = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, -6, 0, 22), ZIndex = 6, Visible = false, Parent = list }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+        local entry = { frame = row, over = 0 }
+        entry.nameLabel = fxLabel({ Text = "", TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0.6, -40, 1, 0), Position = UDim2.fromOffset(6, 0), ZIndex = 7, Parent = row })
+        entry.catLabel = fxLabel({ Text = "", TextSize = 11, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Right, Size = UDim2.new(0.4, -52, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), ZIndex = 7, Parent = row })
+        local pick = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, -buttonWidth - 6, 1, 0), ZIndex = 9, Parent = row })
+        local playOuter, playFace = fxBevel(row, 7, UDim2.fromOffset(buttonWidth, 16), UDim2.new(1, -buttonWidth - 3, 0.5, -8))
+        playOuter.Visible = false
+        entry.playOuter = playOuter
+        fxLabel({ Text = initial.buttonText or "Play", TextSize = 11, Size = UDim2.new(1, 0, 1, 0), ZIndex = 9, Parent = playFace })
+        local playHit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 11, Parent = playOuter })
+        local function hover(delta)
+            entry.over = math.max(entry.over + delta, 0)
+            playOuter.Visible = entry.over > 0 and not state.config.noPlay and entry.name ~= nil
+        end
+        for _, hit in ipairs({ pick, playHit }) do
+            hit.MouseEnter:Connect(function() hover(1) end)
+            hit.MouseLeave:Connect(function() hover(-1) end)
+        end
+        pick.MouseButton1Click:Connect(function()
+            local option = state.config.flag and Options[state.config.flag]
+            if option and entry.name then option:SetValue(entry.name) end
+        end)
+        playHit.MouseButton1Click:Connect(function()
+            if entry.name then play(entry.name) end
+        end)
+        return entry
+    end
+
+    local function render()
+        if not frame.Parent then return end
+        local height = list.AbsoluteSize.Y
+        if height <= 0 then return end
+        local first = math.max(math.floor(list.CanvasPosition.Y / STRIDE), 0)
+        local count = math.ceil(height / STRIDE) + 2
+        if not dirty and first == lastFirst and count == lastCount then return end
+        dirty = false
+        lastFirst, lastCount = first, count
+        for slot = 1, count do
+            if not pool[slot] then pool[slot] = makeRow() end
+        end
+        for slot, entry in ipairs(pool) do
+            local index = first + slot
+            local name = slot <= count and filtered[index] or nil
+            if name then
+                local category = state.config.category and state.config.category(name)
+                entry.name = name
+                entry.frame.Position = UDim2.fromOffset(3, 3 + (index - 1) * STRIDE)
+                entry.nameLabel.Text = name
+                entry.catLabel.Text = category or ""
+                fxBorder(entry.frame, name == shown and "AccentColor" or "OutlineColor")
+                entry.frame.Visible = true
+            else
+                entry.name = nil
+                entry.over = 0
+                entry.playOuter.Visible = false
+                entry.frame.Visible = false
+            end
+        end
+    end
+
+    function state.applyFilter()
+        local query = string.lower(box.Text)
+        local config = state.config
+        table.clear(filtered)
+        for _, name in ipairs(config.names) do
+            local hidden = config.hidden and config.hidden(name)
+            if not hidden and (query == "" or string.find(string.lower(name), query, 1, true)) then
+                filtered[#filtered + 1] = name
+            end
+        end
+        list.CanvasSize = UDim2.fromOffset(0, #filtered * STRIDE + 6)
+        local limit = math.max(#filtered * STRIDE + 6 - list.AbsoluteSize.Y, 0)
+        if list.CanvasPosition.Y > limit then list.CanvasPosition = Vector2.new(0, limit) end
+        dirty = true
+        render()
+    end
+
+    function state.attach(parent, config)
+        state.config = config
+        shown = nil
+        frame.Parent = parent
+        state.applyFilter()
+    end
+
+    box:GetPropertyChangedSignal("Text"):Connect(function() state.applyFilter() end)
+    list:GetPropertyChangedSignal("CanvasPosition"):Connect(render)
+    list:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() dirty = true render() end)
+    track(RunService.Heartbeat:Connect(function()
+        if not (frame.Parent and Fx.main and Fx.main.Visible and frame.Parent.Visible) then return end
+        local current = value(state.config.flag, nil)
+        if current ~= shown then
+            shown = current
+            dirty = true
+        end
+        if dirty then render() end
+    end))
+    return state
+end
+
+local function fxTracerPreview(host)
+    local list = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, 0, 1, 0), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = host }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+    Library:Create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
+    Library:Create("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3), Parent = list })
+    local entries = {}
+    for index, name in ipairs(TRACER_NAMES) do
+        local preset = TRACER_PRESETS[name]
+        if preset then
+            local row = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = index, ZIndex = 6, Parent = list }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+            fxLabel({ Text = name, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0, 90, 1, 0), Position = UDim2.fromOffset(6, 0), ZIndex = 7, Parent = row })
+            local lane = Library:Create("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, ClipsDescendants = true, Position = UDim2.fromOffset(100, 3), Size = UDim2.new(1, -106, 1, -6), ZIndex = 7, Parent = row })
+            local strip
+            if preset.Texture ~= "" then
+                strip = Library:Create("ImageLabel", { BackgroundTransparency = 1, Image = preset.Texture, ScaleType = Enum.ScaleType.Stretch, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 6), ImageTransparency = preset.BaseTransparency or 0, ZIndex = 8, Parent = lane })
+            else
+                strip = Library:Create("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 2), ZIndex = 8, Parent = lane })
+            end
+            local gradient = Library:Create("UIGradient", { Parent = strip })
+            local pick = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 10, Parent = row })
+            pick.MouseButton1Click:Connect(function()
+                local option = Options.tracers_style
+                if option then option:SetValue(name) end
+            end)
+            entries[#entries + 1] = { name = name, row = row, strip = strip, gradient = gradient, preset = preset, isImage = preset.Texture ~= "" }
+        end
+    end
+    local lastStamp = 0
+    track(RunService.Heartbeat:Connect(function()
+        local now = os.clock()
+        if now - lastStamp < 0.2 then return end
+        lastStamp = now
+        if not (Fx.main and Fx.main.Visible and host.Visible) then return end
+        local first = Options.tracers_color and Options.tracers_color.Value or Color3.new(1, 1, 1)
+        local second = Options.tracers_color2 and Options.tracers_color2.Value or first
+        local useGradient = Toggles.tracers_gradient and Toggles.tracers_gradient.Value == true
+        local width = Options.tracers_width and Options.tracers_width.Value or 1
+        local selected = Options.tracers_style and Options.tracers_style.Value
+        local sequence = ColorSequence.new(first, useGradient and second or first)
+        for _, entry in ipairs(entries) do
+            entry.gradient.Color = sequence
+            local height = math.clamp(entry.preset.Width0 * width * 12 + 2, 2, 20)
+            entry.strip.Size = UDim2.new(1, 0, 0, height)
+            fxBorder(entry.row, entry.name == selected and "AccentColor" or "OutlineColor")
+        end
+    end))
+end
+
+local function fxSkyPreview(host)
+    local config = { names = SKYBOX_NAMES, flag = "skybox_value", noPlay = true, placeholder = "search skyboxes..." }
+    local listHost = Library:Create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0.4, -4, 1, 0), ZIndex = 4, Parent = host })
+    local netHost = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromScale(0.4, 0), Size = UDim2.fromScale(0.6, 1), ZIndex = 5, Parent = host }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+    local net = Library:Create("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, -8, 1, -8), ZIndex = 5, Parent = netHost })
+    Library:Create("UIAspectRatioConstraint", { AspectRatio = 4 / 3, AspectType = Enum.AspectType.FitWithinMaxSize, DominantAxis = Enum.DominantAxis.Width, Parent = net })
+    local cells = {
+        { "SkyboxUp", "Up", 1, 0 }, { "SkyboxLf", "Left", 0, 1 }, { "SkyboxFt", "Front", 1, 1 },
+        { "SkyboxRt", "Right", 2, 1 }, { "SkyboxBk", "Back", 3, 1 }, { "SkyboxDn", "Down", 1, 2 },
+    }
+    local faces = {}
+    for _, cell in ipairs(cells) do
+        local image = Library:Create("ImageLabel", { BackgroundColor3 = Color3.new(0, 0, 0), BorderColor3 = Library.OutlineColor, BorderSizePixel = 1, Position = UDim2.new(cell[3] / 4, 1, cell[4] / 3, 1), Size = UDim2.new(0.25, -2, 1 / 3, -2), ScaleType = Enum.ScaleType.Stretch, Image = "", ZIndex = 6, Parent = net })
+        fxLabel({ Text = cell[2], TextSize = 10, TextTransparency = 0.25, Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12), ZIndex = 7, Parent = image })
+        faces[cell[1]] = image
+    end
+    local note = fxLabel({ Text = "", TextWrapped = true, TextSize = Library.FontSize, Size = UDim2.fromScale(1, 1), ZIndex = 9, Visible = false, Parent = netHost })
+    local list = fxSoundList(config)
+    list.attach(listHost, config)
+    local shown
+    local last = 0
+    track(RunService.Heartbeat:Connect(function()
+        local now = os.clock()
+        if now - last < 0.25 then return end
+        last = now
+        if not (Fx.main and Fx.main.Visible and host.Visible) then return end
+        local name = Options.skybox_value and Options.skybox_value.Value
+        local preset = name and Actions.skyPreset and Actions.skyPreset(name)
+        local stamp = tostring(name)
+        if preset then
+            for _, cell in ipairs(cells) do stamp = stamp .. "|" .. tostring(preset[cell[1]]) end
+        end
+        if stamp == shown then return end
+        shown = stamp
+        local usable = preset and not preset.KeepOriginal and not preset.Custom
+        net.Visible = usable and true or false
+        note.Visible = not usable
+        if not usable then
+            if preset and preset.KeepOriginal then
+                note.Text = "Default keeps the game's own sky"
+            elseif name == "Custom" then
+                note.Text = "Enter ids in the Custom ids box, the preview appears once they load"
+            else
+                note.Text = "Pick a skybox to preview it"
+            end
+            return
+        end
+        for _, cell in ipairs(cells) do
+            faces[cell[1]].Image = preset[cell[1]] or ""
+        end
+    end))
+end
+
+local FxAtmo = { selected = nil, saved = {}, snaps = {}, rebuild = nil }
+local ATMO_PATH = "Aster/atmosphere.json"
+do
+    local ok, data = pcall(function()
+        if isfile and readfile and isfile(ATMO_PATH) then
+            return game:GetService("HttpService"):JSONDecode(readfile(ATMO_PATH))
+        end
+    end)
+    if ok and type(data) == "table" and type(data.snapshots) == "table" then
+        for _, entry in ipairs(data.snapshots) do
+            if type(entry) == "table" and type(entry.name) == "string" and type(entry.ambient) == "table" then
+                table.insert(FxAtmo.snaps, entry)
+            end
+        end
+    end
+    if ok and type(data) == "table" and type(data.assets) == "table" then
+        for _, entry in ipairs(data.assets) do
+            if type(entry) == "table" and type(entry.id) == "number" then
+                table.insert(FxAtmo.saved, { id = entry.id, name = type(entry.name) == "string" and entry.name or ("Asset " .. entry.id) })
+            end
+        end
+    end
+end
+
+local function fxAtmoSave()
+    if not writefile then return end
+    pcall(function()
+        if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
+        writefile(ATMO_PATH, game:GetService("HttpService"):JSONEncode({ assets = FxAtmo.saved, snapshots = FxAtmo.snaps }))
+    end)
+end
+
+local function fxAtmoTell(message)
+    pcall(function() Library:Notify(message, 5) end)
+end
+
+local function fxSet(flag, value)
+    local toggle = Toggles[flag]
+    if toggle then
+        toggle:SetValue(value)
+        return
+    end
+    local option = Options[flag]
+    if not option then return end
+    if typeof(value) == "Color3" then
+        if option.SetValueRGB then option:SetValueRGB(value, option.Transparency or 0) end
+    else
+        option:SetValue(value)
+    end
+end
+
+local function fxPart(flag)
+    local toggle = Toggles[flag]
+    return not toggle or toggle.Value ~= false
+end
+
+local C = Color3.fromRGB
+local ATMO_ORDER = { "Night", "Sunset", "Foggy Morning", "Neon Night", "Winter", "Inferno", "Dreamy Pink", "Deep Space" }
+local ATMO_PRESETS = {
+    ["Night"] = { sky = "Night", ambient = C(20, 24, 40), outer = C(30, 36, 60), clock = 0, atmos = { C(60, 70, 110), C(20, 25, 50), 0.35, 1.5, 0, 0.2 }, bloom = { 0.5, 24, 0.9 }, cc = { C(200, 210, 255), -0.1, 0.1, 0 } },
+    ["Sunset"] = { sky = "Sunset", ambient = C(120, 80, 70), outer = C(190, 120, 90), clock = 17.8, atmos = { C(255, 170, 120), C(255, 120, 80), 0.3, 1.8, 2, 0.3 }, bloom = { 0.6, 30, 0.85 }, cc = { C(255, 225, 200), 0.2, 0.05, 0 }, rays = 0.35 },
+    ["Foggy Morning"] = { sky = "Cloudy", ambient = C(150, 155, 165), outer = C(170, 175, 185), clock = 7, atmos = { C(200, 205, 215), C(180, 185, 195), 0.55, 4, 0, 0 }, bloom = { 0.2, 24, 1 }, cc = { C(235, 238, 245), -0.25, 0, 0 } },
+    ["Neon Night"] = { sky = "Purple Night", ambient = C(60, 30, 90), outer = C(90, 40, 130), clock = 0, atmos = { C(140, 60, 200), C(60, 20, 120), 0.3, 2, 1, 0.25 }, bloom = { 1.2, 40, 0.7 }, cc = { C(255, 200, 255), 0.35, 0.15, 0 } },
+    ["Winter"] = { sky = "Winter", ambient = C(150, 170, 200), outer = C(190, 210, 235), clock = 12, atmos = { C(210, 225, 245), C(170, 190, 220), 0.4, 2.5, 0, 0 }, bloom = { 0.4, 24, 0.95 }, cc = { C(225, 240, 255), -0.1, 0, 0 } },
+    ["Inferno"] = { sky = "Hell", ambient = C(110, 30, 20), outer = C(160, 50, 30), clock = 18, atmos = { C(255, 90, 40), C(160, 30, 10), 0.4, 2.5, 3, 0.2 }, bloom = { 1, 36, 0.8 }, cc = { C(255, 190, 170), 0.3, 0.2, 0 } },
+    ["Dreamy Pink"] = { sky = "Pink Clouds", ambient = C(200, 150, 170), outer = C(230, 180, 200), clock = 16.5, atmos = { C(255, 200, 220), C(240, 150, 190), 0.25, 1, 1.5, 0.3 }, bloom = { 0.7, 32, 0.85 }, cc = { C(255, 230, 240), 0.15, 0, 0 } },
+    ["Deep Space"] = { sky = "Galaxy", ambient = C(30, 30, 50), outer = C(40, 40, 70), clock = 0, bloom = { 0.8, 30, 0.9 }, cc = { C(220, 225, 255), 0.1, 0.1, 0 } },
+}
+
+local function fxApplyPreset(preset)
+    if fxPart("atmo_part_sky") and preset.skyIds then
+        fxSet("skybox_custom_ids", preset.skyIds)
+        fxSet("skybox_value", "Custom")
+        fxSet("skybox_enabled", true)
+    elseif fxPart("atmo_part_sky") and preset.sky then
+        fxSet("skybox_value", preset.sky)
+        fxSet("skybox_enabled", true)
+    end
+    if fxPart("atmo_part_light") then
+        fxSet("lighting_toggle_Ambient", true)
+        fxSet("lighting_colorAmbient", preset.ambient)
+        fxSet("lighting_colorOutdoorAmbient", preset.outer)
+        if preset.clock then
+            fxSet("lighting_toggle_ClockTime", true)
+            fxSet("lighting_number_ClockTime", preset.clock)
+        end
+    end
+    if fxPart("atmo_part_atmos") then
+        local atmos = preset.atmos
+        if atmos then
+            fxSet("atmosphere_enabled", true)
+            fxSet("atmosphere_color", atmos[1])
+            fxSet("atmosphere_decay", atmos[2])
+            fxSet("atmosphere_density", atmos[3])
+            fxSet("atmosphere_haze", atmos[4])
+            fxSet("atmosphere_glare", atmos[5])
+            fxSet("atmosphere_offset", atmos[6])
+        else
+            fxSet("atmosphere_enabled", false)
+        end
+    end
+    if fxPart("atmo_part_post") then
+        local bloom, cc = preset.bloom, preset.cc
+        fxSet("bloom_enabled", bloom ~= nil)
+        if bloom then
+            fxSet("bloom_intensity", bloom[1])
+            fxSet("bloom_size", bloom[2])
+            fxSet("bloom_threshold", bloom[3])
+        end
+        fxSet("color_correction_enabled", cc ~= nil)
+        if cc then
+            fxSet("color_correction_tint", cc[1])
+            fxSet("color_correction_saturation", cc[2])
+            fxSet("color_correction_contrast", cc[3])
+            fxSet("color_correction_brightness", cc[4])
+        end
+        fxSet("sunrays_enabled", preset.rays ~= nil)
+        if preset.rays then fxSet("sunrays_intensity", preset.rays) end
+    end
+end
+
+local function fxApplyAsset(id)
+    fxAtmoTell("Loading asset " .. id .. "...")
+    task.spawn(function()
+        local ok, objects = pcall(function() return game:GetObjects("rbxassetid://" .. id) end)
+        if not ok or type(objects) ~= "table" or #objects == 0 then
+            fxAtmoTell("Asset " .. id .. " could not be loaded (private, removed or not a model)")
+            return
+        end
+        local found = {}
+        local wanted = { Sky = "sky", Atmosphere = "atmos", BloomEffect = "bloom", ColorCorrectionEffect = "cc", SunRaysEffect = "rays" }
+        for _, root in ipairs(objects) do
+            local list = root:GetDescendants()
+            table.insert(list, 1, root)
+            for _, item in ipairs(list) do
+                local key = wanted[item.ClassName]
+                if key and not found[key] then found[key] = item end
+            end
+        end
+        local applied = {}
+        if found.sky and fxPart("atmo_part_sky") then
+            fxSet("skybox_custom_ids", tostring(id))
+            fxSet("skybox_value", "Custom")
+            fxSet("skybox_enabled", true)
+            table.insert(applied, "sky")
+        end
+        if found.atmos and fxPart("atmo_part_atmos") then
+            local a = found.atmos
+            fxSet("atmosphere_enabled", true)
+            fxSet("atmosphere_color", a.Color)
+            fxSet("atmosphere_decay", a.Decay)
+            fxSet("atmosphere_density", a.Density)
+            fxSet("atmosphere_haze", a.Haze)
+            fxSet("atmosphere_glare", a.Glare)
+            fxSet("atmosphere_offset", a.Offset)
+            table.insert(applied, "atmosphere")
+        end
+        if fxPart("atmo_part_post") then
+            if found.bloom then
+                fxSet("bloom_enabled", true)
+                fxSet("bloom_intensity", found.bloom.Intensity)
+                fxSet("bloom_size", found.bloom.Size)
+                fxSet("bloom_threshold", found.bloom.Threshold)
+                table.insert(applied, "bloom")
+            end
+            if found.cc then
+                fxSet("color_correction_enabled", true)
+                fxSet("color_correction_tint", found.cc.TintColor)
+                fxSet("color_correction_saturation", found.cc.Saturation)
+                fxSet("color_correction_contrast", found.cc.Contrast)
+                fxSet("color_correction_brightness", found.cc.Brightness)
+                table.insert(applied, "color correction")
+            end
+            if found.rays then
+                fxSet("sunrays_enabled", true)
+                fxSet("sunrays_intensity", found.rays.Intensity)
+                table.insert(applied, "sun rays")
+            end
+        end
+        for _, root in ipairs(objects) do pcall(function() root:Destroy() end) end
+        if #applied == 0 then
+            fxAtmoTell("Asset " .. id .. " has no sky, atmosphere or post effects to apply")
+        else
+            fxAtmoTell("Applied from asset " .. id .. ": " .. table.concat(applied, ", "))
+        end
+    end)
+end
+
+local function fxPack(color)
+    return { color.R, color.G, color.B }
+end
+
+local function fxUnpack(list)
+    return Color3.new(list[1], list[2], list[3])
+end
+
+local function fxSnapToPreset(snap)
+    local preset = { ambient = fxUnpack(snap.ambient), outer = fxUnpack(snap.outer), clock = snap.clock }
+    if snap.atmos then
+        local a = snap.atmos
+        preset.atmos = { fxUnpack(a.color), fxUnpack(a.decay), a.density, a.haze, a.glare, a.offset }
+    end
+    if snap.bloom then preset.bloom = { snap.bloom[1], snap.bloom[2], snap.bloom[3] } end
+    if snap.cc then preset.cc = { fxUnpack(snap.cc.tint), snap.cc.saturation, snap.cc.contrast, snap.cc.brightness } end
+    preset.rays = snap.rays
+    preset.skyIds = snap.skyIds
+    return preset
+end
+
+function FxAtmo.capture()
+    local lighting = game:GetService("Lighting")
+    local typed = Options.atmo_capture_name and tostring(Options.atmo_capture_name.Value or "") or ""
+    typed = string.match(typed, "^%s*(.-)%s*$") or ""
+    local name = typed ~= "" and typed or ("Captured " .. (#FxAtmo.snaps + 1))
+    for _, entry in ipairs(FxAtmo.snaps) do
+        if entry.name == name then
+            fxAtmoTell("A captured preset named " .. name .. " already exists")
+            return
+        end
+    end
+    local snap = { name = name, ambient = fxPack(lighting.Ambient), outer = fxPack(lighting.OutdoorAmbient), clock = lighting.ClockTime }
+    local atmos = lighting:FindFirstChildOfClass("Atmosphere")
+    if atmos then
+        snap.atmos = { color = fxPack(atmos.Color), decay = fxPack(atmos.Decay), density = atmos.Density, haze = atmos.Haze, glare = atmos.Glare, offset = atmos.Offset }
+    end
+    local bloom = lighting:FindFirstChildOfClass("BloomEffect")
+    if bloom and bloom.Enabled then snap.bloom = { bloom.Intensity, bloom.Size, bloom.Threshold } end
+    local cc = lighting:FindFirstChildOfClass("ColorCorrectionEffect")
+    if cc and cc.Enabled then snap.cc = { tint = fxPack(cc.TintColor), saturation = cc.Saturation, contrast = cc.Contrast, brightness = cc.Brightness } end
+    local rays = lighting:FindFirstChildOfClass("SunRaysEffect")
+    if rays and rays.Enabled then snap.rays = rays.Intensity end
+    local sky = lighting:FindFirstChildOfClass("Sky")
+    if sky then
+        local ids = {}
+        for _, face in ipairs({ "SkyboxUp", "SkyboxDn", "SkyboxFt", "SkyboxBk", "SkyboxLf", "SkyboxRt" }) do
+            local id = string.match(tostring(sky[face]), "(%d%d%d+)")
+            if not id then ids = nil break end
+            ids[#ids + 1] = id
+        end
+        if ids then snap.skyIds = table.concat(ids, " ") end
+    end
+    table.insert(FxAtmo.snaps, snap)
+    fxAtmoSave()
+    if FxAtmo.rebuild then FxAtmo.rebuild() end
+    fxAtmoTell("Captured current lighting" .. (snap.skyIds and " and skybox" or "") .. " as " .. name)
+end
+
+function FxAtmo.apply(item)
+    if not item then
+        fxAtmoTell("Pick a preset or asset first")
+        return
+    end
+    if item.kind == "preset" then
+        fxApplyPreset(item.preset or ATMO_PRESETS[item.name])
+        fxAtmoTell("Applied preset " .. item.name)
+    else
+        fxApplyAsset(item.id)
+    end
+end
+
+function FxAtmo.reset()
+    for _, flag in ipairs({ "skybox_enabled", "atmosphere_enabled", "bloom_enabled", "color_correction_enabled", "sunrays_enabled", "lighting_toggle_Ambient", "lighting_toggle_ClockTime" }) do
+        fxSet(flag, false)
+    end
+    fxAtmoTell("Sky, atmosphere and post effects turned off")
+end
+
+local function fxAtmoParseId(text)
+    text = tostring(text or "")
+    local id = string.match(text, "store/asset/(%d+)") or string.match(text, "assetId=(%d+)") or string.match(text, "(%d%d%d%d+)")
+    return tonumber(id)
+end
+
+local function fxAtmoName(entry, after)
+    task.spawn(function()
+        local ok, info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(entry.id) end)
+        if ok and type(info) == "table" and type(info.Name) == "string" then
+            entry.name = info.Name
+            if after then after() end
+        end
+    end)
+end
+
+function FxAtmo.add()
+    local id = fxAtmoParseId(Options.atmo_asset and Options.atmo_asset.Value)
+    if not id then
+        fxAtmoTell("Paste a Creator Store link or an asset id first")
+        return
+    end
+    for _, entry in ipairs(FxAtmo.saved) do
+        if entry.id == id then
+            fxAtmoTell("That asset is already saved")
+            return
+        end
+    end
+    local entry = { id = id, name = "Asset " .. id }
+    table.insert(FxAtmo.saved, entry)
+    fxAtmoSave()
+    if FxAtmo.rebuild then FxAtmo.rebuild() end
+    fxAtmoName(entry, function()
+        fxAtmoSave()
+        if FxAtmo.rebuild then FxAtmo.rebuild() end
+    end)
+end
+
+function FxAtmo.remove()
+    local item = FxAtmo.selected
+    if item and item.snap then
+        for index, entry in ipairs(FxAtmo.snaps) do
+            if entry == item.snap then
+                table.remove(FxAtmo.snaps, index)
+                break
+            end
+        end
+        FxAtmo.selected = nil
+        fxAtmoSave()
+        if FxAtmo.rebuild then FxAtmo.rebuild() end
+        return
+    end
+    if not (item and item.saved) then
+        fxAtmoTell("Select one of your saved assets first")
+        return
+    end
+    for index, entry in ipairs(FxAtmo.saved) do
+        if entry.id == item.id then
+            table.remove(FxAtmo.saved, index)
+            break
+        end
+    end
+    FxAtmo.selected = nil
+    fxAtmoSave()
+    if FxAtmo.rebuild then FxAtmo.rebuild() end
+end
+
+local function fxAtmoPreview(host)
+    local grid = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, 0, 1, 0), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = host }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+    Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+    Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = grid })
+    local tiles = {}
+    local lastClick
+
+    local function paintSelection()
+        for _, entry in ipairs(tiles) do
+            fxBorder(entry.outer, FxAtmo.selected and FxAtmo.selected.key == entry.item.key and "AccentColor" or "Black")
+        end
+    end
+
+    local function rebuild()
+        for _, child in ipairs(grid:GetChildren()) do
+            if child:IsA("Frame") then child:Destroy() end
+        end
+        table.clear(tiles)
+        local order = 0
+        local function add(item, label)
+            order += 1
+            local outer, face = fxBevel(grid, 6, UDim2.fromOffset(98, 104), nil, order)
+            if item.kind == "preset" then
+                local swatch = fxCreate("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, Position = UDim2.fromOffset(4, 4), Size = UDim2.new(1, -8, 1, -28), ZIndex = 8, Parent = face })
+                Library:Create("UIGradient", { Color = ColorSequence.new(item.top, item.bottom), Rotation = 90, Parent = swatch })
+            else
+                Library:Create("ImageLabel", { BackgroundTransparency = 1, Image = string.format("rbxthumb://type=Asset&id=%d&w=150&h=150", item.id), ScaleType = Enum.ScaleType.Fit, Position = UDim2.fromOffset(4, 4), Size = UDim2.new(1, -8, 1, -28), ZIndex = 8, Parent = face })
+            end
+            fxLabel({ Text = label, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 20), Position = UDim2.new(0, 3, 1, -22), ZIndex = 9, Parent = face })
+            local hit = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 12, Parent = outer })
+            hit.MouseButton1Click:Connect(function()
+                FxAtmo.selected = item
+                paintSelection()
+                local now = os.clock()
+                if lastClick and lastClick.key == item.key and now - lastClick.at < 0.5 then FxAtmo.apply(item) end
+                lastClick = { key = item.key, at = now }
+            end)
+            hit.MouseEnter:Connect(function()
+                if not (FxAtmo.selected and FxAtmo.selected.key == item.key) then fxBorder(outer, "AccentColor") end
+            end)
+            hit.MouseLeave:Connect(function()
+                if not (FxAtmo.selected and FxAtmo.selected.key == item.key) then fxBorder(outer, "Black") end
+            end)
+            tiles[#tiles + 1] = { item = item, outer = outer }
+        end
+        for _, name in ipairs(ATMO_ORDER) do
+            local preset = ATMO_PRESETS[name]
+            local top = preset.atmos and preset.atmos[1] or preset.outer
+            add({ kind = "preset", key = "p:" .. name, name = name, top = top, bottom = preset.ambient }, name)
+        end
+        for _, snap in ipairs(FxAtmo.snaps) do
+            local preset = fxSnapToPreset(snap)
+            add({ kind = "preset", key = "c:" .. snap.name, name = snap.name, preset = preset, snap = snap, top = preset.atmos and preset.atmos[1] or preset.outer, bottom = preset.ambient }, snap.name)
+        end
+        for _, entry in ipairs(FxAtmo.saved) do
+            add({ kind = "asset", key = "s:" .. entry.id, id = entry.id, name = entry.name, saved = true }, entry.name)
+        end
+        paintSelection()
+    end
+    FxAtmo.rebuild = rebuild
+    rebuild()
+end
+
+local function fxNote(text)
+    return function(host)
+        fxLabel({ Text = text, TextWrapped = true, TextSize = Library.FontSize, Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(8, 0), ZIndex = 5, Parent = host })
+    end
+end
+
+Fx:Sub("SFX", "Hit sound")
+Fx:Sub("SFX", "Kill sound")
+for _, weapon in ipairs(FX_WEAPONS) do Fx:Sub("SFX", weapon.label) end
+Fx:Sub("VFX", "Kill effects")
+Fx:Sub("VFX", "Hit effects")
+Fx:Sub("VFX", "Aura effects")
+Fx:Sub("VFX", "Muzzle effects")
+Fx:Sub("VFX", "Enchantments")
+Fx:Sub("Tracers", "Bullet tracers")
+Fx:Sub("Sky", "Skyboxes")
+Fx:Sub("Sky", "Atmosphere")
+Fx:Sub("Car orbit", "Spawner")
+Fx:Sub("Car orbit", "Orbit")
+
+do
+    local lists = {}
+    local function soundSection(label, group, toggleFlag, idFlag, volumeFlag, pitchFlag, varFlag, defaultSound, previewCallback)
+        local config = { names = {}, lookup = function(name) return fxHitEntry(group, name) end, category = function(name) return FxSaved.label(group, name) end, flag = idFlag, volumeFlag = volumeFlag, pitchFlag = pitchFlag, varFlag = varFlag }
+        local function allNames()
+            local values = {}
+            for _, name in ipairs(HIT_SOUND_NAMES) do values[#values + 1] = name end
+            for _, name in ipairs(FxSaved.names(group)) do
+                if not HIT_SOUNDS[name] then values[#values + 1] = name end
+            end
+            return values
+        end
+        local function refresh()
+            table.clear(config.names)
+            for _, name in ipairs(allNames()) do config.names[#config.names + 1] = name end
+            local option = Options[idFlag]
+            if option and option.SetValues then pcall(function() option:SetValues(allNames()) end) end
+            if lists[group] then lists[group].applyFilter() end
+        end
+        for _, name in ipairs(allNames()) do config.names[#config.names + 1] = name end
+        local box = Fx:Section("SFX", label, label)
+        box:Toggle({ Name = label .. "s", Flag = toggleFlag, Default = false })
+        box:Dropdown({ Name = label, Flag = idFlag, Items = allNames(), Default = defaultSound, Tooltip = "Built in sounds and the ids you saved below" })
+        box:Input({ Name = "Sound id", Flag = group .. "_custom", Default = "", Placeholder = "audio id or link to save" })
+        box:Input({ Name = "Sound name", Flag = group .. "_name", Default = "", Placeholder = "name to save it under (optional)" })
+        box:Button({ Name = "Save sound", Callback = function()
+            local text = Options[group .. "_custom"] and Options[group .. "_custom"].Value
+            local source = fxParseSource(text)
+            if not (source and source.id) then
+                pcall(function() Library:Notify("Paste an audio id or link first", 4) end)
+                return
+            end
+            local typed = Options[group .. "_name"] and Options[group .. "_name"].Value
+            local name = type(typed) == "string" and string.match(typed, "^%s*(.-)%s*$") or ""
+            if name == "" then name = tostring(source.id) end
+            FxSaved.add(group, name, { id = source.id })
+            refresh()
+            if Options[idFlag] then Options[idFlag]:SetValue(name) end
+            if Options[group .. "_name"] then Options[group .. "_name"]:SetValue("") end
+            fxEnsure("rbxassetid://" .. source.id)
+            pcall(function() Library:Notify("Saved " .. name .. " for the " .. string.lower(label), 4) end)
+        end })
+        box:Button({ Name = "Remove selected", Callback = function()
+            local selected = Options[idFlag] and Options[idFlag].Value
+            if type(selected) == "string" and FxSaved.remove(group, selected) then
+                refresh()
+                if Options[idFlag] then Options[idFlag]:SetValue(defaultSound) end
+                pcall(function() Library:Notify("Removed " .. selected, 4) end)
+            else
+                pcall(function() Library:Notify("Only sounds you saved can be removed", 4) end)
+            end
+        end })
+        box:Slider({ Name = "Volume", Flag = volumeFlag, Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
+        box:Slider({ Name = "Pitch", Flag = pitchFlag, Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+        box:Slider({ Name = "Pitch variation", Flag = varFlag, Min = 0, Max = 0.5, Default = 0, Decimals = 0.01 })
+        box:Button({ Name = "Preview sound", Callback = previewCallback })
+        Fx:Preview("SFX", label, nil, function(sub)
+            lists[group] = lists[group] or fxSoundList(config)
+            lists[group].attach(sub.preview, config)
+        end)
+    end
+    soundSection("Hit sound", "hit", "World_HitSound", "World_HitSoundId", "World_HitVolume", "World_HitPitch", "World_HitPitchVar", "Gamesense", function() if playHitSound then playHitSound() end end)
+    soundSection("Kill sound", "kill", "World_KillSound", "World_KillSoundId", "World_KillVolume", "World_KillPitch", "World_KillPitchVar", "PF Killshot", function()
+        local name = Options.World_KillSoundId and Options.World_KillSoundId.Value
+        fxPlaySound(fxHitEntry("kill", name), Options.World_KillVolume.Value, Options.World_KillPitch.Value, Options.World_KillPitchVar.Value)
+    end)
+
+    local gunList
+    for _, weapon in ipairs(FX_WEAPONS) do
+        local key = "sfx_" .. weapon.key
+        local config = { names = {}, lookup = function(name) return FxSaved.entry(key, name) end, category = function(name) return FxSaved.label(key, name) end, flag = key .. "_sound", volumeFlag = key .. "_volume", pitchFlag = key .. "_pitch", varFlag = key .. "_pitchvar", placeholder = "search saved sounds..." }
+        local function dropdownValues()
+            local values = { "None" }
+            for _, name in ipairs(FxSaved.names(key)) do values[#values + 1] = name end
+            return values
+        end
+        local function refresh()
+            table.clear(config.names)
+            for _, name in ipairs(FxSaved.names(key)) do config.names[#config.names + 1] = name end
+            local option = Options[key .. "_sound"]
+            if option and option.SetValues then pcall(function() option:SetValues(dropdownValues()) end) end
+            if gunList and gunList.config == config then gunList.applyFilter() end
+        end
+        for _, name in ipairs(FxSaved.names(key)) do config.names[#config.names + 1] = name end
+        local box = Fx:Section("SFX", weapon.label, weapon.label .. " sound")
+        box:Toggle({ Name = "Custom " .. weapon.label .. " sound", Flag = key .. "_on", Default = false })
+        box:Dropdown({ Name = "Saved sound", Flag = key .. "_sound", Items = dropdownValues(), Default = "None", Tooltip = "Sounds you saved for this weapon. None plays the id typed below, if any." })
+        box:Input({ Name = "Sound id or file", Flag = key .. "_custom", Default = "", Placeholder = "audio id, link, or a file in Aster/sounds" })
+        box:Input({ Name = "Sound name", Flag = key .. "_name", Default = "", Placeholder = "name to save it under (optional)" })
+        box:Button({ Name = "Save sound", Callback = function()
+            local text = Options[key .. "_custom"] and Options[key .. "_custom"].Value
+            local source = fxParseSource(text)
+            if not source then
+                pcall(function() Library:Notify("Paste an audio id, link or file name first", 4) end)
+                return
+            end
+            if source.missing then
+                pcall(function() Library:Notify("No file named " .. source.missing .. " in Aster/sounds, and it is not an id", 5) end)
+                return
+            end
+            local typed = Options[key .. "_name"] and Options[key .. "_name"].Value
+            local name = type(typed) == "string" and string.match(typed, "^%s*(.-)%s*$") or ""
+            if name == "" then name = source.id and tostring(source.id) or source.file end
+            FxSaved.add(key, name, source)
+            refresh()
+            if Options[key .. "_sound"] then Options[key .. "_sound"]:SetValue(name) end
+            if Options[key .. "_name"] then Options[key .. "_name"]:SetValue("") end
+            if source.id then fxEnsure("rbxassetid://" .. source.id) end
+            pcall(function() Library:Notify("Saved " .. name .. " for " .. weapon.label, 4) end)
+        end })
+        box:Button({ Name = "Remove selected", Callback = function()
+            local selected = Options[key .. "_sound"] and Options[key .. "_sound"].Value
+            if type(selected) == "string" and FxSaved.remove(key, selected) then
+                refresh()
+                if Options[key .. "_sound"] then Options[key .. "_sound"]:SetValue("None") end
+                pcall(function() Library:Notify("Removed " .. selected, 4) end)
+            end
+        end })
+        box:Slider({ Name = "Volume", Flag = key .. "_volume", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
+        box:Slider({ Name = "Pitch", Flag = key .. "_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+        box:Slider({ Name = "Pitch variation", Flag = key .. "_pitchvar", Min = 0, Max = 0.5, Default = 0, Decimals = 0.01 })
+        box:Dropdown({ Name = "Method", Flag = key .. "_method", Items = { "Replace game sound", "Play on shot" }, Default = "Replace game sound", Tooltip = "Replace game sound swaps the sound the game itself plays for this weapon, so it also changes the guns other players hold. Play on shot leaves the game sound alone and plays yours on top of your own shots." })
+        box:Toggle({ Name = "Replace other players' guns", Flag = key .. "_others", Default = true })
+        box:Toggle({ Name = "Mute game sound (Play on shot)", Flag = key .. "_mute", Default = true })
+        box:Button({ Name = "Forget found game sound", Callback = function()
+            if Actions.sfxForget then Actions.sfxForget(key) end
+        end })
+        box:Button({ Name = "Preview sound", Callback = function()
+            local entry = fxWeaponEntry(key)
+            if not entry then
+                pcall(function() Library:Notify("No sound picked or typed for " .. weapon.label, 4) end)
+                return
+            end
+            fxPlaySound(entry, Options[config.volumeFlag].Value, Options[config.pitchFlag].Value, Options[config.varFlag].Value)
+        end })
+        Fx:Preview("SFX", weapon.label, nil, function(sub)
+            gunList = gunList or fxSoundList(config)
+            gunList.attach(sub.preview, config)
+        end)
+    end
+
+    local killVfx, hitVfx, auraVfx, muzzleVfx, enchVfx
+    local enchVfxConfig = { names = FX_ENCH_NAMES, flag = "ench_effect", noPlay = true, placeholder = "search enchantments..." }
+    local killVfxConfig = { names = FX_KILL_NAMES, flag = "ke_effect", play = function(name) Actions.previewKillEffect(name) end, buttonText = "Preview", buttonWidth = 56, placeholder = "search kill effects..." }
+    local hitVfxConfig = { names = FX_HIT_NAMES, flag = "he_effect", play = function(name) Actions.previewHitEffect(name) end, buttonText = "Preview", buttonWidth = 56, placeholder = "search hit effects..." }
+    local auraVfxConfig = { names = AURA_PACK.items, flag = "pa_source", noPlay = true, placeholder = "search auras..." }
+    local muzzleVfxConfig = { names = FX_MUZZLE_NAMES, flag = "mz_effect", noPlay = true, placeholder = "search muzzle effects..." }
+    Fx:Preview("VFX", "Enchantments", nil, function(sub)
+        enchVfx = enchVfx or fxSoundList(enchVfxConfig)
+        enchVfx.attach(sub.preview, enchVfxConfig)
+    end)
+    Fx:Preview("VFX", "Kill effects", nil, function(sub)
+        killVfx = killVfx or fxSoundList(killVfxConfig)
+        killVfx.attach(sub.preview, killVfxConfig)
+    end)
+    Fx:Preview("VFX", "Hit effects", nil, function(sub)
+        hitVfx = hitVfx or fxSoundList(hitVfxConfig)
+        hitVfx.attach(sub.preview, hitVfxConfig)
+    end)
+    Fx:Preview("VFX", "Aura effects", nil, function(sub)
+        auraVfx = auraVfx or fxSoundList(auraVfxConfig)
+        auraVfx.attach(sub.preview, auraVfxConfig)
+    end)
+    Fx:Preview("VFX", "Muzzle effects", nil, function(sub)
+        muzzleVfx = muzzleVfx or fxSoundList(muzzleVfxConfig)
+        muzzleVfx.attach(sub.preview, muzzleVfxConfig)
+    end)
+    Fx:Preview("Tracers", "Bullet tracers", fxTracerPreview)
+    Fx:Preview("Sky", "Skyboxes", fxSkyPreview)
+    Fx:Preview("Sky", "Atmosphere", fxAtmoPreview)
+
+    local atmoApply = Fx:Section("Sky", "Atmosphere", "Presets")
+    atmoApply:Toggle({ Name = "Apply sky", Flag = "atmo_part_sky", Default = true })
+    atmoApply:Toggle({ Name = "Apply lighting", Flag = "atmo_part_light", Default = true })
+    atmoApply:Toggle({ Name = "Apply atmosphere", Flag = "atmo_part_atmos", Default = true })
+    atmoApply:Toggle({ Name = "Apply post effects", Flag = "atmo_part_post", Default = true })
+    atmoApply:Button({ Name = "Apply selected", Callback = function() FxAtmo.apply(FxAtmo.selected) end })
+    atmoApply:Button({ Name = "Turn everything off", Callback = function() FxAtmo.reset() end })
+
+    local atmoStore = Fx:Section("Sky", "Atmosphere", "Creator Store")
+    atmoStore:Input({ Name = "Asset link or id", Flag = "atmo_asset", Default = "", Placeholder = "create.roblox.com/store/asset/123..." })
+    atmoStore:Button({ Name = "Save asset", Callback = function() FxAtmo.add() end })
+    atmoStore:Button({ Name = "Remove selected asset", Callback = function() FxAtmo.remove() end })
+    local atmoCapture = Fx:Section("Sky", "Atmosphere", "Capture lighting")
+    atmoCapture:Input({ Name = "Preset name", Flag = "atmo_capture_name", Default = "", Placeholder = "optional name..." })
+    atmoCapture:Button({ Name = "Capture current lighting", Callback = function() FxAtmo.capture() end, Tooltip = "Saves this game's lighting, atmosphere and post effects as a preset tile you can apply anywhere. Remove it with Remove selected asset" })
+
+    Fx:Preview("Car orbit", "Spawner", function(sub)
+        local host = sub.preview
+        fxLabel({ Text = "Cars", TextSize = Library.FontSize, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 12), ZIndex = 5, Parent = host })
+        local countLabel = fxLabel({ Text = "0", TextSize = 46, Size = UDim2.new(1, 0, 0, 54), Position = UDim2.fromOffset(0, 28), ZIndex = 5, Parent = host })
+        local targetLabel = fxLabel({ Text = "", TextSize = Library.FontSize, TextTransparency = 0.3, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 84), ZIndex = 5, Parent = host })
+        local barOuter, barFace = fxBevel(host, 5, UDim2.new(1, -60, 0, 12), UDim2.fromOffset(30, 108))
+        local barFill = fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = 7, Parent = barFace }, { BackgroundColor3 = "AccentColor" })
+        local statusLabel = fxLabel({ Text = "", TextSize = Library.FontSize, Size = UDim2.new(1, -16, 0, 34), Position = UDim2.fromOffset(8, 128), TextWrapped = true, ZIndex = 5, Parent = host })
+        local detailLabel = fxLabel({ Text = "", TextSize = Library.FontSize - 1, TextTransparency = 0.4, Size = UDim2.new(1, -16, 0, 30), Position = UDim2.fromOffset(8, 164), TextWrapped = true, ZIndex = 5, Parent = host })
+        track(RunService.Heartbeat:Connect(function()
+            if not (host.Parent and Fx.main and Fx.main.Visible and host.Visible) then return end
+            local api = Actions.carOrbit
+            local state = api and api.state
+            if not state then
+                statusLabel.Text = "Car orbit is not available"
+                return
+            end
+            local target = math.max(math.floor(readFlag("car_target", 20)), 1)
+            countLabel.Text = tostring(state.count)
+            targetLabel.Text = string.format("target %d  |  moving %d", target, state.owned)
+            barFill.Size = UDim2.new(math.clamp(state.count / target, 0, 1), 0, 1, 0)
+            statusLabel.Text = state.status
+            detailLabel.Text = string.format("alive %d/%d  |  regrabs %d  |  %s", state.owned, state.count, state.regrabs or 0, state.detail or "")
+        end))
+    end)
+
+    Fx:Preview("Car orbit", "Orbit", function(sub)
+        local host = sub.preview
+        local dots = {}
+        local DOTS = 24
+        local view = fxCreate("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(6, 6), Size = UDim2.new(1, -12, 1, -34), ZIndex = 5, ClipsDescendants = true, Parent = host }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" })
+        local caption = fxLabel({ Text = "top view", TextSize = Library.FontSize - 1, TextTransparency = 0.4, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 1, -22), ZIndex = 5, Parent = host })
+        local middle = fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(7, 7), ZIndex = 7, Parent = view }, { BackgroundColor3 = "AccentColor" })
+        for index = 1, DOTS do
+            dots[index] = Library:Create("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(6, 4), ZIndex = 6, Visible = false, Parent = view })
+        end
+        local angle = 0
+        track(RunService.Heartbeat:Connect(function(dt)
+            if not (host.Parent and Fx.main and Fx.main.Visible and host.Visible) then return end
+            local api = Actions.carOrbit
+            if not (api and api.pattern) then return end
+            local spin = math.rad(readFlag("car_spin", 90))
+            if readFlag("car_dir", "Clockwise") ~= "Clockwise" then spin = -spin end
+            angle = (angle + spin * dt) % (math.pi * 2)
+            local count = math.clamp(api.state.count > 0 and api.state.count or 12, 1, DOTS)
+            local size = view.AbsoluteSize
+            local radius = math.max(readFlag("car_radius", 35), 1)
+            local reach = math.max(radius, math.abs(readFlag("car_height", 12)) * 0.5)
+            local scale = (math.min(size.X, size.Y) / 2 - 12) / math.max(reach * 1.15, 1)
+            for index = 1, DOTS do
+                local dot = dots[index]
+                if index <= count then
+                    local offset = api.pattern(index, count, angle, true)
+                    dot.Position = UDim2.fromOffset(size.X / 2 + offset.X * scale, size.Y / 2 + offset.Z * scale)
+                    dot.Visible = true
+                else
+                    dot.Visible = false
+                end
+            end
+            local follow = readFlag("car_follow", "Self")
+            caption.Text = string.format("top view  |  following %s  |  %s", string.lower(follow), readFlag("car_pattern", "Ring"))
+        end))
+    end)
+
+    local carSpawn = Fx:Section("Car orbit", "Spawner", "Car spawner")
+    carSpawn:Dropdown({ Name = "Preset", Flag = "car_spawn_preset", Items = { "Careful 30", "Quick 20", "Swarm 60", "Mega 150" }, Default = "Quick 20", Tooltip = "Sets the target and the delay. Press Apply preset after picking" })
+    carSpawn:Button({ Name = "Apply preset", Callback = function()
+        local name = readFlag("car_spawn_preset", "Quick 20")
+        if carApplyPreset(CAR_SPAWN_PRESETS, name) then pcall(function() Library:Notify("Applied preset " .. name, 3) end) end
+    end })
+    carSpawn:Toggle({ Name = "Spawn cars", Flag = "car_spawn_on", Default = false, Tooltip = "Presses the police garage car spawners over and over, moves each new car forward to free the spot and counts them. Needs the team that can use the garage." })
+    carSpawn:Slider({ Name = "Target cars", Flag = "car_target", Min = 1, Max = 200, Default = 20, Suffix = " cars", Decimals = 1, Tooltip = "Stops spawning once this many cars are yours" })
+    carSpawn:Slider({ Name = "Spawn delay", Flag = "car_delay", Min = 0.05, Max = 2, Default = 0.25, Suffix = " s", Decimals = 0.05, Tooltip = "Time between spawn presses" })
+    carSpawn:Slider({ Name = "Move forward", Flag = "car_forward", Min = 5, Max = 150, Default = 25, Suffix = " studs", Decimals = 0.5, Tooltip = "How far in front of the garage new cars are parked while orbit is off. With orbit on they go straight to their orbit spot" })
+    carSpawn:Toggle({ Name = "Reverse forward", Flag = "car_flip", Default = false, Tooltip = "Use this if the cars get parked behind the spawn spot" })
+    carSpawn:Toggle({ Name = "Use both spawners", Flag = "car_both", Default = true, Tooltip = "The police garage has two spawner pads, using both doubles the speed" })
+    carSpawn:Dropdown({ Name = "Garage position", Flag = "car_stand", Items = { "Next to spawner", "Pinned on spawner", "Stay where I am" }, Default = "Next to spawner", Tooltip = "Next to spawner: you are moved onto the pad once and can then move around freely, you are only pulled back if you get too far away. Pinned: held on the pad. Stay: no teleport, walk there yourself" })
+    carSpawn:Toggle({ Name = "Return afterwards", Flag = "car_return", Default = true })
+    carSpawn:Button({ Name = "Grab nearby cars", Callback = function() if Actions.carOrbit then Actions.carOrbit.grab() end end })
+    carSpawn:Button({ Name = "Release all cars", Callback = function() if Actions.carOrbit then Actions.carOrbit.release() end end })
+
+    local carControl = Fx:Section("Car orbit", "Spawner", "Car control")
+    carControl:Toggle({ Name = "Auto regrab", Flag = "car_regrab", Default = false, Tooltip = "Keeps picking up free cars near you and pulls back cars the server took from you" })
+    carControl:Slider({ Name = "Regrab cooldown", Flag = "car_regrab_cd", Min = 0.25, Max = 10, Default = 2, Suffix = " s", Decimals = 0.05 })
+    carControl:Slider({ Name = "Regrab range", Flag = "car_grab_range", Min = 20, Max = 1000, Default = 250, Suffix = " studs", Decimals = 0.5, Tooltip = "How far from you cars are picked up" })
+    carControl:Button({ Name = "Regrab all", Callback = function() if Actions.carOrbit then Actions.carOrbit.regrab() end end })
+    carControl:Toggle({ Name = "Stronger sync", Flag = "car_dual", Default = true, Tooltip = "Places the cars a second time every frame after physics, so other players see them where you do. Turn it off if it lags" })
+    carControl:Toggle({ Name = "Place mode (freeze)", Flag = "car_freeze", Default = false, Tooltip = "Leaves every car exactly where it is right now. Turn it off to continue the orbit" })
+    carControl:Toggle({ Name = "Strip wheels", Flag = "car_strip", Default = false, Tooltip = "Hides your cars' wheels and turns off their collision so they glide easier. Looks only change for you, and it is undone when you turn it off" })
+
+    local CAR_ORBIT_PRESETS = {
+        ["Tornado"] = { car_pattern = "Tornado", car_radius = 40, car_height = 4, car_spread = 60, car_spin = 180, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Halo"] = { car_pattern = "Ring", car_radius = 30, car_height = 25, car_spread = 0, car_spin = 120, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Highway line"] = { car_pattern = "Line", car_radius = 35, car_height = 4, car_spread = 0, car_spin = 28, car_gap = 15, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Windmill"] = { car_pattern = "Line", car_radius = 35, car_height = 18, car_spread = 0, car_spin = 120, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Car wall"] = { car_pattern = "Wall", car_radius = 35, car_height = 22, car_spread = 0, car_spin = 0, car_gap = 14, car_face = "Fixed", car_tilt = 0, car_dir = "Clockwise" },
+        ["Grid carpet"] = { car_pattern = "Grid", car_radius = 35, car_height = 20, car_spread = 0, car_spin = 0, car_gap = 14, car_face = "Fixed", car_tilt = 0, car_dir = "Clockwise" },
+        ["Ferris wheel"] = { car_pattern = "Wheel", car_radius = 20, car_height = 28, car_spread = 0, car_spin = 45, car_gap = 14, car_face = "Fixed", car_tilt = 90, car_dir = "Clockwise" },
+        ["Sphere cage"] = { car_pattern = "Sphere", car_radius = 35, car_height = 25, car_spread = 25, car_spin = 60, car_gap = 14, car_face = "Center", car_tilt = 0, car_dir = "Clockwise" },
+        ["Double helix"] = { car_pattern = "Helix", car_radius = 28, car_height = 22, car_spread = 40, car_spin = 150, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Cube"] = { car_pattern = "Cube", car_radius = 35, car_height = 22, car_spread = 0, car_spin = 40, car_gap = 12, car_face = "Fixed", car_tilt = 0, car_dir = "Clockwise" },
+        ["Galaxy"] = { car_pattern = "Spiral", car_radius = 80, car_height = 15, car_spread = 0, car_spin = 40, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Star"] = { car_pattern = "Star", car_radius = 40, car_height = 15, car_spread = 0, car_spin = 60, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+        ["Figure eight"] = { car_pattern = "Figure eight", car_radius = 35, car_height = 15, car_spread = 0, car_spin = 100, car_gap = 14, car_face = "Direction of travel", car_tilt = 0, car_dir = "Clockwise" },
+    }
+    local CAR_ORBIT_PRESET_NAMES = { "Tornado", "Halo", "Highway line", "Windmill", "Car wall", "Grid carpet", "Ferris wheel", "Sphere cage", "Double helix", "Cube", "Galaxy", "Star", "Figure eight" }
+    local CAR_SPAWN_PRESETS = {
+        ["Careful 30"] = { car_target = 30, car_delay = 0.5 },
+        ["Quick 20"] = { car_target = 20, car_delay = 0.25 },
+        ["Swarm 60"] = { car_target = 60, car_delay = 0.15 },
+        ["Mega 150"] = { car_target = 150, car_delay = 0.1 },
+    }
+    local function carApplyPreset(table_, name)
+        local preset = table_[name]
+        if not preset then return false end
+        for flagName, value in pairs(preset) do fxSet(flagName, value) end
+        return true
+    end
+
+    local carOrbitBox = Fx:Section("Car orbit", "Orbit", "Orbit")
+    carOrbitBox:Dropdown({ Name = "Preset", Flag = "car_preset", Items = CAR_ORBIT_PRESET_NAMES, Default = "Tornado", Tooltip = "Pick a look, then press Apply preset. It sets the pattern, size, speed, facing and tilt but never the car count" })
+    carOrbitBox:Button({ Name = "Apply preset", Callback = function()
+        local name = readFlag("car_preset", "Tornado")
+        if carApplyPreset(CAR_ORBIT_PRESETS, name) then pcall(function() Library:Notify("Applied preset " .. name, 3) end) end
+    end })
+    carOrbitBox:Toggle({ Name = "Orbit cars", Flag = "car_orbit_on", Default = false, Tooltip = "Your cars circle the center you pick. Only your own cars move, and only what the server lets you own" })
+    carOrbitBox:Dropdown({ Name = "Follow", Flag = "car_follow", Items = { "Self", "Cursor", "Selected player", "Silent aim target" }, Default = "Self", Tooltip = "Self circles you. Cursor circles the spot your mouse points at. Selected player circles the player picked in the Players tab. Silent aim target circles whoever silent aim is on. Without a target it circles you" })
+    carOrbitBox:Dropdown({ Name = "Pattern", Flag = "car_pattern", Items = { "Ring", "Double ring", "Helix", "Tornado", "Sphere", "Wheel", "Line", "Grid", "Wall", "Cube", "Spiral", "Star", "Figure eight" }, Default = "Ring", Tooltip = "Line, Grid, Wall and Cube use the Spacing slider and turn around the center as they spin" })
+    carOrbitBox:Slider({ Name = "Radius", Flag = "car_radius", Min = 3, Max = 1000, Default = 35, Suffix = " studs", Decimals = 0.5 })
+    carOrbitBox:Slider({ Name = "Height", Flag = "car_height", Min = -20, Max = 1000, Default = 12, Suffix = " studs", Decimals = 0.5, Tooltip = "Height of the orbit above the center" })
+    carOrbitBox:Slider({ Name = "Height spread", Flag = "car_spread", Min = 0, Max = 1000, Default = 0, Suffix = " studs", Decimals = 0.5, Tooltip = "How tall the Helix, Tornado and Sphere patterns are" })
+    carOrbitBox:Slider({ Name = "Spacing", Flag = "car_gap", Min = 3, Max = 60, Default = 14, Suffix = " studs", Decimals = 0.05, Tooltip = "Gap between cars in the Line, Grid, Wall and Cube patterns" })
+    carOrbitBox:Slider({ Name = "Orbit speed", Flag = "car_spin", Min = 0, Max = 720, Default = 90, Suffix = " deg/s", Decimals = 1 })
+    carOrbitBox:Dropdown({ Name = "Direction", Flag = "car_dir", Items = { "Clockwise", "Counter clockwise" }, Default = "Clockwise" })
+    carOrbitBox:Dropdown({ Name = "Facing", Flag = "car_face", Items = { "Direction of travel", "Center", "Fixed" }, Default = "Direction of travel" })
+    carOrbitBox:Slider({ Name = "Car tilt", Flag = "car_tilt", Min = 0, Max = 180, Default = 0, Suffix = " deg", Decimals = 1, Tooltip = "Rolls every car sideways, 90 puts them on their side" })
+    carOrbitBox:Slider({ Name = "Follow smoothing", Flag = "car_smooth", Min = 1, Max = 60, Default = 12, Suffix = " /s", Decimals = 1, Tooltip = "How quickly the orbit center catches up with you or the cursor, lower is lazier" })
+    carOrbitBox:Toggle({ Name = "Stay under the height cap", Flag = "car_cap", Default = true, Tooltip = "Keeps every car below the height limit and above the void, so the orbit never reaches the kill plane" })
+    carOrbitBox:Slider({ Name = "Height cap", Flag = "car_cap_y", Min = 20, Max = 179, Default = 165, Suffix = " studs", Decimals = 1, Tooltip = "Highest point a car may reach. The kill plane is at about 180" })
+
+    local killSections, lastKill, lastCheck = {}, nil, 0
+    track(RunService.Heartbeat:Connect(function()
+        local now = os.clock()
+        if now - lastCheck < 0.3 then return end
+        lastCheck = now
+        if not (Fx.main and Fx.main.Visible) then return end
+        local current = Options.ke_effect and Options.ke_effect.Value
+        if not current or current == lastKill or not Actions.killEmitters then return end
+        lastKill = current
+        if killSections[current] == nil then
+            local emitters = Actions.killEmitters(current)
+            if #emitters > 0 then
+                local section = Fx:Section("VFX", "Kill effects", current .. " colors")
+                for _, emitter in ipairs(emitters) do
+                    local prefix = "kec_" .. fxKey(current) .. "_" .. fxKey(emitter.name)
+                    section:Toggle({ Name = emitter.label or emitter.name, Flag = prefix .. "_on", Default = false }):Colorpicker({ Name = emitter.name, Flag = prefix .. "_c", Default = emitter.color })
+                end
+                getgenv().AsterCfg.apply("kec_" .. fxKey(current) .. "_")
+                killSections[current] = section
+            else
+                killSections[current] = false
+            end
+        end
+        for name, section in pairs(killSections) do
+            if section then section.frame.Visible = name == current end
+        end
+    end))
+
+    local auraSections, auraPending, auraCheck = {}, {}, 0
+    track(RunService.Heartbeat:Connect(function()
+        local now = os.clock()
+        if now - auraCheck < 0.3 then return end
+        auraCheck = now
+        if not (Fx.main and Fx.main.Visible) then return end
+        local current = Options.pa_source and Options.pa_source.Value
+        if not current or not Actions.auraEmitters then return end
+        if auraSections[current] == nil and not auraPending[current] then
+            auraPending[current] = true
+            task.spawn(function()
+                local ok, emitters = pcall(Actions.auraEmitters, current)
+                if ok and emitters and #emitters > 0 then
+                    local section = Fx:Section("VFX", "Aura effects", current .. " colors")
+                    for _, emitter in ipairs(emitters) do
+                        local prefix = "pac_" .. fxKey(current) .. "_" .. fxKey(emitter.name)
+                        section:Toggle({ Name = emitter.label or emitter.name, Flag = prefix .. "_on", Default = false }):Colorpicker({ Name = emitter.name, Flag = prefix .. "_c", Default = emitter.color })
+                    end
+                    getgenv().AsterCfg.apply("pac_" .. fxKey(current) .. "_")
+                    auraSections[current] = section
+                else
+                    auraSections[current] = false
+                end
+                auraPending[current] = nil
+            end)
+        end
+        for name, section in pairs(auraSections) do
+            if section then section.frame.Visible = name == current end
+        end
+    end))
+end
 end
 
 end
 
 do
 
-    local fly, speed, spider = MiscPage:MultiSection({ Sections = { "Fly", "Speed", "Spider" }, Side = 1 })
+    local fly, speed, spider = MiscSubs.Movement:MultiSection({ Sections = { "Fly", "Speed", "Spider" }, Side = 1 })
     fly:Toggle({ Name = "Fly", Flag = "misc_fly", Default = false }):Keybind({ Name = "Fly key", Flag = "misc_fly_key", Default = "None", Sync = true })
     fly:Dropdown({ Name = "Mode", Flag = "misc_fly_mode", Items = { "Velocity", "CFrame" }, Default = "Velocity" })
     fly:Slider({ Name = "Speed", Flag = "misc_fly_speed", Min = 1, Max = 150, Default = 50, Suffix = " studs", Decimals = 1 })
     fly:Slider({ Name = "Vertical speed", Flag = "misc_fly_vspeed", Min = 1, Max = 100, Default = 40, Suffix = " studs", Decimals = 1 })
-    fly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_fly_cap", Default = true })
+    fly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_fly_cap", Default = false })
     fly:Label({ Name = "Up: Space   Down: Left Ctrl" })
     speed:Toggle({ Name = "Speed", Flag = "misc_speed", Default = false }):Keybind({ Name = "Speed key", Flag = "misc_speed_key", Default = "None", Sync = true })
     speed:Dropdown({ Name = "Mode", Flag = "misc_speed_mode", Items = { "Velocity", "CFrame", "WalkSpeed" }, Default = "Velocity" })
@@ -1741,7 +3817,7 @@ do
     spider:Slider({ Name = "Climb speed", Flag = "misc_spider_speed", Min = 1, Max = 100, Default = 30, Suffix = " studs", Decimals = 1 })
     spider:Toggle({ Name = "Climb state", Flag = "misc_spider_state", Default = false })
 
-    local high, long, phase = MiscPage:MultiSection({ Sections = { "High jump", "Long jump", "Phase" }, Side = 1 })
+    local high, long, phase = MiscSubs.Movement:MultiSection({ Sections = { "High jump", "Long jump", "Phase" }, Side = 2 })
     high:Toggle({ Name = "High jump", Flag = "misc_highjump", Default = false }):Keybind({ Name = "High jump key", Flag = "misc_highjump_key", Default = "None", Sync = true })
     high:Dropdown({ Name = "Mode", Flag = "misc_highjump_mode", Items = { "Velocity", "Impulse", "Instant" }, Default = "Velocity" })
     high:Slider({ Name = "Power", Flag = "misc_highjump_power", Min = 1, Max = 150, Default = 50, Suffix = " studs", Decimals = 1 })
@@ -1756,26 +3832,28 @@ do
     phase:Label({ Name = "Hold Shift to Phase while Spider is on" })
     phase:Toggle({ Name = "Disabler (fixes Character mode)", Flag = "misc_disabler", Default = false })
 
-    local Character = MiscPage:Section({ Name = "Character", Side = 1 })
+    local Character = MiscSubs.Utility:Section({ Name = "Character", Side = 1 })
     Character:Toggle({ Name = "No jump cooldown", Flag = "misc_no_jump_cd", Default = false })
     Character:Toggle({ Name = "Camera phase", Flag = "misc_camera_phase", Default = false })
+    Character:Toggle({ Name = "Infinite camera zoom", Flag = "misc_camera_zoom", Default = false, Tooltip = "Lets you scroll the camera out as far as you want, in third person" })
+    Character:Slider({ Name = "Max zoom distance", Flag = "misc_camera_zoom_max", Min = 100, Max = 100000, Default = 100000, Suffix = " studs", Decimals = 1 })
     Character:Toggle({ Name = "Gravity", Flag = "misc_gravity", Default = false })
     Character:Dropdown({ Name = "Gravity mode", Flag = "misc_gravity_mode", Items = { "Workspace", "Local" }, Default = "Workspace" })
     Character:Slider({ Name = "Gravity value", Flag = "misc_gravity_value", Min = 0, Max = 300, Default = 196, Decimals = 1 })
 
-    local World = MiscPage:Section({ Name = "Xray", Side = 1 })
+    local World = MiscSubs.Utility:Section({ Name = "Xray", Side = 1 })
     World:Toggle({ Name = "Xray", Flag = "misc_xray", Default = false })
     World:Slider({ Name = "Part transparency", Flag = "misc_xray_alpha", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
     World:Input({ Name = "Keep opaque (names)", Flag = "misc_xray_ignore", Default = "", Placeholder = "Door, Fence" })
 
-    local Melee = MiscPage:Section({ Name = "Melee aura", Side = 2 })
+    local Melee = MiscSubs.Combat:Section({ Name = "Melee aura", Side = 1 })
     Melee:Toggle({ Name = "Melee aura", Flag = "misc_melee", Default = false })
     Melee:Slider({ Name = "Range", Flag = "misc_melee_range", Min = 1, Max = 15, Default = 15, Suffix = " studs", Decimals = 1 })
     Melee:Slider({ Name = "Delay", Flag = "misc_melee_delay", Min = 0.1, Max = 1, Default = 0.5, Suffix = "s", Decimals = 0.05 })
     Melee:Toggle({ Name = "Skip friendly players", Flag = "misc_melee_friendly", Default = true })
     Melee:Toggle({ Name = "Skip forcefield", Flag = "misc_melee_ff", Default = true })
 
-    local arrest, taze = MiscPage:MultiSection({ Sections = { "Auto arrest", "Auto taze" }, Side = 2 })
+    local arrest, taze = MiscSubs.Combat:MultiSection({ Sections = { "Auto arrest", "Auto taze" }, Side = 2 })
     arrest:Toggle({ Name = "Auto arrest", Flag = "misc_autoarrest", Default = false })
     arrest:Slider({ Name = "Range", Flag = "misc_arrest_range", Min = 1, Max = 7.5, Default = 7.5, Suffix = " studs", Decimals = 0.5 })
     arrest:Toggle({ Name = "Equip handcuffs", Flag = "misc_arrest_hand", Default = true })
@@ -1786,7 +3864,7 @@ do
     taze:Slider({ Name = "Range", Flag = "misc_taze_range", Min = 1, Max = 52, Default = 52, Suffix = " studs", Decimals = 1 })
     taze:Toggle({ Name = "Velocity check", Flag = "misc_taze_velocity", Default = true })
 
-    local Protect = MiscPage:Section({ Name = "Protection", Side = 2 })
+    local Protect = MiscSubs.Utility:Section({ Name = "Protection", Side = 2 })
     Protect:Toggle({ Name = "Anti taze", Flag = "misc_anti_taze", Default = false })
     Protect:Toggle({ Name = "Anti fling", Flag = "misc_anti_fling", Default = false })
     Protect:Toggle({ Name = "Destroy body on death", Flag = "misc_destroy_body", Default = false })
@@ -1794,23 +3872,23 @@ do
     Protect:Toggle({ Name = "Anti kill plane", Flag = "misc_anti_killplane", Default = false })
     Protect:Toggle({ Name = "Anti invisible", Flag = "misc_anti_invis", Default = false })
 
-    local Detect = MiscPage:Section({ Name = "Cheat detector", Side = 2 })
+    local Detect = MiscSubs.Utility:Section({ Name = "Cheat detector", Side = 2 })
     Detect:Toggle({ Name = "Cheat detector", Flag = "misc_cheat_detector", Default = false })
     Detect:Toggle({ Name = "Teleport check", Flag = "misc_cheat_teleport", Default = true })
     Detect:Button({ Name = "Clear flags", Callback = function() MiscActions.clearCheats() end })
 
-    local Fling = MiscPage:Section({ Name = "Fling cars", Side = 2 })
+    local Fling = MiscSubs.Combat:Section({ Name = "Fling cars", Side = 1 })
     Fling:Toggle({ Name = "Fling cars", Flag = "misc_fling_cars", Default = false })
     Fling:Slider({ Name = "Target range", Flag = "misc_fling_range", Min = 20, Max = 1000, Default = 300, Suffix = " studs", Decimals = 1 })
 
-    local Invis = MiscPage:Section({ Name = "Invisibility", Side = 2 })
+    local Invis = MiscSubs.Utility:Section({ Name = "Invisibility", Side = 1 })
     local invisToggle = Invis:Toggle({ Name = "Invisibility", Flag = "misc_invis", Default = false })
     invisToggle:Keybind({ Name = "Invisibility key", Flag = "misc_invis_key", Default = "None", Sync = true })
     Invis:Toggle({ Name = "Hide under the map (look up)", Flag = "misc_invis_under", Default = true })
     Invis:Toggle({ Name = "Move while hidden", Flag = "misc_invis_move", Default = false })
     Invis:Slider({ Name = "Look-up pitch", Flag = "misc_invis_pitch", Min = -90, Max = 90, Default = 90, Suffix = "°", Decimals = 1 })
 
-    local Desync = MiscPage:Section({ Name = "Desync", Side = 2 })
+    local Desync = RageSubs.Other:Section({ Name = "Desync", Side = 1 })
     Desync:Toggle({ Name = "Desync", Flag = "misc_desync", Default = false, Tooltip = "The server sees you at another position than the one you play at" }):Keybind({ Name = "Desync key", Flag = "misc_desync_key", Default = "None", Sync = true })
     Desync:Dropdown({
         Name = "Style", Flag = "misc_desync_style", Items = { "Offset", "Void" }, Default = "Offset",
@@ -1826,7 +3904,7 @@ do
     local desyncTracer = Desync:Toggle({ Name = "Tracer", Flag = "misc_desync_tracer", Default = false })
     desyncTracer:Colorpicker({ Name = "Tracer color", Flag = "misc_desync_tracer_color", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
 
-    local Walk = MiscPage:Section({ Name = "Walk speed", Side = 1 })
+    local Walk = MiscSubs.Movement:Section({ Name = "Walk speed", Side = 1 })
     Walk:Toggle({ Name = "Walk speed", Flag = "misc_walk", Default = false }):Keybind({ Name = "Walk speed key", Flag = "misc_walk_key", Default = "None", Sync = true })
     Walk:Slider({ Name = "Walk speed", Flag = "misc_walk_value", Min = 16, Max = 200, Default = 16, Suffix = " studs/s", Decimals = 1 })
     Walk:Toggle({ Name = "No acceleration", Flag = "misc_noaccel", Default = false, Tooltip = "Start and stop at full speed instead of speeding up and sliding" }):Keybind({ Name = "No acceleration key", Flag = "misc_noaccel_key", Default = "None", Sync = true })
@@ -1837,7 +3915,7 @@ do
     Walk:Slider({ Name = "Speed outside prison", Flag = "misc_walk_out", Min = 16, Max = 100, Default = 100, Suffix = " studs/s", Decimals = 1 })
     Walk:Toggle({ Name = "Notify area changes", Flag = "misc_walk_notify", Default = false, Tooltip = "Shows which area the script thinks you are in" })
 
-    local Move = MiscPage:Section({ Name = "Movement", Side = 1 })
+    local Move = MiscSubs.Movement:Section({ Name = "Movement", Side = 2 })
     Move:Toggle({ Name = "Jump multiplier", Flag = "misc_jumpmult", Default = false }):Keybind({ Name = "Jump multiplier key", Flag = "misc_jumpmult_key", Default = "None", Sync = true })
     Move:Slider({ Name = "Jump multiplier (max 3x)", Flag = "misc_jumpmult_value", Min = 1, Max = 3, Default = 1.5, Suffix = "x", Decimals = 0.05 })
     Move:Toggle({ Name = "Spinbot", Flag = "misc_spinbot", Default = false }):Keybind({ Name = "Spinbot key", Flag = "misc_spinbot_key", Default = "None", Sync = true })
@@ -1847,11 +3925,11 @@ do
     Move:Toggle({ Name = "Hold Left Ctrl to teleport", Flag = "misc_clicktp_ctrl", Default = true })
     Move:Slider({ Name = "Click teleport range", Flag = "misc_clicktp_range", Min = 10, Max = 2000, Default = 500, Suffix = " studs", Decimals = 1 })
 
-    local vFly, vSpeed = MiscPage:MultiSection({ Sections = { "Vehicle fly", "Vehicle speed" }, Side = 1 })
+    local vFly, vSpeed = MiscSubs.Movement:MultiSection({ Sections = { "Vehicle fly", "Vehicle speed" }, Side = 2 })
     vFly:Toggle({ Name = "Vehicle fly", Flag = "misc_vfly", Default = false }):Keybind({ Name = "Vehicle fly key", Flag = "misc_vfly_key", Default = "None", Sync = true })
     vFly:Slider({ Name = "Speed", Flag = "misc_vfly_speed", Min = 1, Max = 100, Default = 60, Suffix = " studs", Decimals = 1 })
     vFly:Toggle({ Name = "Move along camera", Flag = "misc_vfly_camera", Default = true })
-    vFly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_vfly_cap", Default = true })
+    vFly:Toggle({ Name = "Height cap (49.9)", Flag = "misc_vfly_cap", Default = false })
     vFly:Label({ Name = "Up: E   Down: Q" })
     vSpeed:Toggle({ Name = "Vehicle speed", Flag = "misc_vspeed", Default = false }):Keybind({ Name = "Vehicle speed key", Flag = "misc_vspeed_key", Default = "None", Sync = true })
     vSpeed:Slider({ Name = "Max speed", Flag = "misc_vspeed_value", Min = 80, Max = 200, Default = 140, Decimals = 1 })
@@ -1878,9 +3956,10 @@ end
 
 do
 
-    local EspList = VisualsPage:MultiSection({ Sections = { "Players" }, Side = 1 })
+    local EspList = VisualsSubs.ESP:MultiSection({ Sections = { "Players" }, Side = 1 })
     EspList:Toggle({ Name = "Enabled", Flag = "esp_enabled", Default = false })
     EspList:Toggle({ Name = "Name", Flag = "esp_name", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_name_color1", Default = WHITE })
+    EspList:Dropdown({ Name = "Name type", Flag = "esp_name_type", Items = { "Username", "Display name", "Display (@username)" }, Default = "Username", Tooltip = "Which name the ESP shows above players" })
     EspList:Toggle({ Name = "Boxes", Flag = "esp_box", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_box_color", Default = WHITE })
     EspList:Toggle({ Name = "Outline", Flag = "esp_outline_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_outline_color", Default = BLACK })
     EspList:Toggle({ Name = "Fill", Flag = "esp_fill", Default = false }):Colorpicker({ Name = "Color", Flag = "esp_fill_color", Default = WHITE, Alpha = 0.9 })
@@ -1899,7 +3978,7 @@ do
     EspList:Toggle({ Name = "Team colors", Flag = "esp_use_team_color", Default = false })
 EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpicker({ Name = "Visible", Flag = "esp_chams_adorn_vis_color", Default = Color3.fromRGB(59, 204, 90), Alpha = 0.35 }):Colorpicker({ Name = "Behind walls", Flag = "esp_chams_adorn_occ_color", Default = Color3.fromRGB(59, 144, 204), Alpha = 0.7 })
 
-    local SetGeneral, SetBox, SetHealth, SetArrows = VisualsPage:MultiSection({ Sections = { "General", "Box", "Health", "Arrows" }, Side = 2 })
+    local SetGeneral, SetBox, SetHealth, SetArrows = VisualsSubs.ESP:MultiSection({ Sections = { "General", "Box", "Health", "Arrows" }, Side = 2 })
     SetGeneral:Toggle({ Name = "Players", Flag = "esp_players", Default = true })
     SetGeneral:Toggle({ Name = "Local player", Flag = "esp_local_player", Default = false })
     SetGeneral:Slider({ Name = "Text size (all text)", Flag = "esp_text_size", Suffix = " px", Min = 8, Max = 24, Default = 12, Decimals = 1 })
@@ -1911,23 +3990,32 @@ EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpic
     SetArrows:Slider({ Name = "Size", Flag = "esp_arrow_size", Suffix = " px", Min = 8, Max = 32, Default = 14, Decimals = 1 })
     SetArrows:Slider({ Name = "Orbit radius", Flag = "esp_arrow_orbit", Suffix = " px", Min = 50, Max = 300, Default = 100, Decimals = 1 })
 
-    local AdornLayers, AdornGlow = VisualsPage:MultiSection({ Sections = { "Layers", "Glow" }, Side = 2 })
+    local AdornLayers, AdornGlow = VisualsSubs.ESP:MultiSection({ Sections = { "Layers", "Glow" }, Side = 1 })
     AdornLayers:Slider({ Name = "Visible thickness", Flag = "esp_chams_adorn_thickness", Min = 0, Max = 0.6, Default = 0.1, Decimals = 0.01 })
     AdornGlow:Toggle({ Name = "Glow", Flag = "esp_chams_adorn_glow", Default = false })
     AdornGlow:Slider({ Name = "Glow strength", Flag = "esp_chams_adorn_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
     AdornGlow:Toggle({ Name = "Round head", Flag = "esp_chams_adorn_round_head", Default = true })
     AdornGlow:Slider({ Name = "Head size", Flag = "esp_chams_adorn_head_size", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
 
-    local CamFov = VisualsPage:Section({ Name = "Camera", Side = 1 })
+    local CamFov = VisualsSubs.Screen:Section({ Name = "Camera", Side = 1 })
 CamFov:Toggle({ Name = "FOV changer", Flag = "camera_fov_changer", Default = false })
 CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max = 140, Default = 100, Suffix = "°", Decimals = 1 })
 
-    local LightMain, LightTime, LightFog = WorldPage:MultiSection({ Sections = { "Light", "Time", "Fog" }, Side = 1 })
-    LightMain:Toggle({ Name = "Ambient", Flag = "lighting_toggle_Ambient", Default = false }):Colorpicker({ Name = "Color", Flag = "lighting_colorAmbient", Default = WHITE })
+    local EffectsBox = WorldSubs.Effects:Section({ Name = "Effects window", Side = 1 })
+    EffectsBox:Toggle({ Name = "Effects window", Flag = "fx_ui", Default = false, Tooltip = "Opens the window with sounds, visual effects and tracers" })
+
+    local LightMain, LightTime, LightFog = WorldSubs.Lighting:MultiSection({ Sections = { "Light", "Time", "Fog" }, Side = 1 })
+    LightMain:Toggle({ Name = "Ambient", Flag = "lighting_toggle_Ambient", Default = false }):Colorpicker({ Name = "Inner ambient", Flag = "lighting_colorAmbient", Default = WHITE }):Colorpicker({ Name = "Outer ambient", Flag = "lighting_colorOutdoorAmbient", Default = WHITE })
     LightMain:Toggle({ Name = "Brightness", Flag = "lighting_toggle_Brightness", Default = false })
     LightMain:Slider({ Name = "Brightness value", Flag = "lighting_number_Brightness", Min = 0, Max = 5, Default = 1.7, Decimals = 0.01 })
     LightMain:Toggle({ Name = "Exposure", Flag = "lighting_toggle_ExposureCompensation", Default = false })
     LightMain:Slider({ Name = "Exposure value", Flag = "lighting_number_ExposureCompensation", Min = -5, Max = 5, Default = -1.1, Decimals = 0.01 })
+    LightMain:Toggle({ Name = "Map lights", Flag = "maplights_enabled", Default = false, Tooltip = "Customizes the lamps and lights built into the map" })
+    LightMain:Toggle({ Name = "Always on", Flag = "maplights_force", Default = false, Tooltip = "Keeps map lights on during the day too" })
+    LightMain:Toggle({ Name = "Recolor lights", Flag = "maplights_recolor", Default = false }):Colorpicker({ Name = "Light color", Flag = "maplights_color", Default = Color3.fromRGB(255, 214, 150) })
+    LightMain:Slider({ Name = "Light brightness", Flag = "maplights_brightness", Min = 0, Max = 10, Default = 1, Decimals = 0.01 })
+    LightMain:Slider({ Name = "Light range", Flag = "maplights_range", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
+    LightMain:Toggle({ Name = "Light shadows", Flag = "maplights_shadows", Default = false })
     LightTime:Toggle({ Name = "Clock time", Flag = "lighting_toggle_ClockTime", Default = false })
     LightTime:Slider({ Name = "Clock time value", Flag = "lighting_number_ClockTime", Min = 0, Max = 24, Default = 9.2, Decimals = 0.01 })
     LightFog:Toggle({ Name = "Fog start", Flag = "lighting_toggle_FogStart", Default = false })
@@ -1936,7 +4024,8 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     LightFog:Slider({ Name = "Fog end value", Flag = "lighting_number_FogEnd", Suffix = " stud(s)", Min = 0, Max = 5000, Default = 2500, Decimals = 1 })
     LightFog:Toggle({ Name = "Fog color", Flag = "lighting_toggle_FogColor", Default = false }):Colorpicker({ Name = "Color", Flag = "lighting_colorFogColor", Default = WHITE })
 
-    local EnvSky, EnvAtmos, EnvBloom, EnvScreen = WorldPage:MultiSection({ Sections = { "Sky", "Atmos", "Bloom", "Screen" }, Side = 1 })
+    local EnvAtmos, EnvBloom, EnvScreen = WorldSubs.Lighting:MultiSection({ Sections = { "Atmos", "Bloom", "Screen" }, Side = 2 })
+    local EnvSky = Fx:Section("Sky", "Skyboxes", "Skybox")
     EnvSky:Toggle({ Name = "Skybox", Flag = "skybox_enabled", Default = false })
     EnvSky:Dropdown({ Name = "Preset", Flag = "skybox_value", Items = SKYBOX_NAMES, Default = SKYBOX_NAMES[1] })
     EnvSky:Input({ Name = "Custom ids", Flag = "skybox_custom_ids", Default = "", Placeholder = "1 id or link, or 6: up down front back left right" })
@@ -1959,7 +4048,9 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     EnvScreen:Slider({ Name = "Sun rays intensity", Flag = "sunrays_intensity", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
     EnvScreen:Slider({ Name = "Screen blur", Flag = "camera_blur", Min = 0, Max = 20, Default = 0, Decimals = 0.01 })
 
-    local GunLook, GunChams, GunTracerTab, GunTimingTab = VisualsPage:MultiSection({ Sections = { "Viewmodel", "Chams", "Tracers", "Timing" }, Side = 2 })
+    local GunLook, GunChams = VisualsSubs.Viewmodel:MultiSection({ Sections = { "Viewmodel", "Chams" }, Side = 1 })
+local GunTracerTab = Fx:Section("Tracers", "Bullet tracers", "Tracers")
+local GunTimingTab = Fx:Section("Tracers", "Bullet tracers", "Timing")
 GunLook:Toggle({ Name = "Gun color", Flag = "viewmodel_body_color", Default = false }):Colorpicker({ Name = "Color", Flag = "viewmodel_body_color_value", Default = Color3.fromRGB(202, 161, 13), Alpha = true })
 GunLook:Dropdown({ Name = "Material", Flag = "viewmodel_material_value", Items = { "Default", "ForceField", "Neon", "Glass", "SmoothPlastic", "Plastic" }, Default = "Default" })
 GunLook:Dropdown({ Name = "Forcefield texture", Flag = "viewmodel_texture_value", Items = FORCEFIELD_TEXTURE_NAMES, Default = "Disabled" })
@@ -1967,6 +4058,7 @@ GunLook:Toggle({ Name = "Disable textures", Flag = "viewmodel_disable_textures",
 GunChams:Toggle({ Name = "Gun chams", Flag = "viewmodel_chams", Default = false }):Colorpicker({ Name = "Fill", Flag = "viewmodel_chams_color", Default = Color3.fromRGB(120, 80, 255), Alpha = 0.5 }):Colorpicker({ Name = "Outline", Flag = "viewmodel_chams_color2", Default = WHITE, Alpha = true })
 GunTracerTab:Toggle({ Name = "Bullet tracers", Flag = "tracers_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "tracers_color", Default = WHITE })
 GunTracerTab:Dropdown({ Name = "Style", Flag = "tracers_style", Items = TRACER_NAMES, Default = "Obelus" })
+GunTracerTab:Toggle({ Name = "Gradient", Flag = "tracers_gradient", Default = false }):Colorpicker({ Name = "End color", Flag = "tracers_color2", Default = Color3.fromRGB(255, 80, 80) })
 GunTracerTab:Slider({ Name = "Width", Flag = "tracers_width", Suffix = "x", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
 GunTracerTab:Slider({ Name = "Glow", Flag = "tracers_glow", Min = 1, Max = 10, Default = 1, Decimals = 0.1 })
 GunTimingTab:Slider({ Name = "Visible time", Flag = "tracers_duration", Suffix = "s", Min = 0.1, Max = 5, Default = 0.5, Decimals = 0.1 })
@@ -1974,16 +4066,16 @@ GunTimingTab:Slider({ Name = "Fade time", Flag = "tracers_fade", Suffix = "s", M
 GunTimingTab:Toggle({ Name = "Expand from muzzle", Flag = "tracers_expand", Default = true })
 GunTimingTab:Slider({ Name = "Expand speed", Flag = "tracers_expand_speed", Min = 4, Max = 40, Default = 18, Decimals = 1 })
 
-    local BodyForce, BodyExtra = VisualsPage:MultiSection({ Sections = { "Arms", "Extras" }, Side = 2 })
+    local BodyForce, BodyExtra = VisualsSubs.Viewmodel:MultiSection({ Sections = { "Arms", "Extras" }, Side = 2 })
 BodyForce:Toggle({ Name = "Forcefield material", Flag = "arm_material", Default = false }):Colorpicker({ Name = "Color", Flag = "arm_material_color", Default = Color3.fromRGB(255, 255, 255), Alpha = true })
 BodyForce:Dropdown({ Name = "Forcefield texture", Flag = "arm_material_texture", Items = FORCEFIELD_TEXTURE_NAMES, Default = "Disabled" })
 BodyExtra:Toggle({ Name = "Disable textures", Flag = "arm_disable_textures", Default = false })
 BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories", Default = false })
 
-    local SelfChams = VisualsPage:Section({ Name = "Self chams", Side = 2 })
+    local SelfChams = VisualsSubs.Viewmodel:Section({ Name = "Self chams", Side = 2 })
     SelfChams:Toggle({ Name = "Self chams", Flag = "Self_Chams", Default = false }):Colorpicker({ Name = "Fill", Flag = "Self_ChamsColor1", Default = Color3.fromRGB(80, 160, 255), Alpha = 0.3 }):Colorpicker({ Name = "Outline", Flag = "Self_ChamsColor2", Default = WHITE, Alpha = true })
 
-    local WeatherMain, WeatherLook, WeatherWind, WeatherStrike = WorldPage:MultiSection({ Sections = { "Weather", "Look", "Wind", "Strike" }, Side = 1 })
+    local WeatherMain, WeatherLook, WeatherWind, WeatherStrike = WorldSubs.Weather:MultiSection({ Sections = { "Weather", "Look", "Wind", "Strike" }, Side = 1 })
     WeatherMain:Toggle({ Name = "Weather", Flag = "weather_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "weather_color", Default = Color3.fromRGB(200, 200, 220) })
     WeatherMain:Dropdown({ Name = "Preset", Flag = "weather_preset", Items = WEATHER_NAMES, Default = "Rain" })
     WeatherMain:Slider({ Name = "Intensity", Flag = "weather_intensity", Min = 0.1, Max = 3, Default = 1, Decimals = 0.01 })
@@ -2000,7 +4092,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     WeatherStrike:Slider({ Name = "Flash", Flag = "weather_lightning_flash", Min = 0, Max = 10, Default = 4, Decimals = 0.1 })
     WeatherStrike:Slider({ Name = "Interval", Flag = "weather_lightning_interval", Suffix = "s", Min = 1, Max = 15, Default = 4, Decimals = 0.1 })
 
-    local CrossMain, CrossOutline, CrossMotion, CrossArms = VisualsPage:MultiSection({ Sections = { "Crosshair", "Outline", "Motion", "Arms" }, Side = 1 })
+    local CrossMain, CrossOutline, CrossMotion, CrossArms = VisualsSubs.Screen:MultiSection({ Sections = { "Crosshair", "Outline", "Motion", "Arms" }, Side = 2 })
     CrossMain:Toggle({ Name = "Crosshair", Flag = "crosshair_enabled", Default = false }):Colorpicker({ Name = "Color", Flag = "crosshair_color", Default = WHITE })
     CrossMain:Slider({ Name = "Length", Flag = "crosshair_length", Suffix = " px", Min = 1, Max = 40, Default = 12, Decimals = 1 })
     CrossMain:Slider({ Name = "Thickness", Flag = "crosshair_thickness", Suffix = " px", Min = 1, Max = 8, Default = 2, Decimals = 1 })
@@ -2020,25 +4112,46 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     CrossArms:Toggle({ Name = "Left arm", Flag = "crosshair_arm_left", Default = true })
     CrossArms:Toggle({ Name = "Right arm", Flag = "crosshair_arm_right", Default = true })
 
-    local HitFx = WorldPage:Section({ Name = "Hit effects", Side = 2 })
+    local HitFx = Fx:Section("VFX", "Hit effects", "Hit effects")
     local heToggle = HitFx:Toggle({ Name = "Hit effects", Flag = "he_enabled", Default = false })
     heToggle:Colorpicker({ Name = "Color", Flag = "he_color", Default = Color3.fromRGB(255, 81, 0) })
-    HitFx:Dropdown({ Name = "Effect", Flag = "he_effect", Items = { "nova", "sparks", "bubble", "orbs", "air", "blood", "glitch", "slash", "cosmic", "crescentslash", "Burst: Mutants Rage", "Burst: Armageddon", "Burst: Solar Flare", "Burst: Heaven", "Burst: Gravity God", "Burst: Red Ring of Death", "Burst: Blue Heat", "Burst: Stardust Fragment", "Burst: Fiery Ritual of Hallownest", "Burst: Midnight Blues", "Burst: Susanoo Arms", "Burst: Atomic", "Burst: Kurama" }, Default = "nova" })
+    HitFx:Dropdown({ Name = "Effect", Flag = "he_effect", Items = FX_HIT_NAMES, Default = "nova" })
     HitFx:Dropdown({ Name = "Trigger", Flag = "he_trigger", Items = { "On hit", "On shot" }, Default = "On hit" })
     HitFx:Slider({ Name = "Size", Flag = "he_size", Min = 0, Max = 10, Default = 2, Decimals = 0.1 })
     HitFx:Slider({ Name = "Duration", Flag = "he_duration", Min = 0.1, Max = 10, Default = 2, Suffix = "s", Decimals = 0.1 })
     HitFx:Button({ Name = "Preview effect", Callback = function() Actions.previewHitEffect() end })
 
-    local KillFx = WorldPage:Section({ Name = "Kill effects", Side = 2 })
+    local KillFx = Fx:Section("VFX", "Kill effects", "Kill effects")
     KillFx:Toggle({ Name = "Kill effects", Flag = "ke_enabled", Default = false, Tooltip = "Plays an effect where a player you shot dies" })
-    KillFx:Dropdown({ Name = "Effect", Flag = "ke_effect", Items = { "Stone", "Gold Statue", "Fade", "Ghost", "Shrink", "Blackhole", "Cosmic Strike", "Cyberspace", "Darkheart", "Deleted", "Galactic Pull", "Game Over", "Glitter Bomb", "Heartbreak", "Infinite Portal", "Lightning", "Northern Aurora Burst", "Paper Surprise", "Scorch", "Soul Grasp", "Sparkle", "Stereo", "Tornado", "Tornado Acid", "Tornado Earth", "Tornado Fire", "Tornado Lightning" }, Default = "Darkheart" })
+    KillFx:Dropdown({ Name = "Effect", Flag = "ke_effect", Items = FX_KILL_NAMES, Default = "Darkheart" })
     KillFx:Toggle({ Name = "Body reaction", Flag = "ke_body", Default = true, Tooltip = "Also changes the victim's own body parts where the original effect does (charred stone, shrinking, fading)" })
     KillFx:Slider({ Name = "Duration", Flag = "ke_duration", Min = 1, Max = 8, Default = 4, Suffix = "s", Decimals = 0.1 })
     KillFx:Button({ Name = "Preview effect", Callback = function() Actions.previewKillEffect() end })
 
-    local Muzzle = WorldPage:Section({ Name = "Muzzle effects", Side = 2 })
+    local Ench = Fx:Section("VFX", "Enchantments", "Gun enchantments")
+    Ench:Toggle({ Name = "Gun enchantments", Flag = "ench_enabled", Default = false, Tooltip = "Blade trail effects fitted onto the gun you hold. Only you see them" })
+    Ench:Dropdown({ Name = "Effect", Flag = "ench_effect", Items = FX_ENCH_NAMES, Default = "Void" })
+    Ench:Dropdown({ Name = "Apply to", Flag = "ench_target", Items = { "My weapon", "Everyone's weapons" }, Default = "My weapon", Tooltip = "Everyone's weapons also covers players within 250 studs, up to 10 of them" })
+    Ench:Dropdown({ Name = "Mode", Flag = "ench_mode", Items = { "While equipped", "While shooting" }, Default = "While equipped", Tooltip = "While shooting only lights up your own gun after each shot" })
+    Ench:Slider({ Name = "Shot glow time", Flag = "ench_flash", Min = 0.1, Max = 3, Default = 0.6, Suffix = "s", Decimals = 0.05 })
+    Ench:Slider({ Name = "Size", Flag = "ench_size", Min = 10, Max = 400, Default = 100, Suffix = "%", Decimals = 1, Tooltip = "100 fits the effect to the length of the gun" })
+    Ench:Dropdown({ Name = "Gun direction", Flag = "ench_axis", Items = { "Auto", "X", "Y", "Z" }, Default = "Auto", Tooltip = "The axis the gun is long along. Change it if the effect lies across the gun" })
+    Ench:Toggle({ Name = "Flip direction", Flag = "ench_flip", Default = false })
+    Ench:Toggle({ Name = "Custom color", Flag = "ench_custom", Default = false }):Colorpicker({ Name = "Color", Flag = "ench_color", Default = Color3.fromRGB(120, 200, 255) })
+    Ench:Slider({ Name = "Transparency", Flag = "ench_alpha", Min = 0, Max = 0.95, Default = 0, Decimals = 0.05 })
+    Ench:Slider({ Name = "Offset X", Flag = "ench_x", Min = -5, Max = 5, Default = 0, Suffix = " studs", Decimals = 0.05 })
+    Ench:Slider({ Name = "Offset Y", Flag = "ench_y", Min = -5, Max = 5, Default = 0, Suffix = " studs", Decimals = 0.05 })
+    Ench:Slider({ Name = "Offset Z", Flag = "ench_z", Min = -5, Max = 5, Default = 0, Suffix = " studs", Decimals = 0.05 })
+    Ench:Button({ Name = "Reset position", Callback = function()
+        for _, name in ipairs({ "ench_x", "ench_y", "ench_z" }) do
+            local option = Options[name]
+            if option and option.SetValue then pcall(function() option:SetValue(0) end) end
+        end
+    end })
+
+    local Muzzle = Fx:Section("VFX", "Muzzle effects", "Muzzle effects")
     Muzzle:Toggle({ Name = "Muzzle effects", Flag = "mz_enabled", Default = false, Tooltip = "Black hole effects on the Muzzle part of the tool you hold" })
-    Muzzle:Dropdown({ Name = "Effect", Flag = "mz_effect", Items = { "Blue Black Hole", "Gold Black Hole", "Orange Black Hole", "Purple Black Hole", "Red Black Hole", "White Black Hole" }, Default = "Purple Black Hole" })
+    Muzzle:Dropdown({ Name = "Effect", Flag = "mz_effect", Items = FX_MUZZLE_NAMES, Default = "Purple Black Hole" })
     Muzzle:Dropdown({ Name = "Mode", Flag = "mz_mode", Items = { "While equipped", "On shot" }, Default = "While equipped" })
     Muzzle:Slider({ Name = "Flash time", Flag = "mz_flash", Min = 0.05, Max = 1.5, Default = 0.25, Suffix = "s", Decimals = 0.05 })
     Muzzle:Slider({ Name = "Size", Flag = "mz_size", Min = 0.5, Max = 100, Default = 5, Suffix = "%", Decimals = 0.5 })
@@ -2058,7 +4171,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
         end
     end })
 
-    local Reload = WorldPage:Section({ Name = "Reload indicator", Side = 2 })
+    local Reload = WorldSubs.Indicators:Section({ Name = "Reload indicator", Side = 1 })
     Reload:Toggle({ Name = "Reload indicator", Flag = "reload_ind", Default = false, Tooltip = "A progress bar under the cursor while your gun reloads" })
     Reload:Toggle({ Name = "Show time", Flag = "reload_ind_text", Default = true })
     Reload:Slider({ Name = "Width", Flag = "reload_ind_w", Min = 40, Max = 300, Default = 120, Suffix = "px", Decimals = 1 })
@@ -2067,7 +4180,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     Reload:Label({ Name = "Bar color" }):Colorpicker({ Name = "Bar", Flag = "reload_ind_fill", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
     Reload:Label({ Name = "Background color" }):Colorpicker({ Name = "Background", Flag = "reload_ind_back", Default = Color3.fromRGB(0, 0, 0), Alpha = 0.5 })
 
-    local Ammo = WorldPage:Section({ Name = "Ammo indicator", Side = 2 })
+    local Ammo = WorldSubs.Indicators:Section({ Name = "Ammo indicator", Side = 2 })
     Ammo:Toggle({ Name = "Server bullet count", Flag = "ammo_ind", Default = false, Tooltip = "Shows how many bullets the server says your gun has. It turns yellow when that differs from the count your game shows." })
     Ammo:Toggle({ Name = "Show local count", Flag = "ammo_ind_local", Default = false, Tooltip = "Also shows the count your own game shows" })
     Ammo:Slider({ Name = "Text size", Flag = "ammo_ind_size", Min = 10, Max = 32, Default = 16, Decimals = 1 })
@@ -2076,7 +4189,7 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     Ammo:Label({ Name = "Empty color" }):Colorpicker({ Name = "Empty", Flag = "ammo_ind_c_empty", Default = Color3.fromRGB(255, 80, 80) })
     Ammo:Label({ Name = "Mismatch color" }):Colorpicker({ Name = "Mismatch", Flag = "ammo_ind_c_diff", Default = Color3.fromRGB(255, 200, 60) })
 
-    local Indicator = WorldPage:Section({ Name = "Wallbang indicator", Side = 2 })
+    local Indicator = WorldSubs.Indicators:Section({ Name = "Wallbang indicator", Side = 1 })
     Indicator:Toggle({ Name = "Wallbang indicator", Flag = "wb_ind", Default = false, Tooltip = "Tells you if an enemy is visible, wallbangable with the wallbang method you use now (a spot that can deal damage), or not wallbangable" })
     Indicator:Toggle({ Name = "Show on cursor", Flag = "wb_ind_cursor", Default = true })
     Indicator:Toggle({ Name = "Show on everyone", Flag = "wb_ind_all", Default = false })
@@ -2087,13 +4200,13 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     Indicator:Label({ Name = "Wallbangable color" }):Colorpicker({ Name = "Wallbangable", Flag = "wb_ind_c_wb", Default = Color3.fromRGB(255, 200, 60) })
     Indicator:Label({ Name = "Blocked color" }):Colorpicker({ Name = "Blocked", Flag = "wb_ind_c_block", Default = Color3.fromRGB(255, 80, 80) })
 
-    local AuraBox = WorldPage:Section({ Name = "Particle aura", Side = 1 })
+    local AuraBox = Fx:Section("VFX", "Aura effects", "Particle aura")
     local auraToggle = AuraBox:Toggle({ Name = "Particle aura", Flag = "pa_enabled", Default = false })
     auraToggle:Colorpicker({ Name = "Color", Flag = "pa_color", Default = Color3.fromRGB(133, 220, 255), Alpha = 0.2 })
     AuraBox:Dropdown({ Name = "Aura", Flag = "pa_source", Items = AURA_PACK.items, Default = "angel" })
     AuraBox:Toggle({ Name = "Keep pack colors", Flag = "pa_pack_original", Default = true, Tooltip = "Pack auras keep their own colors. Turn off to paint them with the color above like the other auras." })
 
-    local Avatar = WorldPage:Section({ Name = "Avatar changer", Side = 2 })
+    local Avatar = WorldSubs.Effects:Section({ Name = "Avatar changer", Side = 2 })
     Avatar:Toggle({ Name = "Avatar spoofer window", Flag = "spoof_ui", Default = false, Tooltip = "Opens a window to browse a player's current look and saved outfits" })
     Avatar:Input({ Name = "User", Flag = "spoof_avatar_user", Placeholder = "UserId, username or profile URL" })
     Avatar:Button({ Name = "Apply avatar", Callback = function()
@@ -2144,6 +4257,7 @@ do
         local name = readFlag("Player_Selected", "")
         return name ~= "" and Players:FindFirstChild(name) or nil
     end
+    Actions.selectedPlayer = selectedPlayer
 
     PlayerOptions:Dropdown({
         Name = "Relationship",
@@ -2252,7 +4366,7 @@ do
         Text = "Keybind list shows",
         Values = { "All", "Toggled", "Active" },
         Default = "All",
-        Tooltip = "All: every keybind. Toggled: only keybinds whose feature is switched on. Active: only keybinds held or toggled right now.",
+        Tooltip = "All: every keybind that has a key. Toggled: only keybinds whose feature is switched on. Active: only keybinds held or toggled right now.",
         Callback = function(value)
             pcall(function() Library:SetKeybindMode(value) end)
         end,
@@ -2268,6 +4382,120 @@ do
         Tooltip = "Drag the round grip in the bottom-right corner to resize the menu",
         Callback = function(value) Library.WireframeDrag = value end,
     })
+
+    do
+        local TeleportService = game:GetService("TeleportService")
+        local HttpService = game:GetService("HttpService")
+        local ServerGroup = SettingsTab:AddRightGroupbox("Server")
+        local busy = false
+
+        local function tell(message)
+            pcall(function() Library:Notify(message, 5) end)
+        end
+
+        local function readOption(name, default)
+            local option = Options and Options[name]
+            if option and option.Value ~= nil then return option.Value end
+            return default
+        end
+
+        local function fetchServers()
+            local send = (syn and syn.request) or http_request or request
+            local minimum = readOption("ServerHopMin", 0)
+            for _, host in ipairs({ "games.roproxy.com", "games.roblox.com" }) do
+                local found, cursor = {}, nil
+                for _ = 1, 3 do
+                    local url = string.format("https://%s/v1/games/%d/servers/Public?sortOrder=Asc&excludeFullGames=true&limit=100%s", host, game.PlaceId, cursor and ("&cursor=" .. cursor) or "")
+                    local body
+                    if send then
+                        local ok, reply = pcall(send, { Url = url, Method = "GET" })
+                        if ok and type(reply) == "table" and reply.StatusCode == 200 and type(reply.Body) == "string" then body = reply.Body end
+                    else
+                        local ok, reply = pcall(function() return game:HttpGet(url) end)
+                        if ok and type(reply) == "string" then body = reply end
+                    end
+                    if not body then break end
+                    local okJson, data = pcall(function() return HttpService:JSONDecode(body) end)
+                    if not (okJson and type(data) == "table" and type(data.data) == "table") then break end
+                    for _, server in ipairs(data.data) do
+                        if type(server) == "table" and server.id and server.id ~= game.JobId and type(server.playing) == "number" and type(server.maxPlayers) == "number"
+                            and server.playing < server.maxPlayers and server.playing >= minimum then
+                            found[#found + 1] = server
+                        end
+                    end
+                    cursor = type(data.nextPageCursor) == "string" and data.nextPageCursor or nil
+                    if not cursor then break end
+                end
+                if #found > 0 then return found end
+            end
+            return {}
+        end
+
+        pcall(function()
+            Library:GiveSignal(TeleportService.TeleportInitFailed:Connect(function(_, result, message)
+                busy = false
+                tell("Teleport failed: " .. tostring(message ~= "" and message or result))
+            end))
+        end)
+
+        ServerGroup:AddDropdown("ServerHopMode", {
+            Text = "Server hop picks",
+            Values = { "Random", "Fewest players", "Most players" },
+            Default = "Random",
+            Tooltip = "Which public server to join. Full servers and this one are skipped",
+        })
+        ServerGroup:AddSlider("ServerHopMin", {
+            Text = "Minimum players",
+            Default = 0,
+            Min = 0,
+            Max = 40,
+            Rounding = 0,
+            Tooltip = "Skips servers with fewer players than this",
+        })
+        ServerGroup:AddButton("Server hop", function()
+            if busy then return end
+            busy = true
+            tell("Looking for a server...")
+            task.spawn(function()
+                local list = fetchServers()
+                if #list == 0 then
+                    busy = false
+                    tell("No other server found. Try lowering the minimum players")
+                    return
+                end
+                local mode = readOption("ServerHopMode", "Random")
+                if mode == "Fewest players" then
+                    table.sort(list, function(a, b) return a.playing < b.playing end)
+                elseif mode == "Most players" then
+                    table.sort(list, function(a, b) return a.playing > b.playing end)
+                end
+                local pick = mode == "Random" and list[math.random(1, #list)] or list[1]
+                tell(string.format("Joining a server with %d/%d players", pick.playing, pick.maxPlayers))
+                local ok, err = pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, LocalPlayer) end)
+                if not ok then
+                    busy = false
+                    tell("Teleport failed: " .. tostring(err))
+                end
+            end)
+        end)
+        ServerGroup:AddButton("Rejoin", function()
+            if busy then return end
+            busy = true
+            tell("Rejoining...")
+            local ok, err = pcall(function()
+                if #Players:GetPlayers() <= 1 then
+                    TeleportService:Teleport(game.PlaceId, LocalPlayer)
+                else
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+                end
+            end)
+            if not ok then
+                busy = false
+                tell("Rejoin failed: " .. tostring(err))
+            end
+        end)
+        ServerGroup:AddLabel("Aster is not loaded again after joining, run it again")
+    end
 
     do
         local BUTTONS = { MB3 = true, MB4 = true, MB5 = true }
@@ -2512,7 +4740,7 @@ do
 
         local withOverride, okFour = replaceOnce(filtered,
             "newTracked[player.Character]={name=player.Name,Cheap=false}",
-            "newTracked[player.Character]={name=player.Name,Cheap=false,Config=getgenv().TS_ESPOverride and getgenv().TS_ESPOverride(player) or nil}")
+            "newTracked[player.Character]={name=getgenv().TS_ESPName and getgenv().TS_ESPName(player) or player.Name,Cheap=false,Config=getgenv().TS_ESPOverride and getgenv().TS_ESPOverride(player) or nil}")
         if not okFour then
             warn("Highlight color patch skipped: the ESP library changed")
             return filtered
@@ -2589,16 +4817,28 @@ do
         end
         return entry
     end
+    getgenv().TS_ESPName = function(player)
+        local style = getFlag("esp_name_type", "Username")
+        local display = player.DisplayName
+        if display == nil or display == "" then display = player.Name end
+        if style == "Display name" then return display end
+        if style == "Display (@username)" then
+            if display == player.Name then return display end
+            return display .. " (@" .. player.Name .. ")"
+        end
+        return player.Name
+    end
     onUnload(function()
         getgenv().TS_ESPFilter = nil
         getgenv().TS_ESPOverride = nil
+        getgenv().TS_ESPName = nil
     end)
 
     local lastTeamSignature
     local function checkTeamChanges()
         local parts = {}
         table.insert(parts, table.concat({
-            tostring(getFlag("esp_enemies_only", false)), tostring(getFlag("esp_hostile_only", false)), tostring(getFlag("esp_use_team_color", false)),
+            tostring(getFlag("esp_enemies_only", false)), tostring(getFlag("esp_hostile_only", false)), tostring(getFlag("esp_use_team_color", false)), tostring(getFlag("esp_name_type", "Username")),
             tostring(getFlag("rel_hl_friendly", false)), tostring(getFlag("rel_hl_priority", false)),
             tostring(getColor("rel_hl_friendly_color", Color3.new(1, 1, 1))), tostring(getColor("rel_hl_priority_color", Color3.new(1, 1, 1))),
         }, ":"))
@@ -2765,6 +5005,7 @@ do
 
     local originalLighting = {
         Ambient = LightingService.Ambient,
+        OutdoorAmbient = LightingService.OutdoorAmbient,
         Brightness = LightingService.Brightness,
         ClockTime = LightingService.ClockTime,
         ExposureCompensation = LightingService.ExposureCompensation,
@@ -2901,6 +5142,13 @@ do
         end
     end
 
+    Actions.skyPreset = function(name)
+        local preset = SKYBOX_PRESETS[name]
+        if preset and preset.Custom then return customSkybox() end
+        return preset
+    end
+    onUnload(function() Actions.skyPreset = nil end)
+
     local lightingApplied = {}
     local lightingRestore = {}
 
@@ -2921,6 +5169,7 @@ do
 
     local function applyWorldLighting()
         applyLightingProp("Ambient", getFlag("lighting_toggle_Ambient", false), getColor("lighting_colorAmbient", originalLighting.Ambient))
+        applyLightingProp("OutdoorAmbient", getFlag("lighting_toggle_Ambient", false), getColor("lighting_colorOutdoorAmbient", originalLighting.OutdoorAmbient))
         applyLightingProp("Brightness", getFlag("lighting_toggle_Brightness", false), getFlag("lighting_number_Brightness", originalLighting.Brightness))
         applyLightingProp("ExposureCompensation", getFlag("lighting_toggle_ExposureCompensation", false), getFlag("lighting_number_ExposureCompensation", originalLighting.ExposureCompensation))
         applyLightingProp("ClockTime", getFlag("lighting_toggle_ClockTime", false), getFlag("lighting_number_ClockTime", originalLighting.ClockTime))
@@ -3301,14 +5550,9 @@ do
     pendingHits = {}
 
     playHitSound = function()
-        local soundId = HIT_SOUNDS[getFlag("World_HitSoundId", "Gamesense")]
-        if not soundId then return end
-        local sound = Instance.new("Sound")
-        sound.SoundId = soundId
-        sound.Volume = getFlag("World_HitVolume", 1)
-        sound.Parent = SoundService
-        sound:Play()
-        Debris:AddItem(sound, 6)
+        local entry = fxHitEntry("hit", getFlag("World_HitSoundId", "Gamesense"))
+        if not entry then return end
+        fxPlaySound(entry, getFlag("World_HitVolume", 1), getFlag("World_HitPitch", 1), getFlag("World_HitPitchVar", 0))
     end
 
     local function onHit(player, damage, killed, position)
@@ -3811,7 +6055,8 @@ do
         local beam = Instance.new("Beam")
         beam.Attachment0 = a0
         beam.Attachment1 = a1
-        beam.Color = ColorSequence.new(getColor("tracers_color", Color3.fromRGB(255, 255, 255)))
+        local tracerColor = getColor("tracers_color", Color3.fromRGB(255, 255, 255))
+        beam.Color = ColorSequence.new(tracerColor, getFlag("tracers_gradient", false) and getColor("tracers_color2", tracerColor) or tracerColor)
         if preset.Texture ~= "" then beam.Texture = preset.Texture end
         beam.Transparency = preset.Transparency
         beam.LightEmission = preset.LightEmission
@@ -4937,6 +7182,66 @@ do
         local spoofSize = Vector2.new(600, 680)
         local SPOOF_MIN = Vector2.new(440, 500)
 
+        local store = { recent = {}, favorites = {} }
+        local STORE_PATH = "Aster/spoofer.json"
+        do
+            local ok, data = pcall(function()
+                if isfile and readfile and isfile(STORE_PATH) then
+                    return game:GetService("HttpService"):JSONDecode(readfile(STORE_PATH))
+                end
+            end)
+            if ok and type(data) == "table" then
+                if type(data.recent) == "table" then store.recent = data.recent end
+                if type(data.favorites) == "table" then store.favorites = data.favorites end
+            end
+        end
+
+        local function storeSave()
+            if not writefile then return end
+            pcall(function()
+                if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
+                writefile(STORE_PATH, game:GetService("HttpService"):JSONEncode(store))
+            end)
+        end
+
+        local function favoriteIndex(info)
+            for index, entry in ipairs(store.favorites) do
+                if entry.kind == info.kind and ((info.kind == "outfit" and entry.id == info.id) or (info.kind ~= "outfit" and entry.uid == info.uid)) then
+                    return index
+                end
+            end
+            return nil
+        end
+
+        local function toggleFavorite(info)
+            local index = favoriteIndex(info)
+            if index then
+                table.remove(store.favorites, index)
+            else
+                table.insert(store.favorites, { kind = info.kind, id = info.id, uid = info.uid, name = info.name })
+            end
+            storeSave()
+            return index == nil
+        end
+
+        local function recordRecent(uid, name)
+            for index = #store.recent, 1, -1 do
+                if store.recent[index].uid == uid then table.remove(store.recent, index) end
+            end
+            table.insert(store.recent, 1, { uid = uid, name = name })
+            while #store.recent > 15 do table.remove(store.recent) end
+            storeSave()
+        end
+
+        local function removeRecent(uid)
+            for index = #store.recent, 1, -1 do
+                if store.recent[index].uid == uid then table.remove(store.recent, index) end
+            end
+            storeSave()
+        end
+
+        local refreshChips, refreshFavorites
+
         local preferOriginal = false
         local function httpJson(url)
             local lastStatus, lastMessage
@@ -5013,6 +7318,21 @@ do
                 return #fresh
             end
 
+            local plainStopped
+            for page = 1, 40 do
+                if page > 1 then task.wait(1) end
+                local data, status = httpJsonRetry(string.format("https://avatar.roblox.com/v1/users/%d/outfits?page=%d&itemsPerPage=50", uid, page), onWait, alive)
+                if not data then
+                    if page > 1 then plainStopped = (status == 429) and "limited" or "error" end
+                    break
+                end
+                local added = take(data.data)
+                if #(data.data or {}) < 50 or added == 0 then break end
+            end
+            if #list > 0 then
+                return list, { kind = "public", source = "v1", stopped = plainStopped }
+            end
+
             local failed, firstStatus, firstMessage = false, nil, nil
             local token
             local stopped
@@ -5073,10 +7393,17 @@ do
             ui.indicator.TextColor3 = INDICATOR_COLORS[kind] or INDICATOR_COLORS.unreachable
         end
 
-        local function closeSpoofUi()
+        local function destroySpoofUi()
             if spoofUi then
                 pcall(function() spoofUi.main:Destroy() end)
                 spoofUi = nil
+            end
+        end
+
+        local function closeSpoofUi()
+            if spoofUi then
+                spoofUi.hidden = true
+                pcall(function() spoofUi.main.Visible = false end)
             end
         end
 
@@ -5164,10 +7491,10 @@ do
             ui.status.Text = info and ("Selected: " .. info.name .. (info.kind == "outfit" and "  (outfit)" or "  (current look)")) or "Nothing selected"
         end
 
-        local function addTile(info, image, order)
+        local function addTile(info, image, order, target, isFav)
             local ui = spoofUi
             if not ui then return end
-            local tile, face = bevel(ui.grid, 307, UDim2.fromOffset(98, 104), nil, order)
+            local tile, face = bevel(target or ui.grid, 307, UDim2.fromOffset(98, 104), nil, order)
             if image then
                 local picture = mk("ImageLabel", { BackgroundTransparency = 1, Image = "", ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -28), Position = UDim2.fromOffset(4, 4), ZIndex = 310, Parent = face })
                 ui.lazy[tile] = { label = picture, image = image }
@@ -5176,6 +7503,20 @@ do
             end
             lbl({ Text = info.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 20), Position = UDim2.new(0, 3, 1, -22), ZIndex = 310, Parent = face })
             local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = tile })
+            if info.kind ~= "random" then
+                local function paintStar(button, on)
+                    button.Text = on and "FAV" or "fav"
+                    button.TextColor3 = on and Color3.fromRGB(255, 205, 70) or Library.FontColor
+                    button.TextTransparency = on and 0 or 0.35
+                end
+                local star = lf("TextButton", { BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45, BorderSizePixel = 0, Font = Library.Font, TextSize = 10, Size = UDim2.fromOffset(26, 14), Position = UDim2.new(1, -29, 0, 3), ZIndex = 316, Parent = tile })
+                paintStar(star, favoriteIndex(info) ~= nil)
+                star.MouseButton1Click:Connect(function()
+                    local on = toggleFavorite(info)
+                    paintStar(star, on)
+                    if isFav and not on and refreshFavorites then refreshFavorites() end
+                end)
+            end
             local function ask()
                 local current = spoofUi
                 if not current then return end
@@ -5206,7 +7547,7 @@ do
                     selectTile(pick.info, pick.tile)
                 end)
             else
-                table.insert(ui.pool, { info = info, tile = tile })
+                if not isFav then table.insert(ui.pool, { info = info, tile = tile }) end
                 hit.MouseButton1Click:Connect(function()
                     selectTile(info, tile)
                     ask()
@@ -5222,12 +7563,38 @@ do
             return tile
         end
 
+        function refreshFavorites()
+            local ui = spoofUi
+            if not ui then return end
+            for _, child in ipairs(ui.favGrid:GetChildren()) do
+                if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
+            end
+            if #store.favorites == 0 then
+                mk("TextLabel", { BackgroundTransparency = 1, Text = "Press fav on an outfit or player to keep it here", TextSize = 11, TextWrapped = true, LayoutOrder = 1, Size = UDim2.fromOffset(98, 104), ZIndex = 309, Parent = ui.favGrid })
+                return
+            end
+            for index, entry in ipairs(store.favorites) do
+                local info = { kind = entry.kind, id = entry.id, uid = entry.uid, name = entry.name or "?" }
+                local image
+                if entry.kind == "outfit" and entry.id then
+                    image = string.format("rbxthumb://type=Outfit&id=%d&w=150&h=150", entry.id)
+                elseif entry.uid then
+                    image = string.format("rbxthumb://type=Avatar&id=%d&w=150&h=150", entry.uid)
+                end
+                if image then addTile(info, image, index, ui.favGrid, true) end
+            end
+        end
+
         local function loadTarget(uid, name)
             local ui = spoofUi
             if not ui or not uid then return end
             ui.token += 1
             local token = ui.token
             ui.target = { uid = uid, name = name }
+            if uid ~= LocalPlayer.UserId then
+                recordRecent(uid, name)
+                refreshChips()
+            end
             for _, child in ipairs(ui.grid:GetChildren()) do
                 if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
             end
@@ -5293,28 +7660,34 @@ do
             end)
         end
 
-        local function refreshChips()
+        function refreshChips()
             local ui = spoofUi
             if not ui then return end
             for _, child in ipairs(ui.chips:GetChildren()) do
                 if child:IsA("Frame") then child:Destroy() end
             end
             local query = string.lower(ui.search.Text or "")
-            local function chip(text, uid, order)
+            local function chip(text, uid, order, removable)
                 local width = TextService:GetTextSize(text, Library.FontSize, Library.Font, Vector2.new(1000, 20)).X + 18
                 local outer, face = bevel(ui.chips, 308, UDim2.fromOffset(width, 20), nil, order)
                 lbl({ Size = UDim2.new(1, 0, 1, 0), TextSize = Library.FontSize, Text = text, ZIndex = 310, Parent = face })
                 local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = outer })
                 Library:OnHighlight(hit, outer, { BorderColor3 = "AccentColor" }, { BorderColor3 = "Black" })
                 hit.MouseButton1Click:Connect(function() loadTarget(uid, text) end)
+                if removable then
+                    hit.MouseButton2Click:Connect(function()
+                        removeRecent(uid)
+                        refreshChips()
+                    end)
+                end
             end
-            chip("You", LocalPlayer.UserId, 0)
+            chip("You", LocalPlayer.UserId, 0, false)
             local shown = 0
-            for _, player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer and shown < 24
-                    and (query == "" or string.find(string.lower(player.Name), query, 1, true) or string.find(string.lower(player.DisplayName), query, 1, true)) then
+            for _, entry in ipairs(store.recent) do
+                if shown < 15 and type(entry.name) == "string" and type(entry.uid) == "number"
+                    and (query == "" or string.find(string.lower(entry.name), query, 1, true)) then
                     shown += 1
-                    chip(player.DisplayName, player.UserId, shown)
+                    chip(entry.name, entry.uid, shown, true)
                 end
             end
         end
@@ -5360,9 +7733,36 @@ do
             local barOuter = lf("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.fromOffset(4, 37), Size = UDim2.new(1, -8, 0, 5), ZIndex = 307, Visible = false, Parent = previewBox }, { BorderColor3 = "Black" })
             local barBack = lf("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 308, Parent = barOuter }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
             local barFill = lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = 309, Parent = barBack }, { BackgroundColor3 = "AccentColor" })
-            local grid = lf("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(4, 44), Size = UDim2.new(1, -8, 1, -48), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, ZIndex = 307, Parent = previewBox }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
-            Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
-            Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = grid })
+            local function makeGrid(visible)
+                local frameGrid = lf("ScrollingFrame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(4, 44), Size = UDim2.new(1, -8, 1, -48), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, Visible = visible, ZIndex = 307, Parent = previewBox }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+                Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 104), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = frameGrid })
+                Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), Parent = frameGrid })
+                return frameGrid
+            end
+            local grid = makeGrid(true)
+            local favGrid = makeGrid(false)
+
+            local tabButtons = {}
+            local setMode
+            local function tabButton(text, x, mode)
+                local outer, face = bevel(previewBox, 307, UDim2.fromOffset(66, 16), UDim2.fromOffset(x, 3))
+                lbl({ Size = UDim2.new(1, 0, 1, 0), TextSize = 12, Text = text, ZIndex = 309, Parent = face })
+                local hitButton = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 313, Parent = outer })
+                hitButton.MouseButton1Click:Connect(function() setMode(mode) end)
+                tabButtons[mode] = outer
+            end
+            tabButton("Browse", 4, "browse")
+            tabButton("Favorites", 74, "favorites")
+            function setMode(mode)
+                local ui = spoofUi
+                if not ui then return end
+                ui.mode = mode
+                ui.grid.Visible = mode == "browse"
+                ui.favGrid.Visible = mode == "favorites"
+                ui.activeGrid = mode == "favorites" and ui.favGrid or ui.grid
+                for name, outer in pairs(tabButtons) do setBorder(outer, name == mode and "AccentColor" or "Black") end
+                if mode == "favorites" then refreshFavorites() end
+            end
 
             local status = lbl({ Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(1, -16, 0, 16), Position = UDim2.new(0, 8, 1, -72), ZIndex = 307, Parent = body })
             local function button(text, position, size, callback)
@@ -5411,7 +7811,7 @@ do
                 end)
             end)
 
-            spoofUi = { main = main, grid = grid, chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0, thumbsDone = true }
+            spoofUi = { main = main, grid = grid, favGrid = favGrid, activeGrid = grid, mode = "browse", chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0, thumbsDone = true }
             local owner = spoofUi
             task.spawn(function()
                 while spoofUi == owner do
@@ -5438,8 +7838,9 @@ do
                         end
                     end
                     if #waiting > 0 and inflight < 8 then
-                        local top = grid.AbsolutePosition.Y
-                        local bottom = top + grid.AbsoluteSize.Y
+                        local active = owner.activeGrid or grid
+                        local top = active.AbsolutePosition.Y
+                        local bottom = top + active.AbsoluteSize.Y
                         for _, item in ipairs(waiting) do
                             local y = item.tile.AbsolutePosition.Y
                             item.rank = ((y + 104 >= top - 110 and y <= bottom + 110) and 0 or 1000000) + item.tile.LayoutOrder
@@ -5467,7 +7868,20 @@ do
                     task.wait(0.15)
                 end
             end)
-            Library:MakeDraggable(main, 25)
+            Library:MakeDraggable(main, 25, true)
+            local settle = 0
+            main:GetPropertyChangedSignal("Position"):Connect(function()
+                settle += 1
+                local ticket = settle
+                local current = spoofUi
+                if current and current.activeGrid then current.activeGrid.Visible = false end
+                task.delay(0.15, function()
+                    local ui = spoofUi
+                    if settle ~= ticket or not ui then return end
+                    ui.grid.Visible = ui.mode == "browse"
+                    ui.favGrid.Visible = ui.mode == "favorites"
+                end)
+            end)
             search:GetPropertyChangedSignal("Text"):Connect(refreshChips)
             search.FocusLost:Connect(function(enter)
                 if not enter then return end
@@ -5483,10 +7897,14 @@ do
                 task.spawn(function()
                     local uid = resolveUserId(text)
                     if not uid then notify("Avatar spoofer: could not find " .. tostring(text)) return end
-                    loadTarget(uid, text ~= "" and text or tostring(uid))
+                    local name = text ~= "" and text or tostring(uid)
+                    local okName, real = pcall(function() return Players:GetNameFromUserIdAsync(uid) end)
+                    if okName and type(real) == "string" and real ~= "" then name = real end
+                    loadTarget(uid, name)
                 end)
             end)
             refreshChips()
+            setMode("browse")
             loadTarget(LocalPlayer.UserId, "You")
         end
 
@@ -5494,18 +7912,16 @@ do
             local wanted = getFlag("spoof_ui", false)
             if wanted and not spoofUi then
                 local ok, err = pcall(openSpoofUi)
-                if not ok then warn("Avatar spoofer window failed:", err) closeSpoofUi() end
-            elseif not wanted and spoofUi then
-                closeSpoofUi()
+                if not ok then warn("Avatar spoofer window failed:", err) destroySpoofUi() end
+            elseif spoofUi then
+                spoofUi.hidden = not wanted
             end
 
             if spoofUi then
-                local show = Library.Toggled ~= false
+                local show = Library.Toggled ~= false and not spoofUi.hidden
                 if spoofUi.main.Visible ~= show then spoofUi.main.Visible = show end
             end
         end))
-        track(Players.PlayerAdded:Connect(function() if spoofUi then refreshChips() end end))
-        track(Players.PlayerRemoving:Connect(function() if spoofUi then task.defer(refreshChips) end end))
 
         SpooferActions.prefetch = function(uid, outfitId) prefetchAvatar(uid, outfitId) end
         SpooferActions.applyUser = function(uid) return runApply(uid) end
@@ -5524,7 +7940,500 @@ do
             SpooferActions.prefetch = noop
             for _, entry in pairs(modelCache) do pcall(function() entry.model:Destroy() end) end
             table.clear(modelCache)
-            closeSpoofUi()
+            destroySpoofUi()
+        end)
+    end)()
+
+    ;(function()
+        local weaponByTool = {}
+        for _, weapon in ipairs(FX_WEAPONS) do
+            for _, name in ipairs(weapon.tools) do weaponByTool[name] = weapon end
+        end
+        local function normalize(text)
+            return string.lower((string.gsub(tostring(text or ""), "[^%w]", "")))
+        end
+
+        local function onKill()
+            if not getFlag("World_KillSound", false) then return end
+            fxPlaySound(fxHitEntry("kill", getFlag("World_KillSoundId", "PF Killshot")), getFlag("World_KillVolume", 1), getFlag("World_KillPitch", 1), getFlag("World_KillPitchVar", 0))
+        end
+        table.insert(ShotEvents.kill, onKill)
+
+        local muting = { untilTime = 0, tool = nil, origin = nil }
+        local keep = { "reload", "equip", "empty", "click", "pump", "cock", "draw", "pullout" }
+        local function keeps(sound)
+            local name = string.lower(sound.Name)
+            for _, word in ipairs(keep) do
+                if string.find(name, word, 1, true) then return true end
+            end
+            return false
+        end
+
+        local METHOD_REPLACE = "Replace game sound"
+        local applied = {}
+        local applyLearned
+        local learned, learnedList, learnScans = {}, {}, {}
+        local learnUntil, learnOrigin, learnWeapon = 0, nil, nil
+        local lastLearnScan, lastBroad = 0, 0
+        local LEARN_FILE = "Aster/gunsounds.json"
+        local replacing = false
+        local nextSweep = 0
+        local ignoreNear = { "step", "run", "jump", "land", "swim", "climb", "fall", "walk", "splash", "hit", "impact", "ricochet", "shell", "casing", "hurt", "damage", "death", "tase", "bullet" }
+
+        local function wanted(key)
+            if not getFlag(key .. "_on", false) then return nil end
+            if getFlag(key .. "_method", METHOD_REPLACE) ~= METHOD_REPLACE then return nil end
+            local entry = fxWeaponEntry(key)
+            if not entry then return nil end
+            return entry
+        end
+
+        local function restoreSound(sound)
+            local record = applied[sound]
+            if not record then return end
+            applied[sound] = nil
+            if record.conn then pcall(function() record.conn:Disconnect() end) end
+            pcall(function()
+                sound.SoundId = record.id
+                sound.Volume = record.volume
+                sound.PlaybackSpeed = record.speed
+            end)
+        end
+
+        local function applySound(sound, weapon, owned)
+            if not sound:IsA("Sound") or sound.Looped or keeps(sound) then return end
+            local key = "sfx_" .. weapon.key
+            local entry = (owned or getFlag(key .. "_others", true)) and wanted(key) or nil
+            if not entry then
+                restoreSound(sound)
+                return
+            end
+            local record = applied[sound]
+            if not record then
+                record = { id = sound.SoundId, volume = sound.Volume, speed = sound.PlaybackSpeed }
+                applied[sound] = record
+                record.conn = sound:GetPropertyChangedSignal("SoundId"):Connect(function()
+                    if applied[sound] ~= record then return end
+                    local want = wanted(record.key)
+                    if want and sound.SoundId ~= want then pcall(applyLearned, sound) end
+                end)
+            end
+            record.key, record.owned = key, owned
+            if sound.SoundId ~= entry then
+                sound.SoundId = entry
+                if sound.IsPlaying then sound.TimePosition = 0 end
+            end
+            sound.Volume = record.volume * getFlag(key .. "_volume", 1)
+            if not sound.IsPlaying then
+                local variation = getFlag(key .. "_pitchvar", 0)
+                sound.PlaybackSpeed = math.max(record.speed * getFlag(key .. "_pitch", 1) * (1 + (math.random() * 2 - 1) * variation), 0.05)
+            end
+        end
+
+        local function applyTool(tool, owned)
+            local weapon = weaponByTool[normalize(tool.Name)]
+            if not weapon then return end
+            for _, descendant in ipairs(tool:GetDescendants()) do
+                if descendant:IsA("Sound") then applySound(descendant, weapon, owned) end
+            end
+        end
+
+        local function sweep()
+            replacing = next(applied) ~= nil
+            if not replacing then
+                for _, weapon in ipairs(FX_WEAPONS) do
+                    if getFlag("sfx_" .. weapon.key .. "_on", false) then
+                        replacing = true
+                        break
+                    end
+                end
+            end
+            if not replacing then return end
+            for _, player in ipairs(Players:GetPlayers()) do
+                local owned = player == LocalPlayer
+                local character = player.Character
+                if character then
+                    for _, child in ipairs(character:GetChildren()) do
+                        if child:IsA("Tool") then applyTool(child, owned) end
+                    end
+                end
+                if owned then
+                    local pack = player:FindFirstChildOfClass("Backpack")
+                    if pack then
+                        for _, child in ipairs(pack:GetChildren()) do
+                            if child:IsA("Tool") then applyTool(child, true) end
+                        end
+                    end
+                end
+            end
+            for sound, record in pairs(applied) do
+                if not sound.Parent then
+                    applied[sound] = nil
+                elseif not wanted(record.key) or (not record.owned and not getFlag(record.key .. "_others", true)) then
+                    restoreSound(sound)
+                end
+            end
+        end
+
+        local function sidKey(text)
+            text = tostring(text or "")
+            if text == "" then return nil end
+            local number = string.match(text, "rbxassetid://(%d+)") or string.match(text, "[?&]id=(%d+)")
+            if number then return "id" .. number end
+            return string.lower(text)
+        end
+
+        local function saveLearned()
+            if type(writefile) ~= "function" then return end
+            pcall(function()
+                if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
+                writefile(LEARN_FILE, game:GetService("HttpService"):JSONEncode(learnedList))
+            end)
+        end
+
+        pcall(function()
+            if type(isfile) == "function" and type(readfile) == "function" and isfile(LEARN_FILE) then
+                local data = game:GetService("HttpService"):JSONDecode(readfile(LEARN_FILE))
+                for key, ids in pairs(data) do
+                    for _, weapon in ipairs(FX_WEAPONS) do
+                        if weapon.key == key and type(ids) == "table" then
+                            learnedList[key] = {}
+                            for sid in pairs(ids) do
+                                learned[sid] = weapon
+                                learnedList[key][sid] = true
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+
+        local function nearestHolder(position)
+            local bestPlayer, bestTool, bestDistance
+            for _, player in ipairs(Players:GetPlayers()) do
+                local character = player.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                local tool = character and character:FindFirstChildOfClass("Tool")
+                if root and tool then
+                    local distance = (root.Position - position).Magnitude
+                    if distance <= 12 and (not bestDistance or distance < bestDistance) then
+                        bestPlayer, bestTool, bestDistance = player, tool, distance
+                    end
+                end
+            end
+            return bestPlayer, bestTool
+        end
+
+        track(workspace.DescendantAdded:Connect(function(descendant)
+            if not replacing or not descendant:IsA("Sound") or keeps(descendant) then return end
+            local tool = descendant:FindFirstAncestorOfClass("Tool")
+            local owner
+            if tool then
+                owner = tool.Parent and Players:GetPlayerFromCharacter(tool.Parent) or nil
+            else
+                local model = descendant:FindFirstAncestorOfClass("Model")
+                if model and Players:GetPlayerFromCharacter(model) then return end
+                local name = string.lower(descendant.Name)
+                for _, word in ipairs(ignoreNear) do
+                    if string.find(name, word, 1, true) then return end
+                end
+                local parent = descendant.Parent
+                if parent and parent:IsA("Attachment") then parent = parent.Parent end
+                if not (parent and parent:IsA("BasePart")) then return end
+                owner, tool = nearestHolder(parent.Position)
+            end
+            if not tool then return end
+            local weapon = weaponByTool[normalize(tool.Name)]
+            if weapon then applySound(descendant, weapon, owner == LocalPlayer) end
+        end))
+
+        track(RunService.Heartbeat:Connect(function()
+            local now = os.clock()
+            if now < nextSweep then return end
+            nextSweep = now + 0.5
+            pcall(sweep)
+        end))
+
+        local function ownerOf(sound)
+            local tool = sound:FindFirstAncestorOfClass("Tool")
+            if tool and tool.Parent then
+                local holder = Players:GetPlayerFromCharacter(tool.Parent)
+                if holder then return holder == LocalPlayer end
+            end
+            local model = sound:FindFirstAncestorOfClass("Model")
+            local modelOwner = model and Players:GetPlayerFromCharacter(model)
+            if modelOwner then return modelOwner == LocalPlayer end
+            local parent = sound.Parent
+            if parent and parent:IsA("Attachment") then parent = parent.Parent end
+            if parent and parent:IsA("BasePart") then
+                local near = nearestHolder(parent.Position)
+                if near then return near == LocalPlayer end
+            end
+            return true
+        end
+
+        applyLearned = function(sound)
+            if not sound:IsA("Sound") then return end
+            local sid = sidKey(sound.SoundId)
+            local weapon = sid and learned[sid]
+            if not weapon then return end
+            applySound(sound, weapon, ownerOf(sound))
+        end
+
+        local function learnCandidate(sound, weapon)
+            if not sound:IsA("Sound") or sound.Looped or applied[sound] or keeps(sound) then return false end
+            local sid = sidKey(sound.SoundId)
+            if not sid or learned[sid] then return false end
+            local mine = fxWeaponEntry("sfx_" .. weapon.key)
+            if mine and sidKey(mine) == sid then return false end
+            local name = string.lower(sound.Name)
+            for _, word in ipairs(ignoreNear) do
+                if string.find(name, word, 1, true) then return false end
+            end
+            local model = sound:FindFirstAncestorOfClass("Model")
+            local modelOwner = model and Players:GetPlayerFromCharacter(model)
+            if modelOwner and modelOwner ~= LocalPlayer then return false end
+            return true
+        end
+
+        local function learn(sound, weapon)
+            local sid = sidKey(sound.SoundId)
+            if not sid then return end
+            learned[sid] = weapon
+            learnedList[weapon.key] = learnedList[weapon.key] or {}
+            learnedList[weapon.key][sid] = true
+            saveLearned()
+            local parent = sound.Parent
+            fxReport("learn" .. sid, string.format("Weapon sounds: found the %s game sound '%s' in %s", weapon.label, sound.Name, parent and parent.Name or "?"))
+            pcall(applyLearned, sound)
+        end
+
+        local lastPlaying = {}
+
+        local function scanForLearn(weapon, origin, tool, everywhere)
+            local character = LocalPlayer.Character
+            local seen = {}
+            local function consider(sound)
+                if seen[sound] or not sound:IsA("Sound") then return end
+                seen[sound] = true
+                if sound.IsPlaying and sound.TimePosition < 0.6 then
+                    if #lastPlaying < 8 then lastPlaying[#lastPlaying + 1] = sound.Name .. " in " .. (sound.Parent and sound.Parent.Name or "?") end
+                    if learnCandidate(sound, weapon) then learn(sound, weapon) end
+                end
+            end
+            if everywhere then
+                for _, descendant in ipairs(game:GetDescendants()) do
+                    if descendant:IsA("Sound") then consider(descendant) end
+                end
+                return
+            end
+            local function scanRoot(root)
+                if not root then return end
+                for _, descendant in ipairs(root:GetDescendants()) do
+                    if descendant:IsA("Sound") then consider(descendant) end
+                end
+            end
+            scanRoot(tool)
+            scanRoot(character)
+            scanRoot(game:GetService("SoundService"))
+            scanRoot(LocalPlayer:FindFirstChildOfClass("PlayerGui"))
+            local ok, parts = pcall(workspace.GetPartBoundsInRadius, workspace, origin, 10)
+            if ok and parts then
+                for _, part in ipairs(parts) do
+                    for _, child in ipairs(part:GetChildren()) do
+                        if child:IsA("Sound") then
+                            consider(child)
+                        elseif child:IsA("Attachment") then
+                            for _, inner in ipairs(child:GetChildren()) do consider(inner) end
+                        end
+                    end
+                end
+            end
+        end
+
+        track(game.DescendantAdded:Connect(function(descendant)
+            if not descendant:IsA("Sound") then return end
+            if replacing and next(learned) ~= nil then pcall(applyLearned, descendant) end
+            local weapon = learnWeapon
+            if weapon and os.clock() < learnUntil and learnCandidate(descendant, weapon) then
+                local character = LocalPlayer.Character
+                local close = false
+                if character and descendant:IsDescendantOf(character) then close = true end
+                if not close and (descendant:IsDescendantOf(game:GetService("SoundService")) or descendant:IsDescendantOf(LocalPlayer)) then close = true end
+                if not close and learnOrigin then
+                    local parent = descendant.Parent
+                    if parent and parent:IsA("Attachment") then parent = parent.Parent end
+                    if parent and parent:IsA("BasePart") and (parent.Position - learnOrigin).Magnitude < 10 then close = true end
+                end
+                if close then learn(descendant, weapon) end
+            end
+        end))
+
+        local function broadSweep()
+            if next(learned) == nil then return end
+            local now = os.clock()
+            if now - lastBroad < 4 then return end
+            lastBroad = now
+            local roots = { game:GetService("ReplicatedStorage"), game:GetService("SoundService"), LocalPlayer, workspace }
+            for _, root in ipairs(roots) do
+                for _, descendant in ipairs(root:GetDescendants()) do
+                    if descendant:IsA("Sound") then pcall(applyLearned, descendant) end
+                end
+            end
+        end
+
+        track(RunService.Heartbeat:Connect(function()
+            if replacing then pcall(broadSweep) end
+        end))
+
+        Actions.sfxForget = function(key)
+            local removed = 0
+            for sid, weapon in pairs(learned) do
+                if "sfx_" .. weapon.key == key then
+                    learned[sid] = nil
+                    removed += 1
+                end
+            end
+            for sound, record in pairs(applied) do
+                if record.key == key then restoreSound(sound) end
+            end
+            learnedList[string.sub(key, 5)] = nil
+            learnScans[key] = 0
+            saveLearned()
+            pcall(function() Library:Notify(removed > 0 and "Forgot the found game sound, fire the weapon once to find it again" or "Nothing was found yet for this weapon", 4) end)
+        end
+
+        local function beginLearn(tool)
+            local weapon = weaponByTool[normalize(tool.Name)]
+            if not weapon then return end
+            local key = "sfx_" .. weapon.key
+            if not getFlag(key .. "_on", false) or getFlag(key .. "_method", METHOD_REPLACE) ~= METHOD_REPLACE then return end
+            local now = os.clock()
+            if (learnScans[key] or 0) >= 14 or now - lastLearnScan < 0.4 then return end
+            lastLearnScan = now
+            learnScans[key] = (learnScans[key] or 0) + 1
+            local anchor = tool:FindFirstChild("Muzzle", true) or tool:FindFirstChild("Handle")
+            local origin = anchor and anchor:IsA("BasePart") and anchor.Position or (LocalPlayer.Character and LocalPlayer.Character:GetPivot().Position) or Vector3.zero
+            learnUntil, learnOrigin, learnWeapon = now + 0.6, origin, weapon
+            table.clear(lastPlaying)
+            for _, wait in ipairs({ 0, 0.03, 0.08, 0.2, 0.4 }) do
+                task.delay(wait, function() pcall(scanForLearn, weapon, origin, tool) end)
+            end
+            task.delay(0.7, function()
+                if learnedList[weapon.key] then return end
+                if (learnScans[key] or 0) >= 3 then pcall(scanForLearn, weapon, origin, tool, true) end
+                if not learnedList[weapon.key] and (learnScans[key] or 0) >= 3 then
+                    local seenText = #lastPlaying > 0 and (" Sounds playing at the shot: " .. table.concat(lastPlaying, ", ")) or " No sound was playing at the shot."
+                    fxReport("nolearn" .. key, "Weapon sounds: could not find the game sound for " .. weapon.label .. "." .. seenText)
+                end
+            end)
+        end
+
+        do
+            local watchedTool, ammoConn, lastAmmoValue
+            track(RunService.Heartbeat:Connect(function()
+                local character = LocalPlayer.Character
+                local tool = character and character:FindFirstChildOfClass("Tool")
+                if tool == watchedTool then return end
+                if ammoConn then pcall(function() ammoConn:Disconnect() end) ammoConn = nil end
+                watchedTool = tool
+                if not tool then return end
+                lastAmmoValue = tool:GetAttribute("Local_CurrentAmmo")
+                ammoConn = tool:GetAttributeChangedSignal("Local_CurrentAmmo"):Connect(function()
+                    local ammo = tool:GetAttribute("Local_CurrentAmmo")
+                    local dropped = type(ammo) == "number" and type(lastAmmoValue) == "number" and ammo < lastAmmoValue
+                    lastAmmoValue = ammo
+                    if dropped then pcall(beginLearn, tool) end
+                end)
+            end))
+            onUnload(function()
+                if ammoConn then pcall(function() ammoConn:Disconnect() end) end
+            end)
+        end
+
+        local function onShot(origin)
+            local character = LocalPlayer.Character
+            local tool = character and character:FindFirstChildOfClass("Tool")
+            local weapon = tool and weaponByTool[normalize(tool.Name)]
+            if not weapon then
+                if tool then
+                    local anyOn = false
+                    for _, candidate in ipairs(FX_WEAPONS) do
+                        if getFlag("sfx_" .. candidate.key .. "_on", false) then anyOn = true end
+                    end
+                    if anyOn then fxReport("tool" .. tool.Name, "Weapon sounds: no slot for tool '" .. tool.Name .. "'") end
+                end
+                return
+            end
+            local key = "sfx_" .. weapon.key
+            if not getFlag(key .. "_on", false) then return end
+            if getFlag(key .. "_method", METHOD_REPLACE) == METHOD_REPLACE then
+                applyTool(tool, true)
+                local now = os.clock()
+                pcall(beginLearn, tool)
+                return
+            end
+            local entry = fxWeaponEntry(key)
+            if not entry then return end
+            fxPlaySound(entry, getFlag(key .. "_volume", 1), getFlag(key .. "_pitch", 1), getFlag(key .. "_pitchvar", 0))
+            if getFlag(key .. "_mute", true) then
+                muting.untilTime = os.clock() + 0.5
+                muting.tool = tool
+                muting.origin = origin
+            end
+        end
+        table.insert(ShotEvents.shot, onShot)
+
+        local alive = true
+        task.spawn(function()
+            while alive do
+                for _, weapon in ipairs(FX_WEAPONS) do
+                    local key = "sfx_" .. weapon.key
+                    if getFlag(key .. "_on", false) then
+                        fxEnsure(fxWeaponEntry(key))
+                    end
+                end
+                task.wait(1.5)
+            end
+        end)
+
+        track(RunService.Heartbeat:Connect(function()
+            if os.clock() > muting.untilTime then return end
+            local tool = muting.tool
+            if not (tool and tool.Parent) then return end
+            local scope = LocalPlayer.Character or tool
+            for _, descendant in ipairs(scope:GetDescendants()) do
+                if descendant:IsA("Sound") and descendant.IsPlaying and descendant.TimePosition < 0.35 and not keeps(descendant) then
+                    descendant:Stop()
+                end
+            end
+        end))
+
+        track(workspace.DescendantAdded:Connect(function(descendant)
+            if os.clock() > muting.untilTime or not descendant:IsA("Sound") or keeps(descendant) then return end
+            local character = LocalPlayer.Character
+            local near = false
+            if character and descendant:IsDescendantOf(character) then near = true end
+            if not near and muting.origin then
+                local parent = descendant.Parent
+                if parent and parent:IsA("Attachment") then parent = parent.Parent end
+                if parent and parent:IsA("BasePart") and (parent.Position - muting.origin).Magnitude < 8 then near = true end
+            end
+            if near then
+                descendant.Volume = 0
+                task.defer(function() pcall(function() descendant:Stop() end) end)
+            end
+        end))
+
+        onUnload(function()
+            alive = false
+            Actions.sfxForget = nil
+            for sound in pairs(applied) do restoreSound(sound) end
+            for _, list in ipairs({ ShotEvents.kill, ShotEvents.shot }) do
+                for index = #list, 1, -1 do
+                    if list[index] == onKill or list[index] == onShot then table.remove(list, index) end
+                end
+            end
         end)
     end)()
 
@@ -5631,6 +8540,116 @@ do
 
     local function typing() return UserInputService:GetFocusedTextBox() ~= nil end
 
+    ;(function()
+        local bag = newBag()
+        local records = setmetatable({}, { __mode = "k" })
+        local forced = setmetatable({}, { __mode = "k" })
+        local list = {}
+
+        local function eligible(inst)
+            if not inst:IsA("Light") then return false end
+            if inst:FindFirstAncestorOfClass("Tool") then return false end
+            local model = inst:FindFirstAncestorOfClass("Model")
+            while model do
+                if model:FindFirstChildOfClass("Humanoid") then return false end
+                model = model:FindFirstAncestorOfClass("Model")
+            end
+            local camera = workspace.CurrentCamera
+            if camera and inst:IsDescendantOf(camera) then return false end
+            return true
+        end
+
+        local function register(inst)
+            if records[inst] or not eligible(inst) then return end
+            local record = { Color = inst.Color, Brightness = inst.Brightness, Enabled = inst.Enabled, Shadows = inst.Shadows }
+            pcall(function() record.Range = inst.Range end)
+            records[inst] = record
+            list[#list + 1] = inst
+        end
+
+        local function apply()
+            local recolor = readFlag("maplights_recolor", false)
+            local color = (Options.maplights_color and typeof(Options.maplights_color.Value) == "Color3" and Options.maplights_color.Value or Color3.fromRGB(255, 214, 150))
+            local force = readFlag("maplights_force", false)
+            local brightness = readFlag("maplights_brightness", 1)
+            local range = readFlag("maplights_range", 1)
+            local shadows = readFlag("maplights_shadows", false)
+            local keep = 0
+            for index = 1, #list do
+                local inst = list[index]
+                if inst.Parent then
+                    keep += 1
+                    list[keep] = inst
+                    local record = records[inst]
+                    local wantColor = recolor and color or record.Color
+                    if inst.Color ~= wantColor then inst.Color = wantColor end
+                    local wantBrightness = record.Brightness * brightness
+                    if inst.Brightness ~= wantBrightness then inst.Brightness = wantBrightness end
+                    if record.Range then
+                        local wantRange = record.Range * range
+                        if inst.Range ~= wantRange then inst.Range = wantRange end
+                    end
+                    local wantShadows = shadows or record.Shadows
+                    if inst.Shadows ~= wantShadows then inst.Shadows = wantShadows end
+                    if force then
+                        if not forced[inst] then
+                            record.Enabled = inst.Enabled
+                            forced[inst] = true
+                        end
+                        if not inst.Enabled then inst.Enabled = true end
+                    elseif forced[inst] then
+                        inst.Enabled = record.Enabled
+                        forced[inst] = nil
+                    end
+                end
+            end
+            for index = #list, keep + 1, -1 do list[index] = nil end
+        end
+
+        local function restore()
+            for _, inst in ipairs(list) do
+                local record = records[inst]
+                if inst.Parent and record then
+                    pcall(function()
+                        inst.Color = record.Color
+                        inst.Brightness = record.Brightness
+                        inst.Shadows = record.Shadows
+                        if record.Range then inst.Range = record.Range end
+                        if forced[inst] then inst.Enabled = record.Enabled end
+                    end)
+                end
+                forced[inst] = nil
+            end
+        end
+
+        feature("maplights_enabled", function()
+            task.spawn(function()
+                local count = 0
+                for _, descendant in ipairs(workspace:GetDescendants()) do
+                    register(descendant)
+                    count += 1
+                    if count % 1500 == 0 then task.wait() end
+                end
+            end)
+            bag.add(workspace.DescendantAdded:Connect(function(descendant)
+                task.defer(register, descendant)
+            end))
+            local last = 0
+            bag.add(RunService.Heartbeat:Connect(function()
+                local now = os.clock()
+                if now - last < 0.15 then return end
+                last = now
+                apply()
+            end))
+        end, function()
+            bag.clear()
+            restore()
+            table.clear(list)
+            table.clear(records)
+        end)
+    end)()
+
+
     local function shiftDown()
         return UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
     end
@@ -5684,6 +8703,29 @@ do
             cheatFlagged[player.UserId] = true
             say(player.Name .. " may be cheating (" .. kind .. ")")
         end
+    end
+
+    do
+        local bag, original = newBag(), nil
+        local function apply()
+            local cap = flag("misc_camera_zoom_max", 100000)
+            if LocalPlayer.CameraMaxZoomDistance ~= cap then LocalPlayer.CameraMaxZoomDistance = cap end
+            if LocalPlayer.CameraMode ~= Enum.CameraMode.Classic then LocalPlayer.CameraMode = Enum.CameraMode.Classic end
+        end
+        feature("misc_camera_zoom", function()
+            original = { LocalPlayer.CameraMaxZoomDistance, LocalPlayer.CameraMode }
+            pcall(apply)
+            bag.add(RunService.RenderStepped:Connect(function() pcall(apply) end))
+        end, function()
+            bag.clear()
+            if original then
+                pcall(function()
+                    LocalPlayer.CameraMaxZoomDistance = original[1]
+                    LocalPlayer.CameraMode = original[2]
+                end)
+            end
+            original = nil
+        end)
     end
 
     do
@@ -6091,6 +9133,11 @@ do
                 VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
             end)
             return ok
+        end
+
+        Actions.reloadGun = function()
+            local reload = getReload()
+            if reload then task.spawn(reload) else task.spawn(pressReload) end
         end
 
         local priority = { M4A1 = 1, ["AK-47"] = 1, MP5 = 1, FAL = 1, ["Remington 870"] = 2, M9 = 3, Revolver = 4 }
@@ -6646,7 +9693,7 @@ do
                     yLevel = nil
                     root.AssemblyLinearVelocity = v3(dir.X * speed, 2.25 + (up + down) * vertical, dir.Z * speed)
                 end
-                if flag("misc_fly_cap", true) then yLevel = capHeight(root, yLevel) end
+                if flag("misc_fly_cap", false) then yLevel = capHeight(root, yLevel) end
             end))
         end, function() bag.clear() end)
     end
@@ -7389,11 +10436,11 @@ do
             fn(position)
         end
 
-        local function emit(position)
+        local function emit(position, effectName)
             if typeof(position) ~= "Vector3" then return end
             local picker = Options.he_color
             local color = picker and typeof(picker.Value) == "Color3" and picker.Value or Color3.fromRGB(255, 81, 0)
-            local ok, err = pcall(HitEffects.Play, position, flag("he_effect", "nova"), color, flag("he_size", 2), flag("he_duration", 2))
+            local ok, err = pcall(HitEffects.Play, position, effectName or flag("he_effect", "nova"), color, flag("he_size", 2), flag("he_duration", 2))
             if not ok then warnf("hit effect failed:", err) end
         end
 
@@ -7431,9 +10478,9 @@ do
             if hook then hook(false) end
         end)
 
-        Actions.previewHitEffect = function()
+        Actions.previewHitEffect = function(effectName)
             local cam = Camera()
-            if cam then emit(cam.CFrame.Position + cam.CFrame.LookVector * 14) end
+            if cam then emit(cam.CFrame.Position + cam.CFrame.LookVector * 14, effectName) end
         end
 
         onUnload(function()
@@ -7453,11 +10500,6 @@ do
         	["Blackhole"] = {{"Part","BlackholeParticlesContainer",{["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",1,1,1}},nil,nil,{{"Attachment","Attachment",{},nil,nil,{{"ParticleEmitter","innerShine",{["Color"]={"CS",{{0,0.9098,0.43922,1},{1,0.9098,0.43922,1}}},["ZOffset"]=0.47176,["VelocitySpread"]=180,["Lifetime"]={"NR",1,2},["Speed"]={"NR",0.019864,0.019864},["Brightness"]=10,["SpreadAngle"]={"V2",180,-180},["RotSpeed"]={"NR",-300,300},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-180,180},["Transparency"]={"NS",{{0,1,0},{0.34949,0.35857,0},{0.70805,0.93625,0},{1,1,0}}},["Texture"]="rbxassetid://9576700277",["LightEmission"]=1,["Size"]={"NS",{{0,13.513,0},{0.47523,1.741,1.741},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{0.21897,0.99203,0},{0.47469,-1.5179,0},{0.74587,0.92032,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"}}},{"ParticleEmitter","darkerShades",{["RotSpeed"]={"NR",100,300},["Color"]={"CS",{{0,0,0,0},{1,0,0,0}}},["LockedToPart"]=true,["ZOffset"]=0.21597,["Rotation"]={"NR",-180,180},["Transparency"]={"NS",{{0,1,0},{0.34949,0.35857,0},{0.70805,0.93625,0},{1,1,0}}},["Texture"]="rbxassetid://9576558696",["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Speed"]={"NR",0,0},["Brightness"]=2,["Lifetime"]={"NR",1,2},["Size"]={"NS",{{0,10.799,0},{1,0,0}}}}},{"ParticleEmitter","suction",{["RotSpeed"]={"NR",100,100},["Color"]={"CS",{{0,0.78039,0.52549,1},{0.34429,0.043711,0.0099051,0.054908},{0.66436,0.27843,0.027451,0.31373},{1,0,0,0}}},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-180,180},["Transparency"]={"NS",{{0,1,0},{0.34949,0.35857,0},{1,0,0}}},["Texture"]="rbxassetid://9576558555",["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Speed"]={"NR",0,0},["Brightness"]=10,["Lifetime"]={"NR",2,2},["Size"]={"NS",{{0,22.478,0},{0.42301,6.4503,0},{0.67661,2.2379,0},{1,0,0}}}}}}}},1}},
         	["Paper Surprise"] = {{"Part","PaperSurprise",{["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",4,4,4}},nil,nil,{{"Attachment","Attachment",{},nil,nil,{{"ParticleEmitter","circle 1",{["Enabled"]=false,["Color"]={"CS",{{0,1,1,1},{0.074266,1,0.16842,0.18146},{0.12953,1,0,0.015686},{0.2418,0,0.91765,1},{0.3437,0.56863,1,0},{0.37651,0.92012,0.59419,0},{0.39551,1,0.50196,0},{0.4266,0.66667,0,1},{0.49741,0,0.38431,1},{0.55095,0.4,1,0},{0.60967,1,0.46667,0},{0.65458,0.066667,0,1},{0.72366,0.43529,1,0},{0.77548,1,0,0},{0.93437,1,0,0},{1,1,1,1}}},["LockedToPart"]=true,["Rate"]=4,["Texture"]="rbxassetid://9589733819",["Transparency"]={"NS",{{0,1,0},{0.50187,0,0},{1,1,0}}},["LightEmission"]=1,["Lifetime"]={"NR",1,1},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Speed"]={"NR",0.003,0.003},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,3,0},{1,3,0}}}}},{"ParticleEmitter","circle  2",{["Enabled"]=false,["RotSpeed"]={"NR",-360,-360},["Color"]={"CS",{{0,1,1,1},{1,1,1,1}}},["LockedToPart"]=true,["Rate"]=2,["Texture"]="rbxassetid://11336307417",["Transparency"]={"NS",{{0,1,0},{0.49813,0,0},{1,1,0}}},["LightEmission"]=1,["Lifetime"]={"NR",1,1},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Speed"]={"NR",0.003,0.003},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,5,0},{1,5,0}}}}},{"ParticleEmitter","Paper",{["Color"]={"CS",{{0,1,1,1},{1,1,1,1}}},["Drag"]=3.5,["VelocitySpread"]=45,["Lifetime"]={"NR",0.3,2},["Speed"]={"NR",10,33},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",45,45},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=18,["Texture"]="rbxassetid://11531840467",["Transparency"]={"NS",{{0,0,0},{0.80075,0,0},{1,1,0}}},["Size"]={"NS",{{0,1.5625,0.9375},{0.33997,1.25,0},{0.66376,1.25,0.9375},{0.91407,0,0},{1,0,0}}},["Acceleration"]={"V3",0,-10,0},["LightEmission"]=0.2,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"}},{["EmitCount"]=8,["EmitDelay"]=0}},{"ParticleEmitter","Glow 2",{["Enabled"]=false,["RotSpeed"]={"NR",99999,99999},["Texture"]="rbxassetid://9354796901",["Color"]={"CS",{{0,0,0,0},{1,0,0,0}}},["LockedToPart"]=true,["Rate"]=11,["LightEmission"]=-5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.5,0.25,0.25},{1,1,0}}},["Speed"]={"NR",0.003,0.003},["Lifetime"]={"NR",0.25,0.5},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=0,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,1.9963,0},{1,5.3236,1.3309}}}}},{"ParticleEmitter","Glow",{["Enabled"]=false,["Color"]={"CS",{{0,1,1,1},{1,1,1,1}}},["LockedToPart"]=true,["Rate"]=11,["Texture"]="rbxassetid://9589703753",["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.5,0.25,0.25},{1,1,0}}},["LightEmission"]=1,["Lifetime"]={"NR",0.25,0.5},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Speed"]={"NR",0.003,0.003},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,1.9963,0},{1,5.3236,1.3309}}}}},{"ParticleEmitter","Paper Colours",{["Color"]={"CS",{{0,0.66667,0,0},{1,0.66667,0,0}}},["Drag"]=3.5,["VelocitySpread"]=45,["Lifetime"]={"NR",0.3,2},["Speed"]={"NR",10,33},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",45,45},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=18,["Transparency"]={"NS",{{0,0,0},{0.80075,0,0},{1,1,0}}},["Texture"]="rbxassetid://11531840467",["Acceleration"]={"V3",0,-10,0},["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.50062,0.625,0.375},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"}}},{"ParticleEmitter","Paper Colours",{["Color"]={"CS",{{0,0,0.33333,0},{1,0,0.33333,0}}},["Drag"]=3.5,["VelocitySpread"]=45,["Lifetime"]={"NR",0.3,2},["Speed"]={"NR",10,33},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",45,45},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=18,["Transparency"]={"NS",{{0,0,0},{0.80075,0,0},{1,1,0}}},["Texture"]="rbxassetid://11531840467",["Acceleration"]={"V3",0,-10,0},["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.50062,0.625,0.375},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"}}},{"ParticleEmitter","Paper Colours",{["Color"]={"CS",{{0,0.66667,0.33333,0},{1,0.66667,0.33333,0}}},["Drag"]=3.5,["VelocitySpread"]=45,["Lifetime"]={"NR",0.3,2},["Speed"]={"NR",10,33},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",45,45},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=18,["Transparency"]={"NS",{{0,0,0},{0.80075,0,0},{1,1,0}}},["Texture"]="rbxassetid://11531840467",["Acceleration"]={"V3",0,-10,0},["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.50062,0.625,0.375},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"}}},{"ParticleEmitter","Paper Colours",{["Color"]={"CS",{{0,0,0,0.49804},{1,0,0,0.49804}}},["Drag"]=3.5,["VelocitySpread"]=45,["Lifetime"]={"NR",0.3,2},["Speed"]={"NR",10,33},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",45,45},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=18,["Transparency"]={"NS",{{0,0,0},{0.80075,0,0},{1,1,0}}},["Texture"]="rbxassetid://11531840467",["Acceleration"]={"V3",0,-10,0},["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.50062,0.625,0.375},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"}}},{"ParticleEmitter","Paper Colours",{["Color"]={"CS",{{0,0.33333,0.66667,1},{1,0.33333,0.66667,1}}},["Drag"]=3.5,["VelocitySpread"]=45,["Lifetime"]={"NR",0.3,2},["Speed"]={"NR",10,33},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",45,45},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=18,["Transparency"]={"NS",{{0,0,0},{0.80075,0,0},{1,1,0}}},["Texture"]="rbxassetid://11531840467",["Acceleration"]={"V3",0,-10,0},["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.50062,0.625,0.375},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"}}},{"ParticleEmitter","Paper Colours",{["Color"]={"CS",{{0,0.33333,0,1},{1,0.33333,0,1}}},["Drag"]=3.5,["VelocitySpread"]=45,["Lifetime"]={"NR",0.3,2},["Speed"]={"NR",10,33},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",45,45},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=18,["Transparency"]={"NS",{{0,0,0},{0.80075,0,0},{1,1,0}}},["Texture"]="rbxassetid://11531840467",["Acceleration"]={"V3",0,-10,0},["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.50062,0.625,0.375},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"}}},{"ParticleEmitter","Paper Colours",{["Color"]={"CS",{{0,1,1,0},{1,1,1,0}}},["Drag"]=3.5,["VelocitySpread"]=45,["Lifetime"]={"NR",0.3,2},["Speed"]={"NR",10,33},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",45,45},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=18,["Transparency"]={"NS",{{0,0,0},{0.80075,0,0},{1,1,0}}},["Texture"]="rbxassetid://11531840467",["LightEmission"]=1,["Acceleration"]={"V3",0,-10,0},["Size"]={"NS",{{0,0,0},{0.50062,0.625,0.375},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}},{"ParticleEmitter","Glow 3",{["Enabled"]=false,["Color"]={"CS",{{0,1,1,1},{0.074266,1,0.16842,0.18146},{0.12953,1,0,0.015686},{0.2418,0,0.91765,1},{0.3437,0.56863,1,0},{0.37651,0.92012,0.59419,0},{0.39551,1,0.50196,0},{0.4266,0.66667,0,1},{0.49741,0,0.38431,1},{0.55095,0.4,1,0},{0.60967,1,0.46667,0},{0.65458,0.066667,0,1},{0.72366,0.43529,1,0},{0.77548,1,0,0},{0.93437,1,0,0},{1,1,1,1}}},["LockedToPart"]=true,["ZOffset"]=1,["Texture"]="rbxassetid://9589703753",["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.5,0.25,0.25},{1,1,0}}},["Rate"]=11,["Lifetime"]={"NR",0.25,0.5},["LightEmission"]=1,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Speed"]={"NR",0.012,0.012},["Size"]={"NS",{{0,7.9856,0},{1,21.295,5.3238}}}}},{"ParticleEmitter","Lines ",{["Color"]={"CS",{{0,1,1,1},{0.074266,1,0.16842,0.18146},{0.12953,1,0,0.015686},{0.2418,0,0.91765,1},{0.3437,0.56863,1,0},{0.37651,0.92012,0.59419,0},{0.39551,1,0.50196,0},{0.4266,0.66667,0,1},{0.49741,0,0.38431,1},{0.55095,0.4,1,0},{0.60967,1,0.46667,0},{0.65458,0.066667,0,1},{0.72366,0.43529,1,0},{0.77548,1,0,0},{0.93437,1,0,0},{1,1,1,1}}},["Drag"]=3,["ZOffset"]=0.96266,["VelocitySpread"]=80,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",17,35},["Brightness"]=100,["SpreadAngle"]={"V2",80,80},["Enabled"]=false,["LockedToPart"]=true,["Rate"]=100,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://7828271118",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.30386,0.625,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Squash"]={"NS",{{0,1.65,0},{1,0,0}}}},{["EmitCount"]=5,["EmitDelay"]=0}}}}},1}},
         	["Cosmic Strike"] = {{"Part","Part",{["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",4,0.51,4}},nil,nil,{{"Attachment","Attachment",{},nil,nil,{{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,0.38824,0.23137,0.61961},{1,0.38824,0.23137,0.61961}}},["Drag"]=5,["ZOffset"]=1.4141,["VelocitySpread"]=-90,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",10.745,121.49},["Brightness"]=100,["SpreadAngle"]={"V2",-90,90},["Enabled"]=false,["LockedToPart"]=true,["Rate"]=9,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9710377531",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.05567,0.5,0.025681},{0.096907,5.0625,1.2889},{0.11959,0.625,0.050542},{0.19934,0.49878,0.088672},{0.24849,1.2196,0.088672},{0.3,0.19215,0.088672},{0.4,0.21994,0.088672},{0.42771,0.65401,0.086748},{0.44578,0,0},{0.50515,3.75,0.082551},{0.52711,1.1843,0.07999},{0.54819,0,0},{0.57831,0.72472,0.076363},{0.6567,0.16626,0.070809},{0.74096,1.0252,0.058661},{0.7997,0.74239,0.055419},{0.8238,0,0},{0.87801,0.45958,0.033752},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Lines ",{["Color"]={"CS",{{0,0.25098,0.20392,0.61961},{1,0.25098,0.20392,0.61961}}},["Drag"]=3,["ZOffset"]=1.4141,["VelocitySpread"]=-90,["Lifetime"]={"NR",0.2,0.7},["Speed"]={"NR",20.745,121.49},["Brightness"]=100,["SpreadAngle"]={"V2",-90,90},["Enabled"]=false,["LockedToPart"]=true,["Rate"]=9,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://7828271118",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.5,2.0625,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","ParticleEmitter",{["Enabled"]=false,["Texture"]="rbxassetid://12359282780",["Color"]={"CS",{{0,0.21961,0.16471,1},{1,0.21961,0.16471,1}}},["FlipbookFramerate"]={"NR",30,30},["LockedToPart"]=true,["Rate"]=1,["Speed"]={"NR",0.003,0.003},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Transparency"]={"NS",{{0,1,0},{0.11819,0.15,0},{0.19714,0.0375,0},{0.27839,0,0},{0.80194,0,0},{0.82964,0.41875,0},{0.88966,0.81875,0},{0.94598,0.94375,0},{1,1,0}}},["Lifetime"]={"NR",2,2},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=20,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,13,0},{1,13,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"PointLight","PointLight",{["Color"]={"C3",0.48627,0.48627,1},["Brightness"]=8,["Range"]=18,["Enabled"]=false}},{"ParticleEmitter","Shockwaves",{["Color"]={"CS",{{0,0.15686,0.078431,1},{1,0.15686,0.078431,1}}},["Drag"]=5,["ZOffset"]=1,["Lifetime"]={"NR",0.1,1.2},["Speed"]={"NR",0,2.8782},["Brightness"]=10,["Size"]={"NS",{{0,0,0},{0.2,10.415,0},{0.4,14.462,0},{0.6,17.187,0},{0.8,19.046,0},{1,19.915,0}}},["Enabled"]=false,["LockedToPart"]=true,["Rate"]=8,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.16812,0.21875,0},{0.33873,0.50625,0},{0.47572,0.80625,0},{0.63885,0.9625,0},{0.8132,0.975,0},{1,1,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Texture"]="rbxassetid://9710639706",["LightEmission"]=1,["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=3,["EmitDelay"]=0}},{"ParticleEmitter","Light",{["Color"]={"CS",{{0,0.50196,0.45882,1},{1,0.50196,0.45882,1}}},["Drag"]=5,["ZOffset"]=2,["Lifetime"]={"NR",1,1},["Speed"]={"NR",0.003,0.003},["Brightness"]=0.5,["Size"]={"NS",{{0,13,0},{1,13,0}}},["Enabled"]=false,["LockedToPart"]=true,["Rate"]=4,["Transparency"]={"NS",{{0,1,0},{0.50046,0,0},{1,1,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Texture"]="rbxassetid://10556517293",["LightEmission"]=1,["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=3,["EmitDelay"]=0}},{"ParticleEmitter","Strike",{["Color"]={"CS",{{0,0.19216,0.16078,0.61961},{1,0.19216,0.16078,0.61961}}},["Lifetime"]={"NR",1,1},["Speed"]={"NR",0.012036,0.012036},["Brightness"]=25,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,40.121,0},{1,40.121,0}}},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=1,["Rotation"]={"NR",180,180},["Transparency"]={"NS",{{0,0,0},{0.80194,0,0},{0.82964,0.41875,0},{0.86242,0.73125,0},{0.90074,0.875,0},{0.93906,0.95625,0},{1,1,0}}},["Texture"]="rbxassetid://12357585567",["Orientation"]={"E","ParticleOrientation","FacingCameraWorldUp"},["LightEmission"]=-1,["FlipbookFramerate"]={"NR",30,30},["Squash"]={"NS",{{0,1,0},{1,1,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}}}}},1}},
-        	["Tornado"] = {{"Part","Wind",{["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.72549,0.96471,1},{1,0.72549,0.96471,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.21961,0.4,1},{1,0.21961,0.4,1}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-35,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["TextureSpeed"]=0.2,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.62789,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=170},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["TextureSpeed"]=0.3,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.53924,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=240},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Lightning",{["CFrame"]={"CF",-11.973,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={2,2},["Attachment0"]={2,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.20784,0.5098,1},{1,0.20784,0.5098,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Lines ",{["Color"]={"CS",{{0,0.13333,0.43529,1},{1,0.13333,0.43529,1}}},["Drag"]=3,["ZOffset"]=0.60482,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,0.7},["Speed"]={"NR",8.8728,51.962},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://7828271118",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.5,0.88215,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,0.16471,0.3451,1},{1,0.16471,0.3451,1}}},["Drag"]=5,["ZOffset"]=0.60482,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,2},["Speed"]={"NR",4.596,91.962},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["Acceleration"]={"V3",0,-50,0},["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9710377531",["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Size"]={"NS",{{0,0,0},{0.05567,0.21385,0.010984},{0.096907,2.1653,0.55128},{0.11959,0.26732,0.021617},{0.19934,0.21333,0.037926},{0.24849,0.52165,0.037926},{0.3,0.082184,0.037926},{0.4,0.094068,0.037926},{0.42771,0.27973,0.037103},{0.44578,0,0},{0.50515,1.6039,0.035308},{0.52711,0.50653,0.034213},{0.54819,0,0},{0.57831,0.30997,0.032661},{0.6567,0.071111,0.030286},{0.74096,0.43849,0.02509},{0.7997,0.31753,0.023703},{0.8238,0,0},{0.87801,0.19657,0.014436},{1,0,0}}},["LightEmission"]=1,["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.21961,0.4,1},{1,0.21961,0.4,1}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["Drag"]=6,["ZOffset"]=0.14203,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",14,14},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.22899,0.22899},{0.16314,1.7804,0.29717},{0.35866,2.7818,0.32917},{0.52802,3.1379,0.34348},{1,3.5607,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Lightning",{["Color"]={"CS",{{0,0,0.34902,1},{1,0,0.34902,1}}},["ZOffset"]=4,["VelocitySpread"]=-360,["Lifetime"]={"NR",0.2,0.55},["Speed"]={"NR",0.0010192,0.0010192},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",-360,360},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=4,["Texture"]="rbxassetid://11363411020",["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,5.6523,0},{1,5.6523,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["FlipbookFramerate"]={"NR",3.9,3.9},["LightEmission"]=1},{["EmitCount"]=7,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Fire",{["CFrame"]={"CF",12.392,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={3,2},["Attachment0"]={3,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=5,["ZOffset"]=0.055849,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,2},["Speed"]={"NR",59,59},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["Acceleration"]={"V3",0,-30.948,0},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9589739468",["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Size"]={"NS",{{0,0,0},{0.05567,0.51594,0},{0.096907,0.51594,0},{0.11959,0.51594,0},{0.19934,0.51594,0},{0.24849,0.51594,0},{0.3,0.51594,0},{0.4,0.51594,0},{0.42771,0.51594,0},{0.44578,0,0},{0.50515,0.51594,0},{0.52711,0.51594,0},{0.54819,0,0},{0.57831,0.51594,0},{0.6567,0.51594,0},{0.74096,0.51594,0},{0.7997,0.51594,0},{0.8238,0,0},{0.87801,0.51594,0},{1,0,0}}},["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}},["LightEmission"]=1},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"ParticleEmitter","Fire",{["FlipbookFramerate"]={"NR",30,30},["Drag"]=11,["ZOffset"]=0.99722,["VelocitySpread"]=35,["Lifetime"]={"NR",0.4,1},["Speed"]={"NR",7.978,69.555},["Brightness"]=100,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["RotSpeed"]={"NR",-50,50},["LockedToPart"]=true,["Rate"]=10,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Texture"]="rbxassetid://11418708306",["Size"]={"NS",{{0,0.59292,0.30387},{0.12202,1.1507,0.17431},{0.3866,2.3301,0.097922},{0.73475,3.7397,0.07289},{1,4.6027,0}}},["Color"]={"CS",{{0,1,0.082353,0},{1,1,0.082353,0}}},["Shape"]={"E","ParticleEmitterShape","Disc"}},{["EmitCount"]=15,["EmitDelay"]=0}},{"ParticleEmitter","Fire 2",{["FlipbookFramerate"]={"NR",60,60},["Drag"]=5,["ZOffset"]=0.12609,["Lifetime"]={"NR",1,1},["Speed"]={"NR",27,27},["Brightness"]=30,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,2.1027,1.0187},{1,2.1027,1.0448}}},["RotSpeed"]={"NR",-1200,-360},["LockedToPart"]=true,["Rate"]=3,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.7167,0,0},{0.76744,0.39752,0},{0.83562,0.81366,0},{0.92653,0.95652,0},{1,1,0}}},["Texture"]="rbxassetid://11977056412",["LightEmission"]=0.25,["Color"]={"CS",{{0,1,0.14902,0},{1,1,0.14902,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}},{"ParticleEmitter","Fire 2",{["FlipbookFramerate"]={"NR",60,60},["Drag"]=5,["ZOffset"]=0.25874,["Lifetime"]={"NR",1,1},["Speed"]={"NR",0.0061561,0.0061561},["Brightness"]=30,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,4.3147,2.0904},{1,4.3147,2.144}}},["RotSpeed"]={"NR",-1200,-360},["LockedToPart"]=true,["Rate"]=3,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.7167,0,0},{0.76744,0.39752,0},{0.83562,0.81366,0},{0.92653,0.95652,0},{1,1,0}}},["Texture"]="rbxassetid://11977056412",["LightEmission"]=0.25,["Color"]={"CS",{{0,1,0.14902,0},{1,1,0.14902,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Earth",{["CFrame"]={"CF",24.518,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=40,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={4,2},["Attachment0"]={4,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=10,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Poison",{["CFrame"]={"CF",35.73,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-35,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["TextureSpeed"]=0.2,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.62789,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=170},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["TextureSpeed"]=0.3,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.53924,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=240},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1}},
-        	["Tornado Acid"] = {{"Part","Wind",{["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.72549,0.96471,1},{1,0.72549,0.96471,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.21961,0.4,1},{1,0.21961,0.4,1}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-35,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["TextureSpeed"]=0.2,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.62789,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=170},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["TextureSpeed"]=0.3,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.53924,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=240},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Lightning",{["CFrame"]={"CF",-11.973,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={2,2},["Attachment0"]={2,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.20784,0.5098,1},{1,0.20784,0.5098,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Lines ",{["Color"]={"CS",{{0,0.13333,0.43529,1},{1,0.13333,0.43529,1}}},["Drag"]=3,["ZOffset"]=0.60482,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,0.7},["Speed"]={"NR",8.8728,51.962},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://7828271118",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.5,0.88215,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,0.16471,0.3451,1},{1,0.16471,0.3451,1}}},["Drag"]=5,["ZOffset"]=0.60482,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,2},["Speed"]={"NR",4.596,91.962},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["Acceleration"]={"V3",0,-50,0},["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9710377531",["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Size"]={"NS",{{0,0,0},{0.05567,0.21385,0.010984},{0.096907,2.1653,0.55128},{0.11959,0.26732,0.021617},{0.19934,0.21333,0.037926},{0.24849,0.52165,0.037926},{0.3,0.082184,0.037926},{0.4,0.094068,0.037926},{0.42771,0.27973,0.037103},{0.44578,0,0},{0.50515,1.6039,0.035308},{0.52711,0.50653,0.034213},{0.54819,0,0},{0.57831,0.30997,0.032661},{0.6567,0.071111,0.030286},{0.74096,0.43849,0.02509},{0.7997,0.31753,0.023703},{0.8238,0,0},{0.87801,0.19657,0.014436},{1,0,0}}},["LightEmission"]=1,["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.21961,0.4,1},{1,0.21961,0.4,1}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["Drag"]=6,["ZOffset"]=0.14203,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",14,14},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.22899,0.22899},{0.16314,1.7804,0.29717},{0.35866,2.7818,0.32917},{0.52802,3.1379,0.34348},{1,3.5607,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Lightning",{["Color"]={"CS",{{0,0,0.34902,1},{1,0,0.34902,1}}},["ZOffset"]=4,["VelocitySpread"]=-360,["Lifetime"]={"NR",0.2,0.55},["Speed"]={"NR",0.0010192,0.0010192},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",-360,360},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=4,["Texture"]="rbxassetid://11363411020",["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,5.6523,0},{1,5.6523,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["FlipbookFramerate"]={"NR",3.9,3.9},["LightEmission"]=1},{["EmitCount"]=7,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Fire",{["CFrame"]={"CF",12.392,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={3,2},["Attachment0"]={3,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=5,["ZOffset"]=0.055849,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,2},["Speed"]={"NR",59,59},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["Acceleration"]={"V3",0,-30.948,0},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9589739468",["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Size"]={"NS",{{0,0,0},{0.05567,0.51594,0},{0.096907,0.51594,0},{0.11959,0.51594,0},{0.19934,0.51594,0},{0.24849,0.51594,0},{0.3,0.51594,0},{0.4,0.51594,0},{0.42771,0.51594,0},{0.44578,0,0},{0.50515,0.51594,0},{0.52711,0.51594,0},{0.54819,0,0},{0.57831,0.51594,0},{0.6567,0.51594,0},{0.74096,0.51594,0},{0.7997,0.51594,0},{0.8238,0,0},{0.87801,0.51594,0},{1,0,0}}},["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}},["LightEmission"]=1},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"ParticleEmitter","Fire",{["FlipbookFramerate"]={"NR",30,30},["Drag"]=11,["ZOffset"]=0.99722,["VelocitySpread"]=35,["Lifetime"]={"NR",0.4,1},["Speed"]={"NR",7.978,69.555},["Brightness"]=100,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["RotSpeed"]={"NR",-50,50},["LockedToPart"]=true,["Rate"]=10,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Texture"]="rbxassetid://11418708306",["Size"]={"NS",{{0,0.59292,0.30387},{0.12202,1.1507,0.17431},{0.3866,2.3301,0.097922},{0.73475,3.7397,0.07289},{1,4.6027,0}}},["Color"]={"CS",{{0,1,0.082353,0},{1,1,0.082353,0}}},["Shape"]={"E","ParticleEmitterShape","Disc"}},{["EmitCount"]=15,["EmitDelay"]=0}},{"ParticleEmitter","Fire 2",{["FlipbookFramerate"]={"NR",60,60},["Drag"]=5,["ZOffset"]=0.12609,["Lifetime"]={"NR",1,1},["Speed"]={"NR",27,27},["Brightness"]=30,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,2.1027,1.0187},{1,2.1027,1.0448}}},["RotSpeed"]={"NR",-1200,-360},["LockedToPart"]=true,["Rate"]=3,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.7167,0,0},{0.76744,0.39752,0},{0.83562,0.81366,0},{0.92653,0.95652,0},{1,1,0}}},["Texture"]="rbxassetid://11977056412",["LightEmission"]=0.25,["Color"]={"CS",{{0,1,0.14902,0},{1,1,0.14902,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}},{"ParticleEmitter","Fire 2",{["FlipbookFramerate"]={"NR",60,60},["Drag"]=5,["ZOffset"]=0.25874,["Lifetime"]={"NR",1,1},["Speed"]={"NR",0.0061561,0.0061561},["Brightness"]=30,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,4.3147,2.0904},{1,4.3147,2.144}}},["RotSpeed"]={"NR",-1200,-360},["LockedToPart"]=true,["Rate"]=3,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.7167,0,0},{0.76744,0.39752,0},{0.83562,0.81366,0},{0.92653,0.95652,0},{1,1,0}}},["Texture"]="rbxassetid://11977056412",["LightEmission"]=0.25,["Color"]={"CS",{{0,1,0.14902,0},{1,1,0.14902,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Earth",{["CFrame"]={"CF",24.518,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=40,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={4,2},["Attachment0"]={4,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=10,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Poison",{["CFrame"]={"CF",35.73,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-35,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["TextureSpeed"]=0.2,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.62789,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=170},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["TextureSpeed"]=0.3,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.53924,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=240},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1}},
-        	["Tornado Lightning"] = {{"Part","Wind",{["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.72549,0.96471,1},{1,0.72549,0.96471,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.21961,0.4,1},{1,0.21961,0.4,1}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-35,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["TextureSpeed"]=0.2,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.62789,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=170},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["TextureSpeed"]=0.3,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.53924,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=240},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Lightning",{["CFrame"]={"CF",-11.973,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={2,2},["Attachment0"]={2,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.20784,0.5098,1},{1,0.20784,0.5098,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Lines ",{["Color"]={"CS",{{0,0.13333,0.43529,1},{1,0.13333,0.43529,1}}},["Drag"]=3,["ZOffset"]=0.60482,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,0.7},["Speed"]={"NR",8.8728,51.962},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://7828271118",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.5,0.88215,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,0.16471,0.3451,1},{1,0.16471,0.3451,1}}},["Drag"]=5,["ZOffset"]=0.60482,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,2},["Speed"]={"NR",4.596,91.962},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["Acceleration"]={"V3",0,-50,0},["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9710377531",["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Size"]={"NS",{{0,0,0},{0.05567,0.21385,0.010984},{0.096907,2.1653,0.55128},{0.11959,0.26732,0.021617},{0.19934,0.21333,0.037926},{0.24849,0.52165,0.037926},{0.3,0.082184,0.037926},{0.4,0.094068,0.037926},{0.42771,0.27973,0.037103},{0.44578,0,0},{0.50515,1.6039,0.035308},{0.52711,0.50653,0.034213},{0.54819,0,0},{0.57831,0.30997,0.032661},{0.6567,0.071111,0.030286},{0.74096,0.43849,0.02509},{0.7997,0.31753,0.023703},{0.8238,0,0},{0.87801,0.19657,0.014436},{1,0,0}}},["LightEmission"]=1,["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.21961,0.4,1},{1,0.21961,0.4,1}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["Drag"]=6,["ZOffset"]=0.14203,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",14,14},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.22899,0.22899},{0.16314,1.7804,0.29717},{0.35866,2.7818,0.32917},{0.52802,3.1379,0.34348},{1,3.5607,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Lightning",{["Color"]={"CS",{{0,0,0.34902,1},{1,0,0.34902,1}}},["ZOffset"]=4,["VelocitySpread"]=-360,["Lifetime"]={"NR",0.2,0.55},["Speed"]={"NR",0.0010192,0.0010192},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",-360,360},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=4,["Texture"]="rbxassetid://11363411020",["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,5.6523,0},{1,5.6523,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["FlipbookFramerate"]={"NR",3.9,3.9},["LightEmission"]=1},{["EmitCount"]=7,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Fire",{["CFrame"]={"CF",12.392,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={3,2},["Attachment0"]={3,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=5,["ZOffset"]=0.055849,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,2},["Speed"]={"NR",59,59},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["Acceleration"]={"V3",0,-30.948,0},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9589739468",["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Size"]={"NS",{{0,0,0},{0.05567,0.51594,0},{0.096907,0.51594,0},{0.11959,0.51594,0},{0.19934,0.51594,0},{0.24849,0.51594,0},{0.3,0.51594,0},{0.4,0.51594,0},{0.42771,0.51594,0},{0.44578,0,0},{0.50515,0.51594,0},{0.52711,0.51594,0},{0.54819,0,0},{0.57831,0.51594,0},{0.6567,0.51594,0},{0.74096,0.51594,0},{0.7997,0.51594,0},{0.8238,0,0},{0.87801,0.51594,0},{1,0,0}}},["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}},["LightEmission"]=1},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"ParticleEmitter","Fire",{["FlipbookFramerate"]={"NR",30,30},["Drag"]=11,["ZOffset"]=0.99722,["VelocitySpread"]=35,["Lifetime"]={"NR",0.4,1},["Speed"]={"NR",7.978,69.555},["Brightness"]=100,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["RotSpeed"]={"NR",-50,50},["LockedToPart"]=true,["Rate"]=10,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Texture"]="rbxassetid://11418708306",["Size"]={"NS",{{0,0.59292,0.30387},{0.12202,1.1507,0.17431},{0.3866,2.3301,0.097922},{0.73475,3.7397,0.07289},{1,4.6027,0}}},["Color"]={"CS",{{0,1,0.082353,0},{1,1,0.082353,0}}},["Shape"]={"E","ParticleEmitterShape","Disc"}},{["EmitCount"]=15,["EmitDelay"]=0}},{"ParticleEmitter","Fire 2",{["FlipbookFramerate"]={"NR",60,60},["Drag"]=5,["ZOffset"]=0.12609,["Lifetime"]={"NR",1,1},["Speed"]={"NR",27,27},["Brightness"]=30,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,2.1027,1.0187},{1,2.1027,1.0448}}},["RotSpeed"]={"NR",-1200,-360},["LockedToPart"]=true,["Rate"]=3,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.7167,0,0},{0.76744,0.39752,0},{0.83562,0.81366,0},{0.92653,0.95652,0},{1,1,0}}},["Texture"]="rbxassetid://11977056412",["LightEmission"]=0.25,["Color"]={"CS",{{0,1,0.14902,0},{1,1,0.14902,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}},{"ParticleEmitter","Fire 2",{["FlipbookFramerate"]={"NR",60,60},["Drag"]=5,["ZOffset"]=0.25874,["Lifetime"]={"NR",1,1},["Speed"]={"NR",0.0061561,0.0061561},["Brightness"]=30,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,4.3147,2.0904},{1,4.3147,2.144}}},["RotSpeed"]={"NR",-1200,-360},["LockedToPart"]=true,["Rate"]=3,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.7167,0,0},{0.76744,0.39752,0},{0.83562,0.81366,0},{0.92653,0.95652,0},{1,1,0}}},["Texture"]="rbxassetid://11977056412",["LightEmission"]=0.25,["Color"]={"CS",{{0,1,0.14902,0},{1,1,0.14902,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Earth",{["CFrame"]={"CF",24.518,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=40,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={4,2},["Attachment0"]={4,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=10,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Poison",{["CFrame"]={"CF",35.73,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-35,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["TextureSpeed"]=0.2,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.62789,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=170},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["TextureSpeed"]=0.3,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.53924,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=240},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1}},
-        	["Tornado Fire"] = {{"Part","Wind",{["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.72549,0.96471,1},{1,0.72549,0.96471,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.21961,0.4,1},{1,0.21961,0.4,1}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-35,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["TextureSpeed"]=0.2,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.62789,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=170},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["TextureSpeed"]=0.3,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.53924,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=240},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Lightning",{["CFrame"]={"CF",-11.973,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={2,2},["Attachment0"]={2,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.20784,0.5098,1},{1,0.20784,0.5098,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Lines ",{["Color"]={"CS",{{0,0.13333,0.43529,1},{1,0.13333,0.43529,1}}},["Drag"]=3,["ZOffset"]=0.60482,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,0.7},["Speed"]={"NR",8.8728,51.962},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://7828271118",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.5,0.88215,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,0.16471,0.3451,1},{1,0.16471,0.3451,1}}},["Drag"]=5,["ZOffset"]=0.60482,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,2},["Speed"]={"NR",4.596,91.962},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["Acceleration"]={"V3",0,-50,0},["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9710377531",["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Size"]={"NS",{{0,0,0},{0.05567,0.21385,0.010984},{0.096907,2.1653,0.55128},{0.11959,0.26732,0.021617},{0.19934,0.21333,0.037926},{0.24849,0.52165,0.037926},{0.3,0.082184,0.037926},{0.4,0.094068,0.037926},{0.42771,0.27973,0.037103},{0.44578,0,0},{0.50515,1.6039,0.035308},{0.52711,0.50653,0.034213},{0.54819,0,0},{0.57831,0.30997,0.032661},{0.6567,0.071111,0.030286},{0.74096,0.43849,0.02509},{0.7997,0.31753,0.023703},{0.8238,0,0},{0.87801,0.19657,0.014436},{1,0,0}}},["LightEmission"]=1,["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.21961,0.4,1},{1,0.21961,0.4,1}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["Drag"]=6,["ZOffset"]=0.14203,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",14,14},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.22899,0.22899},{0.16314,1.7804,0.29717},{0.35866,2.7818,0.32917},{0.52802,3.1379,0.34348},{1,3.5607,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Lightning",{["Color"]={"CS",{{0,0,0.34902,1},{1,0,0.34902,1}}},["ZOffset"]=4,["VelocitySpread"]=-360,["Lifetime"]={"NR",0.2,0.55},["Speed"]={"NR",0.0010192,0.0010192},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",-360,360},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=4,["Texture"]="rbxassetid://11363411020",["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,5.6523,0},{1,5.6523,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["FlipbookFramerate"]={"NR",3.9,3.9},["LightEmission"]=1},{["EmitCount"]=7,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Fire",{["CFrame"]={"CF",12.392,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={3,2},["Attachment0"]={3,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=5,["ZOffset"]=0.055849,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,2},["Speed"]={"NR",59,59},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["Acceleration"]={"V3",0,-30.948,0},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9589739468",["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Size"]={"NS",{{0,0,0},{0.05567,0.51594,0},{0.096907,0.51594,0},{0.11959,0.51594,0},{0.19934,0.51594,0},{0.24849,0.51594,0},{0.3,0.51594,0},{0.4,0.51594,0},{0.42771,0.51594,0},{0.44578,0,0},{0.50515,0.51594,0},{0.52711,0.51594,0},{0.54819,0,0},{0.57831,0.51594,0},{0.6567,0.51594,0},{0.74096,0.51594,0},{0.7997,0.51594,0},{0.8238,0,0},{0.87801,0.51594,0},{1,0,0}}},["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}},["LightEmission"]=1},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"ParticleEmitter","Fire",{["FlipbookFramerate"]={"NR",30,30},["Drag"]=11,["ZOffset"]=0.99722,["VelocitySpread"]=35,["Lifetime"]={"NR",0.4,1},["Speed"]={"NR",7.978,69.555},["Brightness"]=100,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["RotSpeed"]={"NR",-50,50},["LockedToPart"]=true,["Rate"]=10,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Texture"]="rbxassetid://11418708306",["Size"]={"NS",{{0,0.59292,0.30387},{0.12202,1.1507,0.17431},{0.3866,2.3301,0.097922},{0.73475,3.7397,0.07289},{1,4.6027,0}}},["Color"]={"CS",{{0,1,0.082353,0},{1,1,0.082353,0}}},["Shape"]={"E","ParticleEmitterShape","Disc"}},{["EmitCount"]=15,["EmitDelay"]=0}},{"ParticleEmitter","Fire 2",{["FlipbookFramerate"]={"NR",60,60},["Drag"]=5,["ZOffset"]=0.12609,["Lifetime"]={"NR",1,1},["Speed"]={"NR",27,27},["Brightness"]=30,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,2.1027,1.0187},{1,2.1027,1.0448}}},["RotSpeed"]={"NR",-1200,-360},["LockedToPart"]=true,["Rate"]=3,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.7167,0,0},{0.76744,0.39752,0},{0.83562,0.81366,0},{0.92653,0.95652,0},{1,1,0}}},["Texture"]="rbxassetid://11977056412",["LightEmission"]=0.25,["Color"]={"CS",{{0,1,0.14902,0},{1,1,0.14902,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}},{"ParticleEmitter","Fire 2",{["FlipbookFramerate"]={"NR",60,60},["Drag"]=5,["ZOffset"]=0.25874,["Lifetime"]={"NR",1,1},["Speed"]={"NR",0.0061561,0.0061561},["Brightness"]=30,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,4.3147,2.0904},{1,4.3147,2.144}}},["RotSpeed"]={"NR",-1200,-360},["LockedToPart"]=true,["Rate"]=3,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.7167,0,0},{0.76744,0.39752,0},{0.83562,0.81366,0},{0.92653,0.95652,0},{1,1,0}}},["Texture"]="rbxassetid://11977056412",["LightEmission"]=0.25,["Color"]={"CS",{{0,1,0.14902,0},{1,1,0.14902,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Earth",{["CFrame"]={"CF",24.518,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=40,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={4,2},["Attachment0"]={4,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=10,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Poison",{["CFrame"]={"CF",35.73,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-35,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["TextureSpeed"]=0.2,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.62789,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=170},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["TextureSpeed"]=0.3,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.53924,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=240},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1}},
-        	["Tornado Earth"] = {{"Part","Wind",{["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.72549,0.96471,1},{1,0.72549,0.96471,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.21961,0.4,1},{1,0.21961,0.4,1}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-35,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["TextureSpeed"]=0.2,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.62789,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=170},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["TextureSpeed"]=0.3,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.53924,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=240},nil,{["Attachment1"]={1,2},["Attachment0"]={1,1}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.6,0.82745,1},{1,0.6,0.82745,1}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Lightning",{["CFrame"]={"CF",-11.973,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={2,2},["Attachment0"]={2,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.20784,0.5098,1},{1,0.20784,0.5098,1}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Lines ",{["Color"]={"CS",{{0,0.13333,0.43529,1},{1,0.13333,0.43529,1}}},["Drag"]=3,["ZOffset"]=0.60482,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,0.7},["Speed"]={"NR",8.8728,51.962},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://7828271118",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.5,0.88215,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,0.16471,0.3451,1},{1,0.16471,0.3451,1}}},["Drag"]=5,["ZOffset"]=0.60482,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,2},["Speed"]={"NR",4.596,91.962},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["Acceleration"]={"V3",0,-50,0},["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9710377531",["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Size"]={"NS",{{0,0,0},{0.05567,0.21385,0.010984},{0.096907,2.1653,0.55128},{0.11959,0.26732,0.021617},{0.19934,0.21333,0.037926},{0.24849,0.52165,0.037926},{0.3,0.082184,0.037926},{0.4,0.094068,0.037926},{0.42771,0.27973,0.037103},{0.44578,0,0},{0.50515,1.6039,0.035308},{0.52711,0.50653,0.034213},{0.54819,0,0},{0.57831,0.30997,0.032661},{0.6567,0.071111,0.030286},{0.74096,0.43849,0.02509},{0.7997,0.31753,0.023703},{0.8238,0,0},{0.87801,0.19657,0.014436},{1,0,0}}},["LightEmission"]=1,["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}}},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.21961,0.4,1},{1,0.21961,0.4,1}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["Drag"]=6,["ZOffset"]=0.14203,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",14,14},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.22899,0.22899},{0.16314,1.7804,0.29717},{0.35866,2.7818,0.32917},{0.52802,3.1379,0.34348},{1,3.5607,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Lightning",{["Color"]={"CS",{{0,0,0.34902,1},{1,0,0.34902,1}}},["ZOffset"]=4,["VelocitySpread"]=-360,["Lifetime"]={"NR",0.2,0.55},["Speed"]={"NR",0.0010192,0.0010192},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",-360,360},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=4,["Texture"]="rbxassetid://11363411020",["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,5.6523,0},{1,5.6523,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["FlipbookFramerate"]={"NR",3.9,3.9},["LightEmission"]=1},{["EmitCount"]=7,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0,0.29804,1},{1,0,0.29804,1}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Fire",{["CFrame"]={"CF",12.392,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={3,2},["Attachment0"]={3,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Lines 3",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=5,["ZOffset"]=0.055849,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,2},["Speed"]={"NR",59,59},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["Acceleration"]={"V3",0,-30.948,0},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-90,-90},["Transparency"]={"NS",{{0,1,0},{0.09856,0,0},{0.19578,0,0},{0.23042,1,0},{0.26355,0,0},{0.42018,0,0},{0.44578,1,0},{0.47741,0,0},{0.61596,0,0},{0.64608,1,0},{0.67319,0,0},{0.73193,0,0},{0.74849,1,0},{0.76657,0,0},{0.80066,0,0},{1,1,0}}},["Texture"]="rbxassetid://9589739468",["Orientation"]={"E","ParticleOrientation","VelocityParallel"},["Size"]={"NS",{{0,0,0},{0.05567,0.51594,0},{0.096907,0.51594,0},{0.11959,0.51594,0},{0.19934,0.51594,0},{0.24849,0.51594,0},{0.3,0.51594,0},{0.4,0.51594,0},{0.42771,0.51594,0},{0.44578,0,0},{0.50515,0.51594,0},{0.52711,0.51594,0},{0.54819,0,0},{0.57831,0.51594,0},{0.6567,0.51594,0},{0.74096,0.51594,0},{0.7997,0.51594,0},{0.8238,0,0},{0.87801,0.51594,0},{1,0,0}}},["Squash"]={"NS",{{0,0.825,0},{0.034021,0.75,0},{0.078351,-0.1125,0},{0.10928,0.75,0},{0.7741,-0.225,0},{1,-0.3,0.7125}}},["LightEmission"]=1},{["EmitCount"]=25,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"ParticleEmitter","Fire",{["FlipbookFramerate"]={"NR",30,30},["Drag"]=11,["ZOffset"]=0.99722,["VelocitySpread"]=35,["Lifetime"]={"NR",0.4,1},["Speed"]={"NR",7.978,69.555},["Brightness"]=100,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["SpreadAngle"]={"V2",35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["RotSpeed"]={"NR",-50,50},["LockedToPart"]=true,["Rate"]=10,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Texture"]="rbxassetid://11418708306",["Size"]={"NS",{{0,0.59292,0.30387},{0.12202,1.1507,0.17431},{0.3866,2.3301,0.097922},{0.73475,3.7397,0.07289},{1,4.6027,0}}},["Color"]={"CS",{{0,1,0.082353,0},{1,1,0.082353,0}}},["Shape"]={"E","ParticleEmitterShape","Disc"}},{["EmitCount"]=15,["EmitDelay"]=0}},{"ParticleEmitter","Fire 2",{["FlipbookFramerate"]={"NR",60,60},["Drag"]=5,["ZOffset"]=0.12609,["Lifetime"]={"NR",1,1},["Speed"]={"NR",27,27},["Brightness"]=30,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,2.1027,1.0187},{1,2.1027,1.0448}}},["RotSpeed"]={"NR",-1200,-360},["LockedToPart"]=true,["Rate"]=3,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.7167,0,0},{0.76744,0.39752,0},{0.83562,0.81366,0},{0.92653,0.95652,0},{1,1,0}}},["Texture"]="rbxassetid://11977056412",["LightEmission"]=0.25,["Color"]={"CS",{{0,1,0.14902,0},{1,1,0.14902,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}},{"ParticleEmitter","Fire 2",{["FlipbookFramerate"]={"NR",60,60},["Drag"]=5,["ZOffset"]=0.25874,["Lifetime"]={"NR",1,1},["Speed"]={"NR",0.0061561,0.0061561},["Brightness"]=30,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid4x4"},["Size"]={"NS",{{0,4.3147,2.0904},{1,4.3147,2.144}}},["RotSpeed"]={"NR",-1200,-360},["LockedToPart"]=true,["Rate"]=3,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.7167,0,0},{0.76744,0.39752,0},{0.83562,0.81366,0},{0.92653,0.95652,0},{1,1,0}}},["Texture"]="rbxassetid://11977056412",["LightEmission"]=0.25,["Color"]={"CS",{{0,1,0.14902,0},{1,1,0.14902,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,1,0.35686,0.16078},{1,1,0.35686,0.16078}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Earth",{["CFrame"]={"CF",24.518,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=40,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={4,2},["Attachment0"]={4,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-45,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=10,["SpreadAngle"]={"V2",-45,45},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.22353,0.17647,0.13333},{1,0.22353,0.17647,0.13333}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1},{"Part","Poison",{["CFrame"]={"CF",35.73,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",2,7.0265,2}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,-3.6776,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-3.6776,0}},nil,nil,{{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589762590",["Transparency"]={"NS",{{0,0,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=10},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}},{"ParticleEmitter","Spin",{["FlipbookFramerate"]={"NR",15,15},["Drag"]=3.25,["Lifetime"]={"NR",0.59043,1.1809},["Speed"]={"NR",18,18},["Brightness"]=3,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,0,0},{0.2,2.5541,0},{0.4,4.0449,0},{0.6,5.1901,0},{0.8,6.4133,0},{1,10,0}}},["FlipbookMode"]={"E","ParticleFlipbookMode","PingPong"},["RotSpeed"]={"NR",-1600,-860},["LockedToPart"]=true,["Rate"]=15,["Transparency"]={"NS",{{0,0,0},{0.71653,0,0},{0.83887,0.76875,0},{1,1,0}}},["Texture"]="rbxassetid://12350085716",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=5,["ZOffset"]=1.7108,["VelocitySpread"]=-35,["Lifetime"]={"NR",0.2,1},["Speed"]={"NR",12.831,30.795},["Brightness"]=100,["SpreadAngle"]={"V2",-35,35},["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["LockedToPart"]=true,["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://10556232026",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.2,0.92921,4.2771},{0.4,1.9554,4.2771},{0.6,2.9953,4.2771},{0.8,3.8773,4.2771},{1,4.2771,4.2771}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=200,["EmitDelay"]=0}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=6,["ZOffset"]=0.12413,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",9,16},["SpreadAngle"]={"V2",0,1000},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Left"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.20012,0.20012},{0.16314,1.5559,0.2597},{0.35866,2.4311,0.28767},{0.52802,2.7423,0.30018},{1,3.1118,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["TextureSpeed"]=0.2,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.62789,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=170},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}},{"Beam","Beam",{["FaceCamera"]=true,["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["TextureSpeed"]=0.3,["ZOffset"]=1,["Width0"]=0,["Texture"]="rbxassetid://9589826891",["Transparency"]={"NS",{{0,0,0},{0.53924,0.94375,0},{1,1,0}}},["Width1"]=25,["Brightness"]=10,["TextureMode"]={"E","TextureMode","Static"},["TextureLength"]=240},nil,{["Attachment1"]={5,2},["Attachment0"]={5,1}}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,5.3562,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,5.3562,0}}},{"ParticleEmitter","Smoke",{["Color"]={"CS",{{0,0.54902,1,0.031373},{1,0.54902,1,0.031373}}},["Drag"]=6,["ZOffset"]=0.24348,["LightInfluence"]=0.25,["Lifetime"]={"NR",2,3},["Speed"]={"NR",0.0018312,0.0018312},["SpreadAngle"]={"V2",0,60},["LockedToPart"]=true,["Rate"]=5,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.10896,0.9375,0},{0.18698,0.9,0},{0.23038,0.75,0},{0.26777,0.54375,0},{0.3338,0.44375,0},{0.39889,0.81875,0},{0.49908,0.9375,0},{0.60665,0.96875,0},{0.69945,0.94375,0},{0.79917,0.95625,0},{0.89982,0.98125,0},{1,1,0}}},["EmissionDirection"]={"E","NormalId","Front"},["LightEmission"]=1,["Texture"]="rbxassetid://9860410723",["Size"]={"NS",{{0,0.39254,0.39254},{0.16314,3.052,0.50941},{0.35866,4.7687,0.56427},{0.52802,5.3791,0.58881},{1,6.1039,0}}},["Squash"]={"NS",{{0,0,0.45},{0.49934,0.0375,0},{1,0,0}}}},{["EmitCount"]=10,["EmitDelay"]=0}}},1}},
         	["Infinite Portal"] = {{"Part","Part",{["Size"]={"V3",4,0.51,4},["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1}},nil,nil,{{"Attachment","Portal 1",{},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Texture"]="rbxassetid://12437861407",["Rate"]=1,["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["FlipbookFramerate"]={"NR",30,30},["LockedToPart"]=true,["ZOffset"]=0.068645,["Speed"]={"NR",0.0020594,0.0020594},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Transparency"]={"NS",{{0,1,0},{0.17119,0.79558,0},{0.26441,0.43094,0},{0.27839,0,0},{0.60508,0,0},{0.80847,0.58564,0},{0.85085,0.8453,0},{0.89153,0.96133,0},{1,1,0}}},["Lifetime"]={"NR",2,2},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,8.9239,0},{1,8.9239,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"PointLight","PointLight",{["Color"]={"C3",0.48627,0.48627,1},["Brightness"]=8,["Range"]=18}},{"ParticleEmitter","Shockwaves",{["Texture"]="rbxassetid://9710639706",["Rate"]=4,["LightEmission"]=1,["Drag"]=5,["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["LockedToPart"]=true,["ZOffset"]=0.68645,["Speed"]={"NR",0.0020594,0.0020594},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Transparency"]={"NS",{{0,1,0},{0.50339,0.64481,0},{1,1,0}}},["Lifetime"]={"NR",1,1},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=10,["Size"]={"NS",{{0,10.983,0},{1,10.983,0}}}},{["EmitCount"]=3,["EmitDelay"]=0}},{"ParticleEmitter","Shockwaves",{["Texture"]="rbxassetid://9707769019",["Drag"]=5,["LightEmission"]=-5,["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["LockedToPart"]=true,["Rate"]=4,["Speed"]={"NR",0.0020594,0.0020594},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Transparency"]={"NS",{{0,1,0},{0.5,0,0},{1,1,0}}},["Lifetime"]={"NR",1,1},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=0,["Size"]={"NS",{{0,7.0705,0},{1,7.0705,0}}}},{["EmitCount"]=3,["EmitDelay"]=0}}}},{"Attachment","Portal 2",{["CFrame"]={"CF",0,11.874,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,11.874,0}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Texture"]="rbxassetid://12437861407",["Rate"]=1,["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["FlipbookFramerate"]={"NR",30,30},["LockedToPart"]=true,["ZOffset"]=0.068645,["Speed"]={"NR",0.0020594,0.0020594},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Transparency"]={"NS",{{0,1,0},{0.17119,0.79558,0},{0.26441,0.43094,0},{0.27839,0,0},{0.60508,0,0},{0.80847,0.58564,0},{0.85085,0.8453,0},{0.89153,0.96133,0},{1,1,0}}},["Lifetime"]={"NR",2,2},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=5,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,8.9239,0},{1,8.9239,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"PointLight","PointLight",{["Color"]={"C3",0.48627,0.48627,1},["Brightness"]=8,["Range"]=18}},{"ParticleEmitter","Shockwaves",{["Texture"]="rbxassetid://9710639706",["Rate"]=4,["LightEmission"]=1,["Drag"]=5,["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["LockedToPart"]=true,["ZOffset"]=0.68645,["Speed"]={"NR",0.0020594,0.0020594},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Transparency"]={"NS",{{0,1,0},{0.50339,0.64481,0},{1,1,0}}},["Lifetime"]={"NR",1,1},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=10,["Size"]={"NS",{{0,10.983,0},{1,10.983,0}}}},{["EmitCount"]=3,["EmitDelay"]=0}},{"ParticleEmitter","Shockwaves",{["Texture"]="rbxassetid://9707769019",["Drag"]=5,["LightEmission"]=-5,["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["LockedToPart"]=true,["Rate"]=4,["Speed"]={"NR",0.0020594,0.0020594},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Transparency"]={"NS",{{0,1,0},{0.5,0,0},{1,1,0}}},["Lifetime"]={"NR",1,1},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=0,["Size"]={"NS",{{0,7.0705,0},{1,7.0705,0}}}},{["EmitCount"]=3,["EmitDelay"]=0}}}},{"Attachment","Walls",{},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",-6.2629,7.02,-6.1035e-05,0,0,1,0,1,0,-1,0,0},["Axis"]={"V3",0,0,-1},["Rotation"]={"V3",0,90,0},["Orientation"]={"V3",0,90,0},["Position"]={"V3",-6.2629,7.02,-6.1035e-05}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2,2},["Speed"]={"NR",0.00093638,0.00093638},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["EmissionDirection"]={"E","NormalId","Back"},["Transparency"]={"NS",{{0,1,0},{0.13051,0.77596,0},{0.22034,0.46995,0},{0.27839,0,0},{0.80194,0,0},{0.82964,0.41875,0},{0.88966,0.81875,0},{0.94598,0.94375,0},{1,1,0}}},["Texture"]="rbxassetid://12413369473",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["FlipbookFramerate"]={"NR",30,30},["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",-4.4286,7.02,4.4285,-0.70713,0,0.70708,0,1,0,-0.70708,0,-0.70713},["Axis"]={"V3",-0.70713,0,-0.70708},["Rotation"]={"V3",-180,44.998,-180},["Orientation"]={"V3",0,135,0},["Position"]={"V3",-4.4286,7.02,4.4285}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2,2},["Speed"]={"NR",0.00093638,0.00093638},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["EmissionDirection"]={"E","NormalId","Back"},["Transparency"]={"NS",{{0,1,0},{0.13051,0.77596,0},{0.22034,0.46995,0},{0.27839,0,0},{0.80194,0,0},{0.82964,0.41875,0},{0.88966,0.81875,0},{0.94598,0.94375,0},{1,1,0}}},["Texture"]="rbxassetid://12413369473",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["FlipbookFramerate"]={"NR",30,30},["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,7.0204,6.2628,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,7.0204,6.2628}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2,2},["Speed"]={"NR",0.00093638,0.00093638},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["EmissionDirection"]={"E","NormalId","Back"},["Transparency"]={"NS",{{0,1,0},{0.13051,0.77596,0},{0.22034,0.46995,0},{0.27839,0,0},{0.80194,0,0},{0.82964,0.41875,0},{0.88966,0.81875,0},{0.94598,0.94375,0},{1,1,0}}},["Texture"]="rbxassetid://12413369473",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["FlipbookFramerate"]={"NR",30,30},["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",6.2629,7.0204,-6.1035e-05,0,0,1,0,1,0,-1,0,0},["Axis"]={"V3",0,0,-1},["Rotation"]={"V3",0,90,0},["Orientation"]={"V3",0,90,0},["Position"]={"V3",6.2629,7.0204,-6.1035e-05}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2,2},["Speed"]={"NR",0.00093638,0.00093638},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["EmissionDirection"]={"E","NormalId","Back"},["Transparency"]={"NS",{{0,1,0},{0.13051,0.77596,0},{0.22034,0.46995,0},{0.27839,0,0},{0.80194,0,0},{0.82964,0.41875,0},{0.88966,0.81875,0},{0.94598,0.94375,0},{1,1,0}}},["Texture"]="rbxassetid://12413369473",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["FlipbookFramerate"]={"NR",30,30},["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",4.4285,7.0204,4.4285,0.70713,0,0.70708,0,1,0,-0.70708,0,0.70713},["Axis"]={"V3",0.70713,0,-0.70708},["Rotation"]={"V3",0,44.998,0},["Orientation"]={"V3",0,44.998,0},["Position"]={"V3",4.4285,7.0204,4.4285}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2,2},["Speed"]={"NR",0.00093638,0.00093638},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["EmissionDirection"]={"E","NormalId","Back"},["Transparency"]={"NS",{{0,1,0},{0.13051,0.77596,0},{0.22034,0.46995,0},{0.27839,0,0},{0.80194,0,0},{0.82964,0.41875,0},{0.88966,0.81875,0},{0.94598,0.94375,0},{1,1,0}}},["Texture"]="rbxassetid://12413369473",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["FlipbookFramerate"]={"NR",30,30},["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",-4.4286,7.02,-4.4286,0.70713,0,0.70708,0,1,0,-0.70708,0,0.70713},["Axis"]={"V3",0.70713,0,-0.70708},["Rotation"]={"V3",0,44.998,0},["Orientation"]={"V3",0,44.998,0},["Position"]={"V3",-4.4286,7.02,-4.4286}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2,2},["Speed"]={"NR",0.00093638,0.00093638},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["EmissionDirection"]={"E","NormalId","Back"},["Transparency"]={"NS",{{0,1,0},{0.13051,0.77596,0},{0.22034,0.46995,0},{0.27839,0,0},{0.80194,0,0},{0.82964,0.41875,0},{0.88966,0.81875,0},{0.94598,0.94375,0},{1,1,0}}},["Texture"]="rbxassetid://12413369473",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["FlipbookFramerate"]={"NR",30,30},["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",4.4285,7.0204,-4.4286,-0.70713,0,0.70708,0,1,0,-0.70708,0,-0.70713},["Axis"]={"V3",-0.70713,0,-0.70708},["Rotation"]={"V3",-180,44.998,-180},["Orientation"]={"V3",0,135,0},["Position"]={"V3",4.4285,7.0204,-4.4286}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2,2},["Speed"]={"NR",0.00093638,0.00093638},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["EmissionDirection"]={"E","NormalId","Back"},["Transparency"]={"NS",{{0,1,0},{0.13051,0.77596,0},{0.22034,0.46995,0},{0.27839,0,0},{0.80194,0,0},{0.82964,0.41875,0},{0.88966,0.81875,0},{0.94598,0.94375,0},{1,1,0}}},["Texture"]="rbxassetid://12413369473",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["FlipbookFramerate"]={"NR",30,30},["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,7.02,-6.263,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,7.02,-6.263}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,1,0,0.015686},{0.30915,0.97993,0.11886,0.18934},{0.37824,0.89804,0.60392,0.89804},{0.48359,0.34902,0.27059,0.91373},{0.56131,0.48235,0.87843,0.93725},{0.62522,0.43137,0.95294,0.67451},{0.72021,0.68627,0.78824,0.35686},{0.75302,0.74902,0.60392,0.27059},{0.80829,0.95086,0.61338,0.54811},{1,1,0.61569,0.61569}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2,2},["Speed"]={"NR",0.00093638,0.00093638},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["EmissionDirection"]={"E","NormalId","Back"},["Transparency"]={"NS",{{0,1,0},{0.13051,0.77596,0},{0.22034,0.46995,0},{0.27839,0,0},{0.80194,0,0},{0.82964,0.41875,0},{0.88966,0.81875,0},{0.94598,0.94375,0},{1,1,0}}},["Texture"]="rbxassetid://12413369473",["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["FlipbookFramerate"]={"NR",30,30},["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}}},{["EmitCount"]=2,["EmitDelay"]=0}}}}}}},1}},
         	["Heartbreak"] = {{"Part","Part",{["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1},["Size"]={"V3",4,2.8484,4}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",0,3.9863,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,3.9863,0}},nil,nil,{{"ParticleEmitter","Undertale Heart Break",{["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["Color"]={"CS",{{0,1,0.7451,0.74902},{1,1,0.7451,0.74902}}},["Texture"]="rbxassetid://12399983623",["FlipbookFramerate"]={"NR",30,30},["LockedToPart"]=true,["ZOffset"]=4,["Rate"]=0.5,["EmissionDirection"]={"E","NormalId","Back"},["Transparency"]={"NS",{{0,0,0},{0.70129,0,0},{0.7687,0.10625,0},{0.79963,0.35,0},{0.8301,0.56875,0},{0.86242,0.75,0},{0.89428,0.89375,0},{0.92659,0.9625,0},{1,1,0}}},["Speed"]={"NR",0.003,0.003},["Lifetime"]={"NR",2,2},["LightEmission"]=1,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}}}},{"PointLight","PointLight",{["Color"]={"C3",1,0.61176,0.61961},["Brightness"]=16.84,["Range"]=12}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,1,0.22353,0.22353},{1,1,0.22353,0.22353}}},["Drag"]=5,["ZOffset"]=3.0893,["VelocitySpread"]=-360,["Lifetime"]={"NR",0.2,4},["Speed"]={"NR",3.2104,27.525},["Brightness"]=10,["SpreadAngle"]={"V2",-360,360},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["RotSpeed"]={"NR",-150,150},["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://9589910306",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.50187,0.61787,0},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=10,["EmitDelay"]=0}},{"ParticleEmitter","Specs",{["Color"]={"CS",{{0,1,0.22353,0.22353},{1,1,0.22353,0.22353}}},["Drag"]=5,["ZOffset"]=3.0893,["VelocitySpread"]=-360,["Lifetime"]={"NR",0.2,4},["Speed"]={"NR",3.2104,27.525},["Brightness"]=10,["SpreadAngle"]={"V2",-360,360},["Enabled"]=false,["FlipbookMode"]={"E","ParticleFlipbookMode","OneShot"},["RotSpeed"]={"NR",-150,150},["Rate"]=10,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,0,0},{0.54124,0,0},{1,0.9625,0}}},["Texture"]="rbxassetid://8860471252",["LightEmission"]=1,["Size"]={"NS",{{0,0,0},{0.50062,0.38617,0.2317},{1,0,0}}},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["FlipbookStartRandom"]=true},{["EmitCount"]=10,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,-1.2056,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-1.2056,0}},nil,nil,{{"ParticleEmitter","Shockwaves",{["Color"]={"CS",{{0,1,0.4,0.4},{1,1,0.4,0.4}}},["Drag"]=5,["ZOffset"]=1.4325,["Lifetime"]={"NR",1,1},["Speed"]={"NR",0,1.0244},["Brightness"]=5,["Size"]={"NS",{{0,0,0},{1,6.625,0}}},["Enabled"]=false,["LockedToPart"]=true,["Rate"]=2,["Rotation"]={"NR",90,90},["Transparency"]={"NS",{{0,0,0},{0.16812,0.21875,0},{0.33873,0.50625,0},{0.47572,0.80625,0},{0.63885,0.9625,0},{0.8132,0.975,0},{1,1,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Texture"]="rbxassetid://12399853453",["LightEmission"]=1,["Squash"]={"NS",{{0,0,0},{1,0,0}}}},{["EmitCount"]=3,["EmitDelay"]=0}}}}},1}},
         	["Stereo"] = {{"Part","Part",{["Size"]={"V3",1,1,1},["CFrame"]={"CF",0,0,0,1,0,0,0,1,0,0,0,1}},nil,nil,{{"Attachment","Attachment",{["CFrame"]={"CF",-4,0,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",-4,0,0}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,0.94118,0.48627,1},{1,0.94118,0.48627,1}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2.05,2.05},["Speed"]={"NR",0.00093638,0.00093638},["Brightness"]=2,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["Texture"]="rbxassetid://12885573705",["EmissionDirection"]={"E","NormalId","Right"},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}},["FlipbookFramerate"]={"NR",30,30},["FlipbookStartRandom"]=true},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",4,0,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",4,0,0}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,0.94118,0.48627,1},{1,0.94118,0.48627,1}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2.05,2.05},["Speed"]={"NR",0.00093638,0.00093638},["Brightness"]=2,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["Texture"]="rbxassetid://12885573705",["EmissionDirection"]={"E","NormalId","Left"},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}},["FlipbookFramerate"]={"NR",30,30},["FlipbookStartRandom"]=true},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,0,4,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,0,4}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,0.94118,0.48627,1},{1,0.94118,0.48627,1}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2.05,2.05},["Speed"]={"NR",0.00093638,0.00093638},["Brightness"]=2,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["Texture"]="rbxassetid://12885573705",["EmissionDirection"]={"E","NormalId","Front"},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}},["FlipbookFramerate"]={"NR",30,30},["FlipbookStartRandom"]=true},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,0,-4,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,0,-4}},nil,nil,{{"ParticleEmitter","ParticleEmitter",{["Color"]={"CS",{{0,0.94118,0.48627,1},{1,0.94118,0.48627,1}}},["ZOffset"]=0.62425,["Lifetime"]={"NR",2.05,2.05},["Speed"]={"NR",0.00093638,0.00093638},["Brightness"]=2,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,5,0},{1,5,0}}},["LockedToPart"]=true,["Rate"]=1,["Texture"]="rbxassetid://12885573705",["EmissionDirection"]={"E","NormalId","Back"},["Transparency"]={"NS",{{0,0,0},{1,0,0}}},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["LightEmission"]=1,["Squash"]={"NS",{{0,0.2,0},{1,0.2,0}}},["FlipbookFramerate"]={"NR",30,30},["FlipbookStartRandom"]=true},{["EmitCount"]=2,["EmitDelay"]=0}}}},{"Attachment","Attachment",{["CFrame"]={"CF",0,-5.9099,0,1,0,0,0,1,0,0,0,1},["Position"]={"V3",0,-5.9099,0}},nil,nil,{{"ParticleEmitter","Glow 2",{["RotSpeed"]={"NR",99999,99999},["Texture"]="rbxassetid://9354796901",["Color"]={"CS",{{0,1,0.69804,0.090196},{0.2487,0.30196,0.023529,1},{0.53195,1,0.28627,0.29804},{0.81347,0.2,0.58824,1},{1,0.23529,1,0.10196}}},["LockedToPart"]=true,["Rate"]=1,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.5,0.25,0.25},{1,1,0}}},["Lifetime"]={"NR",1,1},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Speed"]={"NR",0.00084566,0.00084566},["Size"]={"NS",{{0,9.0189,0},{1,24.051,6.0126}}}},{["EmitCount"]=3,["EmitDelay"]=0}},{"ParticleEmitter","Glow 2",{["RotSpeed"]={"NR",99999,99999},["Texture"]="rbxassetid://9354796901",["Color"]={"CS",{{0,1,0.69804,0.090196},{0.2487,0.30196,0.023529,1},{0.53195,1,0.28627,0.29804},{0.81347,0.2,0.58824,1},{1,0.23529,1,0.10196}}},["LockedToPart"]=true,["ZOffset"]=2.8189,["Rate"]=1,["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.5,0.25,0.25},{1,1,0}}},["Lifetime"]={"NR",1,1},["Speed"]={"NR",0,0},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,9.0189,0},{1,24.051,6.0126}}}},{["EmitCount"]=3,["EmitDelay"]=0}},{"ParticleEmitter","Glow",{["Texture"]="rbxassetid://9589703753",["Rate"]=1,["Color"]={"CS",{{0,1,0.69804,0.090196},{0.2487,0.30196,0.023529,1},{0.53195,1,0.28627,0.29804},{0.81347,0.2,0.58824,1},{1,0.23529,1,0.10196}}},["LockedToPart"]=true,["ZOffset"]=2.8189,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.5,0.25,0.25},{1,1,0}}},["Lifetime"]={"NR",1,1},["LightEmission"]=1,["Speed"]={"NR",0,0},["Size"]={"NS",{{0,9.0189,0},{1,24.051,6.0126}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","Glow",{["Texture"]="rbxassetid://9589703753",["LightEmission"]=1,["Color"]={"CS",{{0,1,0.69804,0.090196},{0.2487,0.30196,0.023529,1},{0.53195,1,0.28627,0.29804},{0.81347,0.2,0.58824,1},{1,0.23529,1,0.10196}}},["LockedToPart"]=true,["Rate"]=1,["Speed"]={"NR",0.00084566,0.00084566},["Rotation"]={"NR",-360,360},["Transparency"]={"NS",{{0,1,0},{0.5,0.25,0.25},{1,1,0}}},["Lifetime"]={"NR",1,1},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Size"]={"NS",{{0,9.0189,0},{1,24.051,6.0126}}}},{["EmitCount"]=2,["EmitDelay"]=0}},{"ParticleEmitter","6",{["Texture"]="rbxassetid://12831129814",["Rate"]=1,["Color"]={"CS",{{0,1,0.69804,0.090196},{0.2487,0.30196,0.023529,1},{0.53195,1,0.28627,0.29804},{0.81347,0.2,0.58824,1},{1,0.23529,1,0.10196}}},["FlipbookFramerate"]={"NR",30,60},["LockedToPart"]=true,["ZOffset"]=1,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Rotation"]={"NR",90,90},["Transparency"]={"NS",{{0,0,0},{0.72712,0,0},{0.7339,0.18785,0},{0.7661,0.58564,0},{0.81017,0.8453,0},{0.87966,0.96133,0},{1,1,0}}},["Speed"]={"NR",0.001,0.001},["Lifetime"]={"NR",1,1},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=10,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,7,0},{1,7,0}}}}},{"ParticleEmitter","5",{["Texture"]="rbxassetid://12831129814",["Rate"]=1,["Color"]={"CS",{{0,1,0.69804,0.090196},{0.2487,0.30196,0.023529,1},{0.53195,1,0.28627,0.29804},{0.81347,0.2,0.58824,1},{1,0.23529,1,0.10196}}},["FlipbookFramerate"]={"NR",30,60},["LockedToPart"]=true,["ZOffset"]=1,["Squash"]={"NS",{{0,0,0},{1,0,0}}},["Rotation"]={"NR",90,90},["Transparency"]={"NS",{{0,0,0},{0.72712,0,0},{0.7339,0.18785,0},{0.7661,0.58564,0},{0.81017,0.8453,0},{0.87966,0.96133,0},{1,1,0}}},["Speed"]={"NR",0.001,0.001},["Lifetime"]={"NR",1,1},["Orientation"]={"E","ParticleOrientation","VelocityPerpendicular"},["Brightness"]=0,["FlipbookLayout"]={"E","ParticleFlipbookLayout","Grid8x8"},["Size"]={"NS",{{0,6,0},{1,6,0}}}}}}}},1}},
@@ -7706,6 +10748,37 @@ do
             return result and result.Position.Y or position.Y - 2.5
         end
 
+        local function emitterNames(name)
+            local nodes = KILL_FX[name]
+            local result, seen = {}, {}
+            if not nodes then return result end
+            local tops = {}
+            for _, tuple in ipairs(nodes) do
+                local ok, rec = pcall(build, tuple)
+                if ok and rec then tops[#tops + 1] = rec end
+            end
+            local function scan(rec)
+                local inst = rec.inst
+                local kind = FxColor.classes[inst.ClassName]
+                if kind then
+                    local entry = seen[inst.Name]
+                    if entry then
+                        entry.count += 1
+                    else
+                        entry = { name = inst.Name, kind = kind, count = 1, color = FxColor.read(inst) }
+                        seen[inst.Name] = entry
+                        result[#result + 1] = entry
+                    end
+                end
+                for _, kid in ipairs(rec.kids) do scan(kid) end
+            end
+            for _, rec in ipairs(tops) do scan(rec) end
+            for _, rec in ipairs(tops) do pcall(function() rec.inst:Destroy() end) end
+            for _, entry in ipairs(result) do entry.label = FxColor.label(entry.name, entry.kind, entry.count) end
+            return result
+        end
+        Actions.killEmitters = emitterNames
+
         local function playKillEffect(name, position, character, duration)
             local nodes = KILL_FX[name]
             if not nodes or typeof(position) ~= "Vector3" then return end
@@ -7729,6 +10802,18 @@ do
                 if rec then table.insert(tops, rec) end
             end
             for _, rec in ipairs(tops) do link(rec, tops) end
+
+            local function paint(rec)
+                if FxColor.classes[rec.inst.ClassName] then
+                    local prefix = "kec_" .. fxKey(name) .. "_" .. fxKey(rec.inst.Name)
+                    if getgenv().AsterCfg.on(prefix .. "_on", false) then
+                        local color = getgenv().AsterCfg.color(prefix .. "_c")
+                        if color then pcall(FxColor.apply, rec.inst, color) end
+                    end
+                end
+                for _, kid in ipairs(rec.kids) do paint(kid) end
+            end
+            for _, rec in ipairs(tops) do paint(rec) end
 
             local base
             if mode == "floor" then
@@ -7796,15 +10881,16 @@ do
             if not ok then warnf("kill effect failed:", err) end
         end)
 
-        Actions.previewKillEffect = function()
+        Actions.previewKillEffect = function(effectName)
             local cam = Camera()
             if not cam then return end
-            local ok, err = pcall(playKillEffect, flag("ke_effect", "Darkheart"), cam.CFrame.Position + cam.CFrame.LookVector * 14 + Vector3.new(0, -2, 0), nil, flag("ke_duration", 4))
+            local ok, err = pcall(playKillEffect, effectName or flag("ke_effect", "Darkheart"), cam.CFrame.Position + cam.CFrame.LookVector * 14 + Vector3.new(0, -2, 0), nil, flag("ke_duration", 4))
             if not ok then warnf("kill effect preview failed:", err) end
         end
 
         onUnload(function()
             Actions.previewKillEffect = noop
+            Actions.killEmitters = nil
             for _, container in ipairs(live) do pcall(function() container:Destroy() end) end
             table.clear(live)
         end)
@@ -8015,6 +11101,971 @@ do
         end)
     end)()
 
+
+    ;(function()
+        local ENCH_FX = {
+        	["Supporter"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"Attachment3",{-0.047607,0.10938,-2.7768,0,0,1,0,1,0,-1,0,0}},
+        		{"A",0,"1",{-1.0699,-0.21707,0.46161,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"AttachmentBeam1",{-0.011047,0.059204,-3.6959,0,0,1,0,1,0,-1,0,0}},
+        		{"A",0,"AttachmentBeam2",{-0.0028687,0.059204,0.51529,0,0,1,0,1,0,-1,0,0}},
+        		{"A",0,"AttachmentBeam4",{-0.042847,0.089905,-0.34393,0,0,1,0,1,0,-1,0,0}},
+        		{"A",0,"VFX",{0,0.019043,0.033603,0,0,-1,1,0,0,0,-1,0}},
+        		{"A",6,"1",{-0.046021,-3.0279,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",6,"2",{-0.046021,0.39475,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",6,"",{-0.046021,-1.4417,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",6,"Beams",{0,0,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",10,"Runic",{0,0,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",11,"Rune 1",{-0.20441,-1.1348,0.024963,0,0,1,0,1,0,-1,0,0}},
+        		{"A",11,"Rune 1",{0.2699,-1.1348,0.024963,0,0,-1,0,1,0,1,0,0}},
+        		{"A",11,"Rune 1",{0.032745,-1.1348,0.46002,-1,0,0,0,1,0,0,0,-1}},
+        		{"A",11,"Rune 1",{0.032745,-1.1348,-0.40997,1,0,0,0,1,0,0,0,1}},
+        		{"A",11,"Rune 2",{0.0021667,3.6596,0.94,1,0,0,0,1,0,0,0,1}},
+        		{"A",11,"Rune 2",{0.0021667,3.6596,-0.89001,-1,0,0,0,1,0,0,0,-1}},
+        		{"A",11,"Rune 2",{-0.49661,3.0096,0.024963,0,0,-1,0,1,0,1,0,0}},
+        		{"A",11,"Rune 2",{0.50092,3.0096,0.024963,0,0,1,0,1,0,-1,0,0}},
+        		{"A",10,"weaponBeam",{0,-0.27946,0.098,-1,0,0,0,1,0,0,0,-1}},
+        		{"A",20,"2",{0,-1.1523,-1.0914e-11,0,-1,0,1,0,0,0,0,1}},
+        		{"A",20,"1",{0,4.5604,-6.1035e-05,0,-1,0,1,0,0,0,0,1}},
+        		{"A",10,"DashersSideways",{0,-0.5,0,-1,0,0,0,1,0,0,0,-1}},
+        		{"A",23,"Dasher1",{9.1553e-05,-0.87451,0,-0.81681,0.5769,0,0.5769,0.81681,0,0,0,-1}},
+        		{"A",24,"1",{1.4733,0,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",24,"2",{0.092193,0,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",23,"Dasher1",{0,-0.87451,0,0.81256,-0.58288,0,0.58288,0.81256,0,0,0,1}},
+        		{"A",27,"2",{0.092163,0,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",27,"1",{1.4733,0,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",10,"weaponBeam",{0,-0.2794,-0.097534,1,0,0,0,1,0,0,0,1}},
+        		{"A",30,"2",{0,-0.96432,-1.0914e-11,0,-1,0,1,0,0,0,0,1}},
+        		{"A",30,"1",{0,4.5604,-6.1035e-05,0,-1,0,1,0,0,0,0,1}},
+        		{"A",6,"MainSpark",{0,3.4036,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",6,"GlowSlim1",{0,0.65922,0,0,-1,0,1,0,0,0,0,1}},
+        		{"A",0,"AttachmentBeam5",{-0.041138,0.035553,1.699,0,0,1,0,1,0,-1,0,0}},
+        		{"A",0,"2",{2.2824,-0.061371,-3.6615,-1,0,0,0,0,1,0,1,0}},
+        		{"A",0,"T1",{-0.070679,-0.023926,-4.4705,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"T2",{0.0090942,-0.027954,1.5207,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"AttachmentGlow",{0,0.089905,-1.5906,1,0,0,0,1,0,0,0,1}},
+        		{"A",0,"2",{-1.8819,0.95956,-3.3956,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"AttachmentPoint",{-0.028442,0.098541,-3.2432,1,0,0,0,1,0,0,0,1}},
+        		{"A",0,"a1",{-0.020701,0.032532,-3.5044,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"1",{0.72479,-0.52112,0.12315,-1,0,0,0,0,1,0,1,0}},
+        		{"P",0,"",{EmissionDirection={"EV","NormalId",5},Enabled=false,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",90,90},SpreadAngle={"V2",5,5},Squash={"NS",{{0,1,0},{1,1,0}}},Texture="rbxassetid://16847032740",Transparency={"NS",{{0,1,0},{0.12844,0.4,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",0,"Swirl 2",{Brightness=7.24,FlipbookFramerate={"NR",30,30},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.9,1},LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=5,Rotation={"NR",-360,360},Size={"NS",{{0,0.41017,0.41017},{1,0.41017,0.41017}}},Speed={"NR",0.00017529,0.00017529},SpreadAngle={"V2",-360,360},Texture="rbxassetid://15048949714",Transparency={"NS",{{0,1,0},{0.10474,0,0},{0.18828,0,0},{0.3192,0,0},{0.60474,0,0},{0.70948,0,0},{0.90025,0,0},{1,1,0}}},ZOffset=0.1}},
+        		{"P",1,"Specs",{Brightness=5,Drag=2,EmissionDirection={"EV","NormalId",3},Lifetime={"NR",0.2,2.3},Rate=10,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.15645,0.17529,0.17529},{1,0,0}}},Speed={"NR",0.17529,6.135},Texture="rbxassetid://8084996370",VelocityInheritance=0.5,ZOffset=2.5312}},
+        		{"B",1,"Beam5",1,4,{Brightness=8,FaceCamera=true,Texture="rbxassetid://120225055902597",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.16596,0.61875,0},{0.46934,0,0},{0.61205,0,0},{0.90433,0,0},{1,0,0}}},Width0=0.22909,Width1=0,ZOffset=0.0025}},
+        		{"B",1,"Beam6",1,4,{Brightness=8,FaceCamera=true,Texture="rbxassetid://12788868051",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.16596,0.61875,0},{0.46934,0,0},{0.61205,0,0},{0.90433,0,0},{1,0,0}}},Width0=0.22909,Width1=0,ZOffset=0.031}},
+        		{"P",1,"Specs2",{Brightness=5,Drag=2,EmissionDirection={"EV","NormalId",3},Lifetime={"NR",0.2,2.3},LightEmission=1,Rate=10,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.15645,0.17529,0.17529},{1,0,0}}},Speed={"NR",0.17529,6.135},Texture="rbxassetid://8084996370",VelocityInheritance=0.5,ZOffset=2.5312}},
+        		{"B",1,"Beam2",1,4,{Brightness=5,FaceCamera=true,Texture="rbxassetid://139432087095970",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.15328,0.8375,0},{0.22146,0,0},{0.61205,0,0},{0.90433,0,0},{1,0,0}}},Width0=0.68728,Width1=0,ZOffset=0.002}},
+        		{"B",1,"Beam3",1,4,{Brightness=5,FaceCamera=true,Texture="rbxassetid://12505188370",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.15328,0.8375,0},{0.22146,0,0},{0.61205,0,0},{0.90433,0,0},{1,0,0}}},Width0=0.45819,Width1=0,ZOffset=0.002}},
+        		{"B",1,"Beam4",1,4,{Brightness=8,FaceCamera=true,Texture="rbxassetid://120225055902597",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.16596,0.61875,0},{0.46934,0,0},{0.61205,0,0},{0.90433,0,0},{1,0,0}}},Width0=0.22909,Width1=0,ZOffset=0.003}},
+        		{"B",2,"Vine",40,2,{Brightness=7,CurveSize0=3,CurveSize1=-3,FaceCamera=true,LightEmission=0.4,Segments=30,Texture="rbxassetid://16010627582",TextureLength=2,TextureMode={"EV","TextureMode",1},TextureSpeed=-0.15,Transparency={"NS",{{0,1,0},{0.4605,0.25,0},{0.90588,0,0},{1,1,0}}},Width0=0.5,Width1=2,ZOffset=1}},
+        		{"B",2,"Aura",40,2,{Brightness=7,CurveSize0=3,CurveSize1=-3,FaceCamera=true,LightEmission=0.4,Segments=30,Texture="rbxassetid://15875596068",TextureLength=15,TextureMode={"EV","TextureMode",1},TextureSpeed=-0.2,Transparency={"NS",{{0,1,0},{0.58824,0.925,0},{1,1,0}}},Width0=3,Width1=4,ZOffset=1.5}},
+        		{"B",2,"Glow",40,2,{Brightness=7,CurveSize0=3,CurveSize1=-3,FaceCamera=true,LightEmission=0.4,Segments=30,Texture="rbxassetid://15095562105",TextureLength=15,TextureMode={"EV","TextureMode",1},TextureSpeed=-0.1,Transparency={"NS",{{0,1,0},{0.58824,0.875,0},{1,1,0}}},Width0=8,Width1=4}},
+        		{"P",0,"Ink",{Drag=8,EmissionDirection={"EV","NormalId",5},Enabled=false,FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",30,30},Squash={"NS",{{0,0,0},{1,0.60656,0}}},Texture="rbxassetid://16845151306",Transparency={"NS",{{0,0,0},{0.10169,0.36612,0},{0.3,0.77049,0},{0.51525,0.9235,0},{1,1,0}}}}},
+        		{"B",3,"",3,4,{Brightness=5,FaceCamera=true,Texture="rbxassetid://126936896847976",TextureLength=0.8,TextureSpeed=0,Transparency={"NS",{{0,0,0},{0.61205,0,0},{1,1,0}}},Width0=1.227,Width1=0}},
+        		{"B",3,"",3,4,{Brightness=15,FaceCamera=true,Texture="rbxassetid://126936896847976",TextureLength=0.7,TextureSpeed=0,Transparency={"NS",{{0,0,0},{0.83932,1,0},{1,1,0}}},Width0=0.70114,Width1=0,ZOffset=0.001}},
+        		{"P",0,"Glow",{Brightness=25,Drag=0.5,EmissionDirection={"EV","NormalId",2},Lifetime={"NR",1.2,1.2},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=2,ShapeInOut={"EV","ParticleEmitterShapeInOut",1},ShapeStyle={"EV","ParticleEmitterShapeStyle",1},Size={"NS",{{0,0,0.12316},{0.1,0.15442,0.12316},{0.2,0.26062,0.12316},{0.3,0.32424,0.12316},{0.4,0.36214,0.12316},{0.5,0.38581,0.12316},{0.6,0.40142,0.12316},{0.7,0.41225,0.12316},{0.8,0.42015,0.12316},{0.9,0.4262,0.12316},{1,0.43108,0.12316}}},Speed={"NR",1.8768,6.256},Squash={"NS",{{0,-0.25,0.05},{0.1,-0.35027,0.05},{0.2,-0.42921,0.05},{0.3,-0.49125,0.05},{0.4,-0.53965,0.05},{0.5,-0.57689,0.05},{0.6,-0.60489,0.05},{0.7,-0.62513,0.05},{0.8,-0.63879,0.05},{0.9,-0.64682,0.05},{1,-0.65,0.05}}},Texture="http://www.roblox.com/asset/?id=15786345729",TimeScale=0.5,Transparency={"NS",{{0,0.9625,0},{0.038283,0.375,0},{0.098608,0.10625,0},{0.20534,0.05,0},{0.37355,0.08125,0},{0.55104,0.16875,0},{0.73782,0.33125,0},{0.88051,0.58125,0},{1,1,0}}},ZOffset=1}},
+        		{"P",0,"Swirl 2",{Brightness=7.24,FlipbookFramerate={"NR",30,30},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.9,1},LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=5,Rotation={"NR",-360,360},Size={"NS",{{0,0.41017,0.41017},{1,0.41017,0.41017}}},Speed={"NR",0.00017529,0.00017529},SpreadAngle={"V2",-360,360},Texture="rbxassetid://15048949714",Transparency={"NS",{{0,1,0},{0.10474,0,0},{0.18828,0,0},{0.3192,0,0},{0.60474,0,0},{0.70948,0,0},{0.90025,0,0},{1,1,0}}},ZOffset=0.1}},
+        		{"P",0,"ToonLightning",{Brightness=5,FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.7},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=2,Rotation={"NR",90,90},Shape={"EV","ParticleEmitterShape",1},ShapeStyle={"EV","ParticleEmitterShapeStyle",1},Size={"NS",{{0,0.52586,0},{1,0.52586,0}}},Speed={"NR",0.019254,0.019254},Texture="rbxassetid://128704617763218",ZOffset=1}},
+        		{"P",0,"Ink",{Drag=5,EmissionDirection={"EV","NormalId",5},Enabled=false,FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.6},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",20,20},Texture="rbxassetid://16845151306",ZOffset=-1}},
+        		{"P",0,"Swirl",{Brightness=30,Drag=1,FlipbookFramerate={"NR",30,30},FlipbookLayout={"EV","ParticleFlipbookLayout",3},Lifetime={"NR",1,1},LockedToPart=true,Rate=6,Rotation={"NR",-360,360},Size={"NS",{{0,0.35057,0},{1,0.35057,0}}},Speed={"NR",0.0017529,0.0017529},SpreadAngle={"V2",360,-360},Texture="rbxassetid://13603608421",ZOffset=0.1}},
+        		{"P",0,"",{EmissionDirection={"EV","NormalId",5},Enabled=false,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",90,90},SpreadAngle={"V2",5,5},Squash={"NS",{{0,1,0},{1,1,0}}},Texture="rbxassetid://16846880120",Transparency={"NS",{{0,1,0},{0.12844,0.4,0},{1,1,0}}},ZOffset=0.5}},
+        		{"B",5,"Beam5",3,4,{Brightness=8,FaceCamera=true,Texture="rbxassetid://120225055902597",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.18552,0.975,0},{0.38425,0.6875,0},{0.74207,0,0},{0.84091,0.88125,0},{1,1,0}}},Width0=0.45819,Width1=0,ZOffset=0.0025}},
+        		{"B",5,"Beam4",3,4,{Brightness=15,Color={"CS",{{0,1,1,1},{0.69896,1,1,1},{1,1,1,1}}},FaceCamera=true,Texture="rbxassetid://12505188370",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.18552,0.975,0},{0.38425,0.6875,0},{0.74207,0,0},{0.84091,0.88125,0},{1,1,0}}},Width0=1.6037,Width1=0.45819,ZOffset=0.003}},
+        		{"B",5,"Beam6",1,4,{Brightness=15,FaceCamera=true,Texture="rbxassetid://12957647371",TextureLength=1.5,TextureSpeed=1.5,Transparency={"NS",{{0,1,0},{0.37156,0.1625,0},{0.64112,0,0},{1,1,0}}},Width0=1.5776,Width1=0.35057,ZOffset=0.006}},
+        		{"P",0,"ToonLightning",{Brightness=5,FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.1,0.3},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=2,Rotation={"NR",-50,-50},Shape={"EV","ParticleEmitterShape",1},ShapeStyle={"EV","ParticleEmitterShapeStyle",1},Size={"NS",{{0,0.52586,0},{1,0.52586,0}}},Speed={"NR",0.0016045,0.0016045},Texture="rbxassetid://88209568981749",ZOffset=1}},
+        		{"P",0,"Ink",{Drag=5,EmissionDirection={"EV","NormalId",5},Enabled=false,FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.6},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",20,20},Texture="rbxassetid://16845151306",ZOffset=-1}},
+        		{"P",0,"Night.eff1",{Brightness=55,Drag=2.75,Lifetime={"NR",0.7,1.21},LightEmission=1,LockedToPart=true,Rate=3,Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,0,0},{0.499,0.058924,0},{1,0,0}}},Speed={"NR",0.17086,0.25629},SpreadAngle={"V2",120,120},Texture="rbxassetid://5789352409",TimeScale=0.25,Transparency={"NS",{{0,1,0},{0.10474,0,0},{0.87905,0,0},{1,1,0}}},ZOffset=0.8}},
+        		{"B",7,"Light line",7,8,{Brightness=5,FaceCamera=true,Texture="rbxassetid://15095562105",Transparency={"NS",{{0,1,0},{0.47395,0.9,0},{1,1,0}}}}},
+        		{"B",7,"Back light",7,8,{Brightness=5,FaceCamera=true,Texture="rbxassetid://15676360429",TextureLength=0.4,TextureSpeed=0.25,Transparency={"NS",{{0,1,0},{0.070588,1,0},{0.47059,0.83125,0},{0.94118,1,0},{1,1,0}}},Width0=2,Width1=3,ZOffset=0.3}},
+        		{"B",7,"twist",7,8,{Brightness=5,FaceCamera=true,Texture="rbxassetid://12397499278",TextureLength=1.2,TextureSpeed=0.6,Transparency={"NS",{{0,1,0},{0.20504,1,0},{0.46891,0.31875,0},{0.8,1,0},{1,1,0}}},Width0=2,Width1=2,ZOffset=0.6}},
+        		{"B",7,"smokie",7,8,{Brightness=5,FaceCamera=true,Texture="rbxassetid://14745647947",TextureSpeed=0.7,Transparency={"NS",{{0,1,0},{0.20504,1,0},{0.45714,0.49375,0},{0.8,1,0},{1,1,0}}},Width0=2,Width1=2,ZOffset=0.3}},
+        		{"B",7,"energy",7,8,{Brightness=5,FaceCamera=true,Texture="rbxassetid://14744367722",TextureLength=0.5,TextureSpeed=0.7,Transparency={"NS",{{0,1,0},{0.2605,1,0},{0.47395,0.85,0},{0.75294,1,0},{1,1,0}}},Width0=2,Width1=2,ZOffset=-0.2}},
+        		{"P",9,"Glow",{Brightness=5,Drag=1,FlipbookFramerate={"NR",32,32},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LightEmission=0.4,Rotation={"NR",0,360},Size={"NS",{{0,2.9615,0},{0.1,3.3696,0},{0.2,3.7285,0},{0.3,4.0726,0},{0.4,4.419,0},{0.5,4.7799,0},{0.6,5.1669,0},{0.7,5.594,0},{0.8,6.0807,0},{0.9,6.6605,0},{1,7.4038,0}}},Speed={"NR",0.74039,1.4808},SpreadAngle={"V2",360,360},Texture="rbxassetid://15416507090",Transparency={"NS",{{0,1,0},{0.387,0.991,0},{1,1,0}}},ZOffset=6}},
+        		{"P",9,"Spec",{Acceleration={"V3",0,1,0},Brightness=7,FlipbookFramerate={"NR",32,32},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=0.4,Rate=10,RotSpeed={"NR",-100,100},Rotation={"NR",0,360},Size={"NS",{{0,0,0},{0.6,0.4,0.1},{1,0,0}}},Speed={"NR",1,2},SpreadAngle={"V2",90,90},Texture="rbxassetid://15414665346",ZOffset=0.5}},
+        		{"P",9,"Halo",{Brightness=10,FlipbookFramerate={"NR",32,32},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,RotSpeed={"NR",60,60},Rotation={"NR",0,360},Size={"NS",{{0,2,0},{1,3,0}}},Speed={"NR",0.1,0.1},Texture="rbxassetid://12591390025",Transparency={"NS",{{0,1,0},{0.47899,0.9875,0},{1,1,0}}},ZOffset=1}},
+        		{"P",9,"StarFlickRainbow3",{Brightness=3,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},Drag=4,FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.25,0.3},LightEmission=1,LockedToPart=true,Rate=7,RotSpeed={"NR",-5,5},Rotation={"NR",180,180},Size={"NS",{{0,0.67621,0.021132},{0.1,0.68317,0.021132},{0.2,0.6894,0.021132},{0.3,0.69493,0.021132},{0.4,0.69983,0.021132},{0.5,0.70413,0.021132},{0.6,0.70789,0.021132},{0.7,0.71116,0.021132},{0.8,0.71399,0.021132},{0.9,0.71641,0.021132},{1,0.71848,0.021132},{1,0.71848,0.021132}}},Speed={"NR",0.00050209,0.00050209},Squash={"NS",{{0,0.225,0},{1,0.225,0}}},Texture="http://www.roblox.com/asset/?id=16736261968",TimeScale=0.15,Transparency={"NS",{{0,1,0},{0.19595,0.9,0},{0.29054,0.83125,0},{0.52449,0.84375,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",9,"flare4",{Brightness=5,Lifetime={"NR",0.4,0.7},LightEmission=1,LockedToPart=true,Rate=5,RotSpeed={"NR",-22,33},Rotation={"NR",-180,180},Size={"NS",{{0,0.66375,0.066375},{0.1,0.67039,0.066375},{0.2,0.67703,0.066375},{0.3,0.68367,0.066375},{0.4,0.6903,0.066375},{0.5,0.69694,0.066375},{0.6,0.70358,0.066375},{0.7,0.71022,0.066375},{0.8,0.71685,0.066375},{0.9,0.72349,0.066375},{1,0.73013,0.066375},{1,0.73013,0.066375}}},Speed={"NR",0.00033188,0.00033188},Texture="rbxassetid://18853619122",TimeScale=0.3,Transparency={"NS",{{0,1,0},{0.49961,0.85802,0},{1,1,0}}},ZOffset=2.3437}},
+        		{"P",9,"Light shine",{Brightness=10,FlipbookFramerate={"NR",32,32},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Size={"NS",{{0,5.6875,0},{1,10,0}}},Speed={"NR",1,1},SpreadAngle={"V2",360,360},Squash={"NS",{{0,1.4625,0},{1,-3,0}}},Texture="rbxassetid://12483547231",Transparency={"NS",{{0,1,0},{0.48739,0.95625,0},{1,1,0}}},ZOffset=50}},
+        		{"P",9,"Light shine",{Brightness=10,FlipbookFramerate={"NR",32,32},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",1},Rotation={"NR",90,90},Size={"NS",{{0,1,0},{0.23179,1.1875,0},{1,0,0}}},Speed={"NR",1,1},SpreadAngle={"V2",360,360},Squash={"NS",{{0,0.075,0},{1,-3,0}}},Texture="rbxassetid://12483561300",Transparency={"NS",{{0,1,0},{0.48739,0.95625,0},{1,1,0}}}}},
+        		{"P",9,"lensFlare",{Brightness=5,EmissionDirection={"EV","NormalId",0},FlipbookFramerate={"NR",0,0},FlipbookStartRandom=true,Lifetime={"NR",0.4,0.7},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=5,Rotation={"NR",90,90},Size={"NS",{{0,0.66375,0.066375},{0.1,0.67039,0.066375},{0.2,0.67703,0.066375},{0.3,0.68367,0.066375},{0.4,0.6903,0.066375},{0.5,0.69694,0.066375},{0.6,0.70358,0.066375},{0.7,0.71022,0.066375},{0.8,0.71685,0.066375},{0.9,0.72349,0.066375},{1,0.73013,0.066375},{1,0.73013,0.066375}}},Speed={"NR",0.00050584,0.00050584},Squash={"NS",{{0,-0.12843,0},{0.41241,2.0326,0},{1,2.8098,0}}},Texture="rbxassetid://14010452821",TimeScale=0.3,Transparency={"NS",{{0,1,0},{0.49961,0.85802,0},{1,1,0}}},ZOffset=0.325}},
+        		{"P",9,"reachifylineglow",{Brightness=5,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},EmissionDirection={"EV","NormalId",0},FlipbookFramerate={"NR",0.91,0.91},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,0.7},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=4.55,Rotation={"NR",90,90},Size={"NS",{{0,0.66375,0.066375},{0.1,0.67039,0.066375},{0.2,0.67703,0.066375},{0.3,0.68367,0.066375},{0.4,0.6903,0.066375},{0.5,0.69694,0.066375},{0.6,0.70358,0.066375},{0.7,0.71022,0.066375},{0.8,0.71685,0.066375},{0.9,0.72349,0.066375},{1,0.73013,0.066375},{1,0.73013,0.066375}}},Speed={"NR",0.00050584,0.00050584},Squash={"NS",{{0,0.084866,0},{1,1.9125,0}}},Texture="rbxassetid://15393254529",TimeScale=0.3,Transparency={"NS",{{0,1,0},{0.49961,0.85802,0},{1,1,0}}},ZOffset=0.42}},
+        		{"B",12,"",12,19,{Brightness=8,Color={"CS",{{0,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},CurveSize0=-1.75,CurveSize1=-0.35,FaceCamera=true,LightEmission=1,Segments=100,Texture="rbxassetid://16010627582",TextureLength=2.625,TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.36364,0.7,0},{0.49683,0,0},{0.73973,0.875,0},{1,1,0}}},Width0=1.25,Width1=0.1}},
+        		{"B",13,"",13,18,{Brightness=8,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},CurveSize0=-1.75,CurveSize1=-0.35,FaceCamera=true,LightEmission=1,Segments=100,Texture="rbxassetid://16010627582",TextureLength=2.625,TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.36364,0.7,0},{0.49683,0,0},{0.73973,0.875,0},{1,1,0}}},Width0=1.25,Width1=0.1}},
+        		{"B",14,"",14,17,{Brightness=8,Color={"CS",{{0,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},CurveSize0=-1.75,CurveSize1=-0.35,FaceCamera=true,LightEmission=1,Segments=100,Texture="rbxassetid://16010627582",TextureLength=2.625,TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.36364,0.7,0},{0.49683,0,0},{0.73973,0.875,0},{1,1,0}}},Width0=1.25,Width1=0.1}},
+        		{"B",15,"",15,16,{Brightness=8,Color={"CS",{{0,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},CurveSize0=-1.75,CurveSize1=-0.35,FaceCamera=true,LightEmission=1,Segments=100,Texture="rbxassetid://16010627582",TextureLength=2.625,TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.36364,0.7,0},{0.49683,0,0},{0.73973,0.875,0},{1,1,0}}},Width0=1.25,Width1=0.1}},
+        		{"B",20,"",21,22,{Brightness=2,LightEmission=1,Texture="rbxassetid://76397637545058",TextureLength=1.625,TextureSpeed=0.75,Transparency={"NS",{{0,0.35,0},{0.1,0.36664,0},{0.2,0.3865,0},{0.3,0.41046,0},{0.4,0.43981,0},{0.5,0.47654,0},{0.6,0.5239,0},{0.7,0.58757,0},{0.8,0.6782,0},{0.9,0.81382,0},{1,1,0}}},Width0=0.95485,Width1=0.53047,ZOffset=0.02}},
+        		{"B",24,"",26,25,{Brightness=5,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},LightEmission=1,Texture="rbxassetid://76397637545058",TextureLength=1.125,Transparency={"NS",{{0,0.5,0},{0.1,0.60918,0},{0.2,0.71016,0},{0.3,0.79503,0},{0.4,0.86089,0},{0.5,0.90951,0},{0.6,0.94432,0},{0.7,0.96856,0},{0.8,0.98476,0},{0.9,0.99479,0},{1,1,0}}},Width0=1.3169,Width1=0.41153}},
+        		{"B",24,"pink",26,25,{Brightness=7,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},LightEmission=1,Texture="http://www.roblox.com/asset/?id=18661643035",TextureLength=0.375,TextureSpeed=0.9,Transparency={"NS",{{0,0.5,0},{0.1,0.60918,0},{0.2,0.71016,0},{0.3,0.79503,0},{0.4,0.86089,0},{0.5,0.90951,0},{0.6,0.94432,0},{0.7,0.96856,0},{0.8,0.98476,0},{0.9,0.99479,0},{1,1,0}}},Width0=1.0371,Width1=1.0371,ZOffset=0.022}},
+        		{"B",27,"pink",28,29,{Brightness=7,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},LightEmission=1,Texture="http://www.roblox.com/asset/?id=18661643035",TextureLength=0.375,TextureSpeed=0.9,Transparency={"NS",{{0,0.5,0},{0.1,0.60918,0},{0.2,0.71016,0},{0.3,0.79503,0},{0.4,0.86089,0},{0.5,0.90951,0},{0.6,0.94432,0},{0.7,0.96856,0},{0.8,0.98476,0},{0.9,0.99479,0},{1,1,0}}},Width0=1.0371,Width1=1.0371,ZOffset=0.022}},
+        		{"B",27,"",28,29,{Brightness=5,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},LightEmission=1,Texture="rbxassetid://76397637545058",TextureLength=1.125,Transparency={"NS",{{0,0.5,0},{0.1,0.60918,0},{0.2,0.71016,0},{0.3,0.79503,0},{0.4,0.86089,0},{0.5,0.90951,0},{0.6,0.94432,0},{0.7,0.96856,0},{0.8,0.98476,0},{0.9,0.99479,0},{1,1,0}}},Width0=1.3169,Width1=0.41153}},
+        		{"B",30,"",31,32,{Brightness=2,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},LightEmission=1,Texture="rbxassetid://76397637545058",TextureLength=1.625,TextureSpeed=0.75,Transparency={"NS",{{0,0.35,0},{0.1,0.36664,0},{0.2,0.3865,0},{0.3,0.41046,0},{0.4,0.43981,0},{0.5,0.47654,0},{0.6,0.5239,0},{0.7,0.58757,0},{0.8,0.6782,0},{0.9,0.81382,0},{1,1,0}}},Width0=0.95485,Width1=0.53047,ZOffset=0.02}},
+        		{"P",33,"flare2",{Brightness=3,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},Lifetime={"NR",0.4,0.7},LightEmission=1,LockedToPart=true,Rate=5,RotSpeed={"NR",-22,33},Rotation={"NR",-180,180},Size={"NS",{{0,0.70586,0},{0.5,0.77644,0.035293},{1,0.70586,0}}},Speed={"NR",0.00035293,0.00035293},Squash={"NS",{{0,-0.5,0},{0.5,-0.5,0},{1,-0.5,0}}},Texture="rbxassetid://18853582777",TimeScale=0.3,Transparency={"NS",{{0,1,0},{0.5,0.84568,0},{1,1,0}}},ZOffset=1.23}},
+        		{"P",33,"reachifylineglow",{Brightness=5,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},EmissionDirection={"EV","NormalId",0},FlipbookFramerate={"NR",0.91,0.91},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,0.7},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=4.55,Rotation={"NR",90,90},Size={"NS",{{0,0.82716,0.082716},{0.1,0.83543,0.082716},{0.2,0.8437,0.082716},{0.3,0.85197,0.082716},{0.4,0.86025,0.082716},{0.5,0.86852,0.082716},{0.6,0.87679,0.082716},{0.7,0.88506,0.082716},{0.8,0.89333,0.082716},{0.9,0.9016,0.082716},{1,0.90988,0.082716},{1,0.90988,0.082716}}},Speed={"NR",0.00063037,0.00063037},Squash={"NS",{{0,0.084866,0},{1,1.9125,0}}},Texture="rbxassetid://15393254529",TimeScale=0.3,Transparency={"NS",{{0,1,0},{0.49961,0.85802,0},{1,1,0}}},ZOffset=0.42}},
+        		{"P",33,"7",{Brightness=5,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},Lifetime={"NR",1,1.6},LightEmission=1,LockedToPart=true,Rate=4,RotSpeed={"NR",-300,-100},Rotation={"NR",-360,360},Size={"NS",{{0,0.11132,0.060719},{0.095458,0.48293,0.16959},{0.32746,0.79563,0.18574},{1,1.1594,0.32502}}},Speed={"NR",4.3499e-05,4.3499e-05},Texture="rbxassetid://12738486019",TimeScale=0.5,Transparency={"NS",{{0,1,0},{0.24789,1,0},{0.38584,1,0},{0.50211,1,0},{0.54651,0.54375,0},{0.67072,0.86875,0},{0.84619,0.975,0},{1,1,0}}}}},
+        		{"P",33,"flare4",{Brightness=5,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},Lifetime={"NR",0.4,0.7},LightEmission=1,LockedToPart=true,Rate=5,RotSpeed={"NR",-22,33},Rotation={"NR",-180,180},Size={"NS",{{0,0.82716,0.082716},{0.1,0.83543,0.082716},{0.2,0.8437,0.082716},{0.3,0.85197,0.082716},{0.4,0.86025,0.082716},{0.5,0.86852,0.082716},{0.6,0.87679,0.082716},{0.7,0.88506,0.082716},{0.8,0.89333,0.082716},{0.9,0.9016,0.082716},{1,0.90988,0.082716},{1,0.90988,0.082716}}},Speed={"NR",0.00041358,0.00041358},Texture="rbxassetid://18853619122",TimeScale=0.3,Transparency={"NS",{{0,1,0},{0.49961,0.85802,0},{1,1,0}}},ZOffset=2.3437}},
+        		{"P",33,"StarFlickRainbow2",{Brightness=3,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},Drag=4,FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.35,0.42},LightEmission=1,LockedToPart=true,Rate=5,RotSpeed={"NR",-10,20},Rotation={"NR",-180,-180},Size={"NS",{{0,0.5043,0},{0.1,0.55263,0},{0.2,0.58969,0},{0.3,0.61743,0},{0.4,0.63826,0},{0.5,0.65407,0},{0.6,0.66623,0},{0.7,0.67568,0},{0.8,0.68307,0},{0.9,0.68887,0},{1,0.69341,0},{1,0.69341,0}}},Speed={"NR",0.00038011,0.00038011},Texture="rbxassetid://16173734662",TimeScale=0.22,Transparency={"NS",{{0,1,0},{0.22297,0.71875,0},{0.30574,0.9625,0},{0.50507,0.79375,0},{1,1,0}}},ZOffset=0.3}},
+        		{"P",33,"StarFlickRainbow3",{Brightness=3,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},Drag=4,FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.25,0.3},LightEmission=1,LockedToPart=true,Rate=7,RotSpeed={"NR",-5,5},Rotation={"NR",180,180},Size={"NS",{{0,0.84269,0.026334},{0.1,0.85136,0.026334},{0.2,0.85911,0.026334},{0.3,0.86601,0.026334},{0.4,0.87211,0.026334},{0.5,0.87748,0.026334},{0.6,0.88217,0.026334},{0.7,0.88624,0.026334},{0.8,0.88976,0.026334},{0.9,0.89278,0.026334},{1,0.89536,0.026334},{1,0.89536,0.026334}}},Speed={"NR",0.0006257,0.0006257},Squash={"NS",{{0,0.225,0},{1,0.225,0}}},Texture="http://www.roblox.com/asset/?id=16736261968",TimeScale=0.15,Transparency={"NS",{{0,1,0},{0.19595,0.9,0},{0.29054,0.83125,0},{0.52449,0.84375,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",33,"lensFlare",{Brightness=5,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},EmissionDirection={"EV","NormalId",0},FlipbookFramerate={"NR",0,0},FlipbookStartRandom=true,Lifetime={"NR",0.4,0.7},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=5,Rotation={"NR",90,90},Size={"NS",{{0,0.82716,0.082716},{0.1,0.83543,0.082716},{0.2,0.8437,0.082716},{0.3,0.85197,0.082716},{0.4,0.86025,0.082716},{0.5,0.86852,0.082716},{0.6,0.87679,0.082716},{0.7,0.88506,0.082716},{0.8,0.89333,0.082716},{0.9,0.9016,0.082716},{1,0.90988,0.082716},{1,0.90988,0.082716}}},Speed={"NR",0.00063037,0.00063037},Squash={"NS",{{0,-0.12843,0},{0.41241,2.0326,0},{1,2.8098,0}}},Texture="rbxassetid://14010452821",TimeScale=0.3,Transparency={"NS",{{0,1,0},{0.49961,0.85802,0},{1,1,0}}},ZOffset=0.325}},
+        		{"P",34,"Glow2",{Brightness=0.5,Color={"CS",{{0,0.85882,0.85882,0.85882},{0.18307,0.85882,0.85882,0.85882},{0.34197,0.85882,0.85882,0.85882},{0.69257,0.85882,0.85882,0.85882},{0.82038,0.85882,0.85882,0.85882},{1,0.85882,0.85882,0.85882}}},EmissionDirection={"EV","NormalId",3},Lifetime={"NR",1.2,1.8},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=4,Size={"NS",{{0,1.6238,0},{1,3.2477,0.1515}}},Speed={"NR",0.00024888,0.00024888},Squash={"NS",{{0,-0.825,0},{1,-0.825,0}}},Texture="rbxassetid://1075864321",Transparency={"NS",{{0,1,0},{0.49916,0.8,0},{1,1,0}}},ZOffset=-0.1}},
+        		{"L",6,"PointLight",{Range=6,Color={"C3",0.9098,0.9098,0.9098}}},
+        		{"P",0,"ToonLightning",{Brightness=5,FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.6},LightEmission=1,LockedToPart=true,Rate=2,Rotation={"NR",-360,360},Size={"NS",{{0,0.52586,0},{1,0.52586,0}}},Speed={"NR",0.016045,0.016045},Texture="rbxassetid://98371801305515",ZOffset=1}},
+        		{"T",37,"NewTrail",37,38,{Brightness=26,Lifetime=0.4,MinLength=0.15,Texture="rbxassetid://2443461141",TextureLength=0.625,Transparency={"NS",{{0,0,0},{0.52459,0.69333,0},{0.79098,0.92889,0},{1,0.95556,0}}},WidthScale={"NS",{{0,1,0},{1,0.18125,0}}}}},
+        		{"P",0,"Ink",{Drag=8,EmissionDirection={"EV","NormalId",5},Enabled=false,FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",30,30},Texture="rbxassetid://16845151306",Transparency={"NS",{{0,0,0},{1,1,0}}}}},
+        		{"P",39,"Glow",{Brightness=0.5,EmissionDirection={"EV","NormalId",2},FlipbookFramerate={"NR",30,30},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.3,0.5},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Size={"NS",{{0,2.6293,0},{1,2.6293,0}}},Speed={"NR",0.00029679,0.00029679},Squash={"NS",{{0,-0.6,0},{1,-0.6,0}}},Texture="rbxassetid://12159555294",Transparency={"NS",{{0,0.87432,0},{1,1,0}}},ZOffset=1}},
+        		{"P",41,"PulseRipple",{Brightness=10,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",24,24},FlipbookMode={"EV","ParticleFlipbookMode",1},FlipbookStartRandom=true,Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,0.87643,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://12188469991",TimeScale=0.5,Transparency={"NS",{{0,1,0},{0.50106,0.9125,0},{1,1,0}}},ZOffset=0.3}},
+        		{"P",41,"Star",{Brightness=10,Lifetime={"NR",0.5,1},LockedToPart=true,Rate=5,Size={"NS",{{0,0.87643,0},{1,0.87643,0}}},Speed={"NR",0.0017529,0.0017529},Squash={"NS",{{0,-1,0},{1,-1,0}}},Texture="rbxassetid://12090248314",Transparency={"NS",{{0,1,0},{0.20032,0,0},{0.79968,0.80625,0},{1,1,0}}},ZOffset=1}},
+        		{"P",41,"Swirl 2",{Brightness=10,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,1.0298,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://15132691346",Transparency={"NS",{{0,1,0},{0.42548,0.79375,0},{0.78066,0.89375,0},{1,1,0}}}}},
+        		{"P",41,"Swirl",{Brightness=0,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LockedToPart=true,Rate=5,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,1.7529,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://11855202643",Transparency={"NS",{{0,1,0},{0.19979,0.76875,0},{0.70032,0.88125,0},{1,1,0}}},ZOffset=-1}},
+        		{"P",41,"PulseRing",{Brightness=10,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LockedToPart=true,Rate=1,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,0.87643,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://14762708319",ZOffset=0.2}},
+        		{"P",41,"Pulse",{Brightness=10,FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LockedToPart=true,Rate=3,Size={"NS",{{0,0,0},{1,1.5009,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://13992057187",Transparency={"NS",{{0,1,0},{0.20032,0.9,0},{0.80074,0.9,0},{1,1,0}}},ZOffset=1}},
+        		{"P",0,"Lightning",{Brightness=50,Drag=13,EmissionDirection={"EV","NormalId",3},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.25,0.55},LockedToPart=true,Rate=8,Rotation={"NR",-360,360},Size={"NS",{{0,0.87643,0},{1,0.87643,0}}},Speed={"NR",0.0017529,0.0017529},SpreadAngle={"V2",360,-360},Texture="rbxassetid://15057992719"}},
+        		{"P",0,"",{EmissionDirection={"EV","NormalId",5},Enabled=false,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",90,90},SpreadAngle={"V2",12,12},Squash={"NS",{{0,0.5,0},{1,0.5,0}}},Texture="rbxassetid://16860267787",Transparency={"NS",{{0,1,0},{0.12844,0.4,0},{1,1,0}}},ZOffset=0.5}},
+        		{"B",43,"Glow",36,43,{Brightness=7,CurveSize0=2.4952,CurveSize1=-2.4952,FaceCamera=true,LightEmission=0.4,Segments=30,Texture="rbxassetid://15095562105",TextureLength=15,TextureMode={"EV","TextureMode",1},TextureSpeed=-0.1,Transparency={"NS",{{0,1,0},{0.58824,0.875,0},{1,1,0}}},Width0=6.6538,Width1=3.3269}},
+        		{"B",43,"Vine",36,43,{Brightness=7,CurveSize0=2.4952,CurveSize1=-2.4952,FaceCamera=true,LightEmission=0.4,Segments=30,Texture="rbxassetid://16010627582",TextureLength=2,TextureMode={"EV","TextureMode",1},TextureSpeed=-0.15,Transparency={"NS",{{0,1,0},{0.4605,0.25,0},{0.90588,0,0},{1,1,0}}},Width0=0.41587,Width1=1.6635,ZOffset=1}},
+        		{"B",43,"Aura",36,43,{Brightness=7,CurveSize0=2.4952,CurveSize1=-2.4952,FaceCamera=true,LightEmission=0.4,Segments=30,Texture="rbxassetid://15875596068",TextureLength=15,TextureMode={"EV","TextureMode",1},TextureSpeed=-0.2,Transparency={"NS",{{0,1,0},{0.58824,0.925,0},{1,1,0}}},Width0=2.4952,Width1=3.3269,ZOffset=1.5}},
+        		{"P",0,"ToonLightning",{Brightness=5,FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.3,0.3},LightEmission=1,LockedToPart=true,Rate=2,Rotation={"NR",-360,360},Size={"NS",{{0,0.52586,0},{1,0.52586,0}}},Speed={"NR",0.024275,0.024275},Texture="rbxassetid://98016283117283",ZOffset=1}},
+        		{"P",0,"Dots",{Brightness=5,Lifetime={"NR",1.5,1.5},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.50106,1.052,1.052},{1,0,0}}},Speed={"NR",0,0},SpreadAngle={"V2",720,720},Texture="rbxassetid://5789352409",Transparency={"NS",{{0,1,0},{0.5,0.9,0},{1,1,0}}},ZOffset=0.65}},
+        		{"B",0,"Beam4",35,3,{Color={"CS",{{0,0.19608,0.19608,0.19608},{1,0.19608,0.19608,0.19608}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://16010627582",TextureSpeed=-1,Transparency={"NS",{{0,1,0},{0.068182,0.8,0},{0.37579,0,0},{0.90063,0,0},{1,1,0}}},Width0=3.5057,Width1=0.52586,ZOffset=-0.003}}
+        	} },
+        	["Afterimage"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"AttachmentBeam4",{-0.016846,3.0518e-05,-3.8478,0,0,-1,0,1,0,1,0,0}},
+        		{"A",0,"T2",{-0.0076743,0.059106,1.0676,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"AttachmentBeam5",{-0.0012207,-0.046844,-5.6086,0,0,-1,0,1,0,1,0,0}},
+        		{"A",0,"Attachment3",{0.0020752,0.016785,0.96039,0,0,-1,0,1,0,1,0,0}},
+        		{"A",0,"AttachmentBeam2",{-0.0012207,3.0518e-05,-5.4487,0,0,-1,0,1,0,1,0,0}},
+        		{"A",0,"T1",{0.0016493,0.063111,-1.5605,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"AttachmentBeam1",{-0.016968,0,1.7526,0,0,-1,0,1,0,1,0,0}},
+        		{"B",1,"Beam4",7,5,{Brightness=15,Color={"CS",{{0,0.57451,0.57451,0.57451},{0.69896,0.5,0.5,0.5},{1,0.63922,0.63922,0.63922}}},FaceCamera=true,Texture="rbxassetid://12505188370",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.18552,0.975,0},{0.38425,0.6875,0},{0.74207,0,0},{0.84091,0.88125,0},{1,1,0}}},Width0=2.5064,Width1=0.71613,ZOffset=0.003}},
+        		{"B",1,"Beam5",7,5,{Brightness=8,Color={"CS",{{0,0.63922,0.63922,0.63922},{1,0.63922,0.63922,0.63922}}},FaceCamera=true,Texture="rbxassetid://120225055902597",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.18552,0.975,0},{0.38425,0.6875,0},{0.74207,0,0},{0.84091,0.88125,0},{1,1,0}}},Width0=0.71613,Width1=0,ZOffset=0.0025}},
+        		{"B",1,"Beam6",4,5,{Brightness=15,Color={"CS",{{0,0.57451,0.57451,0.57451},{1,0.57451,0.57451,0.57451}}},FaceCamera=true,Texture="rbxassetid://12957647371",TextureLength=1.5,TextureSpeed=1.5,Transparency={"NS",{{0,1,0},{0.37156,0.1625,0},{0.64112,0,0},{1,1,0}}},Width0=2.4657,Width1=0.54793,ZOffset=0.006}},
+        		{"P",0,"aura",{Brightness=25,Color={"CS",{{0,0.61961,0.61961,0.61961},{0.046713,0.57458,0.57458,0.57458},{0.80277,0.038591,0.038591,0.038591},{1,0,0,0}}},Drag=2.75,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1.25,1.75},LightEmission=-3,LockedToPart=true,Rate=25,Rotation={"NR",-180,180},Size={"NS",{{0,0.37394,0.083216},{0.31024,0.56055,0.071777},{1,0.68544,0.083216}}},Speed={"NR",0.5,7},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://13455668887",Transparency={"NS",{{0,1,0},{0.23489,0,0},{0.72008,0.88767,0},{1,1,0}}},VelocityInheritance=1,ZOffset=-0.3}},
+        		{"B",3,"Beam4",3,7,{Color={"CS",{{0,0.11569,0.11569,0.11569},{1,0.11569,0.11569,0.11569}}},FaceCamera=true,Texture="rbxassetid://10816141940",TextureSpeed=-1,Transparency={"NS",{{0,1,0},{0.068182,0.8,0},{0.37579,0,0},{0.90063,0,0},{1,1,0}}},Width0=2,Width1=0.82189,ZOffset=-0.003}},
+        		{"B",4,"Beam2",4,5,{Brightness=5,Color={"CS",{{0,0.60196,0.60196,0.60196},{1,0.60196,0.60196,0.60196}}},FaceCamera=true,Texture="rbxassetid://124753331461910",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.15328,0.8375,0},{0.22146,0,0},{0.61205,0,0},{0.90433,0,0},{1,0,0}}},Width0=1.0742,Width1=0,ZOffset=0.002}},
+        		{"B",4,"Beam4",4,5,{Brightness=8,Color={"CS",{{0,0.53333,0.53333,0.53333},{1,0.53333,0.53333,0.53333}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://12111970343",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.16596,0.61875,0},{0.46934,0,0},{0.61205,0,0},{0.90433,0,0},{1,0,0}}},Width0=0.35806,Width1=0,ZOffset=0.003}},
+        		{"B",4,"Beam6",4,5,{Brightness=8,Color={"CS",{{0,0.52745,0.52745,0.52745},{1,0.52745,0.52745,0.52745}}},FaceCamera=true,Texture="rbxassetid://6091474388",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.16596,0.61875,0},{0.46934,0,0},{0.61205,0,0},{0.90433,0,0},{1,0,0}}},Width0=0.35806,Width1=0,ZOffset=0.031}},
+        		{"B",4,"Beam3",4,5,{Brightness=5,Color={"CS",{{0,0.68039,0.68039,0.68039},{1,0.68039,0.68039,0.68039}}},FaceCamera=true,Texture="rbxassetid://76397637545058",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.15328,0.8375,0},{0.22146,0,0},{0.61205,0,0},{0.90433,0,0},{1,0,0}}},Width0=0.71613,Width1=0,ZOffset=0.002}},
+        		{"B",4,"Beam5",4,5,{Brightness=8,Color={"CS",{{0,0.63922,0.63922,0.63922},{1,0.63922,0.63922,0.63922}}},FaceCamera=true,Texture="rbxassetid://10528782340",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.16596,0.61875,0},{0.46934,0,0},{0.61205,0,0},{0.90433,0,0},{1,0,0}}},Width0=0.35806,Width1=0,ZOffset=0.0025}},
+        		{"P",0,"ayta",{Brightness=100,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=2.75,EmissionDirection={"EV","NormalId",2},FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1.25,1.5},LightEmission=-3,LockedToPart=true,Rate=25,Rotation={"NR",-180,180},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0.30649,0.068205},{0.30089,0.47862,0.053545},{1,0.55843,0.049083}}},Speed={"NR",0.5,7},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://9612279614",Transparency={"NS",{{0,1,0},{0.17489,0,0},{0.31689,0,0},{0.59889,0.801,0},{1,1,0}}},VelocityInheritance=1,ZOffset=-0.3}},
+        		{"T",6,"NewTrail",6,2,{Brightness=0,Color={"CS",{{0,0.29412,0,0},{1,0.29412,0,0}}},Lifetime=0.4,MinLength=0.15,Texture="rbxassetid://13885100307",TextureLength=0.625,Transparency={"NS",{{0,0,0},{0.52459,0.69333,0},{0.79098,0.92889,0},{1,0.95556,0}}},WidthScale={"NS",{{0,1,0},{1,0.18125,0}}}}},
+        		{"T",6,"NewTrail",6,2,{Lifetime=0.4,MinLength=0.15,Texture="rbxassetid://13885100307",TextureLength=0.625,Transparency={"NS",{{0,0,0},{0.52459,0.69333,0},{0.79098,0.92889,0},{1,0.95556,0}}},WidthScale={"NS",{{0,1,0},{1,0.18125,0}}}}},
+        		{"B",7,"",7,5,{Brightness=5,Color={"CS",{{0,0.58235,0.58235,0.58235},{1,0.58235,0.58235,0.58235}}},FaceCamera=true,Texture="rbxassetid://126936896847976",TextureLength=0.8,TextureSpeed=0,Transparency={"NS",{{0,0,0},{0.61205,0,0},{1,1,0}}},Width0=1.9177,Width1=0}},
+        		{"B",7,"",7,5,{Brightness=15,Color={"CS",{{0,0.65686,0.65686,0.65686},{1,0.65686,0.65686,0.65686}}},FaceCamera=true,Texture="rbxassetid://126936896847976",TextureLength=0.7,TextureSpeed=0,Transparency={"NS",{{0,0,0},{0.83932,1,0},{1,1,0}}},Width0=1.0959,Width1=0,ZOffset=0.001}}
+        	} },
+        	["Void"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"Facing",{-0.023259,0.053922,0.97108,1,0,0,0,1,0,0,0,1}},
+        		{"A",0,"T2",{0.018188,0.11777,-2.0846,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T1",{0.003164,0.1137,0.96749,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"Smoke",{0.0001683,0.068026,1.2389,1,0,0,0,0,1,0,-1,0}},
+        		{"P",1,"Spinning Shard 2",{Brightness=5,Color={"CS",{{0,0.7384,0.40418,1},{1,0.7384,0.40418,1}}},EmissionDirection={"EV","NormalId",0},FlipbookLayout={"EV","ParticleFlipbookLayout",2},Lifetime={"NR",0.29214,1.1685},LightEmission=1,LockedToPart=true,Rate=205.38,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0,0},{0.13716,0.018511,0.018511},{1,0,0}}},Speed={"NR",0.28966,1.4483},Texture="rbxassetid://16924875355",ZOffset=1}},
+        		{"P",1,"Greyscaled Absorbing Circle",{Color={"CS",{{0,0.18434,0,0.38267},{1,0.18434,0,0.38267}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.58427,0.58427},LockedToPart=true,Rate=6.8461,Size={"NS",{{0,0.60474,0},{1,0.60474,0}}},Speed={"NR",0,0},Texture="rbxassetid://16503522199",Transparency={"NS",{{0,1,0},{0.50249,0.34375,0},{1,1,0}}},ZOffset=3}},
+        		{"P",1,"gd",{Brightness=5,Color={"CS",{{0,0.52162,0.24732,1},{1,0.52162,0.24732,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.58427,0.58427},LightEmission=1,LockedToPart=true,Rate=13.692,RotSpeed={"NR",-171.15,-171.15},Rotation={"NR",-180,180},Size={"NS",{{0,1.5232,0.25386},{0.1,1.3709,0.25386},{0.2,1.2185,0.25386},{0.3,1.0662,0.25386},{0.4,0.91391,0.25386},{0.5,0.76159,0.25386},{0.6,0.60927,0.25386},{0.7,0.45695,0.25386},{0.8,0.30464,0.25386},{0.9,0.15232,0.25386},{1,3.0063e-16,0.25386},{1,0,0.25386}}},Speed={"NR",0,0},Texture="rbxassetid://109230620745070",Transparency={"NS",{{0,1,0},{1,0,0}}}}},
+        		{"P",1,"Realistic Fog",{Color={"CS",{{0,0.55394,0.39634,1},{1,0.55394,0.39634,1}}},Drag=3.4231,FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.58427,1.1685},LockedToPart=true,Rate=68.462,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0.40618,0.25386},{0.1,0.45048,0.25386},{0.2,0.48648,0.25386},{0.3,0.52056,0.25386},{0.4,0.55459,0.25386},{0.5,0.58956,0.25386},{0.6,0.6263,0.25386},{0.7,0.66562,0.25386},{0.8,0.70857,0.25386},{0.9,0.75665,0.25386},{1,0.81236,0.25386},{1,0.81236,0.25386}}},Speed={"NR",0,1.4483},Texture="rbxassetid://12878027420",Transparency={"NS",{{0,1,0},{0.5,0.80625,0},{1,1,0}}},ZOffset=-2}},
+        		{"P",1,"gd",{Brightness=0,Color={"CS",{{0,0.029468,0.029468,0.029468},{1,0.029468,0.029468,0.029468}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.58427,0.58427},LockedToPart=true,Rate=13.692,RotSpeed={"NR",-171.15,-171.15},Rotation={"NR",-180,180},Size={"NS",{{0,1.5232,0.25386},{0.1,1.3709,0.25386},{0.2,1.2185,0.25386},{0.3,1.0662,0.25386},{0.4,0.91391,0.25386},{0.5,0.76159,0.25386},{0.6,0.60927,0.25386},{0.7,0.45695,0.25386},{0.8,0.30464,0.25386},{0.9,0.15232,0.25386},{1,3.0063e-16,0.25386},{1,0,0.25386}}},Speed={"NR",0,0},Texture="rbxassetid://109230620745070",Transparency={"NS",{{0,1,0},{0.17955,0.375,0},{1,0,0}}}}},
+        		{"P",1,"Star",{Brightness=15,Color={"CS",{{0,0.7384,0.40418,1},{1,0.7384,0.40418,1}}},EmissionDirection={"EV","NormalId",0},Lifetime={"NR",0.29214,1.1685},LightEmission=1,LockedToPart=true,Rate=205.38,Shape={"EV","ParticleEmitterShape",1},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0,0},{0.13716,0.047599,0.047599},{1,0,0}}},Speed={"NR",0.28966,1.4483},Texture="rbxassetid://130971550682453",ZOffset=1}},
+        		{"P",1,"RainRain",{Color={"CS",{{0,0.52162,0.24732,1},{1,0.52162,0.24732,1}}},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.14607,0.14607},LightEmission=1,LockedToPart=true,Rate=68.462,Size={"NS",{{0,1.9251,0},{0.1,1.9251,0},{0.2,1.9251,0},{0.3,1.9251,0},{0.4,1.9251,0},{0.5,1.9251,0},{0.6,1.9251,0},{0.7,1.9251,0},{0.8,1.9251,0},{0.9,1.9251,0},{1,1.9251,0},{1,1.9251,0}}},Speed={"NR",0,0},Texture="rbxassetid://96288653875185",Transparency={"NS",{{0,1,0},{0.5,0.95,0},{1,1,0}}},ZOffset=-15}},
+        		{"P",1,"Flare146New",{Brightness=5,Color={"CS",{{0,0.52162,0.24732,1},{1,0.52162,0.24732,1}}},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.14607,0.14607},LightEmission=1,LockedToPart=true,Rate=68.462,Size={"NS",{{0,0,0},{0.1,0.10578,0},{0.2,0.21155,0},{0.3,0.31733,0},{0.4,0.42311,0},{0.5,0.52888,0},{0.6,0.63466,0},{0.7,0.74043,0},{0.8,0.84621,0},{0.9,0.95199,0},{1,1.0578,0},{1,1.0278,0}}},Speed={"NR",0,0},Squash={"NS",{{0,-1,0},{1,-1,0}}},Texture="rbxassetid://97371691119032",Transparency={"NS",{{0,0,0},{1,1,0}}}}},
+        		{"P",1,"RainRain",{Color={"CS",{{0,0.52162,0.24732,1},{1,0.52162,0.24732,1}}},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.14607,0.14607},LightEmission=1,LockedToPart=true,Rate=68.462,Size={"NS",{{0,0.93827,0},{0.1,0.93827,0},{0.2,0.93827,0},{0.3,0.93827,0},{0.4,0.93827,0},{0.5,0.93827,0},{0.6,0.93827,0},{0.7,0.93827,0},{0.8,0.93827,0},{0.9,0.93827,0},{1,0.93827,0},{1,0.93827,0}}},Speed={"NR",0,0},Texture="rbxassetid://75319759777784",Transparency={"NS",{{0,1,0},{0.5,0.95,0},{1,1,0}}},ZOffset=-15}},
+        		{"P",1,"Glow",{Brightness=5,Color={"CS",{{0,0.52162,0.24732,1},{1,0.52162,0.24732,1}}},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.14607,0.14607},LightEmission=1,LockedToPart=true,Rate=68.462,Rotation={"NR",-180,180},Size={"NS",{{0,0,0},{0.1,0.10578,0},{0.2,0.21155,0},{0.3,0.31733,0},{0.4,0.42311,0},{0.5,0.52888,0},{0.6,0.63466,0},{0.7,0.74043,0},{0.8,0.84621,0},{0.9,0.95199,0},{1,1.0578,0},{1,1.0278,0}}},Speed={"NR",0,0},Texture="rbxassetid://118283059903716",Transparency={"NS",{{0,0.875,0},{1,1,0}}}}},
+        		{"P",1,"Glow",{Brightness=5,Color={"CS",{{0,0.52162,0.24732,1},{1,0.52162,0.24732,1}}},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.14607,0.14607},LockedToPart=true,Rate=68.462,Rotation={"NR",-180,180},Size={"NS",{{0,0.48355,0},{1,0.48355,0}}},Speed={"NR",0,0},Texture="rbxassetid://80526450313973",ZOffset=-1}},
+        		{"P",1,"Black",{Brightness=0,Color={"CS",{{0,1,0.75423,0.72183},{1,1,0.75423,0.72183}}},Lifetime={"NR",0.29214,0.29214},LockedToPart=true,Rate=17.115,Size={"NS",{{0,0.48355,0},{1,0.48355,0}}},Speed={"NR",0,0},Texture="rbxassetid://107251295851688",Transparency={"NS",{{0,1,0},{0.50125,0,0},{1,1,0}}},ZOffset=2}},
+        		{"P",1,"3D Sun Overlay",{Brightness=5,Color={"CS",{{0,0.52162,0.24732,1},{1,0.43409,0.10222,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.29214,0.29214},LightEmission=1,LockedToPart=true,Rate=6.8461,Size={"NS",{{0,0.33848,0},{1,0.33848,0}}},Speed={"NR",0,0},Texture="rbxassetid://16511930894",Transparency={"NS",{{0,1,0},{0.48878,0.05,0},{1,1,0}}},ZOffset=3}},
+        		{"P",1,"Rotating Disk Circle",{Brightness=5,Color={"CS",{{0,0.52162,0.24732,1},{1,0.52162,0.24732,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.58427,0.58427},LightEmission=1,LockedToPart=true,Rate=10.269,Rotation={"NR",-180,180},Size={"NS",{{0,0,0},{0.1,0.084621,0},{0.2,0.16924,0},{0.3,0.25386,0},{0.4,0.33848,0},{0.5,0.42311,0},{0.6,0.50773,0},{0.7,0.59235,0},{0.8,0.67697,0},{0.9,0.76159,0},{1,0.84621,0},{1,0.84621,0}}},Speed={"NR",0,0},Texture="rbxassetid://17517670087",Transparency={"NS",{{0,1,0},{0.49875,0.54375,0},{1,1,0}}}}},
+        		{"P",1,"water",{Brightness=5,Color={"CS",{{0,0.52162,0.24732,1},{1,0.52162,0.24732,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.584,0.8},LockedToPart=true,Rate=3,Rotation={"NR",-180,180},Size={"NS",{{0,2.7631,0},{1,0,0}}},Speed={"NR",0,0},Texture="rbxassetid://104888060261813",Transparency={"NS",{{0,1,0},{0.30299,0.4,0},{1,0,0}}},ZOffset=-5}},
+        		{"P",1,"High Quality LE Ripple",{Brightness=5,Color={"CS",{{0,0.36918,0,1},{1,0.36918,0,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.58427,0.58427},LightEmission=1,LockedToPart=true,Rate=6.8461,Rotation={"NR",-180,180},Size={"NS",{{0,0,0.25386},{0.1,0.15232,0.25386},{0.2,0.30464,0.25386},{0.3,0.45695,0.25386},{0.4,0.60927,0.25386},{0.5,0.76159,0.25386},{0.6,0.91391,0.25386},{0.7,1.0662,0.25386},{0.8,1.2185,0.25386},{0.9,1.3709,0.25386},{1,1.5232,0.25386},{1,1.5232,0.25386}}},Speed={"NR",0,0},Texture="rbxassetid://14833562946",Transparency={"NS",{{0,0.55625,0},{1,1,0}}}}},
+        		{"P",1,"e",{Brightness=5,Color={"CS",{{0,0.36918,0,1},{1,0.36918,0,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.58427,0.58427},LockedToPart=true,Rate=6.8461,Rotation={"NR",-180,180},Size={"NS",{{0,1.2693,0.21155},{0.1,1.1424,0.21155},{0.2,1.0155,0.21155},{0.3,0.88852,0.21155},{0.4,0.76159,0.21155},{0.5,0.63466,0.21155},{0.6,0.50773,0.21155},{0.7,0.38079,0.21155},{0.8,0.25386,0.21155},{0.9,0.12693,0.21155},{1,1.5032e-16,0.21155},{1,0,0.21155}}},Speed={"NR",0,0},Texture="rbxassetid://90520792878218",Transparency={"NS",{{0,1,0},{0.1995,0.2625,0},{1,0,0}}}}},
+        		{"P",1,"Layered Blank Ripple",{Brightness=5,Color={"CS",{{0,0.52162,0.24732,1},{1,0.52162,0.24732,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.29214,0.29214},LightEmission=1,LockedToPart=true,Rate=13.692,RotSpeed={"NR",-171.15,-171.15},Rotation={"NR",-180,180},Size={"NS",{{0,0.76159,0.12693},{0.1,0.68543,0.12693},{0.2,0.60927,0.12693},{0.3,0.53311,0.12693},{0.4,0.45695,0.12693},{0.5,0.38079,0.12693},{0.6,0.30464,0.12693},{0.7,0.22848,0.12693},{0.8,0.15232,0.12693},{0.9,0.076159,0.12693},{1,1.5032e-16,0.12693},{1,0,0.12693}}},Speed={"NR",0,0},Texture="rbxassetid://11864614229",Transparency={"NS",{{0,1,0},{1,0,0}}}}},
+        		{"T",3,"NewTrail3\\",3,2,{Brightness=0.9,Color={"CS",{{0,0,0,0},{1,0.13725,0,0.24706}}},Lifetime=0.45,LightEmission=1,MinLength=0.15,Texture="rbxassetid://15488087736",Transparency={"NS",{{0,0,0},{1,0,0}}},WidthScale={"NS",{{0,1,0},{0.08247,0.99948,0},{0.1649,0.99453,0},{0.24719,0.98449,0},{0.32922,0.96859,0},{0.41078,0.94583,0},{0.49159,0.915,0},{0.57117,0.87459,0},{0.64883,0.82276,0},{0.72351,0.75739,0},{0.79363,0.67626,0},{0.857,0.57763,0},{0.91103,0.46118,0},{0.95339,0.3289,0},{0.98293,0.18487,0},{1,0.030017,0}}}}},
+        		{"T",3,"NewTrail",3,2,{Brightness=0.9,Color={"CS",{{0,0,0,0},{1,0.13725,0,0.24706}}},Lifetime=0.35,MinLength=0.15,Texture="rbxassetid://11636552631",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}}}},
+        		{"T",3,"NewTrail2",3,2,{Brightness=0.9,Color={"CS",{{0,0,0,0},{1,0.13725,0,0.24706}}},Lifetime=0.35,LightEmission=1,MinLength=0.15,Texture="rbxassetid://4480871448",Transparency={"NS",{{0,0,0},{1,0,0}}},WidthScale={"NS",{{0,1,0},{0.08247,0.99948,0},{0.1649,0.99453,0},{0.24719,0.98449,0},{0.32922,0.96859,0},{0.41078,0.94583,0},{0.49159,0.915,0},{0.57117,0.87459,0},{0.64883,0.82276,0},{0.72351,0.75739,0},{0.79363,0.67626,0},{0.857,0.57763,0},{0.91103,0.46118,0},{0.95339,0.3289,0},{0.98293,0.18487,0},{1,0.030017,0}}}}},
+        		{"P",0,"Smoke1",{Acceleration={"V3",0,0,-0.605},Brightness=1.015,Color={"CS",{{0,0.043137,0.0039216,0.23922},{1,0.043137,0.0039216,0.23922}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1.25},LockedToPart=true,Rate=15,Rotation={"NR",-180,180},Size={"NS",{{0,7e-06,0},{1,0.93011,0}}},Speed={"NR",12,12},Texture="rbxassetid://13167998146",Transparency={"NS",{{0,1,0},{0.20206,0,0},{0.42993,0,0},{0.62232,0,0},{1,1,0}}},VelocityInheritance=0.1,ZOffset=0.01}},
+        		{"P",0,"Smoke2",{Acceleration={"V3",0,0,-0.5},Brightness=0.345,Color={"CS",{{0,0.043137,0.0039216,0.23922},{1,0.043137,0.0039216,0.23922}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1.25},LockedToPart=true,Rate=30,Rotation={"NR",-180,180},Size={"NS",{{0,7e-06,0},{1,0.93011,0}}},Speed={"NR",12,12},Texture="rbxassetid://13487156861",TimeScale=0.55,Transparency={"NS",{{0,1,0},{0.26593,0,0},{0.42993,0,0},{0.72993,0,0},{1,1,0}}},VelocityInheritance=0.1}},
+        		{"P",0,"Spec1",{Brightness=20,Color={"CS",{{0,0.043137,0.0039216,0.23922},{1,0.043137,0.0039216,0.23922}}},Drag=8,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Rate=10,Rotation={"NR",90,90},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.3,Size={"NS",{{0,7e-06,0},{1,0.93011,0}}},Speed={"NR",12,12},Squash={"NS",{{0,0,0},{0.1,0,0},{0.2,0,0},{0.3,0,0},{0.4,0,0},{0.5,0,0},{0.6,0,0},{0.7,0,0},{0.8,0,0},{0.9,0,0},{1,0,0}}},Texture="rbxassetid://13167808508",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=0.1,ZOffset=1}},
+        		{"P",0,"Spec2",{Brightness=20,Color={"CS",{{0,0.043137,0.0039216,0.23922},{1,0.043137,0.0039216,0.23922}}},Drag=8,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Rate=10,Rotation={"NR",90,90},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.3,Size={"NS",{{0,7e-06,0},{1,0.93011,0}}},Speed={"NR",12,12},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0,0},{0.1,0,0},{0.2,0,0},{0.3,0,0},{0.4,0,0},{0.5,0,0},{0.6,0,0},{0.7,0,0},{0.8,0,0},{0.9,0,0},{1,0,0}}},Texture="rbxassetid://13167808508",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=0.1,ZOffset=1}},
+        		{"P",4,"specs",{Brightness=25,Color={"CS",{{0,0.41961,0.24314,1},{1,0.41961,0.24314,1}}},Lifetime={"NR",2.5,4},LightEmission=1,LockedToPart=true,Rate=5,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.045093,0.34884,0.16419},{0.094828,0.52326,0.2907},{0.89589,0.23256,0.033223},{0.92374,0.23256,0.027298},{0.94562,0.17442,0.01899},{1,0,0}}},Speed={"NR",1,3},Texture="rbxassetid://16543943176",ZOffset=1}},
+        		{"P",4,"specsBG",{Color={"CS",{{0,0.41961,0.24314,1},{1,0.41961,0.24314,1}}},Lifetime={"NR",2,2},LightEmission=1,LockedToPart=true,Rate=10,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.045093,0.34884,0.16419},{0.094828,0.52326,0.2907},{0.89589,0.23256,0.033223},{0.92374,0.23256,0.027298},{0.94562,0.17442,0.01899},{1,0,0}}},Texture="rbxassetid://16543943176",ZOffset=1}},
+        		{"P",4,"bg",{Brightness=0.25,Color={"CS",{{0,0.53725,0.32157,1},{1,0.53725,0.32157,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",2,2},LightEmission=0.25,LockedToPart=true,Rate=10,Rotation={"NR",-360,360},Size={"NS",{{0,0.23256,0},{0.03183,0.46512,0},{0.082228,0.69767,0},{0.1565,0.46512,0},{0.73342,1.5116,0.23256},{0.88395,1.3372,0.2907},{1,0,0}}},Speed={"NR",4,4},Texture="rbxassetid://130370813266693",Transparency={"NS",{{0,0,0},{0.69761,0.18452,0},{0.75663,0.23214,0},{0.81963,0.32738,0},{0.87202,0.45833,0},{1,1,0}}},ZOffset=-0.1}},
+        		{"P",4,"fg",{Brightness=0.02,Color={"CS",{{0,0.53725,0.32157,1},{1,0.53725,0.32157,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",3,4},LightEmission=1,LockedToPart=true,Rotation={"NR",-360,360},Size={"NS",{{0,0.23256,0},{0.03183,0.46512,0},{0.082228,0.69767,0},{0.1565,0.46512,0},{0.73342,1.5116,0.23256},{0.88395,1.3372,0.2907},{1,0,0}}},Speed={"NR",1,3},Texture="rbxassetid://130370813266693"}}
+        	} },
+        	["UltraHardSteel"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T2",{0.0090942,-0.027954,1.5207,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"T1",{-0.070679,-0.023926,-4.4705,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"",{-0.016762,-0.0096939,-2.8463,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"a1",{-0.020701,0.032532,-3.5044,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"",{0.01269,0.0080278,0.94463,1,0,0,0,0,1,0,-1,0}},
+        		{"P",0,"Ink",{Drag=8,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",30,30},Squash={"NS",{{0,0,0},{1,0.60656,0}}},Texture="rbxassetid://16845151306",Transparency={"NS",{{0,0,0},{0.10169,0.36612,0},{0.3,0.77049,0},{0.51525,0.9235,0},{1,1,0}}}}},
+        		{"P",0,"Ink",{Drag=8,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",30,30},Texture="rbxassetid://16845151306",Transparency={"NS",{{0,0,0},{1,1,0}}}}},
+        		{"B",0,"",5,3,{Brightness=25,FaceCamera=true,Texture="rbxassetid://112808149793034",Transparency={"NS",{{0,1,0},{0.10835,0.50625,0},{0.83827,0.45625,0},{1,1,0}}},Width1=2}},
+        		{"T",2,"NewTrail",2,1,{Brightness=26,Lifetime=0.4,MinLength=0.15,Texture="rbxassetid://2443461141",TextureLength=0.625,Transparency={"NS",{{0,0,0},{0.52459,0.69333,0},{0.79098,0.92889,0},{1,0.95556,0}}},WidthScale={"NS",{{0,1,0},{1,0.18125,0}}}}},
+        		{"P",0,"Ink",{Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.6},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",20,20},Texture="rbxassetid://16845151306",ZOffset=-1}},
+        		{"P",0,"",{EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",90,90},SpreadAngle={"V2",5,5},Squash={"NS",{{0,1,0},{1,1,0}}},Texture="rbxassetid://16847032740",Transparency={"NS",{{0,1,0},{0.12844,0.4,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",0,"",{EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",90,90},SpreadAngle={"V2",12,12},Squash={"NS",{{0,0.5,0},{1,0.5,0}}},Texture="rbxassetid://16860267787",Transparency={"NS",{{0,1,0},{0.12844,0.4,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",0,"",{EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",90,90},SpreadAngle={"V2",5,5},Squash={"NS",{{0,1,0},{1,1,0}}},Texture="rbxassetid://16846880120",Transparency={"NS",{{0,1,0},{0.12844,0.4,0},{1,1,0}}},ZOffset=0.5}},
+        		{"B",0,"Beam2",5,3,{Brightness=25,FaceCamera=true,Texture="rbxassetid://112808149793034",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.10835,0.50625,0},{0.83827,0.45625,0},{1,1,0}}},Width1=3}},
+        		{"P",0,"Ink",{Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.6},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",20,20},Texture="rbxassetid://16845151306",ZOffset=-1}}
+        	} },
+        	["Whetstone"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T2",{0.018917,0.063162,0.79687,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"",{-0.025514,0.080968,1.0348,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"",{-0.054932,0.063141,-4.9472,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T1",{0.059577,0.038389,-1.5642,1,0,0,0,0,-1,0,1,0}},
+        		{"P",0,"ParticlEmitter",{Acceleration={"V3",0,0,-3.4122},Brightness=0.27,Drag=2.5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=19,Rotation={"NR",5,5},Size={"NS",{{0,0.68032,0.21521},{0.3859,1.4369,0.18562},{1,0.93743,0.21521}}},Speed={"NR",0.5,15},SpreadAngle={"V2",5,5},Squash={"NS",{{0,-0.37133,0},{1,-0.34467,0.18667}}},Texture="rbxassetid://14372610031",Transparency={"NS",{{0,1,0},{0.1459,0,0},{0.6039,0,0},{1,1,0}}},ZOffset=0.05}},
+        		{"P",0,"ParticlEmitter",{Acceleration={"V3",0,0,-1.7136},Brightness=1.065,Drag=2.5,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",1.0501,1.0501},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.95233,1.1904},LightEmission=1,LockedToPart=true,Rate=19,Rotation={"NR",-180,180},Size={"NS",{{0,0.49466,0.11008},{0.31024,1.3697,0.094948},{1,0.90672,0.11008}}},Speed={"NR",0.5,15},SpreadAngle={"V2",5,5},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="http://www.roblox.com/asset/?id=14727016281",Transparency={"NS",{{0,1,0},{0.21485,0.49366,0},{0.57685,0.72366,0},{1,1,0}}},VelocityInheritance=0.2,ZOffset=0.5}},
+        		{"P",0,"ParticlEmitter",{Brightness=0.001,Drag=2.5,EmissionDirection={"EV","NormalId",5},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=19,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,0.79555,0},{0.40125,1.9898,0.02844},{1,1.2147,0.019627}}},Speed={"NR",0.5,15},SpreadAngle={"V2",5,5},Texture="rbxassetid://13167800208",TimeScale=0.5,Transparency={"NS",{{0,1,0},{0.16824,0.371,0},{0.33624,0.69767,0},{1,1,0}}},ZOffset=1}},
+        		{"P",0,"ParticlEmitter",{Brightness=15,Drag=2.5,EmissionDirection={"EV","NormalId",5},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.15,0.25},LightEmission=1,LockedToPart=true,Rate=19,Shape={"EV","ParticleEmitterShape",3},ShapePartial=5,Size={"NS",{{0,0,0},{0.22167,1.4732,0.075955},{0.47316,0.42092,0.060706},{1,0,0}}},Speed={"NR",0.5,15},SpreadAngle={"V2",5,5},Squash={"NS",{{0,0.59533,0},{0.2394,0.45,0},{0.41782,-0.498,0},{0.64182,1.5301,0},{1,-0.5,0}}},Texture="rbxassetid://13167809864",ZOffset=0.7}},
+        		{"B",0,"Beam2",2,3,{Brightness=0.1,FaceCamera=true,LightEmission=1,Texture="rbxassetid://112808149793034",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.10835,0.50625,0},{0.83827,0.45625,0},{1,1,0}}},Width1=3}},
+        		{"P",0,"ParticlEmitter",{Acceleration={"V3",0,0,-1.7136},Brightness=1.065,Drag=2.5,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",1.0501,1.0501},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.71424,0.95233},LightEmission=1,LockedToPart=true,Rate=19,Rotation={"NR",-180,180},Size={"NS",{{0,0.35083,0.35083},{0.1,0.86298,0.35083},{0.2,1.0362,0.35083},{0.3,1.1809,0.35083},{0.4,1.3029,0.35083},{0.5,1.4057,0.35083},{0.6,1.4913,0.35083},{0.7,1.5611,0.35083},{0.8,1.6162,0.35083},{0.9,1.6573,0.35083},{1,0.91216,0.35083}}},Speed={"NR",0.5,15},SpreadAngle={"V2",5,5},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://14066311352",Transparency={"NS",{{0,1,0},{0.21485,0.49366,0},{0.57685,0.72366,0},{1,1,0}}},ZOffset=0.15}},
+        		{"P",0,"ParticlEmitter",{Acceleration={"V3",0,0,-1.7136},Brightness=1.065,Drag=2.5,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",1.0501,1.0501},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.71424,1.4285},LightEmission=1,LockedToPart=true,Rate=19,Rotation={"NR",-180,180},Size={"NS",{{0,0.45883,0.10211},{0.19834,1.196,0.088069},{1,1.0074,0}}},Speed={"NR",0.5,15},SpreadAngle={"V2",5,5},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://15376405698",Transparency={"NS",{{0,1,0},{0.21485,0.49366,0},{0.57685,0.72366,0},{1,1,0}}},ZOffset=0.1}},
+        		{"T",4,"NewTrail",4,1,{Brightness=0.1,Lifetime=0.4,LightEmission=1,MinLength=0.15,Texture="rbxassetid://2443461141",TextureLength=0.625,Transparency={"NS",{{0,0,0},{0.52459,0.69333,0},{0.79098,0.92889,0},{1,0.95556,0}}},WidthScale={"NS",{{0,1,0},{1,0.18125,0}}}}},
+        		{"P",0,"ParticlEmitter",{Brightness=30,Drag=2.5,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LightEmission=1,LockedToPart=true,Rate=19,Shape={"EV","ParticleEmitterShape",3},ShapePartial=4,Size={"NS",{{0,0,0},{0.083521,0.17328,0.063946},{0.15152,0,0},{0.23352,0.17328,0.16635},{0.35752,0,0},{0.49752,0.17328,0.12128},{0.67152,0.0031408,0},{0.84952,0.094752,0},{1,0,0}}},Speed={"NR",0.5,15},SpreadAngle={"V2",5,5},Texture="rbxassetid://13167809864",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},ZOffset=2}},
+        		{"B",0,"",2,3,{Brightness=0.1,FaceCamera=true,LightEmission=1,Texture="rbxassetid://112808149793034",Transparency={"NS",{{0,1,0},{0.10835,0.50625,0},{0.83827,0.45625,0},{1,1,0}}},Width1=2}}
+        	} },
+        	["Solar"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{0.10773,0.20618,2.0283,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T2",{0.084656,0.21356,-2.1454,1,0,0,0,0,1,0,-1,0}},
+        		{"P",0,"Smokefire",{Acceleration={"V3",0,0,-50},Brightness=10,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1},LightEmission=0.1,LockedToPart=true,Rate=32,RotSpeed={"NR",-40,40},Rotation={"NR",-180,180},Size={"NS",{{0,1.1218,0},{0.26546,1.0302,0},{1,1.4886,0}}},Speed={"NR",0.0036206,0.0036206},SpreadAngle={"V2",20,20},Texture="http://www.roblox.com/asset/?id=14727016281",Transparency={"NS",{{0,1,0},{0.17634,0,0},{0.34634,0,0},{0.67834,0,0},{1,1,0}}},VelocityInheritance=1,ZOffset=2}},
+        		{"P",0,"Spec3",{Acceleration={"V3",0,54.327,0},Brightness=40,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Drag=3.25,EmissionDirection={"EV","NormalId",3},FlipbookFramerate={"NR",11.1,11.1},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.5},LightEmission=0.7,Orientation={"EV","ParticleOrientation",2},Rate=32,Shape={"EV","ParticleEmitterShape",2},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0,0},{0.098342,0.028669,0.017379},{0.19234,0.1302,0.013233},{0.50233,0.056801,0.025761},{0.75203,0.033422,0.018491},{1,0,0}}},Speed={"NR",1.7474,3.1203},SpreadAngle={"V2",30,30},Squash={"NS",{{0,-0.238,0},{0.1559,-0.63133,0},{1,-0.8232,0}}},Texture="rbxassetid://14844365304",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=1,ZOffset=1}},
+        		{"P",0,"2",{Acceleration={"V3",0,0,-50},Brightness=10,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.3,0.75},LightEmission=0.35,LockedToPart=true,Rate=32,Rotation={"NR",-180,180},Size={"NS",{{0,0.14961,0},{0.11434,0.38615,0},{1,0.67898,0}}},Speed={"NR",0.18383,1.8383},SpreadAngle={"V2",30,30},Squash={"NS",{{0,0,0},{1,0,0.19067}}},Texture="rbxassetid://12270748864",Transparency={"NS",{{0,1,0},{0.14034,0,0},{0.69834,0,0},{1,1,0}}},ZOffset=0.15}},
+        		{"P",0,"Lightning",{Acceleration={"V3",0,0,-50},Brightness=10,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.15,0.75},LightEmission=1,LockedToPart=true,Rate=32,Rotation={"NR",-180,180},ShapePartial=0.8,Size={"NS",{{0,0,0},{0.28634,0.7707,0.31811},{1,0.98571,0.34611}}},Speed={"NR",0.014594,0.014594},SpreadAngle={"V2",50,50},Squash={"NS",{{0,0,0.29067},{1,-0.0006665,0.292}}},Texture="rbxassetid://79731420700226",Transparency={"NS",{{0,1,0},{0.098344,0,0},{0.79,0,0},{1,1,0}}},VelocityInheritance=1,ZOffset=-1}},
+        		{"T",1,"NewTrail2",1,2,{Brightness=2,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Lifetime=0.35,LightEmission=1,MinLength=0.15,Texture="rbxassetid://16288356764",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}}}},
+        		{"T",1,"NewTrail",1,2,{Brightness=2,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Lifetime=0.35,LightEmission=1,MinLength=0.15,Texture="rbxassetid://4480871448",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{1,0.325,0}}}}},
+        		{"P",0,"1",{Acceleration={"V3",0,0,-50},Brightness=10,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.2,0.5},LightEmission=0.45,LockedToPart=true,Rate=32,Rotation={"NR",-180,180},Size={"NS",{{0,0.16457,0},{0.090342,0.43568,0},{1,0.90233,0}}},Speed={"NR",0.89564,1.489},SpreadAngle={"V2",30,30},Texture="rbxassetid://17082856180",Transparency={"NS",{{0,1,0},{0.19,0,0},{0.94834,0,0},{1,1,0}}},ZOffset=0.1}},
+        		{"P",0,"Spec1",{Acceleration={"V3",0,54.327,0},Brightness=40,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Drag=3.25,EmissionDirection={"EV","NormalId",3},FlipbookFramerate={"NR",11.1,11.1},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.5},LightEmission=0.7,Orientation={"EV","ParticleOrientation",2},Rate=32,Shape={"EV","ParticleEmitterShape",2},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0,0},{0.098342,0.028669,0.017379},{0.19234,0.1302,0.013233},{0.50233,0.056801,0.025761},{0.75203,0.033422,0.018491},{1,0,0}}},Speed={"NR",1.7474,3.1203},SpreadAngle={"V2",30,30},Squash={"NS",{{0,-0.238,0},{0.1559,-0.63133,0},{1,-0.8232,0}}},Texture="rbxassetid://14844365304",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=1,ZOffset=1}},
+        		{"P",0,"Spec2",{Acceleration={"V3",0,54.327,0},Brightness=40,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Drag=3.25,EmissionDirection={"EV","NormalId",3},FlipbookFramerate={"NR",11.1,11.1},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.5},LightEmission=0.7,Orientation={"EV","ParticleOrientation",2},Rate=32,Shape={"EV","ParticleEmitterShape",2},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0,0},{0.098342,0.028669,0.017379},{0.19234,0.1302,0.013233},{0.50233,0.056801,0.025761},{0.75203,0.033422,0.018491},{1,0,0}}},Speed={"NR",1.7474,3.1203},SpreadAngle={"V2",30,30},Squash={"NS",{{0,-0.238,0},{0.1559,-0.63133,0},{1,-0.8232,0}}},Texture="rbxassetid://14844365304",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=1,ZOffset=1}},
+        		{"P",0,"Smoke3",{Acceleration={"V3",0,0,-50},Brightness=10,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Drag=10,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,0.75},LightEmission=1,LockedToPart=true,Rate=32,RotSpeed={"NR",-70,80},Rotation={"NR",-180,180},Size={"NS",{{0,0.14961,0},{0.40234,0.49511,0},{1,1.1508,0}}},Speed={"NR",0.54281,1.6284},SpreadAngle={"V2",50,50},Texture="rbxassetid://11846336638",Transparency={"NS",{{0,1,0},{0.31946,0,0},{0.50177,0,0},{0.80912,0.92173,0},{1,1,0}}},ZOffset=0.2}},
+        		{"P",0,"Spec4",{Acceleration={"V3",0,54.327,0},Brightness=40,Color={"CS",{{0,1,1,1},{0.44637,1,0.41024,0.1782},{1,1,0.28235,0}}},Drag=3.25,EmissionDirection={"EV","NormalId",3},FlipbookFramerate={"NR",11.1,11.1},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.5},LightEmission=0.7,Orientation={"EV","ParticleOrientation",2},Rate=32,Shape={"EV","ParticleEmitterShape",2},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0,0},{0.098342,0.028669,0.017379},{0.19234,0.1302,0.013233},{0.50233,0.056801,0.025761},{0.75203,0.033422,0.018491},{1,0,0}}},Speed={"NR",1.7474,3.1203},SpreadAngle={"V2",30,30},Squash={"NS",{{0,-0.238,0},{0.1559,-0.63133,0},{1,-0.8232,0}}},Texture="rbxassetid://14844365304",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=1,ZOffset=1}}
+        	} },
+        	["Frost"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{0.44377,0.20618,1.7544,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T2",{0.77179,0.21356,-2.7653,1,0,0,0,0,1,0,-1,0}},
+        		{"T",1,"NewTrail2",1,2,{Color={"CS",{{0,0.6,0.91373,1},{0.37889,0.43287,0.72475,1},{0.73702,0.11455,0.36482,1},{1,0,0.23529,1}}},Lifetime=0.4,LightEmission=1,MinLength=0.15,Texture="rbxassetid://10816141940",TextureLength=0.625,Transparency={"NS",{{0,7e-06,0},{0.081456,0.0064684,0},{0.1628,0.023414,0},{0.24391,0.052238,0},{0.32459,0.09459,0},{0.40459,0.15241,0},{0.48351,0.22795,0},{0.56086,0.32374,0},{0.63588,0.4425,0},{0.70763,0.58687,0},{0.77487,0.75895,0},{0.83619,0.95961,0},{0.89019,1,0},{0.93576,1,0},{0.97234,1,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.08247,0.99948,0},{0.1649,0.99453,0},{0.24719,0.98449,0},{0.32922,0.96859,0},{0.41078,0.94583,0},{0.49159,0.915,0},{0.57117,0.87459,0},{0.64883,0.82276,0},{0.72351,0.75739,0},{0.79363,0.67626,0},{0.857,0.57763,0},{0.91103,0.46118,0},{0.95339,0.3289,0},{0.98293,0.18487,0},{1,0.030017,0}}}}},
+        		{"T",1,"NewTrail",1,2,{Color={"CS",{{0,0.6,0.91373,1},{0.37889,0.43287,0.72475,1},{0.73702,0.11455,0.36482,1},{1,0,0.23529,1}}},Lifetime=0.4,LightEmission=1,MinLength=0.15,Texture="rbxassetid://6091329339",TextureLength=0.625,Transparency={"NS",{{0,7e-06,0},{0.028163,0.28004,0},{0.067883,0.53968,0},{0.11775,0.77353,0},{0.17576,0.97944,0},{0.23989,1,0},{0.30846,1,0},{0.3802,1,0},{0.4542,1,0},{0.52984,1,0},{0.60666,1,0},{0.68435,1,0},{0.76267,1,0},{0.84146,1,0},{0.9206,1,0},{1,1,0}}}}}
+        	} },
+        	["Lightning"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"a1",{-0.020667,-3.1098,0.050708,1,0,0,0,-1,0,0,0,-1}},
+        		{"A",0,"T1",{0.0043421,0.1137,0.96749,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"",{-0.016724,0.11029,-2.9,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"",{0.012756,0.12799,0.87719,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T2",{0.010737,0.11777,-1.525,1,0,0,0,0,1,0,-1,0}},
+        		{"P",0,"Lightning",{Brightness=55,Color={"CS",{{0,0.17255,0.32549,1},{1,0.17255,0.32549,1}}},EmissionDirection={"EV","NormalId",5},Lifetime={"NR",0.3,0.6},LightEmission=0.7,Orientation={"EV","ParticleOrientation",2},Rate=49,Rotation={"NR",90,90},Size={"NS",{{0,2.0801,0.79085},{0.030769,0.12941,0},{0.0986,1.4418,0.25882},{0.15128,0.10065,0},{0.20192,0.086275,0},{0.2641,0.31634,0.15817},{0.29295,0.11503,0},{0.35064,0.014379,0},{0.39615,0.17255,0.086275},{0.4706,1.2851,0.18693},{0.51538,0.11503,0},{1,0,0}}},Speed={"NR",0.2,2},SpreadAngle={"V2",10,10},Squash={"NS",{{0,-0.74178,0},{1,2.1269,0}}},Texture="http://www.roblox.com/asset/?id=243098098",TimeScale=0.5,ZOffset=-0.71259}},
+        		{"P",0,"BigBlueLightning",{Brightness=10,Color={"CS",{{0,0.17255,0.32549,1},{1,0.17255,0.32549,1}}},EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.1,0.35},LightEmission=1,Orientation={"EV","ParticleOrientation",2},Rate=49,Rotation={"NR",-360,360},Size={"NS",{{0,1.2859,0},{1,1.2859,0}}},Speed={"NR",0.2,2},SpreadAngle={"V2",10,10},Texture="rbxassetid://11812165090",ZOffset=0.85729}},
+        		{"T",2,"NewTrail",2,5,{Brightness=25,Color={"CS",{{0,0.18824,0.71765,1},{1,0,0.05098,1}}},Lifetime=0.6,LightEmission=1,MinLength=0.15,Texture="rbxassetid://12823611043",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{1,0.28125,0}}}}},
+        		{"T",2,"NewTrail2",2,5,{Color={"CS",{{0,0.18824,0.71765,1},{1,0,0.05098,1}}},Lifetime=0.6,LightEmission=1,MinLength=0.15,Texture="rbxassetid://10816141940",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{1,0.28125,0}}}}},
+        		{"P",0,"Flare1",{Brightness=2.19,Color={"CS",{{0,0.1098,0.39216,1},{1,0.1098,0.39216,1}}},EmissionDirection={"EV","NormalId",5},Lifetime={"NR",0.4,0.4},LightEmission=1,Rate=49,Size={"NS",{{0,1.2906,0},{1,1.2906,0}}},Speed={"NR",0.2,2},SpreadAngle={"V2",10,10},Squash={"NS",{{0,0.1,0},{0.49049,0.8625,0},{1,0.1,0}}},Texture="rbxassetid://3052949762",Transparency={"NS",{{0,1,0},{0.48254,0.44375,0},{1,1,0}}},ZOffset=0.12906}},
+        		{"P",3,"",{Rate=0,Speed={"NR",0.2,2},Texture="rbxassetid://15881443696"}},
+        		{"B",0,"Beam2",4,3,{Brightness=10,Color={"CS",{{0,0,0.29804,0.74118},{1,0,0.29804,0.74118}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://16114023603",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.10835,0.50625,0},{0.83827,0.45625,0},{1,1,0}}},Width1=3}},
+        		{"B",0,"",4,3,{Brightness=10,Color={"CS",{{0,0,0.29804,0.74118},{1,0,0.29804,0.74118}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://16114023603",Transparency={"NS",{{0,1,0},{0.10835,0.50625,0},{0.83827,0.45625,0},{1,1,0}}},Width1=2}},
+        		{"P",0,"Lightning 4",{Brightness=25,Color={"CS",{{0,0.18039,0.46667,1},{1,0.18039,0.46667,1}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.14134,0.42401},LightEmission=0.75,Rate=49,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.2,1.2697,0},{0.4,1.5727,0},{0.6,1.7113,0},{0.8,1.7671,0},{1,1.7728,0}}},Speed={"NR",0.2,2},SpreadAngle={"V2",10,10},Squash={"NS",{{0,0,0},{1,-0.1125,0.6375}}},Texture="rbxassetid://13780092154",Transparency={"NS",{{0,0,0},{0.1,0.084531,0},{0.2,0.1628,0},{0.3,0.24005,0},{0.4,0.31913,0},{0.5,0.40229,0},{0.6,0.4918,0},{0.7,0.59046,0},{0.8,0.70229,0},{0.9,0.83411,0},{1,1,0}}},ZOffset=-0.50778}},
+        		{"P",0,"Glow",{Brightness=0,Color={"CS",{{0,0.058824,0.27843,1},{1,0.058824,0.27843,1}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",30,30},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,0.4},LightEmission=1,LightInfluence=200,Rate=49,RotSpeed={"NR",-360,360},Rotation={"NR",-180,180},Size={"NS",{{0,2.9503,0},{1,2.9503,0}}},Speed={"NR",0.2,2},SpreadAngle={"V2",10,10},Texture="rbxassetid://12159555294",Transparency={"NS",{{0,1,0},{0.072319,0.95625,0},{0.51496,0.9625,0},{1,1,0}}},ZOffset=-0.71259}}
+        	} },
+        	["Soundwave"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"Spik",{-0.052917,-0.01355,-3.6905,0,-1,0,0,0,1,-1,0,0}},
+        		{"A",0,"Top",{0.023023,-0.013666,1.2671,0,-1,0,0,0,1,-1,0,0}},
+        		{"A",0,"Top",{0.023132,-0.013611,-5.0385,0,-1,0,0,0,1,-1,0,0}},
+        		{"A",0,"Spik",{0.022989,-0.013632,1.8903,0,-1,0,0,0,1,-1,0,0}},
+        		{"A",0,"Top",{0.023071,-0.013672,-5.0808,0,-1,0,0,0,1,-1,0,0}},
+        		{"A",0,"T2",{-0.020813,-0.064941,1.5914,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"",{0.02309,-0.090796,1.7965,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"Spik",{0.029968,-0.01355,1.2561,0,-1,0,0,0,1,-1,0,0}},
+        		{"A",0,"Top",{0.022989,-0.013632,-0.095032,0,-1,0,0,0,1,-1,0,0}},
+        		{"A",0,"T1",{-0.0049438,-0.060883,-2.9882,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"",{0.022989,0.063583,1.7965,1,0,0,0,0,1,0,-1,0}},
+        		{"P",0,"Fe",{Brightness=15,Color={"CS",{{0,0.90302,1,0.24985},{0.41451,0.79175,0.87678,0.21906},{0.69775,0.040752,0.045128,0.011275},{1,0,0,0}}},EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.8},LightEmission=-0.5,LockedToPart=true,Rate=27,Rotation={"NR",-360,360},Size={"NS",{{0,0.4375,0.25},{1,0.5625,0}}},Speed={"NR",0.001,15},SpreadAngle={"V2",5,5},Texture="rbxassetid://71298374838414",Transparency={"NS",{{0,0,0},{0.4877,0.86667,0},{1,1,0}}},ZOffset=3}},
+        		{"P",1,"",{Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},Lifetime={"NR",1.2,1.2},LightEmission=1,LockedToPart=true,Rate=1.55,Size={"NS",{{0,2.5,0},{1,2.5,0}}},Speed={"NR",0.0015,0.0015},Squash={"NS",{{0,1.2,0},{1,1.2,0}}},Texture="rbxassetid://17558269216",Transparency={"NS",{{0,1,0},{0.5,0.5,0},{1,1,0}}},ZOffset=-1}},
+        		{"P",2,"Fe",{Brightness=15,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.8},LockedToPart=true,Rate=7,Rotation={"NR",30,30},Size={"NS",{{0,0.5,0},{1,1,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",-360,360},Texture="rbxassetid://16940423887",TimeScale=0.8,Transparency={"NS",{{0,1,0},{0.3,0,0},{0.5,0,0},{1,1,0}}},ZOffset=1.2}},
+        		{"P",2,"Fe",{Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.8},LockedToPart=true,Rate=15,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.1,0.22,0},{0.2,0.44,0},{0.3,0.66,0},{0.4,0.88,0},{0.5,1.1,0},{0.6,1.32,0},{0.7,1.54,0},{0.8,1.76,0},{0.9,1.98,0},{1,2.2,0},{1,2.2,0}}},Speed={"NR",0.001,0.001},Texture="http://www.roblox.com/asset/?id=13712002536",TimeScale=0.8,Transparency={"NS",{{0,1,0},{0.12373,0.875,0},{0.22542,0.74375,0},{0.33051,0.4875,0},{0.39831,0.2875,0},{0.43559,0.0875,0},{0.44576,0,0},{0.50169,0,0},{0.52373,0.13125,0},{0.58983,0.39375,0},{0.67288,0.6,0},{0.7661,0.775,0},{0.86441,0.90625,0},{1,1,0}}},ZOffset=-1.001}},
+        		{"P",2,"Fe",{Brightness=35,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.8},LightEmission=1,LockedToPart=true,Rate=15,Rotation={"NR",-360,360},Size={"NS",{{0,6.5e-06,0},{0.090909,0.13007,0},{0.18182,0.26014,0},{0.27273,0.39022,0},{0.36364,0.52029,0},{0.45455,0.65036,0},{0.54545,0.78043,0},{0.63636,0.9105,0},{0.72727,1.0406,0},{0.81818,1.1707,0},{0.90909,1.3007,0},{1,1.4308,0}}},Speed={"NR",0.0005,0.0005},Texture="rbxassetid://93580499879880",TimeScale=0.8,Transparency={"NS",{{0,1,0},{0.12373,0.875,0},{0.22542,0.74375,0},{0.33051,0.4875,0},{0.39831,0.2875,0},{0.43559,0.0875,0},{0.44576,0,0},{0.50169,0,0},{0.52373,0.13125,0},{0.58983,0.39375,0},{0.67288,0.6,0},{0.7661,0.775,0},{0.86441,0.90625,0},{1,1,0}}},ZOffset=-1}},
+        		{"P",2,"Fe",{Brightness=15,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.8},LightEmission=1,LockedToPart=true,Rate=7,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.1,0.2,0},{0.2,0.4,0},{0.3,0.6,0},{0.4,0.8,0},{0.5,1,0},{0.6,1.2,0},{0.7,1.4,0},{0.8,1.6,0},{0.9,1.8,0},{1,2,0},{1,2,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",-360,360},Texture="rbxassetid://11597664950",TimeScale=0.8,Transparency={"NS",{{0,1,0},{0.3,0,0},{0.5,0,0},{1,1,0}}}}},
+        		{"B",0,"",8,3,{Brightness=5,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},FaceCamera=true,Texture="rbxassetid://89457476532396",TextureLength=0.5,TextureSpeed=0.5,Transparency={"NS",{{0,1,0},{0.2,0.725,0},{1,1,0}}},Width0=8,Width1=2}},
+        		{"P",3,"",{Brightness=15,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},EmissionDirection={"EV","NormalId",0},Lifetime={"NR",0.15,0.15},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=10,Size={"NS",{{0,1.5,0},{0.25,0.75,0},{0.5,1.5,0},{0.75,0.75,0},{1,1.5,0}}},Speed={"NR",0.00075,0.00075},Squash={"NS",{{0,-0.5,0},{1,-0.5,0}}},Texture="rbxassetid://10335418884",TimeScale=0.4,ZOffset=1.001}},
+        		{"B",0,"",8,3,{Brightness=5,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://89457476532396",TextureLength=2,TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.3,0,0},{0.508,0,0},{0.7,0,0},{1,1,0}}},Width0=8,Width1=2,ZOffset=0.001}},
+        		{"P",5,"",{Brightness=15,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},EmissionDirection={"EV","NormalId",0},Lifetime={"NR",0.15,0.15},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=10,Size={"NS",{{0,3,0},{0.25,1.5,0},{0.5,3,0},{0.75,1.5,0},{1,3,0}}},Speed={"NR",0.0015,0.0015},Squash={"NS",{{0,-0.5,0},{1,-0.5,0}}},Texture="rbxassetid://10335418884",TimeScale=0.4,ZOffset=1.001}},
+        		{"P",0,"Fe",{Brightness=10,Color={"CS",{{0,0.94902,1,0.39608},{1,0.94902,1,0.39608}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.8},LockedToPart=true,Rate=27,Rotation={"NR",-360,360},Size={"NS",{{0,0.4375,0.25},{1,0.5625,0}}},Speed={"NR",0.001,15},SpreadAngle={"V2",5,5},Texture="rbxassetid://74370821518906",Transparency={"NS",{{0,0,0},{0.4877,0.86667,0},{1,1,0}}},ZOffset=3}},
+        		{"B",0,"",8,3,{Brightness=3,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},FaceCamera=true,Texture="rbxassetid://82925725443246",Transparency={"NS",{{0,1,0},{0.3,0,0},{0.508,0,0},{0.7,0,0},{1,1,0}}},Width0=8,Width1=2,ZOffset=0.09}},
+        		{"B",0,"",8,3,{Brightness=5,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://89457476532396",TextureLength=0.5,TextureSpeed=0.5,Transparency={"NS",{{0,1,0},{0.3,0,0},{0.508,0,0},{0.7,0,0},{1,1,0}}},Width0=8,Width1=2,ZOffset=0.01}},
+        		{"P",0,"Fe",{Brightness=10,Color={"CS",{{0,0.94902,1,0.39608},{1,0.94902,1,0.39608}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.8},LightEmission=1,LockedToPart=true,Rate=27,Rotation={"NR",-360,360},Size={"NS",{{0,0.4375,0.25},{1,0.5625,0}}},Speed={"NR",0.001,15},SpreadAngle={"V2",5,5},Texture="rbxassetid://93580499879880",Transparency={"NS",{{0,0,0},{0.4877,0.86667,0},{1,1,0}}},ZOffset=3}},
+        		{"P",7,"",{Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},EmissionDirection={"EV","NormalId",5},Lifetime={"NR",1,1},LightEmission=-1,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=2,Rotation={"NR",90,90},Size={"NS",{{0,0.1,0},{1,0.1,0}}},Speed={"NR",0.0007,0.0007},Texture="rbxassetid://867619398",Transparency={"NS",{{0,1,0},{0.5,0,0},{1,1,0}}}}},
+        		{"P",8,"",{Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},Lifetime={"NR",1.2,1.2},LightEmission=1,LockedToPart=true,Rate=1.55,Size={"NS",{{0,3,0},{1,3,0}}},Speed={"NR",0.0015,0.0015},Texture="rbxassetid://17558269216",Transparency={"NS",{{0,1,0},{0.5,0.78,0},{1,1,0}}},ZOffset=-1}},
+        		{"P",9,"",{Brightness=0.975,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},EmissionDirection={"EV","NormalId",0},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=2,Rotation={"NR",90,90},Size={"NS",{{0,2,0},{1,2,0}}},Speed={"NR",0.0007,0.0007},Squash={"NS",{{0,1.5,0},{1,1.5,0}}},Texture="rbxassetid://867619398",Transparency={"NS",{{0,1,0},{0.5,0.85625,0},{1,1,0}}},ZOffset=-0.01}},
+        		{"P",9,"",{Brightness=0.975,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},EmissionDirection={"EV","NormalId",0},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=2,Rotation={"NR",90,90},Size={"NS",{{0,2,0},{1,2,0}}},Speed={"NR",0.0007,0.0007},Squash={"NS",{{0,0.8,0},{1,0.8,0}}},Texture="rbxassetid://11392234336",Transparency={"NS",{{0,1,0},{0.5,0.1,0},{1,1,0}}},ZOffset=2}},
+        		{"T",10,"NewTrail",10,6,{Color={"CS",{{0,0.95294,1,0.54118},{1,0.95294,1,0.54118}}},Lifetime=0.4,LightEmission=1,MinLength=0.15,Texture="rbxassetid://2443461141",TextureLength=0.625,Transparency={"NS",{{0,0,0},{0.52459,0.69333,0},{0.79098,0.92889,0},{1,0.95556,0}}},WidthScale={"NS",{{0,1,0},{1,0.18125,0}}}}},
+        		{"B",0,"",8,3,{Brightness=5,Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},FaceCamera=true,Texture="rbxassetid://89457476532396",TextureLength=0.5,TextureSpeed=0.5,Transparency={"NS",{{0,1,0},{0.2,0.5,0},{0.508,0.5,0},{0.8,0.5,0},{1,1,0}}},Width0=8,Width1=2}},
+        		{"P",11,"",{Color={"CS",{{0,0.90302,1,0.24985},{1,0.90302,1,0.24985}}},EmissionDirection={"EV","NormalId",5},Lifetime={"NR",1,1},LightEmission=-1,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=2,Rotation={"NR",90,90},Size={"NS",{{0,0.1,0},{1,0.1,0}}},Speed={"NR",0.0007,0.0007},Texture="rbxassetid://867619398",Transparency={"NS",{{0,1,0},{0.5,0,0},{1,1,0}}}}}
+        	} },
+        	["Ink"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"a1",{-0.0206,0.084603,-3.728,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T2",{0.42566,0.024134,-0.041847,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"",{0.012723,0.060031,0.72103,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"",{-0.016796,0.042293,-3.0699,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T1",{0.044434,0.028198,-2.5342,1,0,0,0,0,-1,0,1,0}},
+        		{"P",0,"",{Color={"CS",{{0,0,0,0},{1,0,0,0}}},EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",90,90},SpreadAngle={"V2",5,5},Squash={"NS",{{0,1,0},{1,1,0}}},Texture="rbxassetid://16846880120",Transparency={"NS",{{0,1,0},{0.12844,0.4,0},{1,1,0}}},ZOffset=0.5}},
+        		{"B",0,"Beam2",3,4,{Color={"CS",{{0,0,0,0},{1,0,0,0}}},FaceCamera=true,Texture="rbxassetid://112808149793034",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.10835,0.50625,0},{0.83827,0.45625,0},{1,1,0}}},Width1=3}},
+        		{"P",0,"Ink",{Brightness=10,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.6},LightEmission=0.85,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",20,20},Texture="rbxassetid://16860226897",ZOffset=-1}},
+        		{"P",0,"Ink",{Brightness=10,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.6,0.6},LightEmission=0.85,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",20,20},Texture="rbxassetid://16860219678",ZOffset=-1}},
+        		{"B",0,"",3,4,{Color={"CS",{{0,0,0,0},{1,0,0,0}}},FaceCamera=true,Texture="rbxassetid://112808149793034",Transparency={"NS",{{0,1,0},{0.10835,0.50625,0},{0.83827,0.45625,0},{1,1,0}}},Width1=2}},
+        		{"P",0,"Ink",{Brightness=12,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=8,EmissionDirection={"EV","NormalId",5},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",30,30},Texture="rbxassetid://93138557189628",Transparency={"NS",{{0,0,0},{1,1,0}}}}},
+        		{"P",0,"Ink",{Brightness=12,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=8,EmissionDirection={"EV","NormalId",5},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,7e-06,0},{0.10169,1.2,0},{0.29322,2.3,0},{0.59322,2.9,0},{1,2.9,0}}},Speed={"NR",0.00079808,0.00079808},SpreadAngle={"V2",30,30},Squash={"NS",{{0,0,0},{1,0.60656,0}}},Texture="rbxassetid://137744725663143",Transparency={"NS",{{0,0,0},{0.10169,0.36612,0},{0.3,0.77049,0},{0.51525,0.9235,0},{1,1,0}}}}},
+        		{"P",0,"",{Color={"CS",{{0,0,0,0},{1,0,0,0}}},EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",90,90},SpreadAngle={"V2",5,5},Squash={"NS",{{0,1,0},{1,1,0}}},Texture="rbxassetid://16847032740",Transparency={"NS",{{0,1,0},{0.12844,0.4,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",0,"",{Color={"CS",{{0,0,0,0},{1,0,0,0}}},EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",90,90},SpreadAngle={"V2",12,12},Squash={"NS",{{0,0.5,0},{1,0.5,0}}},Texture="rbxassetid://16860267787",Transparency={"NS",{{0,1,0},{0.12844,0.4,0},{1,1,0}}},ZOffset=0.5}},
+        		{"T",5,"NewTrail",5,2,{Brightness=0,Color={"CS",{{0,0.95294,1,0.54118},{1,0.95294,1,0.54118}}},Lifetime=0.4,MinLength=0.15,Texture="rbxassetid://2443461141",TextureLength=0.625,Transparency={"NS",{{0,0,0},{0.52459,0.69333,0},{0.79098,0.92889,0},{1,0.95556,0}}},WidthScale={"NS",{{0,1,0},{1,0.18125,0}}}}}
+        	} },
+        	["Molten"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{0.44377,0.20618,1.7544,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T2",{0.77179,0.21356,-2.7653,1,0,0,0,0,1,0,-1,0}},
+        		{"T",1,"NewTrail",1,2,{Color={"CS",{{0,1,0.97255,0.22745},{0.50519,1,0.50475,0.03834},{1,1,0.41961,0.0039216}}},Lifetime=0.4,LightEmission=1,MinLength=0.15,Texture="rbxassetid://13526884654",TextureLength=0.625,Transparency={"NS",{{0,1,0},{0.5,0,0},{1,1,0}}}}},
+        		{"T",1,"NewTrail2",1,2,{Color={"CS",{{0,1,0.97255,0.22745},{0.50519,1,0.50475,0.03834},{1,1,0.41961,0.0039216}}},Lifetime=0.4,LightEmission=1,MinLength=0.15,Texture="rbxassetid://12823611043",TextureLength=0.625,Transparency={"NS",{{0,1,0},{0.5,0,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{1,0,0}}}}}
+        	} },
+        	["BloodStained"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{0.44377,0.20618,1.7544,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T2",{0.77179,0.21356,-2.7653,1,0,0,0,0,1,0,-1,0}},
+        		{"T",1,"NewTrail",1,2,{Color={"CS",{{0,1,0.1451,0.066667},{0.42042,0.30096,0.042879,0.020503},{1,0.16863,0.023529,0.011765}}},Lifetime=0.22,Texture="rbxassetid://2443461141",Transparency={"NS",{{0,7e-06,0},{0.07758,0.0071769,0},{0.15461,0.02593,0},{0.23063,0.05582,0},{0.30525,0.096185,0},{0.3782,0.14621,0},{0.44925,0.20502,0},{0.5183,0.2717,0},{0.58528,0.34539,0},{0.65021,0.42529,0},{0.71311,0.51068,0},{0.77406,0.60091,0},{0.83313,0.69542,0},{0.89042,0.79372,0},{0.94601,0.89536,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.20207,1,0},{1,1,0}}}}}
+        	} },
+        	["Guillotine"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T2",{0.43306,-0.091217,0.46731,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"",{0.012723,0.060031,0.72103,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"",{-0.016785,0.042297,-4.6986,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T1",{0.25197,-0.087211,-2.0251,1,0,0,0,0,-1,0,1,0}},
+        		{"P",0,"EmbersDark",{Brightness=5,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=2,EmissionDirection={"EV","NormalId",5},Lifetime={"NR",0.85,1.5},LightEmission=-1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=30,Rotation={"NR",90,90},Size={"NS",{{0,0,0},{0.047786,0.45574,0.45574},{1,0,0}}},Speed={"NR",0.12548,6.2738},SpreadAngle={"V2",45,45},Squash={"NS",{{0,0,0},{0.325,0.1,0.1},{1,0,0}}},Texture="rbxassetid://9997556038",Transparency={"NS",{{0,0.45,0},{1,0.45,0}}},ZOffset=0.5}},
+        		{"B",0,"Beam2",2,3,{Brightness=25,Color={"CS",{{0,0.59696,0,0.047666},{1,0.59696,0,0.047666}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://12842713075",TextureSpeed=2,Transparency={"NS",{{0,1,0},{0.10835,0.50625,0},{0.84563,0.92444,0},{1,1,0}}},Width1=3}},
+        		{"P",0,"Aura",{Acceleration={"V3",0,5.2382,0},Brightness=0.6,Color={"CS",{{0,1,0.26275,0.26275},{1,1,0.26275,0.26275}}},Drag=2.5,EmissionDirection={"EV","NormalId",5},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=45,RotSpeed={"NR",-80,80},Rotation={"NR",-360,360},Speed={"NR",0.099235,16},SpreadAngle={"V2",-10,-10},Texture="rbxassetid://2360242557",TimeScale=0.35,Transparency={"NS",{{0,0.8625,0},{0.4267,0.9,0},{0.63462,0.95,0},{1,1,0}}},VelocityInheritance=0.3,ZOffset=2}},
+        		{"P",0,"Aura",{Brightness=0.795,Color={"CS",{{0,0.53333,0,0},{1,0.53333,0,0}}},Drag=2.5,EmissionDirection={"EV","NormalId",5},Lifetime={"NR",1,1},LightEmission=-0.1,LockedToPart=true,Rate=45,RotSpeed={"NR",-80,80},Rotation={"NR",-360,360},Speed={"NR",1,16},SpreadAngle={"V2",5,-5},Texture="rbxassetid://2360242557",TimeScale=0.35,Transparency={"NS",{{0,0.67532,0},{0.37295,0.90667,0},{0.63462,0.95,0},{1,1,0}}},VelocityInheritance=0.3,ZOffset=1}},
+        		{"T",4,"NewTrail",4,1,{Brightness=1.5,Color={"CS",{{0,0.29412,0,0},{1,0.29412,0,0}}},Lifetime=0.4,MinLength=0.15,Texture="rbxassetid://2443461141",TextureLength=0.625,Transparency={"NS",{{0,0,0},{0.52459,0.69333,0},{0.79098,0.92889,0},{1,0.95556,0}}},WidthScale={"NS",{{0,1,0},{1,0.18125,0}}}}},
+        		{"B",0,"",2,3,{Brightness=25,Color={"CS",{{0,0.59696,0,0.047666},{1,0.59696,0,0.047666}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://12842713075",Transparency={"NS",{{0,1,0},{0.10835,0.50625,0},{0.84563,0.92444,0},{1,1,0}}},Width1=2}},
+        		{"P",0,"specsemit",{Acceleration={"V3",0,1.0948,0},Brightness=80,Color={"CS",{{0,1,0.22745,0.22745},{1,1,0.22745,0.22745}}},Drag=6,EmissionDirection={"EV","NormalId",5},Lifetime={"NR",0.85,1.5},LightEmission=-1,LockedToPart=true,Rate=5,RotSpeed={"NR",-360,360},Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.18229,0.12773,0.14963},{0.49829,0.018247,0},{0.71229,0.19707,0.10219},{1,0,0}}},Speed={"NR",0.2,6},SpreadAngle={"V2",360,-360},Texture="rbxassetid://12159555294",ZOffset=1.0401}},
+        		{"P",0,"EmbersDark1",{Brightness=5,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=2,EmissionDirection={"EV","NormalId",5},Lifetime={"NR",0.85,1.5},LightEmission=-1,LockedToPart=true,Rate=30,RotSpeed={"NR",-100,100},Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.05,0.16728,0.16728},{1,0,0}}},Speed={"NR",0.18798,9.399},SpreadAngle={"V2",-360,-360},Texture="rbxassetid://10454146699",Transparency={"NS",{{0,0.3,0},{1,0.3,0}}},ZOffset=0.45}},
+        		{"P",0,"",{Color={"CS",{{0,0.59696,0,0.047666},{1,0.59696,0,0.047666}}},EmissionDirection={"EV","NormalId",5},Enabled=false,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",90,90},SpreadAngle={"V2",5,5},Squash={"NS",{{0,1,0},{1,1,0}}},Texture="rbxassetid://16846880120",Transparency={"NS",{{0,1,0},{0.12844,0.4,0},{1,1,0}}},ZOffset=0.5}}
+        	} },
+        	["Toxic"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{0.44377,0.20618,1.7544,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T2",{0.77179,0.21356,-2.7653,1,0,0,0,0,1,0,-1,0}},
+        		{"T",1,"NewTrail2",1,2,{Color={"CS",{{0,0.027451,1,0.094118},{0.57785,0.012769,0.29526,0.0060248},{1,0.011765,0.24706,0}}},Lifetime=0.35,LightEmission=1,MinLength=0.15,Texture="rbxassetid://10816141940",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.08247,0.99948,0},{0.1649,0.99453,0},{0.24719,0.98449,0},{0.32922,0.96859,0},{0.41078,0.94583,0},{0.49159,0.915,0},{0.57117,0.87459,0},{0.64883,0.82276,0},{0.72351,0.75739,0},{0.79363,0.67626,0},{0.857,0.57763,0},{0.91103,0.46118,0},{0.95339,0.3289,0},{0.98293,0.18487,0},{1,0.030017,0}}}}},
+        		{"T",1,"NewTrail",1,2,{Brightness=5,Color={"CS",{{0,0.027451,1,0.094118},{0.57785,0.012769,0.29526,0.0060248},{1,0.011765,0.24706,0}}},Lifetime=0.35,LightEmission=1,MinLength=0.15,Texture="rbxassetid://133860736415104",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}}}}
+        	} },
+        	["Prismatic"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T2",{0.0062866,0.21356,-2.464,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T1",{-0.025452,0.20618,1.8918,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"End",{0,0,1.8741,1,0,0,0,1,0,0,0,1}},
+        		{"A",0,"Front",{0,0,-3.8062,1,0,0,0,1,0,0,0,1}},
+        		{"A",0,"AttachmentPoint",{0.012939,0.098541,-3.7626,1,0,0,0,1,0,0,0,1}},
+        		{"A",0,"AttachmentPoint",{0.012939,0.098541,0.7138,1,0,0,0,1,0,0,0,1}},
+        		{"T",2,"NewTrail2",2,1,{Brightness=4,Color={"CS",{{0,1,0,0},{0.29412,1,0.33333,0},{0.66609,0.30196,1,0},{1,0,0.10196,1}}},Lifetime=0.35,LightEmission=1,MinLength=0.15,Texture="rbxassetid://14261159751",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.08247,0.99948,0},{0.1649,0.99453,0},{0.24719,0.98449,0},{0.32922,0.96859,0},{0.41078,0.94583,0},{0.49159,0.915,0},{0.57117,0.87459,0},{0.64883,0.82276,0},{0.72351,0.75739,0},{0.79363,0.67626,0},{0.857,0.57763,0},{0.91103,0.46118,0},{0.95339,0.3289,0},{0.98293,0.18487,0},{1,0.030017,0}}}}},
+        		{"T",2,"NewTrail",2,1,{Brightness=4,Color={"CS",{{0,1,0,0},{0.29412,1,0.33333,0},{0.66609,0.30196,1,0},{1,0,0.10196,1}}},Lifetime=0.35,MinLength=0.15,Texture="rbxassetid://16288356764",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}}}},
+        		{"B",3,"",4,3,{Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},CurveSize0=0.20821,FaceCamera=true,LightEmission=1,Segments=20,Texture="rbxassetid://11633449805",TextureLength=0.44444,TextureSpeed=0.12,Transparency={"NS",{{0,1,0},{0.10299,0,0},{0.50778,0,0},{0.62275,0.78661,0},{0.81916,0.93724,0},{1,1,0}}},Width0=0.5,Width1=4,ZOffset=0.005}},
+        		{"B",3,"",4,3,{Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},CurveSize0=0.20821,FaceCamera=true,LightEmission=0.3,Segments=20,Texture="rbxassetid://127537725774864",TextureLength=0.22222,TextureSpeed=0.04,Transparency={"NS",{{0,1,0},{0.10299,0,0},{0.50778,0,0},{0.62275,0.78661,0},{0.81916,0.93724,0},{1,1,0}}},Width0=0.87363,Width1=2,ZOffset=0.006}},
+        		{"B",3,"",4,3,{Brightness=0.1,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},CurveSize0=0.20821,FaceCamera=true,LightEmission=0.5,Segments=20,Texture="rbxassetid://89349481632493",TextureLength=0.35556,TextureSpeed=0.027813,Transparency={"NS",{{0,1,0},{0.10299,0,0},{0.50778,0,0},{0.62275,0.78661,0},{0.81916,0.93724,0},{1,1,0}}},Width0=0,Width1=5,ZOffset=0.007}},
+        		{"B",3,"",4,3,{Brightness=3,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},CurveSize0=0.20821,FaceCamera=true,Segments=20,Texture="rbxassetid://79292930875648",TextureLength=0.35556,TextureSpeed=0.054,Transparency={"NS",{{0,1,0},{0.10299,0,0},{0.50778,0,0},{0.58354,0.93125,0},{0.79177,1,0},{1,1,0}}},Width0=0.87363,Width1=2,ZOffset=0.008}},
+        		{"P",0,"Dust",{Acceleration={"V3",0,0,-2.6202},Brightness=35,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},Drag=3,Lifetime={"NR",4,4},LightEmission=1,LockedToPart=true,Rate=15,Rotation={"NR",-1000,1000},Size={"NS",{{0,0.35323,0},{1,0.40475,0}}},Speed={"NR",0.00012541,0.00012541},SpreadAngle={"V2",-360,360},Texture="rbxassetid://124121888768447",Transparency={"NS",{{0,0,0},{0.059081,0.0067696,0},{0.11731,0.027322,0},{0.17385,0.061217,0},{0.22812,0.10703,0},{0.27989,0.16272,0},{0.32925,0.22612,0},{0.37656,0.29516,0},{0.4223,0.36807,0},{0.55577,0.5954,0},{0.60095,0.66963,0},{0.64743,0.74077,0},{0.69573,0.80716,0},{0.74629,0.86688,0},{0.79935,0.91779,0},{0.85484,0.95773,0},{0.91234,0.98492,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",0,"Fireflies 2",{Acceleration={"V3",0,0,-2.6202},Brightness=25,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},Drag=5,FlipbookFramerate={"NR",25,25},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},FlipbookStartRandom=true,Lifetime={"NR",1.25,2},LightEmission=1,LockedToPart=true,Rate=100,Rotation={"NR",-360,360},Shape={"EV","ParticleEmitterShape",3},Size={"NS",{{0,0.48617,0},{1,0.48617,0}}},Speed={"NR",0.00012614,0.00012614},SpreadAngle={"V2",-1,1},Texture="rbxassetid://87790026409442",Transparency={"NS",{{0,1,0},{0.4952,0,0},{1,1,0}}},ZOffset=0.25}},
+        		{"P",0,"Aura",{Acceleration={"V3",0,0,-15},Brightness=1.5,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},Lifetime={"NR",0.75,1.2},LightEmission=1,LockedToPart=true,Rate=40,Rotation={"NR",-360,360},Size={"NS",{{0,0.78152,0},{1,0.78152,0}}},Speed={"NR",0,0},Texture="rbxassetid://867619398",Transparency={"NS",{{0,1,0},{0.5,0.95,0},{1,1,0}}}}},
+        		{"P",0,"DotSpecs",{Acceleration={"V3",0,0,-15},Brightness=5,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},Drag=5,FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1.5},LightEmission=1,LockedToPart=true,Rotation={"NR",-360,360},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0.24401,0},{0.028678,0.89549,0},{1,1.9538,0}}},Speed={"NR",0,0},Texture="rbxassetid://87790026409442"}},
+        		{"P",0,"Specs",{Acceleration={"V3",0,0,-15},Brightness=5,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},Drag=5,EmissionDirection={"EV","NormalId",2},Lifetime={"NR",0.7,1},LockedToPart=true,RotSpeed={"NR",-360,360},Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.136,0.065127,0.065127},{0.19227,0,0},{0.264,0.065127,0.065127},{0.34787,0,0},{0.434,0.065127,0.065127},{0.53,0,0},{0.678,0.065127,0.065127},{0.84143,0,0},{0.91646,0.16282,0},{1,0,0}}},Speed={"NR",0,3.2563},SpreadAngle={"V2",360,360},Texture="http://www.roblox.com/asset/?id=11583750711",VelocityInheritance=1,ZOffset=0.44276}},
+        		{"P",0,"Star Hit Circle",{Acceleration={"V3",0,0,-15},Brightness=5,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,0.5},LightEmission=1,LockedToPart=true,Rate=5,Size={"NS",{{0,0.17713,0},{1,0.75,0}}},Speed={"NR",0,0},Texture="rbxassetid://11372772717",ZOffset=0.6}},
+        		{"P",0,"Stars",{Acceleration={"V3",0,0,-15},Brightness=5,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},Drag=10,EmissionDirection={"EV","NormalId",2},Lifetime={"NR",0.7,1},LightEmission=1,LockedToPart=true,Rate=10,Size={"NS",{{0,0,0},{0.136,0.26051,0.089875},{0.19227,0,0},{0.264,0.26051,0.13286},{0.34787,0,0},{0.434,0.26051,0.13286},{0.53023,0,0},{0.7,0.26051,0.13286},{0.84143,0,0},{0.897,0.39076,0},{1,0,0}}},Speed={"NR",0,0},SpreadAngle={"V2",-360,360},Texture="rbxassetid://14590086212",ZOffset=1}},
+        		{"P",0,"Stars",{Acceleration={"V3",0,0,-15},Brightness=5,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},Drag=10,EmissionDirection={"EV","NormalId",2},Lifetime={"NR",0.7,1},LightEmission=1,LockedToPart=true,Rate=10,Size={"NS",{{0,0,0},{0.136,0.065127,0.065127},{0.19227,0,0},{0.264,0.065127,0.065127},{0.34787,0,0},{0.434,0.065127,0.065127},{0.53023,0,0},{0.7,0.065127,0.065127},{0.84143,0,0},{0.897,0.065127,0},{1,0,0}}},Speed={"NR",0,0},SpreadAngle={"V2",-360,360},Texture="rbxassetid://14590086212",ZOffset=1}},
+        		{"P",5,"PulseRipple",{Brightness=10,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",24,24},FlipbookMode={"EV","ParticleFlipbookMode",1},FlipbookStartRandom=true,Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,0.87643,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://12188469991",TimeScale=0.5,Transparency={"NS",{{0,1,0},{0.50106,0.9125,0},{1,1,0}}},ZOffset=0.3}},
+        		{"P",5,"Star",{Brightness=10,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},Lifetime={"NR",0.5,1},LightEmission=1,LockedToPart=true,Rate=5,Size={"NS",{{0,0.87643,0},{1,0.87643,0}}},Speed={"NR",0.0017529,0.0017529},Squash={"NS",{{0,-1,0},{1,-1,0}}},Texture="rbxassetid://12090248314",Transparency={"NS",{{0,1,0},{0.20032,0,0},{0.79968,0.80625,0},{1,1,0}}},ZOffset=1}},
+        		{"P",5,"Swirl 2",{Brightness=10,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,1.0298,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://15132691346",Transparency={"NS",{{0,1,0},{0.42548,0.79375,0},{0.78066,0.89375,0},{1,1,0}}}}},
+        		{"P",5,"Swirl",{Brightness=0,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Rate=5,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,1.7529,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://11855202643",Transparency={"NS",{{0,1,0},{0.19979,0.76875,0},{0.70032,0.88125,0},{1,1,0}}},ZOffset=-1}},
+        		{"P",5,"PulseRing",{Brightness=10,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Rate=1,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,0.87643,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://14762708319",ZOffset=0.2}},
+        		{"P",5,"Pulse",{Brightness=10,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=3,Size={"NS",{{0,0,0},{1,1.5009,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://13992057187",Transparency={"NS",{{0,1,0},{0.20032,0.9,0},{0.80074,0.9,0},{1,1,0}}},ZOffset=1}},
+        		{"P",6,"PulseRipple",{Brightness=10,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",24,24},FlipbookMode={"EV","ParticleFlipbookMode",1},FlipbookStartRandom=true,Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,0.87643,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://12188469991",TimeScale=0.5,Transparency={"NS",{{0,1,0},{0.50106,0.9125,0},{1,1,0}}},ZOffset=0.3}},
+        		{"P",6,"Star",{Brightness=10,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},Lifetime={"NR",0.5,1},LightEmission=1,LockedToPart=true,Rate=5,Size={"NS",{{0,0.87643,0},{1,0.87643,0}}},Speed={"NR",0.0017529,0.0017529},Squash={"NS",{{0,-1,0},{1,-1,0}}},Texture="rbxassetid://12090248314",Transparency={"NS",{{0,1,0},{0.20032,0,0},{0.79968,0.80625,0},{1,1,0}}},ZOffset=1}},
+        		{"P",6,"Swirl 2",{Brightness=10,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,1.0298,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://15132691346",Transparency={"NS",{{0,1,0},{0.42548,0.79375,0},{0.78066,0.89375,0},{1,1,0}}}}},
+        		{"P",6,"Swirl",{Brightness=0,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Rate=5,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,1.7529,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://11855202643",Transparency={"NS",{{0,1,0},{0.19979,0.76875,0},{0.70032,0.88125,0},{1,1,0}}},ZOffset=-1}},
+        		{"P",6,"PulseRing",{Brightness=10,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Rate=1,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{1,0.87643,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://14762708319",ZOffset=0.2}},
+        		{"P",6,"Pulse",{Brightness=10,Color={"CS",{{0,0.39608,1,0.25882},{0.46713,0.4845,0.91895,0.95512},{0.51903,0.68863,0.34642,0.9965},{1,0.70588,0.29804,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=3,Size={"NS",{{0,0,0},{1,1.5009,0}}},Speed={"NR",0.0017529,0.0017529},Texture="rbxassetid://13992057187",Transparency={"NS",{{0,1,0},{0.20032,0.9,0},{0.80074,0.9,0},{1,1,0}}},ZOffset=1}}
+        	} },
+        	["Shadow"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{0.44377,0.20618,1.7544,1,0,0,0,0,1,0,-1,0}},
+        		{"A",0,"T2",{0.77179,0.21356,-2.7653,1,0,0,0,0,1,0,-1,0}},
+        		{"T",1,"NewTrail2",1,2,{Brightness=5,Color={"CS",{{0,0,0,0},{1,0.13725,0,0.24706}}},Lifetime=0.35,LightEmission=1,MinLength=0.15,Texture="rbxassetid://10816141940",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.08247,0.99948,0},{0.1649,0.99453,0},{0.24719,0.98449,0},{0.32922,0.96859,0},{0.41078,0.94583,0},{0.49159,0.915,0},{0.57117,0.87459,0},{0.64883,0.82276,0},{0.72351,0.75739,0},{0.79363,0.67626,0},{0.857,0.57763,0},{0.91103,0.46118,0},{0.95339,0.3289,0},{0.98293,0.18487,0},{1,0.030017,0}}}}},
+        		{"T",1,"NewTrail",1,2,{Brightness=0,Color={"CS",{{0,0,0,0},{1,0.13725,0,0.24706}}},Lifetime=0.35,MinLength=0.15,Texture="rbxassetid://83728978613768",Transparency={"NS",{{0,7e-06,0},{0.066667,0.098682,0},{0.13333,0.19735,0},{0.2,0.29602,0},{0.26667,0.39469,0},{0.33333,0.49335,0},{0.4,0.59202,0},{0.46667,0.69069,0},{0.53333,0.78936,0},{0.6,0.88803,0},{0.66667,0.98669,0},{0.73333,1,0},{0.8,1,0},{0.86667,1,0},{0.93333,1,0},{1,1,0}}}}}
+        	} },
+        	["Cinderfall"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"T",2,"",2,1,{Brightness=8.28,Color={"CS",{{0,1,0.52549,0.18824},{0.20934,1,0.36863,0.078431},{0.43253,1,0.25882,0.07451},{1,0.54902,0.086275,0.0078431}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",0,"1",{Brightness=20,Color={"CS",{{0,1,0.52549,0.18824},{0.20934,1,0.36863,0.078431},{0.43253,1,0.25882,0.07451},{1,0.54902,0.086275,0.0078431}}},Drag=35,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.15,0.75},LightEmission=-34,LockedToPart=true,Rate=15,Rotation={"NR",-180,180},Size={"NS",{{0,0.22902,0},{0.090342,0.60633,0},{1,1.2558,0}}},Speed={"NR",0.0010571,0.0010571},SpreadAngle={"V2",200,200},Texture="rbxassetid://17082856180",Transparency={"NS",{{0,1,0},{0.19,0,0},{0.94834,0,0},{1,1,0}}},ZOffset=0.1}},
+        		{"P",0,"2",{Brightness=30,Color={"CS",{{0,1,0.52549,0.18824},{0.20934,1,0.36863,0.078431},{0.43253,1,0.25882,0.07451},{1,0.54902,0.086275,0.0078431}}},Drag=35,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.15,0.75},LockedToPart=true,Rate=15,Rotation={"NR",-180,180},Size={"NS",{{0,0.22902,0},{0.090342,0.60633,0},{1,1.2558,0}}},Speed={"NR",0.0010571,0.0010571},SpreadAngle={"V2",200,200},Texture="rbxassetid://86173102798847",Transparency={"NS",{{0,1,0},{0.19,0,0},{0.94834,0,0},{1,1,0}}},ZOffset=0.2}},
+        		{"P",0,"3",{Brightness=20,Color={"CS",{{0,1,0.52549,0.18824},{0.20934,1,0.36863,0.078431},{0.43253,1,0.25882,0.07451},{1,0.74902,0.13333,0.05098}}},Drag=5,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LightEmission=-1,LockedToPart=true,Rate=15,Rotation={"NR",-180,180},Size={"NS",{{0,0.22902,0},{0.20434,0.68926,0},{1,0.50743,0}}},Speed={"NR",0.0010571,0.0010571},SpreadAngle={"V2",100,100},Texture="rbxassetid://85475590826009",Transparency={"NS",{{0,1,0},{0.19,0,0},{0.94834,0,0},{1,1,0}}},ZOffset=0.05}},
+        		{"P",0,"4",{Brightness=20,Color={"CS",{{0,1,0.52549,0.18824},{0.20934,1,0.36863,0.078431},{0.43253,1,0.25882,0.07451},{1,0.54902,0.086275,0.0078431}}},Drag=5,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},FlipbookStartRandom=true,Lifetime={"NR",0.5,1},LightEmission=-10,LockedToPart=true,Rate=15,RotSpeed={"NR",-30,20},Rotation={"NR",-180,180},Size={"NS",{{0,0.22902,0},{0.20434,0.68926,0},{1,0.50743,0}}},Speed={"NR",0.0010571,0.0010571},SpreadAngle={"V2",100,100},Texture="rbxassetid://17639482764",Transparency={"NS",{{0,1,0},{0.19,0,0},{0.94834,0,0},{1,1,0}}},ZOffset=0.05}}
+        	} },
+        	["Starfall"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"end",{0,0.072021,-1.8113,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"T",2,"",2,3,{Brightness=8.28,Color={"CS",{{0,0.12941,0.2,0.42353},{1,0.027451,0.066667,0.16863}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",0,"Spec2",{Brightness=20,Color={"CS",{{0,1,1,1},{0.065744,0.3098,0.45882,1},{1,0.23922,0.46667,1}}},Drag=8,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Rate=12,Rotation={"NR",90,90},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.3,Size={"NS",{{0,0,0},{0.10393,0.14041,0.075244},{0.20393,0.27505,0.057292},{0.49793,0.19811,0.11153},{0.74593,0.17311,0.080057},{1,0,0}}},Speed={"NR",0.057702,0.32571},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0,0},{0.1,0,0},{0.2,0,0},{0.3,0,0},{0.4,0,0},{0.5,0,0},{0.6,0,0},{0.7,0,0},{0.8,0,0},{0.9,0,0},{1,0,0}}},Texture="rbxassetid://13167808508",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=0.1,ZOffset=1}},
+        		{"P",0,"Spec1",{Brightness=20,Color={"CS",{{0,1,1,1},{0.065744,0.3098,0.45882,1},{1,0.23922,0.46667,1}}},Drag=8,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Rate=12,Rotation={"NR",90,90},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.3,Size={"NS",{{0,0,0},{0.10393,0.14041,0.075244},{0.20393,0.27505,0.057292},{0.49793,0.19811,0.11153},{0.74593,0.17311,0.080057},{1,0,0}}},Speed={"NR",0.057702,0.32571},Squash={"NS",{{0,0,0},{0.1,0,0},{0.2,0,0},{0.3,0,0},{0.4,0,0},{0.5,0,0},{0.6,0,0},{0.7,0,0},{0.8,0,0},{0.9,0,0},{1,0,0}}},Texture="rbxassetid://13167808508",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=0.1,ZOffset=1}},
+        		{"P",0,"Smoke2",{Acceleration={"V3",0,0,-0.86573},Brightness=1.15,Color={"CS",{{0,0.12941,0.2,0.42353},{1,0.027451,0.066667,0.16863}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1.25},LockedToPart=true,Rate=30,Rotation={"NR",-180,180},Size={"NS",{{0,0.1203,0},{0.12393,0.6281,0},{0.42793,0.79169,0},{0.64393,0.51564,0},{1,0.35887,0}}},Speed={"NR",0.010224,0.010224},Texture="rbxassetid://13487156861",TimeScale=0.55,Transparency={"NS",{{0,1,0},{0.26593,0,0},{0.42993,0,0},{0.72993,0,0},{1,1,0}}},VelocityInheritance=0.1}},
+        		{"P",0,"Smoke1",{Acceleration={"V3",0,0,-1.0475},Brightness=1.15,Color={"CS",{{0,0.12941,0.2,0.42353},{1,0.027451,0.066667,0.16863}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1.25},LockedToPart=true,Rate=15,Rotation={"NR",-180,180},Size={"NS",{{0,0.14557,0},{0.18406,0.38842,0},{0.43406,0.67123,0},{0.67206,1.0348,0},{1,1.4504,0}}},Speed={"NR",0.012371,0.012371},Texture="rbxassetid://13167998146",Transparency={"NS",{{0,1,0},{0.20206,0,0},{0.42993,0,0},{0.62232,0,0},{1,1,0}}},VelocityInheritance=0.1,ZOffset=0.01}},
+        		{"P",0,"Spec2",{Brightness=20,Color={"CS",{{0,1,1,1},{0.065744,0.3098,0.45882,1},{1,0.23922,0.46667,1}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,Rate=4,Rotation={"NR",90,90},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.3,Size={"NS",{{0,0,0},{0.10393,0.14041,0.075244},{0.20393,0.27505,0.057292},{0.49793,0.19811,0.11153},{0.74593,0.17311,0.080057},{1,0,0}}},Speed={"NR",0.057702,0.32571},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0,0},{0.1,0,0},{0.2,0,0},{0.3,0,0},{0.4,0,0},{0.5,0,0},{0.6,0,0},{0.7,0,0},{0.8,0,0},{0.9,0,0},{1,0,0}}},Texture="rbxassetid://13167808508",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=0.1,ZOffset=1}},
+        		{"P",0,"Spec1",{Brightness=20,Color={"CS",{{0,1,1,1},{0.065744,0.3098,0.45882,1},{1,0.23922,0.46667,1}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,Rate=4,Rotation={"NR",90,90},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.3,Size={"NS",{{0,0,0},{0.10393,0.14041,0.075244},{0.20393,0.27505,0.057292},{0.49793,0.19811,0.11153},{0.74593,0.17311,0.080057},{1,0,0}}},Speed={"NR",0.057702,0.32571},Squash={"NS",{{0,0,0},{0.1,0,0},{0.2,0,0},{0.3,0,0},{0.4,0,0},{0.5,0,0},{0.6,0,0},{0.7,0,0},{0.8,0,0},{0.9,0,0},{1,0,0}}},Texture="rbxassetid://13167808508",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=0.1,ZOffset=1}},
+        		{"P",0,"Smoke27",{Brightness=15,Color={"CS",{{0,0.32941,0.32941,1},{1,0.32941,0.32941,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=-1,Rate=60,RotSpeed={"NR",-50,50},Rotation={"NR",-360,360},Size={"NS",{{0,1,0.375},{1,0,0}}},Speed={"NR",0,0},Texture="rbxassetid://16867460128",Transparency={"NS",{{0,1,0},{0.15414,0.97333,0},{1,1,0}}},ZOffset=-2.1}},
+        		{"P",0,"fine-smoke1",{Color={"CS",{{0,0.32941,0.32941,1},{1,0.32941,0.32941,1}}},Lifetime={"NR",1,2},Rate=60,RotSpeed={"NR",-50,50},Rotation={"NR",-360,360},Size={"NS",{{0,1,0.375},{1,0,0}}},Speed={"NR",0,0},Texture="rbxassetid://128124707976588",Transparency={"NS",{{0,1,0},{0.17707,0.48889,0},{1,1,0}}},ZOffset=-1}},
+        		{"P",0,"fine-smoke1",{Brightness=0.05,Color={"CS",{{0,0.32941,0.32941,1},{1,0.32941,0.32941,1}}},Lifetime={"NR",1,2},Rate=60,RotSpeed={"NR",-50,50},Rotation={"NR",-360,360},Size={"NS",{{0,1,0.375},{1,0,0}}},Speed={"NR",0,0},Texture="rbxassetid://128124707976588",Transparency={"NS",{{0,1,0},{0.17707,0.48889,0},{1,1,0}}},ZOffset=-1.1}},
+        		{"P",0,"Star12",{Brightness=15,Color={"CS",{{0,0.32941,0.32941,1},{1,0.32941,0.32941,1}}},Lifetime={"NR",0.5,1},Orientation={"EV","ParticleOrientation",1},Rate=60,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.068493,0.25,0.25},{0.16563,0,0},{0.25031,0.25,0.25},{0.35118,0,0},{0.42964,0.375,0.375},{0.54795,0,0},{0.63636,0.25,0.25},{0.7746,0,0},{0.88169,0.25,0.25},{1,0,0}}},Speed={"NR",0,0},Texture="rbxassetid://17062452122"}},
+        		{"P",0,"Star12",{Brightness=0.5,Color={"CS",{{0,0.32941,0.32941,1},{1,0.32941,0.32941,1}}},Lifetime={"NR",0.5,1},Orientation={"EV","ParticleOrientation",1},Rate=60,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.068493,0.25,0.25},{0.16563,0,0},{0.25031,0.25,0.25},{0.35118,0,0},{0.42964,0.375,0.375},{0.54795,0,0},{0.63636,0.25,0.25},{0.7746,0,0},{0.88169,0.25,0.25},{1,0,0}}},Speed={"NR",0,0},Texture="rbxassetid://17062452122",Transparency={"NS",{{0,0.8,0},{1,0.8,0}}},ZOffset=-0.5}}
+        	} },
+        	["Mirage"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"start",{0,0.072021,1.8113,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"end",{0,0.072021,-1.8113,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"A",0,"Trail",{0,0,0,0,0,1,0,1,0,-1,0,0}},
+        		{"A",5,"",{-1.588,0,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",5,"",{1.4785,1.5259e-05,0,1,0,0,0,1,0,0,0,1}},
+        		{"B",1,"",1,2,{Brightness=10,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},FaceCamera=true,Texture="rbxassetid://14978253601",TextureSpeed=-0.6,Transparency={"NS",{{0,1,0},{0.50264,0.8125,0},{1,1,0}}},Width0=2.5,Width1=1.5}},
+        		{"B",1,"Beam 2",1,2,{Brightness=10,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://15099350705",TextureSpeed=-1,Transparency={"NS",{{0,1,0},{0.5,0.55625,0},{1,1,0}}},Width0=2,Width1=1.5}},
+        		{"T",3,"",3,4,{Brightness=8.28,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",0,"Aura",{Acceleration={"V3",0,0,-3.1429},Brightness=0.27,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",5,5},Size={"NS",{{0,2.1381,0.67637},{0.3859,2.4447,0.58339},{1,2.9462,0.67637}}},Speed={"NR",0.025457,0.025457},SpreadAngle={"V2",20,20},Squash={"NS",{{0,-0.37133,0},{1,-0.34467,0.18667}}},Texture="rbxassetid://14372610031",Transparency={"NS",{{0,1,0},{0.1459,0,0},{0.6039,0,0},{1,1,0}}},ZOffset=0.05}},
+        		{"P",0,"CircleWAve",{Brightness=0.001,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},EmissionDirection={"EV","NormalId",5},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=7,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,2.5003,0},{0.40125,3.3854,0.089383},{1,3.8175,0.061686}}},Speed={"NR",0.00035992,0.00035992},Texture="rbxassetid://13167800208",TimeScale=0.5,Transparency={"NS",{{0,1,0},{0.16824,0.371,0},{0.33624,0.69767,0},{1,1,0}}},ZOffset=1}},
+        		{"P",0,"LSaura",{Acceleration={"V3",0,0,-1.5783},Brightness=1.065,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Drag=5.2503,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",1.0501,1.0501},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.71424,1.4285},LightEmission=1,LockedToPart=true,Rate=7.3504,Rotation={"NR",-180,180},Size={"NS",{{0,1.442,0.3209},{0.19834,2.0348,0.27679},{1,3.1662,0}}},Speed={"NR",0.0083212,1.6642},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://15376405698",Transparency={"NS",{{0,1,0},{0.21485,0.49366,0},{0.57685,0.72366,0},{1,1,0}}},ZOffset=0.1}},
+        		{"P",0,"LSaura1",{Acceleration={"V3",0,0,-1.5783},Brightness=1.065,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Drag=5.2503,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",1.0501,1.0501},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.95233,1.1904},LightEmission=1,LockedToPart=true,Rate=3.1502,Rotation={"NR",-180,180},Size={"NS",{{0,1.5547,0.34597},{0.31024,2.3305,0.29841},{1,2.8497,0.34597}}},Speed={"NR",0.0089711,1.7942},SpreadAngle={"V2",50,50},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="http://www.roblox.com/asset/?id=14727016281",Transparency={"NS",{{0,1,0},{0.21485,0.49366,0},{0.57685,0.72366,0},{1,1,0}}},VelocityInheritance=0.2,ZOffset=0.5}},
+        		{"P",0,"LSaura2",{Acceleration={"V3",0,0,-1.5783},Brightness=1.065,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Drag=5.2503,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",1.0501,1.0501},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.71424,0.95233},LightEmission=1,LockedToPart=true,Rate=4.2002,Rotation={"NR",-180,180},Size={"NS",{{0,1.1026,1.1026},{0.1,1.4683,1.1026},{0.2,1.7629,1.1026},{0.3,2.0091,1.1026},{0.4,2.2168,1.1026},{0.5,2.3917,1.1026},{0.6,2.5373,1.1026},{0.7,2.6561,1.1026},{0.8,2.7498,1.1026},{0.9,2.8197,1.1026},{1,2.8668,1.1026}}},Speed={"NR",0.011075,2.2151},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://14066311352",Transparency={"NS",{{0,1,0},{0.21485,0.49366,0},{0.57685,0.72366,0},{1,1,0}}},ZOffset=0.15}},
+        		{"P",0,"Star3",{Brightness=30,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Drag=3.75,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LightEmission=1,LockedToPart=true,Rate=10,Shape={"EV","ParticleEmitterShape",3},ShapePartial=4,Size={"NS",{{0,0,0},{0.083521,0.29481,0.20097},{0.15152,0,0},{0.23352,0.29481,0.52282},{0.35752,0,0},{0.49752,0.29481,0.38116},{0.67152,0.0053438,0},{0.84952,0.16121,0},{1,0,0}}},Speed={"NR",0.024491,2.1267},SpreadAngle={"V2",35,20},Texture="rbxassetid://13167809864",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},ZOffset=2}},
+        		{"P",0,"Stars1",{Brightness=15,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},EmissionDirection={"EV","NormalId",5},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.15,0.25},LightEmission=1,LockedToPart=true,Rate=8,Shape={"EV","ParticleEmitterShape",3},ShapePartial=5,Size={"NS",{{0,0,0},{0.22167,2.5065,0.23872},{0.47316,0.71615,0.19079},{1,0,0}}},Speed={"NR",0.054606,0.054606},Squash={"NS",{{0,0.59533,0},{0.2394,0.45,0},{0.41782,-0.498,0},{0.64182,1.5301,0},{1,-0.5,0}}},Texture="rbxassetid://13167809864",ZOffset=0.7}},
+        		{"P",0,"Spec1",{Brightness=3,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Drag=1,Lifetime={"NR",0.56792,1.1358},LockedToPart=true,Rate=45,RotSpeed={"NR",-30,30},Rotation={"NR",-360,360},ShapePartial=0,Size={"NS",{{0,0.37206,0.31084},{0.082993,0.26742,0.28589},{0.13061,0.39532,0.27274},{0.35646,0.20929,0.21227},{0.41361,0.44183,0.19431},{0.62177,0.19766,0.13167},{0.67619,0.47671,0.1132},{0.71837,0.23202,0.20819},{0.77007,0.1744,0.080856},{0.82177,0.34881,0.064111},{0.8449,0.14849,0.16725},{0.86939,0.20418,0.1241},{0.89388,0.093016,0.22665},{0.92381,0.20929,0.14156},{0.9415,0.092807,0.098073},{0.95374,0.18561,0.20512},{0.96463,0.064965,0.25774},{0.97823,0.13921,0.15818},{0.99456,0.083526,0.0072676},{1,0,0}}},Speed={"NR",0.5,1},SpreadAngle={"V2",1000,-1000},Texture="rbxassetid://8238126392",Transparency={"NS",{{0,1,0},{0.099366,0,0},{1,0,0}}},ZOffset=1}},
+        		{"T",5,"",6,7,{Brightness=7,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Lifetime=0.15,LightInfluence=0.05,Texture="rbxassetid://16892386886",Transparency={"NS",{{0,0,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{1,0,0}}}}},
+        		{"P",0,"art",{Brightness=12,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Drag=2,FlipbookFramerate={"NR",0,0},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},FlipbookStartRandom=true,Lifetime={"NR",0.65,0.85},LightInfluence=0.05,LockedToPart=true,Rate=150,Rotation={"NR",-1000,1000},Size={"NS",{{0,0,0},{0.1,0.080693,0},{0.2,0.15689,0},{0.3,0.22804,0},{0.4,0.29347,0},{0.5,0.35236,0},{0.6,0.40362,0},{0.7,0.44584,0},{0.8,0.47722,0},{0.9,0.49551,0},{1,0.5,0},{1,0.5,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",1000,-1000},Texture="rbxassetid://18369727963",Transparency={"NS",{{0,0.2,0},{1,1,0}}},ZOffset=0.3}},
+        		{"P",0,"contrast",{Acceleration={"V3",0,5,0},Brightness=2,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Drag=3,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.75},LockedToPart=true,Rate=15,RotSpeed={"NR",-30,30},Rotation={"NR",-1000,1000},Size={"NS",{{0,0,0},{0.1,0.16139,0},{0.2,0.31377,0},{0.3,0.45608,0},{0.4,0.58695,0},{0.5,0.70472,0},{0.6,0.80723,0},{0.7,0.89169,0},{0.8,0.95443,0},{0.9,0.99102,0},{1,1,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",1000,-1000},Squash={"NS",{{0,0,0.4125},{1,0,0.2625}}},Texture="rbxassetid://13013256540",Transparency={"NS",{{0,0.5,0},{0.78013,0.50625,0},{1,0.96875,0}}},ZOffset=0.1}},
+        		{"P",0,"gaga",{Brightness=15,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Drag=3,FlipbookFramerate={"NR",0,0},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},FlipbookStartRandom=true,Lifetime={"NR",0.65,0.85},LightInfluence=0.05,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=65,Rotation={"NR",-1000,1000},Size={"NS",{{0,0,0},{0.1,0.16139,0},{0.2,0.31377,0},{0.3,0.45608,0},{0.4,0.58695,0},{0.5,0.70472,0},{0.6,0.80723,0},{0.7,0.89169,0},{0.8,0.95443,0},{0.9,0.99102,0},{1,1,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",1000,-1000},Texture="rbxassetid://18369800560",ZOffset=0.3}},
+        		{"P",0,"pinksmoke",{Acceleration={"V3",0,5,0},Brightness=7,Color={"CS",{{0,0.90053,0.41439,0.25794},{1,0.90053,0.41439,0.25794}}},Drag=2,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightInfluence=0.05,LockedToPart=true,Rate=15,RotSpeed={"NR",-70,70},Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.1,0.16139,0},{0.2,0.31377,0},{0.3,0.45608,0},{0.4,0.58695,0},{0.5,0.70472,0},{0.6,0.80723,0},{0.7,0.89169,0},{0.8,0.95443,0},{0.9,0.99102,0},{1,1,0}}},Speed={"NR",0.001,0.001},SpreadAngle={"V2",-20,20},Texture="rbxassetid://13013256540",Transparency={"NS",{{0,0.06875,0},{0.77273,0.1125,0},{1,1,0}}},ZOffset=0.4}}
+        	} },
+        	["Tidal"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"start",{0,0.072021,1.8113,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"end",{0,0.072021,-1.8113,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"",{-0.027771,0.072021,-0.038258,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"B",1,"",1,2,{Brightness=10,Color={"CS",{{0,0.35294,0.61176,1},{1,0.35294,0.61176,1}}},FaceCamera=true,Texture="rbxassetid://14978253601",TextureSpeed=-0.6,Transparency={"NS",{{0,1,0},{0.50264,0.8125,0},{1,1,0}}},Width0=2.5,Width1=1.5}},
+        		{"B",1,"Beam 2",1,2,{Brightness=10,Color={"CS",{{0,0.35294,0.61176,1},{1,0.35294,0.61176,1}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://15099350705",TextureSpeed=-1,Transparency={"NS",{{0,1,0},{0.5,0.55625,0},{1,1,0}}},Width0=2,Width1=1.5}},
+        		{"P",0,"Water1",{Brightness=20,Color={"CS",{{0,0.21569,0.42353,1},{1,0.21569,0.42353,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,0.43716,0},{1,1.3115,0}}},Speed={"NR",0.02,0.02},Texture="rbxassetid://14261754295",Transparency={"NS",{{0,1,0},{0.50264,0,0},{1,1,0}}},ZOffset=0.15}},
+        		{"P",0,"Water1",{Brightness=10,Color={"CS",{{0,0.22745,0.49804,1},{1,0.22745,0.49804,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},Rate=3,Rotation={"NR",-360,360},Size={"NS",{{0,0.43716,0},{1,1.3115,0}}},Speed={"NR",0.02,0.02},Texture="rbxassetid://13992220545",Transparency={"NS",{{0,1,0},{0.50106,0.71875,0},{1,1,0}}},ZOffset=0.15}},
+        		{"P",0,"Droplets 2",{Acceleration={"V3",0,4,0},Brightness=10,Color={"CS",{{0,0.29412,0.56471,1},{1,0.29412,0.56471,1}}},Drag=10,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LockedToPart=true,Orientation={"EV","ParticleOrientation",1},Rate=5,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.68869,0.10929,0},{1,0,0}}},Speed={"NR",0.02,0.02},Texture="rbxassetid://14855199257",Transparency={"NS",{{0,1,0},{0.20085,0,0},{0.79968,0.70625,0},{1,1,0}}},ZOffset=1}},
+        		{"P",0,"Droplets",{Acceleration={"V3",0,4,0},Brightness=10,Color={"CS",{{0,0.34118,0.40784,1},{1,0.34118,0.40784,1}}},Drag=10,FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",1},Rate=5,Size={"NS",{{0,0,0},{1,0.98361,0}}},Speed={"NR",0.02,0.02},Squash={"NS",{{0,0.1,0},{1,0.1,0}}},Texture="rbxassetid://15254493592",ZOffset=1}},
+        		{"P",3,"Pulse",{Brightness=5,Color={"CS",{{0,0.33333,0.5451,1},{1,0.33333,0.5451,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1.5},LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=2,Size={"NS",{{0,1.0929,0},{1,1.9672,0}}},Speed={"NR",0.001,0.001},Squash={"NS",{{0,-1.5,0},{1,-1.275,0}}},Texture="rbxassetid://13992197350"}},
+        		{"P",3,"Pulse 2",{Brightness=10,Color={"CS",{{0,0.20392,0.28235,1},{1,0.20392,0.28235,1}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1.5},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=2,Size={"NS",{{0,1.0929,0},{1,1.694,0}}},Speed={"NR",0.001,0.001},Squash={"NS",{{0,-1.5,0},{1,-0.9375,0}}},Texture="rbxassetid://13992190852"}},
+        		{"P",0,"Aura",{Acceleration={"V3",0,0,-0.98696},Brightness=10,Color={"CS",{{0,0.16863,0.52941,1},{1,0.12941,0.28627,0.86275}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1.75,1.75},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=2,Rotation={"NR",90,90},Size={"NS",{{0,0.67145,0.2124},{0.3859,0.76771,0.1832},{1,0.92521,0.2124}}},Speed={"NR",0.0079944,0.0079944},SpreadAngle={"V2",20,20},Squash={"NS",{{0,-0.031333,0},{1,0.61533,0.18667}}},Texture="rbxassetid://14128249727",TimeScale=0.7,Transparency={"NS",{{0,1,0},{0.25398,0,0},{0.6,0,0},{1,1,0}}},ZOffset=0.1}},
+        		{"P",0,"Aura2",{Acceleration={"V3",0,0,-1.6714},Brightness=0.7,Color={"CS",{{0,0.16863,0.52941,1},{1,0.12941,0.28627,0.86275}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,0.75},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Size={"NS",{{0,1.1371,0.3597},{0.3859,1.3001,0.31026},{1,1.5668,0.3597}}},Speed={"NR",0.013539,0.013539},SpreadAngle={"V2",20,20},Squash={"NS",{{0,-0.37133,0},{1,-0.34467,0.18667}}},Texture="rbxassetid://14372610031",Transparency={"NS",{{0,1,0},{0.1459,0,0},{0.6039,0,0},{1,1,0}}},ZOffset=0.2}},
+        		{"P",0,"Spec2",{Brightness=7.895,Color={"CS",{{0,0.16863,0.52941,1},{1,0.12941,0.28627,0.86275}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",2.7,2.7},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.25},LightEmission=1,LockedToPart=true,Rate=5,Rotation={"NR",-180,180},Size={"NS",{{0,0,0.016714},{0.12398,0.099709,0.021796},{0.44998,0.1501,0.032307},{0.80198,0.054915,0.02319},{1,0,0}}},Speed={"NR",0.016714,0.016714},SpreadAngle={"V2",50,50},Squash={"NS",{{0,0,0},{0.1,0,0},{0.2,0,0},{0.3,0,0},{0.4,0,0},{0.5,0,0},{0.6,0,0},{0.7,0,0},{0.8,0,0},{0.9,0,0},{1,0,0}}},Texture="rbxassetid://13168097959",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.68,0,0},{1,0,0}}},VelocityInheritance=1,ZOffset=0.1}},
+        		{"P",0,"water",{Acceleration={"V3",0,-5.0143,0},Brightness=4.56,Color={"CS",{{0,0.27451,0.56471,1},{1,0.13333,0.35294,0.86275}}},Drag=5,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},FlipbookStartRandom=true,Lifetime={"NR",0.5,1},LightEmission=1,LockedToPart=true,Rate=5,RotSpeed={"NR",0.01,0.01},Rotation={"NR",-360,360},Size={"NS",{{0,0.33596,0},{1,0.39167,0}}},Speed={"NR",1.6714,6.6857},SpreadAngle={"V2",-360,360},Texture="rbxassetid://13458134063",Transparency={"NS",{{0,1,0},{0.20167,0.24375,0},{0.31598,0,0},{0.61333,0,0},{0.79398,0,0},{1,0,0}}},VelocityInheritance=0.1,ZOffset=0.5}},
+        		{"T",4,"",4,5,{Brightness=8.28,Color={"CS",{{0,0.13333,0.92941,1},{1,0.13333,0.92941,1}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}}
+        	} },
+        	["StormFront"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"start",{-0.095215,-0.040283,1.7809,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"A",0,"T2",{-0.19391,0.036102,-2.5246,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"T",1,"brighttrail",1,3,{Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime=0.5,MinLength=0.16838,Texture="http://www.roblox.com/asset/?id=9399014469",TextureLength=3.3676,TextureMode={"EV","TextureMode",1},Transparency={"NS",{{0,0.14375,0},{0.21743,0.25625,0},{0.32166,0.3625,0},{0.40554,0.45,0},{0.47801,0.56875,0},{0.53827,0.71875,0},{0.59853,0.8125,0},{0.66938,0.86875,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.29333,0.825,0},{0.50303,0.65,0},{0.6703,0.4875,0},{0.78545,0.35,0},{0.90424,0.1875,0},{1,0,0}}}}},
+        		{"T",1,"",1,3,{Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime=0.5,MinLength=0.16838,Texture="rbxassetid://12788868051",TextureLength=2,Transparency={"NS",{{0,0.14375,0},{0.21743,0.25625,0},{0.32166,0.3625,0},{0.40554,0.45,0},{0.47801,0.56875,0},{0.53827,0.71875,0},{0.59853,0.8125,0},{0.66938,0.86875,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.29333,0.825,0},{0.50303,0.65,0},{0.6703,0.4875,0},{0.78545,0.35,0},{0.90424,0.1875,0},{1,0,0}}}}},
+        		{"T",1,"brighttrail2",1,3,{Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime=0.5,MinLength=0.16838,Texture="rbxassetid://13880760594",TextureLength=2.5257,TextureMode={"EV","TextureMode",1},Transparency={"NS",{{0,0.14375,0},{0.21743,0.25625,0},{0.32166,0.3625,0},{0.40554,0.45,0},{0.47801,0.56875,0},{0.53827,0.71875,0},{0.59853,0.8125,0},{0.66938,0.86875,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.29333,0.825,0},{0.50303,0.65,0},{0.6703,0.4875,0},{0.78545,0.35,0},{0.90424,0.1875,0},{1,0,0}}}}},
+        		{"T",1,"darkTrail",1,3,{Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime=0.5,MinLength=0.16838,Texture="rbxassetid://12788868051",Transparency={"NS",{{0,0.14375,0},{0.21743,0.25625,0},{0.32166,0.3625,0},{0.40554,0.45,0},{0.47801,0.56875,0},{0.53827,0.71875,0},{0.59853,0.8125,0},{0.66938,0.86875,0},{1,1,0}}},WidthScale={"NS",{{0,0.8875,0},{0.28485,0.975,0},{0.49939,0.7625,0},{0.66909,0.625,0},{0.78909,0.46875,0},{0.90424,0.1875,0},{1,0,0}}}}},
+        		{"B",2,"",2,3,{Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},FaceCamera=true,Texture="http://www.roblox.com/asset/?id=12921344400",TextureLength=0.85,TextureSpeed=0.5,Transparency={"NS",{{0,1,0},{0.19825,0.46875,0},{0.37406,0.18125,0},{0.51221,0.11875,0},{0.62344,0.35,0},{0.67752,0.70625,0},{0.75977,0.84375,0},{0.84935,0.95,0},{1,1,0}}},Width0=0.84189,Width1=1.6838,ZOffset=0.001}},
+        		{"B",2,"",2,3,{Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},FaceCamera=true,Texture="rbxassetid://12781757438",TextureLength=0.85,TextureSpeed=-0.25,Transparency={"NS",{{0,1,0},{0.50896,0.59375,0},{1,1,0}}},Width0=1.6838,Width1=1.6838}},
+        		{"B",2,"beam",2,3,{Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},FaceCamera=true,Texture="rbxassetid://10528782340",TextureLength=0.85,TextureSpeed=0.5,Transparency={"NS",{{0,1,0},{0.47199,0.93125,0},{1,1,0}}},Width0=1.6838,Width1=3.3676,ZOffset=-0.01}},
+        		{"B",2,"beam",2,3,{Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},FaceCamera=true,Texture="rbxassetid://14050906710",TextureLength=0.85,TextureSpeed=0.25,Transparency={"NS",{{0,1,0},{0.48779,0.5,0},{1,1,0}}},Width0=1.6838,Width1=1.6838}},
+        		{"B",2,"beam",2,3,{Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},FaceCamera=true,Texture="rbxassetid://10528782340",TextureLength=0.85,TextureSpeed=-0.15,Transparency={"NS",{{0,1,0},{0.47313,0.875,0},{1,1,0}}},Width0=3.3676,Width1=1.6838,ZOffset=-0.01}},
+        		{"P",0,"stars",{Acceleration={"V3",0,0.84189,-1.5},Brightness=15,Color={"CS",{{0,0.58935,0.77984,1},{1,0.58935,0.77984,1}}},Drag=1,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.45,0.8},LockedToPart=true,Rate=90,ShapeInOut={"EV","ParticleEmitterShapeInOut",2},Size={"NS",{{0,0,0},{0.11628,0,0},{0.208,0.12628,0.12628},{0.30798,0,0},{0.5,0,0},{0.67456,0,0},{0.759,0.12628,0.12628},{0.84788,0.058828,0},{1,0,0}}},Speed={"NR",0,0.084189},SpreadAngle={"V2",15,150},Texture="rbxassetid://71372784229027",TimeScale=0.35,Transparency={"NS",{{0,1,0},{0.15592,0,0},{0.74577,0,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",0,"lightningbig",{Acceleration={"V3",0,0,-1.5},Brightness=15,Color={"CS",{{0,0.58935,0.77048,1},{1,0.58935,0.77048,1}}},FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,0.4},LightEmission=-2,LockedToPart=true,Rate=0.5,Rotation={"NR",39,999},ShapePartial=4,Size={"NS",{{0,1.768,0},{1,1.768,0}}},Speed={"NR",0.00058932,0.00058932},SpreadAngle={"V2",150,150},Texture="rbxassetid://9255994696",ZOffset=1}},
+        		{"P",0,"lightning2",{Acceleration={"V3",0,0,-1.5},Brightness=15,Color={"CS",{{0,0.58935,0.77048,1},{1,0.58935,0.77048,1}}},FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,0.4},LightEmission=-0.5,LockedToPart=true,Rate=7.5,Rotation={"NR",39,999},ShapePartial=4,Size={"NS",{{0,0.88398,0.44199},{1,0.88398,0.44199}}},Speed={"NR",0.00058932,0.00058932},SpreadAngle={"V2",150,150},Texture="rbxassetid://13780092154",ZOffset=1}},
+        		{"P",0,"lightning",{Acceleration={"V3",0,0,-1.5},Brightness=5,Color={"CS",{{0,0.58935,0.77048,1},{1,0.58935,0.77048,1}}},FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.3,0.5},LockedToPart=true,Rate=7.5,Rotation={"NR",39,999},ShapePartial=3,Size={"NS",{{0,1.1786,0.44199},{1,1.1786,0.44199}}},Speed={"NR",-0.58932,0.58932},SpreadAngle={"V2",150,150},Texture="rbxassetid://11861733639",ZOffset=1}},
+        		{"P",0,"dots",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime={"NR",1,2.25},Rate=35,Rotation={"NR",39,999},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=3,Size={"NS",{{0,0.1356,0.090399},{0.34788,0.067799,0.042097},{0.60973,0.045199,0.0226},{0.77431,0.0226,0.0226},{1,0,0}}},Speed={"NR",0,0.19406},SpreadAngle={"V2",150,150},Texture="rbxassetid://8242018934",TimeScale=0.75,Transparency={"NS",{{0,1,0},{0.037406,0.6358,0},{0.084788,0.39506,0},{0.14713,0.092593,0},{0.22444,0,0},{1,0,0}}},ZOffset=1}},
+        		{"P",0,"blackdots",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime={"NR",1,2.25},Rate=25,Rotation={"NR",39,999},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=4,Size={"NS",{{0,0.16272,0.10848},{0.34788,0.081359,0.081359},{0.60973,0.054239,0.054239},{0.77431,0.02712,0.02712},{1,0,0}}},Speed={"NR",0,0.19406},SpreadAngle={"V2",150,150},Texture="rbxassetid://8242018934",TimeScale=0.75,Transparency={"NS",{{0,1,0},{0.037406,0.6358,0},{0.084788,0.39506,0},{0.14713,0.092593,0},{0.22444,0,0},{1,0,0}}},ZOffset=1}},
+        		{"P",0,"aura2",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=0.6,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LockedToPart=true,Rate=45,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.54115,0.58504,0},{0.8005,0.64222,0},{1,0.42548,0}}},Speed={"NR",0,0.23786},SpreadAngle={"V2",150,150},Squash={"NS",{{0,-0.1,0},{1,-0.1,0}}},Texture="rbxassetid://89598700477428",TimeScale=0.7,Transparency={"NS",{{0,0.35,0},{1,0.35,0}}},ZOffset=-0.6}},
+        		{"P",0,"aura",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=0.6,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LockedToPart=true,Rate=75,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.54115,0.53186,0},{0.8005,0.58383,0},{1,0.3868,0}}},Speed={"NR",0,0.21623},SpreadAngle={"V2",150,150},Squash={"NS",{{0,-0.1,0},{1,-0.1,0}}},Texture="rbxassetid://89598700477428",TimeScale=0.7,ZOffset=-0.5}},
+        		{"P",0,"BezierLineCenter",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=10,Rotation={"NR",39,999},Size={"NS",{{0,0.42094,0},{1,0.42094,0}}},Speed={"NR",0.042094,0.042094},SpreadAngle={"V2",150,150},Squash={"NS",{{0,0.5,0},{1,0.5,0}}},Texture="rbxassetid://13803462600",Transparency={"NS",{{0,0.1,0},{1,0.1,0}}},ZOffset=1}},
+        		{"P",0,"BezierLineCenter",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=5,Rotation={"NR",39,999},Size={"NS",{{0,0.25257,0},{1,0.25257,0}}},Speed={"NR",0.025257,0.025257},SpreadAngle={"V2",150,150},Squash={"NS",{{0,0.5,0},{1,0.5,0}}},Texture="rbxassetid://13803462600",Transparency={"NS",{{0,0.1,0},{1,0.1,0}}},ZOffset=1}},
+        		{"P",0,"aura",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=0.6,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LockedToPart=true,Rate=35,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.54115,0.53186,0},{0.8005,0.58383,0},{1,0.3868,0}}},Speed={"NR",0,0.21623},SpreadAngle={"V2",150,150},Squash={"NS",{{0,-0.1,0},{1,-0.1,0}}},Texture="rbxassetid://89598700477428",TimeScale=0.7,ZOffset=-0.5}},
+        		{"P",0,"aura2",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0,0,0},{1,0,0,0}}},Drag=0.6,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LockedToPart=true,Rate=10,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.54115,0.58504,0},{0.8005,0.64222,0},{1,0.42548,0}}},Speed={"NR",0,0.23786},SpreadAngle={"V2",150,150},Squash={"NS",{{0,-0.1,0},{1,-0.1,0}}},Texture="rbxassetid://89598700477428",TimeScale=0.7,Transparency={"NS",{{0,0.35,0},{1,0.35,0}}},ZOffset=-0.6}},
+        		{"P",0,"dots",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime={"NR",1,2.25},Rate=15,Rotation={"NR",39,999},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=3,Size={"NS",{{0,0.1356,0.090399},{0.34788,0.067799,0.042097},{0.60973,0.045199,0.0226},{0.77431,0.0226,0.0226},{1,0,0}}},Speed={"NR",0,0.19406},SpreadAngle={"V2",150,150},Texture="rbxassetid://8242018934",TimeScale=0.75,Transparency={"NS",{{0,1,0},{0.037406,0.6358,0},{0.084788,0.39506,0},{0.14713,0.092593,0},{0.22444,0,0},{1,0,0}}},ZOffset=1}},
+        		{"P",0,"lightning",{Acceleration={"V3",0,0,-1.5},Brightness=5,Color={"CS",{{0,0.47148,0.62019,1},{1,0.47148,0.62019,1}}},FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.3,0.5},LockedToPart=true,Rate=3,Rotation={"NR",-20,20},Shape={"EV","ParticleEmitterShape",3},ShapePartial=3,Size={"NS",{{0,0.82084,0.30782},{1,0.82084,0.30782}}},Speed={"NR",-0.41042,0.41042},Texture="rbxassetid://11861733639",ZOffset=1}},
+        		{"P",0,"blackdots",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime={"NR",1,2.25},Rate=10,Rotation={"NR",39,999},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=4,Size={"NS",{{0,0.16272,0.10848},{0.34788,0.081359,0.081359},{0.60973,0.054239,0.054239},{0.77431,0.02712,0.02712},{1,0,0}}},Speed={"NR",0,0.19406},SpreadAngle={"V2",150,150},Texture="rbxassetid://8242018934",TimeScale=0.75,Transparency={"NS",{{0,1,0},{0.037406,0.6358,0},{0.084788,0.39506,0},{0.14713,0.092593,0},{0.22444,0,0},{1,0,0}}},ZOffset=1}},
+        		{"P",0,"lightning2",{Acceleration={"V3",0,0,-1.5},Brightness=15,Color={"CS",{{0,0.47148,0.62019,1},{1,0.47148,0.62019,1}}},FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,0.4},LightEmission=-0.5,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=3,Rotation={"NR",39,999},ShapePartial=4,Size={"NS",{{0,0.61563,0.30782},{1,0.61563,0.30782}}},Speed={"NR",0.00041042,0.00041042},SpreadAngle={"V2",150,150},Texture="rbxassetid://13780092154",ZOffset=1}},
+        		{"P",0,"lightningbig",{Acceleration={"V3",0,0,-1.5},Brightness=15,Color={"CS",{{0,0.47148,0.62019,1},{1,0.47148,0.62019,1}}},FlipbookFramerate={"NR",32,32},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,0.4},LightEmission=-2,LockedToPart=true,Rate=0.5,Rotation={"NR",39,999},ShapePartial=4,Size={"NS",{{0,1.2628,0},{1,1.2628,0}}},Speed={"NR",0.00058932,0.00058932},SpreadAngle={"V2",150,150},Texture="rbxassetid://9255994696",ZOffset=1}}
+        	} },
+        	["Cinder"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"T",2,"",2,1,{Brightness=8.28,Color={"CS",{{0,0.17409,0.93137,0.62904},{1,0,0.14118,0.93333}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",0,"Fire",{Acceleration={"V3",0,2,0},Brightness=5.18,Color={"CS",{{0,0.14829,0.14773,0.14773},{1,0.14829,0.14773,0.14773}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.25},LightEmission=0.6,LockedToPart=true,Rate=15,Rotation={"NR",-180,180},Size={"NS",{{0,0,0},{0.12993,0.581,0.082254},{1,1.0973,0}}},Speed={"NR",0.5,0.5},Texture="rbxassetid://70806699712008",Transparency={"NS",{{0,1,0},{0.24593,0.0043333,0},{0.58393,0.61433,0},{0.76393,0.83767,0},{1,1,0}}},ZOffset=0.1}},
+        		{"P",0,"Fire1",{Acceleration={"V3",0,1,0},Brightness=10,Color={"CS",{{0,1,0.23529,0},{1,1,0.23529,0}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,0.75},LightEmission=1,LockedToPart=true,Rate=30,Rotation={"NR",-180,180},Size={"NS",{{0,0.11767,0},{0.24193,0.381,0},{0.47393,0.34767,0},{1,0.531,0}}},Speed={"NR",0.2,0.2},Texture="rbxassetid://70806699712008",Transparency={"NS",{{0,1,0},{0.20193,0,0},{0.42993,0,0},{0.72993,0,0},{1,1,0}}}}},
+        		{"P",0,"Smoke",{Acceleration={"V3",0,2,0},Brightness=3.035,Color={"CS",{{0,0.14829,0.14773,0.14773},{1,0.14829,0.14773,0.14773}}},EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.25},LockedToPart=true,Rate=30,Rotation={"NR",-180,180},Size={"NS",{{0,0.961,0},{0.24593,0.74433,0},{1,0.98767,0}}},Speed={"NR",0.5,0.5},Texture="rbxassetid://13168080806",Transparency={"NS",{{0,1,0},{0.18993,0.581,0},{0.59393,0.401,0},{0.82593,0.61433,0},{1,1,0}}},ZOffset=-0.2}},
+        		{"P",0,"Spec1",{Brightness=20,Color={"CS",{{0,0.14829,0.14773,0.14773},{1,0.14829,0.14773,0.14773}}},Drag=5,FlipbookFramerate={"NR",11.1,11.1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.25},LightEmission=1,Orientation={"EV","ParticleOrientation",2},Rate=15,Rotation={"NR",90,90},Size={"NS",{{0,0,0},{0.10393,0.024333,0.01304},{0.20393,0.047667,0.0099289},{0.49793,0.034333,0.019329},{0.73832,0.017667,0.013874},{1,0,0}}},Speed={"NR",0.5,1},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0,0},{0.1,0.12666,0},{0.2,0.23048,0},{0.3,0.30451,0},{0.4,0.35847,0},{0.5,0.39912,0},{0.6,0.43043,0},{0.7,0.45482,0},{0.8,0.47388,0},{0.9,0.48868,0},{1,0.5,0}}},Texture="rbxassetid://13167799997",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},VelocityInheritance=0.1,ZOffset=0.5}}
+        	} },
+        	["Seafoam"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"T",1,"",1,2,{Brightness=8.28,Color={"CS",{{0,0.17409,0.93137,0.62904},{1,0,0.14118,0.93333}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",0,"water",{Acceleration={"V3",0,-5.6571,0},Brightness=4.56,Color={"CS",{{0,0.17409,0.93137,0.62904},{1,0,0.14118,0.93333}}},Drag=5,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},FlipbookStartRandom=true,Lifetime={"NR",0.5,1},LightEmission=1,LockedToPart=true,Rate=5,RotSpeed={"NR",0.01,0.01},Rotation={"NR",-360,360},Size={"NS",{{0,0.37903,0},{1,0.44189,0}}},Speed={"NR",1.8857,7.5429},SpreadAngle={"V2",-360,360},Texture="rbxassetid://13458134063",Transparency={"NS",{{0,1,0},{0.20167,0.24375,0},{0.31598,0,0},{0.61333,0,0},{0.79398,0,0},{1,0,0}}},VelocityInheritance=0.1,ZOffset=0.5}},
+        		{"P",0,"Spec2",{Brightness=7.895,Color={"CS",{{0,0.17409,0.93137,0.62904},{1,0,0.14118,0.93333}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.25},LightEmission=1,LockedToPart=true,Rate=5,Rotation={"NR",-180,180},Size={"NS",{{0,0,0.018857},{0.12398,0.11249,0.02459},{0.44998,0.16935,0.036449},{0.80198,0.061955,0.026163},{1,0,0}}},Speed={"NR",0.018857,0.018857},SpreadAngle={"V2",50,50},Squash={"NS",{{0,0,0},{0.1,0,0},{0.2,0,0},{0.3,0,0},{0.4,0,0},{0.5,0,0},{0.6,0,0},{0.7,0,0},{0.8,0,0},{0.9,0,0},{1,0,0}}},Texture="rbxassetid://107688167838598",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.68,0,0},{1,0,0}}},VelocityInheritance=1,ZOffset=0.1}},
+        		{"P",0,"Aura2",{Acceleration={"V3",0,0,-1.8857},Brightness=0.7,Color={"CS",{{0,0.17409,0.93137,0.62904},{1,0,0.14118,0.93333}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,0.75},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Size={"NS",{{0,1.2829,0.40582},{0.3859,1.4668,0.35003},{1,1.7677,0.40582}}},Speed={"NR",0.015274,0.015274},SpreadAngle={"V2",20,20},Squash={"NS",{{0,-0.37133,0},{1,-0.34467,0.18667}}},Texture="rbxassetid://14372610031",Transparency={"NS",{{0,1,0},{0.1459,0,0},{0.6039,0,0},{1,1,0}}},ZOffset=0.2}},
+        		{"P",0,"Aura",{Acceleration={"V3",0,0,-1.1135},Brightness=10,Color={"CS",{{0,0.17409,0.93137,0.62904},{1,0,0.14118,0.93333}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1.75,1.75},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=2,Rotation={"NR",90,90},Size={"NS",{{0,0.75753,0.23963},{0.3859,0.86613,0.20669},{1,1.0438,0.23963}}},Speed={"NR",0.0090193,0.0090193},SpreadAngle={"V2",20,20},Squash={"NS",{{0,-0.031333,0},{1,0.61533,0.18667}}},Texture="rbxassetid://107688167838598",TimeScale=0.7,Transparency={"NS",{{0,1,0},{0.25398,0,0},{0.6,0,0},{1,1,0}}},ZOffset=0.1}}
+        	} },
+        	["Nightshade"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"end",{0,0.072021,-1.8113,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"T",2,"",2,3,{Brightness=8.28,Color={"CS",{{0,0.21176,0,0.42353},{1,0.21176,0,0.42353}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",0,"Wisps",{Acceleration={"V3",0,0.11805,0},Brightness=0.01,Drag=10,EmissionDirection={"EV","NormalId",3},Lifetime={"NR",0.75,2},LightEmission=-0.5,Rate=8.3333,RotSpeed={"NR",-800,800},Rotation={"NR",-360,360},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0.55977,0.1445},{0.048718,0.2549,0.12816},{0.3483,0.070885,0.044231},{1,0,0}}},Speed={"NR",1.1851,3.7247},SpreadAngle={"V2",360,360},Texture="rbxassetid://6910301489",Transparency={"NS",{{0,1,0},{0.12692,0.89375,0},{0.2141,0.63125,0},{0.36218,0.3875,0},{1,0.5,0}}},VelocityInheritance=1,ZOffset=8.7613}},
+        		{"P",0,"Wisps2",{Acceleration={"V3",0,0.12986,0},Brightness=10,Color={"CS",{{0,0.094118,0.41176,1},{1,0.094118,0.41176,1}}},Drag=10,EmissionDirection={"EV","NormalId",3},Lifetime={"NR",0.75,2},LightEmission=1,Rate=8.3333,RotSpeed={"NR",-800,800},Rotation={"NR",-360,360},ShapeInOut={"EV","ParticleEmitterShapeInOut",1},Size={"NS",{{0,0.61575,0.15895},{0.048718,0.28039,0.14097},{0.3483,0.077974,0.048654},{1,0,0}}},Speed={"NR",1.3037,4.0972},SpreadAngle={"V2",360,360},Texture="rbxassetid://6910301489",Transparency={"NS",{{0,1,0},{0.12692,0.89375,0},{0.22338,0,0},{0.61338,0,0},{1,0,0}}},VelocityInheritance=1,ZOffset=8.7613}},
+        		{"P",0,"Star12",{Brightness=0.5,Color={"CS",{{0,0.32941,0.32941,1},{1,0.32941,0.32941,1}}},Lifetime={"NR",0.5,1},Orientation={"EV","ParticleOrientation",1},Rate=60,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.068493,0.25,0.25},{0.16563,0,0},{0.25031,0.25,0.25},{0.35118,0,0},{0.42964,0.375,0.375},{0.54795,0,0},{0.63636,0.25,0.25},{0.7746,0,0},{0.88169,0.25,0.25},{1,0,0}}},Speed={"NR",0,0},Texture="rbxassetid://17062452122",Transparency={"NS",{{0,0.8,0},{1,0.8,0}}},ZOffset=-0.5}},
+        		{"P",0,"Star12",{Brightness=15,Color={"CS",{{0,0.32941,0.32941,1},{1,0.32941,0.32941,1}}},Lifetime={"NR",0.5,1},Orientation={"EV","ParticleOrientation",1},Rate=60,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.068493,0.25,0.25},{0.16563,0,0},{0.25031,0.25,0.25},{0.35118,0,0},{0.42964,0.375,0.375},{0.54795,0,0},{0.63636,0.25,0.25},{0.7746,0,0},{0.88169,0.25,0.25},{1,0,0}}},Speed={"NR",0,0},Texture="rbxassetid://17062452122"}},
+        		{"P",0,"Lightning2",{Brightness=0,Color={"CS",{{0,0.090196,0.043137,0.34902},{1,0.090196,0.043137,0.34902}}},EmissionDirection={"EV","NormalId",0},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.25,0.5},LockedToPart=true,Rate=8.3333,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,0,0},{0.2804,0.22121,0.22072},{1,0.30309,0.30106}}},Speed={"NR",0.0021504,0.0021504},Texture="rbxassetid://13778464872",Transparency={"NS",{{0,1,0},{0.098344,0,0},{0.70634,0,0},{1,1,0}}},VelocityInheritance=1,ZOffset=-0.5}},
+        		{"P",0,"Lightning2",{Brightness=10,Color={"CS",{{0,0.090196,0.043137,0.34902},{1,0.090196,0.043137,0.34902}}},EmissionDirection={"EV","NormalId",0},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.25,0.5},LightEmission=0.75,LockedToPart=true,Rate=2.5,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,0,0},{0.2804,0.22121,0.22072},{1,0.30309,0.30106}}},Speed={"NR",0.0021504,0.0021504},Texture="rbxassetid://13778464872",Transparency={"NS",{{0,1,0},{0.098344,0,0},{0.70634,0,0},{1,1,0}}},VelocityInheritance=1,ZOffset=0.5}},
+        		{"P",0,"Lightning",{Brightness=10,Color={"CS",{{0,0.090196,0.043137,0.34902},{1,0.090196,0.043137,0.34902}}},EmissionDirection={"EV","NormalId",0},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.25,0.5},LightEmission=1,LockedToPart=true,Rate=2.5,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",2},ShapePartial=0.8,Size={"NS",{{0,0,0},{0.3004,0.31529,0.10889},{1,0.42394,0.24371}}},Speed={"NR",0.0021504,0.0021504},Texture="rbxassetid://13778464872",Transparency={"NS",{{0,1,0},{0.098344,0,0},{0.70634,0,0},{1,1,0}}},VelocityInheritance=1,ZOffset=0.61}},
+        		{"P",0,"LSaura1",{Brightness=6.285,Color={"CS",{{0,0.054902,0.015686,0.18824},{1,0.054902,0.015686,0.18824}}},Drag=2.75,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1.25,1.75},LockedToPart=true,Rate=41.667,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",3},Size={"NS",{{0,0.53955,0.12007},{0.31024,0.8088,0.10356},{1,0.98899,0.12007}}},Speed={"NR",0.002965,0.593},SpreadAngle={"V2",360,360},Texture="rbxassetid://14601007537",Transparency={"NS",{{0,1,0},{0.23489,0,0},{0.72008,0.88767,0},{1,1,0}}},VelocityInheritance=1,ZOffset=0.05}},
+        		{"P",0,"LSaura",{Brightness=100,Color={"CS",{{0,0.094118,0.054902,0.2902},{1,0.094118,0.054902,0.2902}}},Drag=2.75,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1.25,1.5},LightEmission=-3,LockedToPart=true,Rate=41.667,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,0.30649,0.068205},{0.30089,0.47862,0.053545},{1,0.55843,0.049083}}},Speed={"NR",0.0055776,0.0055776},SpreadAngle={"V2",360,360},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://71355345702692",Transparency={"NS",{{0,1,0},{0.17489,0,0},{0.31689,0,0},{0.59889,0.801,0},{1,1,0}}},VelocityInheritance=1}}
+        	} },
+        	["Pollen"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"T",2,"",2,1,{Brightness=8.28,Color={"CS",{{0,0.98824,1,0.18039},{0.50777,0.94902,1,0.0078431},{1,0.090196,1,0.61961}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",0,"CircleWAve",{Brightness=0.05,Color={"CS",{{0,0.98824,1,0.18039},{0.50777,0.94902,1,0.0078431},{1,0.090196,1,0.61961}}},EmissionDirection={"EV","NormalId",5},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=19,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,0.90376,0},{0.40125,1.2237,0.032309},{1,1.3799,0.022297}}},Speed={"NR",0.0001301,0.0001301},Texture="rbxassetid://13167800208",TimeScale=0.5,Transparency={"NS",{{0,1,0},{0.16824,0.371,0},{0.33624,0.69767,0},{1,1,0}}},ZOffset=0.9}},
+        		{"P",0,"Energy Vague",{Brightness=20,Color={"CS",{{0,0.98824,1,0.18039},{0.50777,0.94902,1,0.0078431},{1,0.090196,1,0.61961}}},Drag=1.298,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",2},Lifetime={"NR",0.77043,1.1557},LightEmission=1,LockedToPart=true,Rate=4,RotSpeed={"NR",5,5},Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,0.49242,0},{0.32152,0.50864,0},{1,0.54064,0}}},Speed={"NR",0.0018577,0.0018577},Texture="rbxassetid://84912585489808",Transparency={"NS",{{0,1,0},{0.2414,0,0},{0.6874,0.42028,0},{1,1,0}}},ZOffset=0.4}},
+        		{"P",0,"Shards 2x2 2",{Brightness=15,Color={"CS",{{0,1,0.23529,0.9701},{0.50777,0.11373,0.24667,1},{1,0.090196,1,0.61961}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",0.18278,0.18278},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.82067,1.3678},LightEmission=1,Rate=19,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.1,Size={"NS",{{0,-1.7,0},{0.22167,0.23686,0.18446},{0.62685,-0.079695,0.14743},{1,-1.7,0}}},Speed={"NR",0.0077124,0.0077124},SpreadAngle={"V2",30,30},Texture="rbxassetid://17842430380",ZOffset=0.55}},
+        		{"P",0,"Star2",{Brightness=30,Color={"CS",{{0,1,0.23529,0.9701},{0.50777,0.98431,1,0.062745},{1,0.090196,1,0.61961}}},Drag=2.9543,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",14.575,14.575},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.7616,1.904},LightEmission=1,LockedToPart=true,Rate=19,Shape={"EV","ParticleEmitterShape",3},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=0,Size={"NS",{{0,0.72857,0},{1,0.85079,0.21048}}},Speed={"NR",0.024849,0.95664},Texture="rbxassetid://117950183954264",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},ZOffset=0.06}},
+        		{"P",0,"Star3",{Brightness=30,Color={"CS",{{0,1,0.23529,0.9701},{0.50777,0.98431,1,0.062745},{1,0.090196,1,0.61961}}},Drag=3.75,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LightEmission=1,LockedToPart=true,Rate=19,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.1,Size={"NS",{{0,0,0},{0.083521,0.22781,0.1553},{0.15152,0,0},{0.23352,0.22781,0.404},{0.35752,0,0},{0.49752,0.22781,0.29453},{0.67152,0.0041293,0},{0.84952,0.12457,0},{1,0,0}}},Speed={"NR",0.018925,1.6433},SpreadAngle={"V2",35,20},Texture="rbxassetid://17842430380",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},ZOffset=1}}
+        	} },
+        	["Gilded"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"end",{0,0.072021,-1.8113,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"A",0,"VFXAttachment",{6.1035e-05,-0.0021973,-0.58922,0,0,-1,-1,0,0,0,1,0}},
+        		{"A",4,"",{0,-2.664,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",5,"",{0,7.6057,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",4,"",{0,1.3688,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",4,"Beams",{-0.054596,0,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",8,"DownChain2",{0,3.5445,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",8,"DownChain",{0,-1.8485,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",4,"",{-0.078339,1.9929,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",4,"",{0,2.4795,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",0,"start",{0,0.072021,1.8113,1,0,0,0,0,-1,0,1,0}},
+        		{"A",0,"end",{0,0.072021,-1.8113,1,0,0,0,0,-1,0,1,0}},
+        		{"T",2,"",2,3,{Brightness=8.28,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",0,"Aura",{Acceleration={"V3",0,0,-2},Brightness=0.3,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rotation={"NR",5,5},Size={"NS",{{0,1.3606,0.43041},{0.3859,1.5557,0.37125},{1,1.8749,0.43041}}},Speed={"NR",0.0162,0.0162},SpreadAngle={"V2",20,20},Squash={"NS",{{0,-0.37133,0},{1,-0.34467,0.18667}}},Texture="rbxassetid://14372610031",Transparency={"NS",{{0,1,0},{0.1459,0,0},{0.6039,0,0},{1,1,0}}},ZOffset=0.05}},
+        		{"P",0,"CircleWAve",{Brightness=0.003,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},EmissionDirection={"EV","NormalId",5},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=7,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,1.2662,0},{0.40125,1.7145,0.045267},{1,1.9333,0.03124}}},Speed={"NR",0.00018227,0.00018227},Texture="rbxassetid://13167800208",TimeScale=0.5,Transparency={"NS",{{0,1,0},{0.16824,0.371,0},{0.33624,0.69767,0},{1,1,0}}},ZOffset=1}},
+        		{"P",0,"LSaura",{Acceleration={"V3",0,0,-1.0044},Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Drag=5.2503,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",1.0501,1.0501},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.71424,1.4285},LightEmission=1,LockedToPart=true,Rate=7.3504,Rotation={"NR",-180,180},Size={"NS",{{0,0.91765,0.20421},{0.19834,1.2949,0.17614},{1,2.0149,0}}},Speed={"NR",0.0052953,1.0591},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://15376405698",Transparency={"NS",{{0,1,0},{0.21485,0.49366,0},{0.57685,0.72366,0},{1,1,0}}},ZOffset=0.1}},
+        		{"P",0,"LSaura1",{Acceleration={"V3",0,0,-1.2553},Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Drag=5.2503,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",1.0501,1.0501},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.95233,1.1904},LightEmission=1,LockedToPart=true,Rate=3.1502,Rotation={"NR",-180,180},Size={"NS",{{0,1.2365,0.27517},{0.31024,1.8536,0.23735},{1,2.2666,0.27517}}},Speed={"NR",0.0071354,1.4271},SpreadAngle={"V2",50,50},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="http://www.roblox.com/asset/?id=14727016281",Transparency={"NS",{{0,1,0},{0.21485,0.49366,0},{0.57685,0.72366,0},{1,1,0}}},VelocityInheritance=0.2,ZOffset=0.5}},
+        		{"P",0,"LSaura2",{Acceleration={"V3",0,0,-1.0044},Brightness=2,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Drag=5.2503,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",1.0501,1.0501},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.71424,0.95233},LightEmission=1,LockedToPart=true,Rate=4.2002,Rotation={"NR",-180,180},Size={"NS",{{0,0.70166,0.70166},{0.1,0.93436,0.70166},{0.2,1.1219,0.70166},{0.3,1.2785,0.70166},{0.4,1.4107,0.70166},{0.5,1.522,0.70166},{0.6,1.6147,0.70166},{0.7,1.6902,0.70166},{0.8,1.7499,0.70166},{0.9,1.7943,0.70166},{1,1.8243,0.70166}}},Speed={"NR",0.007048,1.4096},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://14066311352",Transparency={"NS",{{0,1,0},{0.21485,0.49366,0},{0.57685,0.72366,0},{1,1,0}}},ZOffset=0.15}},
+        		{"P",0,"Shards 2x2 2",{Brightness=15,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",0.18278,0.18278},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.82067,1.3678},LightEmission=1,Rate=1.4622,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.1,Size={"NS",{{0,-1.4,0},{0.22167,0.19506,0.15191},{0.62685,-0.065631,0.12141},{1,-1.4,0}}},Speed={"NR",0.0063514,0.0063514},SpreadAngle={"V2",30,30},Texture="rbxassetid://17842430380",ZOffset=0.55}},
+        		{"P",0,"Star2",{Brightness=30,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Drag=2.9543,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",14.575,14.575},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.7616,1.904},LightEmission=1,LockedToPart=true,Rate=13.13,Shape={"EV","ParticleEmitterShape",3},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=0,Size={"NS",{{0,0.6,0},{1,0.70065,0.17333}}},Speed={"NR",0.020464,0.78782},Texture="rbxassetid://117950183954264",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},ZOffset=0.06}},
+        		{"P",0,"Star3",{Brightness=30,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Drag=3.75,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LightEmission=1,LockedToPart=true,Rate=10,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.1,Size={"NS",{{0,0,0},{0.083521,0.18761,0.12789},{0.15152,0,0},{0.23352,0.18761,0.3327},{0.35752,0,0},{0.49752,0.18761,0.24255},{0.67152,0.0034006,0},{0.84952,0.10259,0},{1,0,0}}},Speed={"NR",0.015585,1.3533},SpreadAngle={"V2",35,20},Texture="rbxassetid://17842430380",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},ZOffset=2}},
+        		{"B",5,"",5,6,{Brightness=10,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://12781855685",TextureLength=0.375,TextureSpeed=0.7,Transparency={"NS",{{0,1,0},{0.50106,0,0},{1,1,0}}},Width0=1.5,Width1=1.5}},
+        		{"P",7,"Glow2",{Brightness=0.2,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Lifetime={"NR",1.2,1.8},LightInfluence=0.97,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=4,Size={"NS",{{0,0.73811,0},{1,1.4762,0.068864}}},Speed={"NR",0.00011313,0.00011313},Squash={"NS",{{0,-0.825,0},{1,-0.825,0}}},Texture="rbxassetid://1075864321",Transparency={"NS",{{0,1,0},{0.49916,0.8,0},{1,1,0}}},ZOffset=-0.1}},
+        		{"B",9,"Chains",10,9,{Brightness=25,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},CurveSize0=-1.5,CurveSize1=-1.5375,FaceCamera=true,Segments=55,Texture="rbxassetid://16692310127",TextureLength=1.375,TextureMode={"EV","TextureMode",2},Transparency={"NS",{{0,1,0},{0.19738,0.3625,0},{0.5014,0,0},{0.80636,0.375,0},{1,1,0}}},Width0=0.375,Width1=0.375,ZOffset=0.1}},
+        		{"B",10,"Chains",10,9,{Brightness=25,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},CurveSize0=1.5,CurveSize1=1.5375,FaceCamera=true,Segments=55,Texture="rbxassetid://16692310127",TextureLength=1.375,TextureMode={"EV","TextureMode",2},Transparency={"NS",{{0,1,0},{0.19738,0.3625,0},{0.5014,0,0},{0.80636,0.375,0},{1,1,0}}},Width0=0.375,Width1=0.375,ZOffset=0.1}},
+        		{"P",11,"",{Brightness=9,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=2,Rotation={"NR",90,90},Size={"NS",{{0,0,0},{0.1,1.047,0},{0.2,1.1896,0},{0.3,1.2567,0},{0.4,1.2956,0},{0.5,1.3208,0},{0.6,1.3385,0},{0.7,1.3519,0},{0.8,1.3627,0},{0.9,1.3721,0},{1,1.3806,0}}},Speed={"NR",0.0058744,0.0058744},Squash={"NS",{{0,1.2,0},{1,1.2,0}}},Texture="rbxassetid://14366327745",Transparency={"NS",{{0,0,0},{1,1,0}}},ZOffset=0.45423}},
+        		{"P",12,"ParticleEmiiter",{Brightness=3,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Drag=4,FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.25,0.3},LightEmission=1,LockedToPart=true,Rate=7,RotSpeed={"NR",-5,5},Rotation={"NR",180,180},Size={"NS",{{0,0.80835,0.025261},{0.1,0.81667,0.025261},{0.2,0.82411,0.025261},{0.3,0.83072,0.025261},{0.4,0.83658,0.025261},{0.5,0.84172,0.025261},{0.6,0.84622,0.025261},{0.7,0.85013,0.025261},{0.8,0.8535,0.025261},{0.9,0.8564,0.025261},{1,0.85887,0.025261},{1,0.85887,0.025261}}},Speed={"NR",0.0006002,0.0006002},Squash={"NS",{{0,0.225,0},{1,0.225,0}}},Texture="http://www.roblox.com/asset/?id=16736261968",TimeScale=0.15,Transparency={"NS",{{0,1,0},{0.19595,0.9,0},{0.29054,0.83125,0},{0.52449,0.84375,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",12,"ParticleEmiiter",{Brightness=3,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Drag=4,FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.35,0.42},LightEmission=1,LockedToPart=true,Rate=5,RotSpeed={"NR",-10,20},Rotation={"NR",-180,-180},Size={"NS",{{0,0.48375,0},{0.1,0.53011,0},{0.2,0.56566,0},{0.3,0.59228,0},{0.4,0.61225,0},{0.5,0.62742,0},{0.6,0.63908,0},{0.7,0.64815,0},{0.8,0.65524,0},{0.9,0.6608,0},{1,0.66516,0},{1,0.66516,0}}},Speed={"NR",0.00036462,0.00036462},Texture="rbxassetid://16173734662",TimeScale=0.22,Transparency={"NS",{{0,1,0},{0.22297,0.71875,0},{0.30574,0.9625,0},{0.50507,0.79375,0},{1,1,0}}},ZOffset=0.3}},
+        		{"P",12,"ParticleEmiiter",{Brightness=5,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},EmissionDirection={"EV","NormalId",0},FlipbookFramerate={"NR",0,0},FlipbookStartRandom=true,Lifetime={"NR",0.4,0.7},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=5,Rotation={"NR",90,90},Size={"NS",{{0,1.0712,0.10712},{0.1,1.0819,0.10712},{0.2,1.0926,0.10712},{0.3,1.1033,0.10712},{0.4,1.114,0.10712},{0.5,1.1247,0.10712},{0.6,1.1354,0.10712},{0.7,1.1461,0.10712},{0.8,1.1569,0.10712},{0.9,1.1676,0.10712},{1,1.1783,0.10712},{1,1.1783,0.10712}}},Speed={"NR",0.00081633,0.00081633},Squash={"NS",{{0,-0.12843,0},{0.41241,2.0326,0},{1,2.8098,0}}},Texture="rbxassetid://14010452821",TimeScale=0.3,Transparency={"NS",{{0,1,0},{0.49961,0.85802,0},{1,1,0}}}}},
+        		{"P",12,"ParticleEmiiter",{Brightness=10,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},EmissionDirection={"EV","NormalId",0},FlipbookFramerate={"NR",0.91,0.91},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,0.7},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=4.55,Rotation={"NR",90,90},Size={"NS",{{0,1.0712,0.10712},{0.1,1.0819,0.10712},{0.2,1.0926,0.10712},{0.3,1.1033,0.10712},{0.4,1.114,0.10712},{0.5,1.1247,0.10712},{0.6,1.1354,0.10712},{0.7,1.1461,0.10712},{0.8,1.1569,0.10712},{0.9,1.1676,0.10712},{1,1.1783,0.10712},{1,1.1783,0.10712}}},Speed={"NR",0.00081633,0.00081633},Squash={"NS",{{0,0.084866,0},{1,1.9125,0}}},Texture="rbxassetid://15393254529",TimeScale=0.3,Transparency={"NS",{{0,1,0},{0.49961,0.85802,0},{1,1,0}}},ZOffset=0.42}},
+        		{"P",12,"ParticleEmiiter",{Brightness=5,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Lifetime={"NR",1,1.6},LightEmission=1,LockedToPart=true,Rate=4,RotSpeed={"NR",-300,-100},Rotation={"NR",-360,360},Size={"NS",{{0,0.10678,0.058245},{0.095458,0.46325,0.16268},{0.32746,0.76321,0.17817},{1,1.1121,0.31178}}},Speed={"NR",4.1726e-05,4.1726e-05},Texture="rbxassetid://12738486019",TimeScale=0.5,Transparency={"NS",{{0,1,0},{0.24789,1,0},{0.38584,1,0},{0.50211,1,0},{0.54651,0.54375,0},{0.67072,0.86875,0},{0.84619,0.975,0},{1,1,0}}}}},
+        		{"P",12,"ParticleEmiiter",{Brightness=3,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Drag=4,FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.25,0.3},LightEmission=1,LockedToPart=true,Rate=7,RotSpeed={"NR",-5,5},Rotation={"NR",180,180},Size={"NS",{{0,1.455,0.04547},{0.1,1.47,0.04547},{0.2,1.4834,0.04547},{0.3,1.4953,0.04547},{0.4,1.5058,0.04547},{0.5,1.5151,0.04547},{0.6,1.5232,0.04547},{0.7,1.5302,0.04547},{0.8,1.5363,0.04547},{0.9,1.5415,0.04547},{1,1.546,0.04547},{1,1.546,0.04547}}},Speed={"NR",0.0010804,0.0010804},Squash={"NS",{{0,0.225,0},{1,0.225,0}}},Texture="http://www.roblox.com/asset/?id=16736261968",TimeScale=0.15,Transparency={"NS",{{0,1,0},{0.19595,0.9,0},{0.29054,0.83125,0},{0.52449,0.84375,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",12,"ParticleEmiiter",{Brightness=3,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Drag=4,FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.35,0.42},LightEmission=1,LockedToPart=true,Rate=5,RotSpeed={"NR",-10,20},Rotation={"NR",-180,-180},Size={"NS",{{0,0.87075,0},{0.1,0.9542,0},{0.2,1.0182,0},{0.3,1.0661,0},{0.4,1.102,0},{0.5,1.1294,0},{0.6,1.1504,0},{0.7,1.1667,0},{0.8,1.1794,0},{0.9,1.1894,0},{1,1.1973,0},{1,1.1973,0}}},Speed={"NR",0.00065632,0.00065632},Texture="rbxassetid://16173734662",TimeScale=0.22,Transparency={"NS",{{0,1,0},{0.22297,0.71875,0},{0.30574,0.9625,0},{0.50507,0.79375,0},{1,1,0}}},ZOffset=0.3}},
+        		{"P",12,"ParticleEmiiter",{Brightness=35,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,0.75},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=1.5,Rotation={"NR",-360,180},Size={"NS",{{0,0.50998,0},{1,0.50998,0}}},Speed={"NR",0.00056664,0.00056664},SpreadAngle={"V2",360,360},Texture="rbxassetid://104933213624042",Transparency={"NS",{{0,0.5,0},{1,0.5,0}}},ZOffset=1}},
+        		{"B",13,"",13,14,{Brightness=2,FaceCamera=true,LightEmission=1,Texture="rbxassetid://14978253601",TextureSpeed=-0.6,Transparency={"NS",{{0,1,0},{0.50264,0.8125,0},{1,1,0}}},Width0=2.5,Width1=1.5,ZOffset=-0.001}},
+        		{"B",13,"Beam 2",13,14,{Brightness=2,FaceCamera=true,LightEmission=1,Texture="rbxassetid://15099350705",TextureSpeed=-1,Transparency={"NS",{{0,1,0},{0.5,0.55625,0},{1,1,0}}},Width0=2,Width1=1.5,ZOffset=-0.001}}
+        	} },
+        	["Monochrome"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"P",0,"LSaura2",{Acceleration={"V3",0,0,-0.92651},Brightness=30,Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1.25,1.75},LightEmission=1,LockedToPart=true,Rate=10,Rotation={"NR",-180,180},Size={"NS",{{0,0.30415,0.30415},{0.1,0.40502,0.30415},{0.2,0.4863,0.30415},{0.3,0.5542,0.30415},{0.4,0.6115,0.30415},{0.5,0.65975,0.30415},{0.6,0.69991,0.30415},{0.7,0.73268,0.30415},{0.8,0.75852,0.30415},{0.9,0.7778,0.30415},{1,0.79079,0.30415}}},Speed={"NR",0.0029095,0.5819},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://99996143525506",Transparency={"NS",{{0,1,0},{0.10434,0,0},{0.86,0,0},{1,1,0}}},ZOffset=0.01}},
+        		{"P",0,"LSaura2B",{Acceleration={"V3",0,0,-0.64152},Brightness=0,Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1.25,1.75},LightEmission=-3,LockedToPart=true,Rate=14,Rotation={"NR",-180,180},Size={"NS",{{0,0.30707,0.30833},{0.1,0.41059,0.30833},{0.2,0.49298,0.30833},{0.3,0.56182,0.30833},{0.4,0.61991,0.30833},{0.5,0.66882,0.30833},{0.6,0.70953,0.30833},{0.7,0.74275,0.30833},{0.8,0.76894,0.30833},{0.9,0.78849,0.30833},{1,0.80166,0.30833}}},Speed={"NR",0.01283,0.01283},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0.0019999,0},{1,-0.0046667,0.066667}}},Texture="rbxassetid://92739826225814",Transparency={"NS",{{0,1,0},{0.17234,0,0},{0.77434,0,0},{1,1,0}}},ZOffset=0.1}},
+        		{"P",0,"Splat",{Acceleration={"V3",0,0,-0.8},Brightness=0,Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.25},LockedToPart=true,Rate=3,Rotation={"NR",-180,180},Size={"NS",{{0,0.27945,0},{0.1,0.59573,0},{0.2,0.64858,0},{0.3,0.67273,0},{0.4,0.68533,0},{0.5,0.69214,0},{0.6,0.69575,0},{0.7,0.69756,0},{0.8,0.69834,0},{0.9,0.69858,0},{1,0.69862,0},{1,0.69862,0}}},Speed={"NR",0.0019744,0.39489},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0.0019999,0},{1,-0.0013334,0}}},Texture="rbxassetid://15011454473",Transparency={"NS",{{0,1,0},{0.17234,0,0},{0.77434,0,0},{1,1,0}}},ZOffset=0.3}},
+        		{"P",0,"SplatWhite",{Acceleration={"V3",0,0,-0.8},Brightness=10,Drag=5,EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.25},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-180,180},Size={"NS",{{0,0.23095,0},{0.1,0.49233,0},{0.2,0.53601,0},{0.3,0.55598,0},{0.4,0.56639,0},{0.5,0.57201,0},{0.6,0.575,0},{0.7,0.57649,0},{0.8,0.57714,0},{0.9,0.57734,0},{1,0.57737,0},{1,0.57737,0}}},Speed={"NR",0.016,0.016},SpreadAngle={"V2",20,20},Squash={"NS",{{0,0.0019999,0},{1,-0.0013334,0}}},Texture="rbxassetid://15011454473",Transparency={"NS",{{0,1,0},{0.17234,0,0},{0.77434,0,0},{1,1,0}}},ZOffset=0.08}},
+        		{"T",1,"brighttrail",1,2,{Brightness=0.1,Lifetime=0.5,LightEmission=1,MinLength=0.16838,Texture="rbxassetid://13885100307",TextureLength=3.3676,TextureMode={"EV","TextureMode",1},Transparency={"NS",{{0,0.14375,0},{0.21743,0.25625,0},{0.32166,0.3625,0},{0.40554,0.45,0},{0.47801,0.56875,0},{0.53827,0.71875,0},{0.59853,0.8125,0},{0.66938,0.86875,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.29333,0.825,0},{0.50303,0.65,0},{0.6703,0.4875,0},{0.78545,0.35,0},{0.90424,0.1875,0},{1,0,0}}}}},
+        		{"T",1,"",1,2,{Brightness=0.1,Color={"CS",{{0,0.2,0.2,0.2},{1,0.2,0.2,0.2}}},Lifetime=0.5,MinLength=0.16838,Texture="rbxassetid://13885100307",TextureLength=2,Transparency={"NS",{{0,0.14375,0},{0.21743,0.25625,0},{0.32166,0.3625,0},{0.40554,0.45,0},{0.47801,0.56875,0},{0.53827,0.71875,0},{0.59853,0.8125,0},{0.66938,0.86875,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.29333,0.825,0},{0.50303,0.65,0},{0.6703,0.4875,0},{0.78545,0.35,0},{0.90424,0.1875,0},{1,0,0}}}}},
+        		{"T",1,"brighttrail2",1,2,{Brightness=0.1,Lifetime=0.5,LightEmission=1,MinLength=0.16838,Texture="rbxassetid://13885100307",TextureLength=2.5257,TextureMode={"EV","TextureMode",1},Transparency={"NS",{{0,0.14375,0},{0.21743,0.25625,0},{0.32166,0.3625,0},{0.40554,0.45,0},{0.47801,0.56875,0},{0.53827,0.71875,0},{0.59853,0.8125,0},{0.66938,0.86875,0},{1,1,0}}},WidthScale={"NS",{{0,1,0},{0.29333,0.825,0},{0.50303,0.65,0},{0.6703,0.4875,0},{0.78545,0.35,0},{0.90424,0.1875,0},{1,0,0}}}}},
+        		{"T",1,"darkTrail",1,2,{Brightness=0,Color={"CS",{{0,0.2,0.2,0.2},{1,0.2,0.2,0.2}}},Lifetime=0.5,MinLength=0.16838,Texture="rbxassetid://12788868051",Transparency={"NS",{{0,0.14375,0},{0.21743,0.25625,0},{0.32166,0.3625,0},{0.40554,0.45,0},{0.47801,0.56875,0},{0.53827,0.71875,0},{0.59853,0.8125,0},{0.66938,0.86875,0},{1,1,0}}},WidthScale={"NS",{{0,0.8875,0},{0.28485,0.975,0},{0.49939,0.7625,0},{0.66909,0.625,0},{0.78909,0.46875,0},{0.90424,0.1875,0},{1,0,0}}}}}
+        	} },
+        	["Meteor"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"start",{-0.095215,-0.040283,1.7809,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"A",0,"T2",{-0.19391,0.036102,-2.5246,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"A",0,"Front",{0,0,-2.1392,1,0,0,0,0,-1,0,1,0}},
+        		{"T",1,"",1,3,{Brightness=8.28,Color={"CS",{{0,1,0.31765,0},{1,1,0.31765,0}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"B",2,"",2,3,{Brightness=15,Color={"CS",{{0,1,0,0},{1,1,0.45098,0}}},FaceCamera=true,LightEmission=1,Texture="http://www.roblox.com/asset/?id=12921344400",TextureLength=0.85,TextureSpeed=0.5,Transparency={"NS",{{0,1,0},{0.19825,0.46875,0},{0.37406,0.18125,0},{0.51221,0.11875,0},{0.62344,0.35,0},{0.67752,0.70625,0},{0.75977,0.84375,0},{0.84935,0.95,0},{1,1,0}}},Width0=0.84189,Width1=1.6838,ZOffset=0.001}},
+        		{"B",2,"",2,3,{Brightness=15,Color={"CS",{{0,1,0,0},{1,1,0.45098,0}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://12781757438",TextureLength=0.85,TextureSpeed=-0.25,Transparency={"NS",{{0,1,0},{0.50896,0.59375,0},{1,1,0}}},Width0=1.6838,Width1=1.6838}},
+        		{"B",2,"beam",2,3,{Brightness=15,Color={"CS",{{0,1,0,0},{1,1,0.45098,0}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://10528782340",TextureLength=0.85,TextureSpeed=0.5,Transparency={"NS",{{0,1,0},{0.47199,0.93125,0},{1,1,0}}},Width0=1.6838,Width1=3.3676,ZOffset=-0.01}},
+        		{"B",2,"beam",2,3,{Brightness=15,Color={"CS",{{0,1,0,0},{1,1,0.45098,0}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://14050906710",TextureLength=0.85,TextureSpeed=0.25,Transparency={"NS",{{0,1,0},{0.48779,0.5,0},{1,1,0}}},Width0=1.6838,Width1=1.6838}},
+        		{"B",2,"beam",2,3,{Brightness=15,Color={"CS",{{0,1,0,0},{1,1,0.45098,0}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://10528782340",TextureLength=0.85,TextureSpeed=-0.15,Transparency={"NS",{{0,1,0},{0.47313,0.875,0},{1,1,0}}},Width0=3.3676,Width1=1.6838,ZOffset=-0.01}},
+        		{"P",0,"stars",{Acceleration={"V3",0,0.84189,-1.5},Brightness=15,Color={"CS",{{0,0.58935,0.77984,1},{1,0.58935,0.77984,1}}},Drag=1,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.45,0.8},LockedToPart=true,Rate=90,ShapeInOut={"EV","ParticleEmitterShapeInOut",2},Size={"NS",{{0,0,0},{0.11628,0,0},{0.208,0.12628,0.12628},{0.30798,0,0},{0.5,0,0},{0.67456,0,0},{0.759,0.12628,0.12628},{0.84788,0.058828,0},{1,0,0}}},Speed={"NR",0,0.084189},SpreadAngle={"V2",15,150},Texture="rbxassetid://71372784229027",TimeScale=0.35,Transparency={"NS",{{0,1,0},{0.15592,0,0},{0.74577,0,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",0,"dots",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime={"NR",1,2.25},Rate=35,Rotation={"NR",39,999},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=3,Size={"NS",{{0,0.1356,0.090399},{0.34788,0.067799,0.042097},{0.60973,0.045199,0.0226},{0.77431,0.0226,0.0226},{1,0,0}}},Speed={"NR",0,0.19406},SpreadAngle={"V2",150,150},Texture="rbxassetid://8242018934",TimeScale=0.75,Transparency={"NS",{{0,1,0},{0.037406,0.6358,0},{0.084788,0.39506,0},{0.14713,0.092593,0},{0.22444,0,0},{1,0,0}}},ZOffset=1}},
+        		{"P",0,"blackdots",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime={"NR",1,2.25},Rate=25,Rotation={"NR",39,999},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=4,Size={"NS",{{0,0.16272,0.10848},{0.34788,0.081359,0.081359},{0.60973,0.054239,0.054239},{0.77431,0.02712,0.02712},{1,0,0}}},Speed={"NR",0,0.19406},SpreadAngle={"V2",150,150},Texture="rbxassetid://8242018934",TimeScale=0.75,Transparency={"NS",{{0,1,0},{0.037406,0.6358,0},{0.084788,0.39506,0},{0.14713,0.092593,0},{0.22444,0,0},{1,0,0}}},ZOffset=1}},
+        		{"P",0,"aura2",{Acceleration={"V3",0,0,-1.5},Brightness=4.78,Color={"CS",{{0,1,0.52549,0.18824},{0.20934,1,0.36863,0.078431},{0.43253,1,0.25882,0.07451},{1,0.54902,0.086275,0.0078431}}},Drag=0.6,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LightEmission=1,LockedToPart=true,Rate=16,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.54115,0.58504,0},{0.8005,0.64222,0},{1,0.42548,0}}},Speed={"NR",0,0.23786},SpreadAngle={"V2",150,150},Squash={"NS",{{0,-0.1,0},{1,-0.1,0}}},Texture="rbxassetid://89598700477428",TimeScale=0.7,Transparency={"NS",{{0,0.35,0},{1,0.35,0}}},ZOffset=-0.6}},
+        		{"P",0,"Fifi",{Acceleration={"V3",0,0,-1.5},Brightness=10,Color={"CS",{{0,1,0.45098,0},{1,1,0.45098,0}}},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=10,Rotation={"NR",39,999},Size={"NS",{{0,0.42094,0},{1,0.42094,0}}},Speed={"NR",0.042094,0.042094},SpreadAngle={"V2",150,150},Squash={"NS",{{0,0.5,0},{1,0.5,0}}},Texture="rbxassetid://96825107427623",Transparency={"NS",{{0,0.1,0},{1,0.1,0}}},ZOffset=1}},
+        		{"P",0,"Fifi",{Acceleration={"V3",0,0,-1.5},Brightness=10,Color={"CS",{{0,1,0.45098,0},{1,1,0.45098,0}}},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.5,1},LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=5,Rotation={"NR",39,999},Size={"NS",{{0,0.25257,0},{1,0.25257,0}}},Speed={"NR",0.025257,0.025257},SpreadAngle={"V2",150,150},Squash={"NS",{{0,0.5,0},{1,0.5,0}}},Texture="rbxassetid://96825107427623",Transparency={"NS",{{0,0.1,0},{1,0.1,0}}},ZOffset=1}},
+        		{"P",0,"aura",{Acceleration={"V3",0,0,-1.5},Brightness=4.78,Color={"CS",{{0,1,0.52549,0.18824},{0.20934,1,0.36863,0.078431},{0.43253,1,0.25882,0.07451},{1,0.54902,0.086275,0.0078431}}},Drag=0.6,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LightEmission=1,LockedToPart=true,Rate=16,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.54115,0.53186,0},{0.8005,0.58383,0},{1,0.3868,0}}},Speed={"NR",0,0.21623},SpreadAngle={"V2",150,150},Squash={"NS",{{0,-0.1,0},{1,-0.1,0}}},Texture="rbxassetid://89598700477428",TimeScale=0.7,ZOffset=-0.5}},
+        		{"P",0,"aura2",{Acceleration={"V3",0,0,-1.5},Brightness=4.78,Color={"CS",{{0,1,0.52549,0.18824},{0.20934,1,0.36863,0.078431},{0.43253,1,0.25882,0.07451},{1,0.54902,0.086275,0.0078431}}},Drag=0.6,FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LightEmission=1,LockedToPart=true,Rate=16,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.54115,0.58504,0},{0.8005,0.64222,0},{1,0.42548,0}}},Speed={"NR",0,0.23786},SpreadAngle={"V2",150,150},Squash={"NS",{{0,-0.1,0},{1,-0.1,0}}},Texture="rbxassetid://89598700477428",TimeScale=0.7,Transparency={"NS",{{0,0.35,0},{1,0.35,0}}},ZOffset=-0.6}},
+        		{"P",0,"dots",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime={"NR",1,2.25},Rate=15,Rotation={"NR",39,999},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=3,Size={"NS",{{0,0.1356,0.090399},{0.34788,0.067799,0.042097},{0.60973,0.045199,0.0226},{0.77431,0.0226,0.0226},{1,0,0}}},Speed={"NR",0,0.19406},SpreadAngle={"V2",150,150},Texture="rbxassetid://8242018934",TimeScale=0.75,Transparency={"NS",{{0,1,0},{0.037406,0.6358,0},{0.084788,0.39506,0},{0.14713,0.092593,0},{0.22444,0,0},{1,0,0}}},ZOffset=1}},
+        		{"P",0,"blackdots",{Acceleration={"V3",0,0,-1.5},Brightness=0,Color={"CS",{{0,0.12738,0.11877,0.20152},{1,0.12738,0.11877,0.20152}}},Lifetime={"NR",1,2.25},Rate=10,Rotation={"NR",39,999},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=4,Size={"NS",{{0,0.16272,0.10848},{0.34788,0.081359,0.081359},{0.60973,0.054239,0.054239},{0.77431,0.02712,0.02712},{1,0,0}}},Speed={"NR",0,0.19406},SpreadAngle={"V2",150,150},Texture="rbxassetid://8242018934",TimeScale=0.75,Transparency={"NS",{{0,1,0},{0.037406,0.6358,0},{0.084788,0.39506,0},{0.14713,0.092593,0},{0.22444,0,0},{1,0,0}}},ZOffset=1}},
+        		{"P",4,"Circle1",{Brightness=0.05,Color={"CS",{{0,0.78759,0.19981,0.10659},{1,0.78759,0.19981,0.10659}}},FlipbookFramerate={"NR",30,30},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.8,0.8},LightEmission=1,LockedToPart=true,Orientation={"EV","ParticleOrientation",3},Rate=4.2,Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.055872,0.82586,0},{0.16587,1.4587,0},{0.30387,1.9049,0},{0.47987,2.2784,0},{0.69987,2.6311,0},{1,3.0584,0.10831}}},SpreadAngle={"V2",1,1},Texture="rbxassetid://10269309720",Transparency={"NS",{{0,0,0},{0.47094,0,0},{0.62107,0.081522,0},{0.69673,0.21739,0},{0.74576,0.41848,0},{0.80569,0.72826,0},{0.87167,0.875,0},{1,1,0}}}}},
+        		{"P",4,"Smoke1",{Acceleration={"V3",0,27.273,0},Color={"CS",{{0,0.78759,0.19981,0.10659},{1,0.78759,0.19981,0.10659}}},Drag=7,EmissionDirection={"EV","NormalId",3},FlipbookFramerate={"NR",20,20},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Rate=50,RotSpeed={"NR",-125,125},Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.19471,2.3831,1.5887},{1,0,0}}},SpreadAngle={"V2",0,180},Texture="rbxassetid://14201241100",Transparency={"NS",{{0,0,0},{1,1,0}}},ZOffset=1.1}},
+        		{"P",4,"Dots1",{Acceleration={"V3",0,27.273,0},Brightness=20,Color={"CS",{{0,0.78759,0.19981,0.10659},{1,0.78759,0.19981,0.10659}}},Drag=5,EmissionDirection={"EV","NormalId",3},FlipbookFramerate={"NR",20,20},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=1,LockedToPart=true,Rate=50,RotSpeed={"NR",-125,125},Rotation={"NR",-180,180},Size={"NS",{{0,0,0},{0.098558,0.16043,0.16043},{0.20092,0,0},{0.29808,0.23173,0.23173},{0.41411,0,0},{0.51082,0.40999,0.16043},{0.61656,0,0},{0.71154,0.33868,0.21391},{0.84356,0,0},{0.91827,0.12478,0.12478},{1,0,0}}},SpreadAngle={"V2",0,180},Texture="rbxassetid://10598374841",Transparency={"NS",{{0,0.44375,0},{0.47516,0.69375,0},{1,1,0}}},ZOffset=1.1}},
+        		{"P",4,"Sparks",{Acceleration={"V3",0,90.91,0},Brightness=20,Color={"CS",{{0,0.78759,0.19981,0.10659},{1,0.78759,0.19981,0.10659}}},Drag=4,EmissionDirection={"EV","NormalId",2},Lifetime={"NR",0.75,0.8},LightEmission=0.1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=10,Rotation={"NR",-90,-90},ShapePartial=0,Size={"NS",{{0,0,0},{0.29916,0.4438,0},{0.53109,0,0},{0.726,0.026628,0},{1,0,0}}},SpreadAngle={"V2",0,180},Squash={"NS",{{0,0.7875,0},{1,1.5,0}}},Texture="rbxassetid://8271975883",Transparency={"NS",{{0,1,0},{0.075,0.4,0},{0.175,0,0},{0.55,0,0},{0.75,0.25,0},{0.992,1,0},{1,1,0}}},ZOffset=0.5}},
+        		{"P",4,"Sparks",{Acceleration={"V3",0,36.364,0},Brightness=13,Color={"CS",{{0,0.78759,0.19981,0.10659},{1,0.78759,0.19981,0.10659}}},Drag=6,EmissionDirection={"EV","NormalId",2},Lifetime={"NR",0.4,0.5},LightEmission=0.1,LockedToPart=true,Orientation={"EV","ParticleOrientation",2},Rate=35,Rotation={"NR",-90,-90},ShapePartial=0,Size={"NS",{{0,0.016546,0},{0.021341,0.34125,0},{0.22104,0.1758,0},{0.6,0.016546,0},{0.726,0.0041364,0},{1,0,0}}},SpreadAngle={"V2",0,180},Squash={"NS",{{0,0.7875,0},{1,1.5,0}}},Texture="rbxassetid://8271975883",Transparency={"NS",{{0,1,0},{0.075,0.4,0},{0.175,0,0},{0.55,0,0},{0.75,0.25,0},{0.992,1,0},{1,1,0}}},ZOffset=0.91}},
+        		{"P",4,"Embers2",{Acceleration={"V3",0,15,0},Brightness=45,Color={"CS",{{0,0.78759,0.19981,0.10659},{1,0.78759,0.19981,0.10659}}},Drag=5,EmissionDirection={"EV","NormalId",3},FlipbookFramerate={"NR",20,20},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LightEmission=-1,LockedToPart=true,RotSpeed={"NR",-125,125},Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.19471,0.29788,0.19859},{1,0,0}}},Speed={"NR",4,4},SpreadAngle={"V2",0,180},Texture="rbxassetid://14229909590",ZOffset=1.1}},
+        		{"P",4,"Embers2",{Acceleration={"V3",0,4.5,0},Brightness=8.14,Color={"CS",{{0,0.20784,0.17647,0.15294},{1,0.20784,0.17647,0.15294}}},EmissionDirection={"EV","NormalId",3},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2},LockedToPart=true,Rate=50,RotSpeed={"NR",-125,125},Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.19471,0.071492,0.047662},{1,0,0}}},Speed={"NR",3,3},SpreadAngle={"V2",0,25},Texture="rbxassetid://15441282898",ZOffset=1.1}}
+        	} },
+        	["Rust"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"T",1,"",1,2,{Brightness=8.28,Color={"CS",{{0,0.7405,0.56476,0.28286},{1,0.7405,0.56476,0.28286}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",0,"CircleWAve",{Brightness=0.05,Color={"CS",{{0,0.39216,0.23529,0.12549},{1,0.39216,0.23529,0.12549}}},EmissionDirection={"EV","NormalId",5},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LockedToPart=true,Rate=7,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,0.74427,0},{0.40125,1.0077,0.026607},{1,1.1364,0.018362}}},Speed={"NR",0.00010714,0.00010714},Texture="rbxassetid://13167800208",TimeScale=0.5,Transparency={"NS",{{0,1,0},{0.16824,0.371,0},{0.33624,0.69767,0},{1,1,0}}},ZOffset=0.9}},
+        		{"P",0,"Energy Vague",{Brightness=20,Color={"CS",{{0,0.39216,0.23529,0.12549},{1,0.39216,0.23529,0.12549}}},Drag=1.298,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",16,16},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",2},Lifetime={"NR",0.77043,1.1557},LockedToPart=true,Rate=4,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",1},Size={"NS",{{0,0.48702,0},{0.32152,0.50306,0},{1,0.53472,0}}},Speed={"NR",0.0018373,0.0018373},Texture="rbxassetid://71355345702692",Transparency={"NS",{{0,1,0},{0.2414,0,0},{0.6874,0.42028,0},{1,1,0}}},ZOffset=0.4}},
+        		{"P",0,"Shards 2x2 2",{Brightness=15,Color={"CS",{{0,0.39216,0.23529,0.12549},{1,0.39216,0.23529,0.12549}}},EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",0.18278,0.18278},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.82067,1.3678},Rate=1.4622,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.1,Size={"NS",{{0,-1.4,0},{0.22167,0.19506,0.15191},{0.62685,-0.065631,0.12141},{1,-1.4,0}}},Speed={"NR",0.0063514,0.0063514},SpreadAngle={"V2",30,30},Texture="rbxassetid://17842430380",ZOffset=0.55}},
+        		{"P",0,"Star2",{Brightness=30,Color={"CS",{{0,0.39216,0.23529,0.12549},{1,0.39216,0.23529,0.12549}}},Drag=2.9543,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",14.575,14.575},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.7616,1.904},LockedToPart=true,Rate=9,Shape={"EV","ParticleEmitterShape",3},ShapeInOut={"EV","ParticleEmitterShapeInOut",2},ShapePartial=0,Size={"NS",{{0,0.6,0},{1,0.70065,0.17333}}},Speed={"NR",0.020464,0.78782},Texture="rbxassetid://117950183954264",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},ZOffset=0.06}},
+        		{"P",0,"Star3",{Brightness=30,Color={"CS",{{0,0.39216,0.23529,0.12549},{1,0.39216,0.23529,0.12549}}},Drag=3.75,EmissionDirection={"EV","NormalId",5},FlipbookFramerate={"NR",11.1,11.1},FlipbookLayout={"EV","ParticleFlipbookLayout",1},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,2.5},LockedToPart=true,Rate=7,Rotation={"NR",-180,180},Shape={"EV","ParticleEmitterShape",3},ShapePartial=2.1,Size={"NS",{{0,0,0},{0.083521,0.18761,0.12789},{0.15152,0,0},{0.23352,0.18761,0.3327},{0.35752,0,0},{0.49752,0.18761,0.24255},{0.67152,0.0034006,0},{0.84952,0.10259,0},{1,0,0}}},Speed={"NR",0.015585,1.3533},SpreadAngle={"V2",35,20},Texture="rbxassetid://17842430380",Transparency={"NS",{{0,1,0},{0.1539,0,0},{0.89258,0,0},{1,0,0}}},ZOffset=1}}
+        	} },
+        	["Contrail"] = { s = {0.188,0.65,3.23}, n = {
+        		{"A",0,"T2",{-0.19391,0.0039062,-1.5454,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"A",0,"T1",{-0.12714,-0.058411,1.5389,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"T",2,"",2,1,{Brightness=8.28,Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",0,"Smoke2",{EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1.25},LockedToPart=true,Rate=5,Rotation={"NR",-180,180},Size={"NS",{{0,0.11767,0},{0.12393,0.61433,0},{0.42793,0.77433,0},{0.64393,0.50433,0},{1,0.351,0}}},Speed={"NR",0.2,0.2},Texture="rbxassetid://13487156861",TimeScale=0.8,Transparency={"NS",{{0,1,0},{0.26593,0,0},{0.42993,0,0},{0.72993,0,0},{1,1,0}}},ZOffset=0.3}},
+        		{"P",0,"Smoke",{EmissionDirection={"EV","NormalId",5},FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.75,1.25},LockedToPart=true,Rate=30,Rotation={"NR",-180,180},Size={"NS",{{0,0,0},{0.23993,0.651,0},{1,0.83433,0}}},Speed={"NR",0.1,0.1},Texture="rbxassetid://13168080806",Transparency={"NS",{{0,1,0},{0.23193,0,0},{0.49393,0.19433,0},{0.79393,0.87433,0},{1,1,0}}},ZOffset=-0.2}}
+        	} },
+        	["Bubblegum"] = { s = {0.188,0.65,5.0092}, n = {
+        		{"A",0,"T2",{-0.22705,0.10468,-2.4893,1.955e-05,0.0025636,1,0.02124,0.99977,-0.0025634,-0.99977,0.02124,-3.4905e-05}},
+        		{"A",0,"T1",{-0.094971,0.029633,2.3372,3.7014e-05,-0.018679,0.99983,0.023805,0.99954,0.018673,-0.99972,0.0238,0.00048164}},
+        		{"A",0,"",{0,0,0,1,0,0,0,1,0,0,0,1}},
+        		{"A",0,"Front",{-0.094971,0,3.584,-1,0,0,0,0,-1,0,-1,0}},
+        		{"A",0,"start",{0,-0.040283,-2.4953,-3.4928e-05,-0.0025634,-1,0.02124,0.99977,-0.0025636,0.99977,-0.02124,1.9527e-05}},
+        		{"T",2,"",2,1,{Brightness=8.28,Color={"CS",{{0,0.97647,0.30588,1},{1,0.97647,0.30588,1}}},Lifetime=0.15,LightEmission=1,MaxLength=20,Texture="rbxassetid://13885100307",TextureLength=0.99,Transparency={"NS",{{0,1,0},{0.047801,0,0},{0.26099,0,0},{0.4283,0,0},{0.67782,0,0},{0.90631,0,0},{1,0,0}}}}},
+        		{"P",3,"OuterAura1",{Brightness=1.3,Color={"CS",{{0,0.98128,0.29658,1},{1,0.98128,0.29658,1}}},FlipbookFramerate={"NR",4.9766,4.9766},FlipbookLayout={"EV","ParticleFlipbookLayout",2},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.1507,0.1507},LightEmission=1,LockedToPart=true,Rate=12,ShapePartial=2,ShapeStyle={"EV","ParticleEmitterShapeStyle",1},Size={"NS",{{0,1.099,0},{0.1,1.8774,0},{0.2,2.0277,0},{0.3,2.0972,0},{0.4,2.1371,0},{0.5,2.162,0},{0.6,2.1779,0},{0.7,2.188,0},{0.8,2.194,0},{0.9,2.1971,0},{1,2.198,0},{1,2.198,0}}},Speed={"NR",0.00064286,0.00064286},Squash={"NS",{{0,0,0},{1,1.0875,0}}},Texture="rbxassetid://135031204991230",TimeScale=0.3,ZOffset=1}},
+        		{"P",3,"cursed energy 2",{Brightness=25,Color={"CS",{{0,1,0.41094,0.96192},{1,1,0.41094,0.96192}}},Drag=2,FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=3,RotSpeed={"NR",-30,20},Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.13514,1.7848,0},{0.47514,2.5832,0},{1,2.8181,0}}},Speed={"NR",0.002,0.002},SpreadAngle={"V2",-360,360},Texture="rbxassetid://78422400450982",ZOffset=-1}},
+        		{"P",3,"cursed energy 2",{Brightness=25,Color={"CS",{{0,1,0.41094,0.96192},{1,1,0.41094,0.96192}}},Drag=2,FlipbookLayout={"EV","ParticleFlipbookLayout",4},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,LockedToPart=true,Rate=3,Rotation={"NR",-140,-140},Size={"NS",{{0,0,0},{0.13514,1.7848,0},{0.47514,2.5832,0},{1,2.8181,0}}},Speed={"NR",0.0031312,0.0031312},SpreadAngle={"V2",-360,360},Texture="rbxassetid://78422400450982",ZOffset=-0.9}},
+        		{"P",3,"Cursed Energy Disperse 8x8",{Brightness=0.1,Color={"CS",{{0,1,0.41094,0.96192},{1,1,0.41094,0.96192}}},Drag=2,FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,1},LightEmission=1,LockedToPart=true,Rate=2,Size={"NS",{{0,0,0},{0.13514,0.9725,0},{0.47514,1.4076,0},{1,1.5355,0}}},Speed={"NR",0.0015101,0.0015101},Squash={"NS",{{0,0.7875,0},{1,1.1625,0}}},Texture="rbxassetid://97051019398375",ZOffset=1.05}},
+        		{"P",3,"Cursed Energy Disperse 8x8",{Brightness=5,Color={"CS",{{0,1,0.41094,0.96192},{1,1,0.41094,0.96192}}},Drag=2,FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,1},LightEmission=1,LockedToPart=true,Rate=2,Size={"NS",{{0,0,0},{0.13514,1.1229,0},{0.47514,1.6253,0},{1,1.773,0}}},Speed={"NR",0.0019374,0.0019374},Squash={"NS",{{0,0.7875,0},{1,1.1625,0}}},Texture="rbxassetid://97051019398375",ZOffset=2.04}},
+        		{"P",3,"Cursed Energy Disperse 8x8",{Brightness=25,Color={"CS",{{0,1,0.41094,0.96192},{1,1,0.41094,0.96192}}},Drag=7,FlipbookLayout={"EV","ParticleFlipbookLayout",3},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",0.4,1},LightEmission=5,LockedToPart=true,Rate=2,Size={"NS",{{0,0,0},{0.13514,0.88319,0},{0.47514,1.2783,0},{1,1.3945,0}}},Speed={"NR",0.00061714,0.00061714},Squash={"NS",{{0,0.7875,0},{1,1.1625,0}}},Texture="rbxassetid://97051019398375",Transparency={"NS",{{0,0,0},{0.59519,0.31667,0},{0.85719,0.68333,0},{1,1,0}}},ZOffset=1.02}},
+        		{"P",0,"cursed energy spec",{Brightness=5,Color={"CS",{{0,1,0.41094,0.96192},{1,1,0.41094,0.96192}}},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,Rate=3,RotSpeed={"NR",-30,20},Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.21119,0.77,0},{0.72719,0.48,0},{1,0,0}}},Speed={"NR",0.25,2.5},SpreadAngle={"V2",-360,360},Texture="rbxassetid://85688545954016"}},
+        		{"P",0,"cursed energy spec",{Brightness=5,Color={"CS",{{0,1,0.41094,0.96192},{1,1,0.41094,0.96192}}},FlipbookMode={"EV","ParticleFlipbookMode",1},Lifetime={"NR",1,1},LightEmission=1,Rate=3,RotSpeed={"NR",-30,20},Rotation={"NR",-360,360},Size={"NS",{{0,0,0},{0.21119,0.77,0},{0.72719,0.48,0},{1,0,0}}},Speed={"NR",0.25,2.5},SpreadAngle={"V2",-360,360},Texture="rbxassetid://85688545954016"}},
+        		{"B",5,"beam",5,4,{Brightness=15,Color={"CS",{{0,0.91798,0.30418,1},{1,0.91798,0.30418,1}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://14050906710",TextureLength=0.85,TextureSpeed=0.25,Transparency={"NS",{{0,1,0},{0.48779,0.5,0},{1,1,0}}},Width0=1.6838,Width1=1.6838}},
+        		{"B",5,"beam",5,4,{Brightness=15,Color={"CS",{{0,0.91798,0.30418,1},{1,0.91798,0.30418,1}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://10528782340",TextureLength=0.85,TextureSpeed=0.5,Transparency={"NS",{{0,1,0},{0.47199,0.93125,0},{1,1,0}}},Width0=1.6838,Width1=3.3676,ZOffset=-0.01}},
+        		{"B",5,"",5,4,{Brightness=15,Color={"CS",{{0,0.91798,0.30418,1},{1,0.91798,0.30418,1}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://12781757438",TextureLength=0.85,TextureSpeed=-0.25,Transparency={"NS",{{0,1,0},{0.50896,0.59375,0},{1,1,0}}},Width0=1.6838,Width1=1.6838}},
+        		{"B",5,"",5,4,{Brightness=15,Color={"CS",{{0,0.91798,0.30418,1},{1,0.91798,0.30418,1}}},FaceCamera=true,LightEmission=1,Texture="http://www.roblox.com/asset/?id=12921344400",TextureLength=0.85,TextureSpeed=0.5,Transparency={"NS",{{0,1,0},{0.19825,0.46875,0},{0.37406,0.18125,0},{0.51221,0.11875,0},{0.62344,0.35,0},{0.67752,0.70625,0},{0.75977,0.84375,0},{0.84935,0.95,0},{1,1,0}}},Width0=0.84189,Width1=1.6838,ZOffset=0.001}},
+        		{"B",5,"beam",5,4,{Brightness=15,Color={"CS",{{0,0.91798,0.30418,1},{1,0.91798,0.30418,1}}},FaceCamera=true,LightEmission=1,Texture="rbxassetid://10528782340",TextureLength=0.85,TextureSpeed=-0.15,Transparency={"NS",{{0,1,0},{0.47313,0.875,0},{1,1,0}}},Width0=3.3676,Width1=1.6838,ZOffset=-0.01}}
+        	} },
+        }
+
+        local bag = newBag()
+        local states = setmetatable({}, { __mode = "k" })
+        local flashUntil = 0
+        local nextTick = 0
+
+        local function decode(value)
+            if type(value) ~= "table" then return value end
+            local tag = value[1]
+            if tag == "V3" then return Vector3.new(value[2], value[3], value[4]) end
+            if tag == "V2" then return Vector2.new(value[2], value[3]) end
+            if tag == "NR" then return NumberRange.new(value[2], value[3]) end
+            if tag == "EV" then return Enum[value[2]]:FromValue(value[3]) end
+            if tag == "C3" then return Color3.new(value[2], value[3], value[4]) end
+            return nil
+        end
+
+        local function recolor(r, g, b, color)
+            local luma = 0.299 * r + 0.587 * g + 0.114 * b
+            if luma < 0.12 then return Color3.new(r, g, b) end
+            if luma > 0.92 then return color:Lerp(Color3.new(1, 1, 1), 0.5) end
+            return color
+        end
+
+        local SCALED_NUMBERS = { Width0 = true, Width1 = true, CurveSize0 = true, CurveSize1 = true, TextureLength = true, MinLength = true, MaxLength = true, Range = true }
+
+        local function applyProps(instance, props, s, k)
+            for key, value in pairs(props) do
+                pcall(function()
+                    if type(value) == "table" and value[1] == "CS" then
+                        local points = {}
+                        for _, p in ipairs(value[2]) do
+                            local c = Color3.new(p[2], p[3], p[4])
+                            if s.custom then c = recolor(p[2], p[3], p[4], s.color) end
+                            table.insert(points, ColorSequenceKeypoint.new(p[1], c))
+                        end
+                        instance[key] = ColorSequence.new(points)
+                    elseif type(value) == "table" and value[1] == "NS" then
+                        local points = {}
+                        for _, p in ipairs(value[2]) do
+                            local v, env = p[2], p[3] or 0
+                            if key == "Size" then v, env = v * k, env * k end
+                            if key == "Transparency" then
+                                if s.alpha > 0 then v = v + (1 - v) * s.alpha end
+                                v, env = math.clamp(v, 0, 1), 0
+                            end
+                            table.insert(points, NumberSequenceKeypoint.new(p[1], v, env))
+                        end
+                        instance[key] = NumberSequence.new(points)
+                    elseif key == "Speed" and type(value) == "table" then
+                        instance.Speed = NumberRange.new(value[2] * k, value[3] * k)
+                    elseif key == "Acceleration" and type(value) == "table" then
+                        instance.Acceleration = Vector3.new(value[2] * k, value[3] * k, value[4] * k)
+                    elseif key == "Color" and type(value) == "table" and value[1] == "C3" then
+                        instance.Color = s.custom and s.color or decode(value)
+                    elseif type(value) == "number" and SCALED_NUMBERS[key] then
+                        instance[key] = math.max(value * k, 0)
+                    else
+                        instance[key] = decode(value)
+                    end
+                end)
+            end
+        end
+
+        local function toggleList(state)
+            return state.toggles
+        end
+
+        local function setEnabled(state, on)
+            if state.enabled == on then return end
+            state.enabled = on
+            for _, item in ipairs(toggleList(state)) do
+                pcall(function() item.inst.Enabled = on and item.base end)
+            end
+        end
+
+        local function destroyState(state)
+            if state.root then pcall(function() state.root:Destroy() end) end
+            state.root = nil
+        end
+
+        local function gunFrame(tool, handle)
+            local low, high
+            local function take(part)
+                local size = part.Size / 2
+                local cf = handle.CFrame:ToObjectSpace(part.CFrame)
+                for _, sx in ipairs({ -1, 1 }) do
+                    for _, sy in ipairs({ -1, 1 }) do
+                        for _, sz in ipairs({ -1, 1 }) do
+                            local corner = cf:PointToWorldSpace(Vector3.new(size.X * sx, size.Y * sy, size.Z * sz))
+                            if not low then
+                                low, high = corner, corner
+                            else
+                                low = Vector3.new(math.min(low.X, corner.X), math.min(low.Y, corner.Y), math.min(low.Z, corner.Z))
+                                high = Vector3.new(math.max(high.X, corner.X), math.max(high.Y, corner.Y), math.max(high.Z, corner.Z))
+                            end
+                        end
+                    end
+                end
+            end
+            local counted = 0
+            for _, part in ipairs(tool:GetDescendants()) do
+                if part:IsA("BasePart") and part.Transparency < 0.95 and part.Name ~= "AsterEnchant" and not part:FindFirstAncestor("AsterEnchant") then
+                    take(part)
+                    counted += 1
+                    if counted >= 80 then break end
+                end
+            end
+            if not low then
+                take(handle)
+            end
+            return (low + high) / 2, high - low
+        end
+
+        local function axisVector(name)
+            if name == "X" then return Vector3.xAxis end
+            if name == "Y" then return Vector3.yAxis end
+            return Vector3.zAxis
+        end
+
+        local function rotationBetween(from, to)
+            local dot = from:Dot(to)
+            if dot > 0.999 then return CFrame.new() end
+            if dot < -0.999 then
+                local perp = math.abs(from.Y) < 0.9 and Vector3.yAxis or Vector3.xAxis
+                return CFrame.fromAxisAngle(from:Cross(perp).Unit, math.pi)
+            end
+            return CFrame.fromAxisAngle(from:Cross(to).Unit, math.acos(math.clamp(dot, -1, 1)))
+        end
+
+        local function build(tool, handle, s)
+            local def = ENCH_FX[s.effect]
+            if not def then return nil end
+            local center, extents = gunFrame(tool, handle)
+            local axisName = s.axis
+            if axisName == "Auto" then
+                axisName = "X"
+                local best = extents.X
+                if extents.Y > best then axisName, best = "Y", extents.Y end
+                if extents.Z > best then axisName, best = "Z", extents.Z end
+            end
+            local length = math.max(extents[axisName], 0.4)
+            local fxSize = Vector3.new(def.s[1], def.s[2], def.s[3])
+            local fxAxis = "X"
+            local fxLength = fxSize.X
+            if fxSize.Y > fxLength then fxAxis, fxLength = "Y", fxSize.Y end
+            if fxSize.Z > fxLength then fxAxis, fxLength = "Z", fxSize.Z end
+            local k = (length / math.max(fxLength, 0.1)) * s.scale
+            local rotation = rotationBetween(axisVector(fxAxis), axisVector(axisName))
+            if s.flip then
+                local perp = axisName == "Y" and Vector3.xAxis or Vector3.yAxis
+                rotation = CFrame.fromAxisAngle(perp, math.pi) * rotation
+            end
+            local relative = CFrame.new(center + Vector3.new(s.x, s.y, s.z)) * rotation
+
+            local root = Instance.new("Part")
+            root.Name = "AsterEnchant"
+            root.Size = Vector3.new(math.max(fxSize.X * k, 0.05), math.max(fxSize.Y * k, 0.05), math.max(fxSize.Z * k, 0.05))
+            root.Transparency = 1
+            root.CanCollide, root.CanTouch, root.CanQuery, root.Massless = false, false, false, true
+            root.CFrame = handle.CFrame * relative
+            root.Parent = handle
+            local weld = Instance.new("Weld")
+            weld.Part0, weld.Part1, weld.C0 = handle, root, relative
+            weld.Parent = root
+
+            local built, toggles = {}, {}
+            for index, node in ipairs(def.n) do
+                local kind = node[1]
+                local parent = node[2] == 0 and root or built[node[2]]
+                if parent then
+                    if kind == "A" then
+                        local c = node[4]
+                        local attachment = Instance.new("Attachment")
+                        attachment.Name = node[3]
+                        attachment.CFrame = CFrame.new(c[1] * k, c[2] * k, c[3] * k, c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11], c[12])
+                        attachment.Parent = parent
+                        built[index] = attachment
+                    elseif kind == "P" or kind == "L" then
+                        local instance = Instance.new(kind == "P" and "ParticleEmitter" or "PointLight")
+                        instance.Name = node[3]
+                        applyProps(instance, node[4], s, k)
+                        local base = instance.Enabled
+                        instance.Parent = parent
+                        built[index] = instance
+                        toggles[#toggles + 1] = { inst = instance, base = base }
+                    elseif kind == "B" or kind == "T" then
+                        local a0, a1 = built[node[4]], built[node[5]]
+                        if a0 and a1 then
+                            local instance = Instance.new(kind == "B" and "Beam" or "Trail")
+                            instance.Name = node[3]
+                            instance.Attachment0, instance.Attachment1 = a0, a1
+                            applyProps(instance, node[6], s, k)
+                            local base = instance.Enabled
+                            instance.Parent = parent
+                            built[index] = instance
+                            toggles[#toggles + 1] = { inst = instance, base = base }
+                        end
+                    end
+                end
+            end
+            return { root = root, toggles = toggles, enabled = true, key = nil }
+        end
+
+        local function settings()
+            local picker = Options.ench_color
+            return {
+                effect = flag("ench_effect", "Void"),
+                mode = flag("ench_mode", "While equipped"),
+                target = flag("ench_target", "My weapon"),
+                scale = flag("ench_size", 100) / 100,
+                alpha = flag("ench_alpha", 0),
+                custom = flag("ench_custom", false),
+                color = (picker and typeof(picker.Value) == "Color3") and picker.Value or Color3.fromRGB(120, 200, 255),
+                axis = flag("ench_axis", "Auto"),
+                flip = flag("ench_flip", false),
+                x = flag("ench_x", 0), y = flag("ench_y", 0), z = flag("ench_z", 0),
+            }
+        end
+
+        local function keyOf(s, handle)
+            return table.concat({ s.effect, s.scale, s.alpha, tostring(s.custom), tostring(s.color), s.axis, tostring(s.flip), s.x, s.y, s.z, tostring(handle.Size) }, "|")
+        end
+
+        local function handleOf(tool)
+            local handle = tool:FindFirstChild("Handle")
+            if handle and handle:IsA("BasePart") then return handle end
+            for _, child in ipairs(tool:GetDescendants()) do
+                if child:IsA("BasePart") and child.Name ~= "AsterEnchant" then return child end
+            end
+            return nil
+        end
+
+        local function collect(s)
+            local list = {}
+            local mine = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+            if mine then list[mine] = true end
+            if s.target ~= "My weapon" then
+                local _, _, myRoot = localParts()
+                local count = 0
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player ~= LocalPlayer and player.Character then
+                        local tool = player.Character:FindFirstChildOfClass("Tool")
+                        local root = player.Character:FindFirstChild("HumanoidRootPart")
+                        if tool and root and (not myRoot or (root.Position - myRoot.Position).Magnitude < 250) then
+                            list[tool] = true
+                            count += 1
+                            if count >= 10 then break end
+                        end
+                    end
+                end
+            end
+            return list, mine
+        end
+
+        local function step()
+            local s = settings()
+            local wanted, mine = collect(s)
+            for tool, state in pairs(states) do
+                if not wanted[tool] or not tool.Parent then
+                    destroyState(state)
+                    states[tool] = nil
+                end
+            end
+            local now = os.clock()
+            for tool in pairs(wanted) do
+                local handle = handleOf(tool)
+                if handle then
+                    local state = states[tool]
+                    local key = keyOf(s, handle)
+                    if not state or state.key ~= key or not state.root or state.root.Parent ~= handle then
+                        if state then destroyState(state) end
+                        state = build(tool, handle, s)
+                        if state then
+                            state.key = key
+                            states[tool] = state
+                            state.enabled = true
+                        else
+                            states[tool] = nil
+                        end
+                    end
+                    if state then
+                        local on = true
+                        if tool == mine and s.mode == "While shooting" then on = now < flashUntil end
+                        setEnabled(state, on)
+                    end
+                end
+            end
+        end
+
+        table.insert(ShotEvents.shot, function()
+            if not isOn("ench_enabled") then return end
+            flashUntil = os.clock() + flag("ench_flash", 0.6)
+        end)
+
+        local function clearAll()
+            for tool, state in pairs(states) do
+                destroyState(state)
+                states[tool] = nil
+            end
+        end
+
+        feature("ench_enabled", function()
+            bag.add(RunService.Heartbeat:Connect(function()
+                local now = os.clock()
+                if now < nextTick then return end
+                nextTick = now + 0.15
+                local ok, err = pcall(step)
+                if not ok then warnf("enchantment failed:", err) end
+            end))
+        end, function()
+            bag.clear()
+            clearAll()
+        end)
+
+        onUnload(function()
+            bag.clear()
+            clearAll()
+        end)
+    end)()
+
     ;(function()
         local bag, active, busy = newBag(), {}, false
         local SOURCES = {
@@ -8029,8 +12080,21 @@ do
             return picker and typeof(picker.Value) == "Color3" and picker.Value or Color3.fromRGB(133, 220, 255)
         end
 
+        local emitterCache = {}
+        local overrideMap
+
         local function signature()
-            return table.concat({ tostring(flag("pa_source", "angel")), tostring(auraColor()), tostring(Options.pa_color and Options.pa_color.Transparency or 0.2), tostring(flag("pa_pack_original", true)) }, "|")
+            local label = flag("pa_source", "angel")
+            local parts = { tostring(label), tostring(auraColor()), tostring(Options.pa_color and Options.pa_color.Transparency or 0.2), tostring(flag("pa_pack_original", true)) }
+            local list = emitterCache[label]
+            if list then
+                for _, emitter in ipairs(list) do
+                    local key = fxKey(emitter.name)
+                    local color = overrideMap(label)[key]
+                    parts[#parts + 1] = key .. "=" .. (color and tostring(color) or "-")
+                end
+            end
+            return table.concat(parts, "|")
         end
 
         local function clear()
@@ -8069,6 +12133,56 @@ do
         }
 
         local FX_CLASS = { ParticleEmitter = true, Beam = true, Trail = true, PointLight = true, SpotLight = true, SurfaceLight = true, Sparkles = true, Fire = true, Smoke = true }
+
+        local function collect(root)
+            local list, seen = {}, {}
+            local function visit(inst)
+                local kind = FxColor.classes[inst.ClassName]
+                if kind then
+                    local key = fxKey(inst.Name)
+                    local entry = seen[key]
+                    if entry then
+                        entry.count += 1
+                    elseif key ~= "" and #list < 14 then
+                        entry = { name = inst.Name, kind = kind, count = 1, color = FxColor.read(inst) }
+                        seen[key] = entry
+                        list[#list + 1] = entry
+                    end
+                end
+            end
+            visit(root)
+            for _, descendant in ipairs(root:GetDescendants()) do visit(descendant) end
+            for _, entry in ipairs(list) do entry.label = FxColor.label(entry.name, entry.kind, entry.count) end
+            return list
+        end
+
+        function overrideMap(label)
+            local map = {}
+            local list = emitterCache[label]
+            if not list then return map end
+            local base = "pac_" .. fxKey(label) .. "_"
+            for _, emitter in ipairs(list) do
+                local key = fxKey(emitter.name)
+                if getgenv().AsterCfg.on(base .. key .. "_on", false) then
+                    local color = getgenv().AsterCfg.color(base .. key .. "_c")
+                    if color then map[key] = color end
+                end
+            end
+            return map
+        end
+
+        local function paintOverride(inst, color)
+            FxColor.apply(inst, color)
+        end
+
+        local function overrideTree(inst, map)
+            local function one(item)
+                local color = FX_CLASS[item.ClassName] and map[fxKey(item.Name)]
+                if color then pcall(paintOverride, item, color) end
+            end
+            one(inst)
+            for _, descendant in ipairs(inst:GetDescendants()) do one(descendant) end
+        end
         local packRigs = {}
         local function packRig(entry)
             local id = type(entry) == "table" and entry.id or AURA_PACK.id
@@ -8094,6 +12208,28 @@ do
         end
         Actions.packRig = function(entry) return (packRig(entry)) end
 
+        Actions.auraEmitters = function(label)
+            if emitterCache[label] then return emitterCache[label] end
+            local list = {}
+            local rigName = AURA_PACK.rigs[label]
+            if rigName then
+                local rig = packRig(rigName)
+                if rig then list = collect(rig) end
+            else
+                local id = SOURCES[label]
+                if id then
+                    local ok, objects = pcall(function() return game:GetObjects(id) end)
+                    local model = ok and objects and objects[1]
+                    if model then
+                        list = collect(model)
+                        pcall(function() model:Destroy() end)
+                    end
+                end
+            end
+            emitterCache[label] = list
+            return list
+        end
+
         local function applyPack(char, rigName)
             local rig, isLoose = packRig(rigName)
             if not rig then
@@ -8102,6 +12238,8 @@ do
                 return
             end
             local keepColors = flag("pa_pack_original", true)
+            local overrides = overrideMap(flag("pa_source", "angel"))
+            local hasOverrides = next(overrides) ~= nil
             local root = char:FindFirstChild("HumanoidRootPart")
             local attached = 0
             local partList = rig:GetDescendants()
@@ -8150,6 +12288,7 @@ do
                                     tint(clone)
                                     for _, d in ipairs(clone:GetDescendants()) do tint(d) end
                                 end
+                                if hasOverrides then overrideTree(clone, overrides) end
                             end
                             attached += 1
                         end
@@ -8163,6 +12302,7 @@ do
             clear()
             local char = LocalPlayer.Character
             if not char then return end
+            pcall(Actions.auraEmitters, flag("pa_source", "angel"))
             local rigName = AURA_PACK.rigs[flag("pa_source", "angel")]
             if rigName then return applyPack(char, rigName) end
             local model
@@ -8172,6 +12312,8 @@ do
             model = ok and objects and objects[1]
             if not model then warnf("particle aura asset could not be loaded") return end
 
+            local overrides = overrideMap(flag("pa_source", "angel"))
+            local hasOverrides = next(overrides) ~= nil
             local function attach(part, target)
                 for _, child in ipairs(part:GetChildren()) do
                     if child:IsA("LuaSourceContainer") then continue end
@@ -8182,6 +12324,7 @@ do
                     clone.Parent = target
                     tint(clone)
                     for _, d in ipairs(clone:GetDescendants()) do tint(d) end
+                    if hasOverrides then overrideTree(clone, overrides) end
                     active[#active + 1] = clone
                 end
             end
@@ -8236,6 +12379,8 @@ do
             bag.clear()
             clear()
         end)
+
+        onUnload(function() Actions.auraEmitters = nil end)
     end)()
 
     ;(function()
@@ -8587,6 +12732,7 @@ do
         end
 
         Actions.getWeapon = function(name) task.spawn(getWeapon, name) end
+        Actions.gettingWeapon = function() return busy end
         Actions.getAllWeapons = function()
             task.spawn(function()
                 for _, name in ipairs(ORDER) do
@@ -9021,7 +13167,7 @@ do
                 else
                     root.CFrame = CFrame.lookAlong(root.Position, cam.CFrame.LookVector) + (hum.MoveDirection + v3(0, vertical, 0)) * speed * dt
                 end
-                if flag("misc_vfly_cap", true) then
+                if flag("misc_vfly_cap", false) then
                     capHeight(root, nil, workspace:FindFirstChild("CarContainer"))
                 end
                 for weld, offset in pairs(welds) do
@@ -9072,13 +13218,14 @@ do
 
     do
         local SP = Actions.sp
-        local requests, order = {}, { "assist", "desync" }
+        local requests, order = {}, { "rage", "assist", "orbit", "desync" }
         local engine = newBag()
         local running = false
-        local applied, realCF = nil, nil
+        local applied, realCF, realVel = nil, nil, nil
         local lastSpeed, lastStyle, lastWarn = 100, nil, 0
         local RESTORE, GHOST = "AsterServerPosRestore", "AsterServerPosGhost"
         SP.pos = nil
+        local groundBelow
 
         local rayParams = RaycastParams.new()
         rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -9090,7 +13237,11 @@ do
         end
 
         function SP.shooter(root)
+            if SP.active == "orbit" then return SP.realPos(root) end
             return SP.pos or SP.realPos(root)
+        end
+        function SP.floorAt(position, lowest)
+            return groundBelow(position, lowest)
         end
 
         local function picker(name, fallbackColor, fallbackAlpha)
@@ -9107,7 +13258,7 @@ do
             return style
         end
 
-        local function groundBelow(position, lowest)
+        function groundBelow(position, lowest)
             local list = {}
             for _, player in ipairs(Players:GetPlayers()) do
                 if player.Character then list[#list + 1] = player.Character end
@@ -9242,11 +13393,12 @@ do
             local real = root.CFrame
             local realPos = real.Position
             local goal, speed, style
+            SP.active = nil
             for _, name in ipairs(order) do
                 local fn = requests[name]
                 if fn then
                     local ok, g, s, v = pcall(fn, root, realPos)
-                    if ok and g then goal, speed, style = g, s or 100, v break end
+                    if ok and g then goal, speed, style = g, s or 100, v SP.active = name break end
                 end
             end
             if goal then
@@ -9258,6 +13410,7 @@ do
             end
             if SP.pos then
                 realCF = real
+                realVel = root.AssemblyLinearVelocity
                 applied = CFrame.new(SP.pos) * (real - realPos)
                 root.CFrame = applied
             else
@@ -9271,8 +13424,16 @@ do
             local char = LocalPlayer.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
 
-            if root and realCF and (root.Position - applied.Position).Magnitude < 0.5 then
-                root.CFrame = realCF
+            if root and realCF then
+                local drift = root.Position - applied.Position
+                if drift.Magnitude < 0.5 then
+                    root.CFrame = realCF
+                else
+                    root.CFrame = realCF + (drift.Magnitude < 40 and drift or Vector3.zero)
+                end
+                if realVel and (applied.Position - realCF.Position).Magnitude > 20 then
+                    root.AssemblyLinearVelocity = realVel
+                end
             end
             applied = nil
         end
@@ -9290,6 +13451,9 @@ do
             RunService:BindToRenderStep(RESTORE, Enum.RenderPriority.First.Value, function()
                 pcall(onRestore)
             end)
+            engine.add(RunService.Stepped:Connect(function()
+                pcall(onRestore)
+            end))
             RunService:BindToRenderStep(GHOST, Enum.RenderPriority.Last.Value, function()
                 local ok, err = pcall(updateGhost)
                 if not ok and clock() - lastWarn > 5 then
@@ -9351,6 +13515,733 @@ do
             SP.enable("desync", desyncRequest)
         end, function()
             SP.disable("desync")
+        end)
+    end
+
+    do
+        local api = { state = { count = 0, owned = 0, regrabs = 0, stripped = 0, status = "Idle", detail = "", spawning = false } }
+        Actions.carOrbit = api
+        local state = api.state
+        local cars = {}
+        local bag = newBag()
+        local engineUsers = 0
+        local spawnToken = 0
+        local angle = 0
+        local center
+        local lastCenterAt = 0
+        local ground = { at = 0, y = nil, around = nil }
+        local garage = v3(615.18, 98.2, 2501.2)
+        local carParams = RaycastParams.new()
+        carParams.FilterType = Enum.RaycastFilterType.Exclude
+
+        local function carFolder()
+            return workspace:FindFirstChild("CarContainer")
+        end
+
+        local function topCar(seat)
+            local folder = carFolder()
+            local node = seat
+            while node and node.Parent and node.Parent ~= folder do node = node.Parent end
+            if node and node.Parent == folder then return node end
+            return seat.Parent
+        end
+
+        local function entryFor(seat)
+            for _, entry in ipairs(cars) do
+                if entry.seat == seat then return entry end
+            end
+            return nil
+        end
+
+        local function adopt(seat)
+            if entryFor(seat) then return nil end
+            local look = seat.CFrame.LookVector * FLAT
+            if look.Magnitude < 0.01 then look = v3(0, 0, -1) end
+            look = look.Unit
+            if flag("car_flip", false) then look = -look end
+            local model = topCar(seat)
+            local reference
+            for _, other in ipairs(cars) do
+                if other.ref and (other.ref.spawn.Position - seat.Position).Magnitude < 40 then reference = other.ref break end
+            end
+            if not reference then reference = { spawn = seat.CFrame, forward = look } end
+            local entry = { seat = seat, model = model, spawn = reference.spawn, forward = reference.forward, ref = reference, drop = 3, partsAt = 0 }
+            if model and model:IsA("Model") then
+                local ok, pivot = pcall(model.GetPivot, model)
+                if ok then entry.offset = seat.CFrame:ToObjectSpace(pivot) end
+                local okBox, boxCF, boxSize = pcall(model.GetBoundingBox, model)
+                if okBox then entry.drop = math.clamp(seat.Position.Y - (boxCF.Position.Y - boxSize.Y / 2), 0.5, 10) end
+            end
+            cars[#cars + 1] = entry
+            return entry
+        end
+
+        local function findPads()
+            local items = workspace:FindFirstChild("Prison_ITEMS")
+            local buttons = items and items:FindFirstChild("buttons")
+            local pads = {}
+            if not buttons then return pads end
+            for _, button in ipairs(buttons:GetChildren()) do
+                local pad = button.Name == "Car Spawner" and button:FindFirstChild("Car Spawner")
+                if pad and pad:IsA("BasePart") and (pad.Position - garage).Magnitude < 90 then pads[#pads + 1] = pad end
+            end
+            table.sort(pads, function(a, b) return (a.Position - garage).Magnitude < (b.Position - garage).Magnitude end)
+            return pads
+        end
+
+        local function isOwner(seat)
+            if type(isnetworkowner) ~= "function" then return true end
+            local ok, result = pcall(isnetworkowner, seat)
+            return ok and result == true
+        end
+
+        local function prune()
+            for index = #cars, 1, -1 do
+                local entry = cars[index]
+                if not (entry.seat and entry.seat.Parent and entry.seat:IsDescendantOf(workspace)) then table.remove(cars, index) end
+            end
+        end
+
+        local function refreshState()
+            prune()
+            local owned = 0
+            for _, entry in ipairs(cars) do
+                if isOwner(entry.seat) then owned += 1 end
+            end
+            state.count, state.owned = #cars, owned
+        end
+
+        local function wheelParts(entry)
+            local list = {}
+            local model = entry.model
+            if not model then return list end
+            for _, descendant in ipairs(model:GetDescendants()) do
+                if descendant:IsA("BasePart") then
+                    local name = string.lower(descendant.Name)
+                    if name:find("wheel", 1, true) or name:find("tire", 1, true) or name:find("tyre", 1, true) then list[#list + 1] = descendant end
+                end
+            end
+            return list
+        end
+
+        local function stripEntry(entry)
+            if entry.stripped then return end
+            entry.stripped = {}
+            for _, part in ipairs(wheelParts(entry)) do
+                local saved = { part = part, collide = part.CanCollide, touch = part.CanTouch, query = part.CanQuery, massless = part.Massless, transparency = part.Transparency }
+                entry.stripped[#entry.stripped + 1] = saved
+                pcall(function()
+                    part.CanCollide = false
+                    part.CanTouch = false
+                    part.CanQuery = false
+                    part.Massless = true
+                    part.Transparency = 1
+                end)
+            end
+            state.stripped += #entry.stripped
+        end
+
+        local function ghostEntry(entry)
+            if entry.ghost then return end
+            entry.ghost = {}
+            local model = entry.model
+            local source = model and model.Parent and model:GetDescendants() or { entry.seat }
+            for _, part in ipairs(source) do
+                if part:IsA("BasePart") and not part.Anchored then
+                    entry.ghost[#entry.ghost + 1] = { part = part, collide = part.CanCollide }
+                    pcall(function() part.CanCollide = false end)
+                end
+            end
+        end
+
+        local function unghostEntry(entry)
+            if not entry.ghost then return end
+            for _, saved in ipairs(entry.ghost) do
+                if saved.part and saved.part.Parent then pcall(function() saved.part.CanCollide = saved.collide end) end
+            end
+            entry.ghost = nil
+        end
+
+        local function unstripEntry(entry)
+            if not entry.stripped then return end
+            for _, saved in ipairs(entry.stripped) do
+                if saved.part and saved.part.Parent then
+                    pcall(function()
+                        saved.part.CanCollide = saved.collide
+                        saved.part.CanTouch = saved.touch
+                        saved.part.CanQuery = saved.query
+                        saved.part.Massless = saved.massless
+                        saved.part.Transparency = saved.transparency
+                    end)
+                end
+            end
+            state.stripped = math.max(state.stripped - #entry.stripped, 0)
+            entry.stripped = nil
+        end
+
+        local function grabNear(range)
+            local folder = carFolder()
+            local _, _, root = localParts()
+            if not (folder and root) then return 0 end
+            local added = 0
+            for _, descendant in ipairs(folder:GetDescendants()) do
+                if descendant:IsA("VehicleSeat") and descendant.Occupant == nil and (descendant.Position - root.Position).Magnitude < range and not entryFor(descendant) and isOwner(descendant) then
+                    if adopt(descendant) then added += 1 end
+                end
+            end
+            refreshState()
+            return added
+        end
+
+        local function reclaim()
+            local _, _, root = localParts()
+            if not root then return 0 end
+            local pulled = 0
+            for _, entry in ipairs(cars) do
+                local seat = entry.seat
+                if seat.Occupant == nil and not isOwner(seat) then
+                    seat.CFrame = root.CFrame * CFrame.new(0, 3, -10)
+                    seat.AssemblyLinearVelocity = ZERO
+                    pulled += 1
+                end
+            end
+            return pulled
+        end
+
+        function api.release()
+            for _, entry in ipairs(cars) do unstripEntry(entry) unghostEntry(entry) end
+            table.clear(cars)
+            state.count, state.owned = 0, 0
+            say("Released all cars")
+        end
+
+        function api.grab()
+            local folder = carFolder()
+            local _, _, root = localParts()
+            if not (folder and root) then say("No cars found") return end
+            local added = grabNear(flag("car_grab_range", 250))
+            say(string.format("Grabbed %d cars, you now have %d", added, state.count))
+        end
+
+        function api.regrab()
+            local added = grabNear(flag("car_grab_range", 250))
+            local pulled = reclaim()
+            state.regrabs += added + pulled
+            refreshState()
+            say(string.format("Regrab: %d new, %d pulled back, %d total", added, pulled, state.count))
+        end
+
+        local function rotY(vector, angle_)
+            local c, sn = math.cos(angle_), math.sin(angle_)
+            return v3(vector.X * c + vector.Z * sn, vector.Y, -vector.X * sn + vector.Z * c)
+        end
+
+        function api.pattern(i, n, a, flat)
+            local pattern = flag("car_pattern", "Ring")
+            local radius = flag("car_radius", 35)
+            local height = flag("car_height", 12)
+            local spread = flag("car_spread", 0)
+            local frac = (i - 0.5) / n
+            local phase = a + (i - 1) * (math.pi * 2 / n)
+            local gap = flag("car_gap", 14)
+            if pattern == "Line" then
+                return rotY(v3((i - (n + 1) / 2) * gap, height, 0), a)
+            elseif pattern == "Grid" then
+                local cols = math.max(math.ceil(math.sqrt(n)), 1)
+                local rows = math.ceil(n / cols)
+                local col, row = (i - 1) % cols, math.floor((i - 1) / cols)
+                return rotY(v3((col - (cols - 1) / 2) * gap, height, (row - (rows - 1) / 2) * gap), a)
+            elseif pattern == "Wall" then
+                local cols = math.max(math.ceil(math.sqrt(n * 1.8)), 1)
+                local rows = math.ceil(n / cols)
+                local col, row = (i - 1) % cols, math.floor((i - 1) / cols)
+                return rotY(v3((col - (cols - 1) / 2) * gap, height + ((rows - 1) / 2 - row) * gap * 0.6, 0), a)
+            elseif pattern == "Cube" then
+                local side = math.max(math.ceil(n ^ (1 / 3) - 1e-6), 1)
+                local lx, ly, lz = (i - 1) % side, math.floor((i - 1) / side) % side, math.floor((i - 1) / (side * side))
+                local mid = (side - 1) / 2
+                return rotY(v3((lx - mid) * gap, height + (ly - mid) * gap * 0.6, (lz - mid) * gap), a)
+            elseif pattern == "Spiral" then
+                local r = radius * (0.1 + 0.9 * frac)
+                local p = a + frac * math.pi * 4
+                return v3(math.cos(p) * r, height, math.sin(p) * r)
+            elseif pattern == "Star" then
+                local spot = ((i - 1) / n) * 10
+                local k = math.floor(spot)
+                local u = spot - k
+                local function vertex(index)
+                    local ang = (index % 10) * math.pi / 5
+                    local rr = index % 2 == 0 and radius or radius * 0.45
+                    return v3(math.sin(ang) * rr, 0, math.cos(ang) * rr)
+                end
+                local point = vertex(k):Lerp(vertex(k + 1), u)
+                return rotY(v3(point.X, height, point.Z), a)
+            elseif pattern == "Figure eight" then
+                local d = 1 + math.sin(phase) ^ 2
+                return v3(math.cos(phase) * radius * 1.4 / d, height, math.sin(phase) * math.cos(phase) * radius * 1.4 / d)
+            elseif pattern == "Double ring" then
+                if i % 2 == 0 then
+                    return v3(math.cos(-phase) * radius * 0.6, height + spread * 0.25, math.sin(-phase) * radius * 0.6)
+                end
+                return v3(math.cos(phase) * radius, height, math.sin(phase) * radius)
+            elseif pattern == "Helix" then
+                return v3(math.cos(phase) * radius, height + (frac - 0.5) * spread, math.sin(phase) * radius)
+            elseif pattern == "Tornado" then
+                local r = radius * (0.25 + 0.75 * frac)
+                local p = a + frac * math.pi * 6
+                return v3(math.cos(p) * r, height + frac * spread, math.sin(p) * r)
+            elseif pattern == "Sphere" then
+                local y = 1 - 2 * frac
+                local ring = math.sqrt(math.max(1 - y * y, 0))
+                local p = a + (i - 1) * 2.399963
+                local vertical = spread > 0 and spread or radius
+                return v3(math.cos(p) * ring * radius, height + y * vertical, math.sin(p) * ring * radius)
+            elseif pattern == "Wheel" then
+                local cam = Camera()
+                local right = v3(1, 0, 0)
+                if cam and not flat then
+                    right = cam.CFrame.RightVector * FLAT
+                    right = right.Magnitude > 0.01 and right.Unit or v3(1, 0, 0)
+                end
+                return right * math.cos(phase) * radius + v3(0, height + math.sin(phase) * radius, 0)
+            end
+            return v3(math.cos(phase) * radius, height, math.sin(phase) * radius)
+        end
+
+        local function groundAt(position)
+            local now = clock()
+            if ground.y and ground.around and now - ground.at < 0.4 and (ground.around - position).Magnitude < 6 then return ground.y end
+            local list = {}
+            local folder = carFolder()
+            if folder then list[#list + 1] = folder end
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player.Character then list[#list + 1] = player.Character end
+            end
+            carParams.FilterDescendantsInstances = list
+            local hit = workspace:Raycast(v3(position.X, position.Y + 300, position.Z), v3(0, -900, 0), carParams)
+            ground.at, ground.around, ground.y = now, position, hit and hit.Position.Y or nil
+            return ground.y
+        end
+
+        local function orbitCenter(dt, root)
+            local target
+            local follow = flag("car_follow", "Self")
+            if follow == "Selected player" or follow == "Silent aim target" then
+                local targetRoot
+                if follow == "Selected player" then
+                    local player = Actions.selectedPlayer and Actions.selectedPlayer()
+                    local character = player and player.Character
+                    targetRoot = character and character:FindFirstChild("HumanoidRootPart")
+                else
+                    targetRoot = Actions.silentTarget and Actions.silentTarget()
+                end
+                if targetRoot and targetRoot.Parent then target = targetRoot.Position end
+            elseif follow == "Cursor" then
+                local cam = Camera()
+                if cam then
+                    local ref = UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter and cam.ViewportSize / 2 or UserInputService:GetMouseLocation()
+                    local ray = cam:ViewportPointToRay(ref.X, ref.Y)
+                    local list = { cam }
+                    local folder = carFolder()
+                    if folder then list[#list + 1] = folder end
+                    for _, player in ipairs(Players:GetPlayers()) do
+                        if player.Character then list[#list + 1] = player.Character end
+                    end
+                    carParams.FilterDescendantsInstances = list
+                    local hit = workspace:Raycast(ray.Origin, ray.Direction * 2000, carParams)
+                    target = hit and hit.Position or (ray.Origin + ray.Direction * 150)
+                end
+            end
+            target = target or Actions.sp.realPos(root)
+            if not center then
+                center = target
+            else
+                local rate = flag("car_smooth", 12)
+                center = center:Lerp(target, 1 - math.exp(-rate * dt))
+            end
+            return center
+        end
+
+        local function orbitCFrame(i, n, middle)
+            local dir = flag("car_dir", "Clockwise") == "Clockwise" and 1 or -1
+            local offset = api.pattern(i, n, angle, false)
+            local position = middle + offset
+            local void = workspace.FallenPartsDestroyHeight
+            if type(void) ~= "number" or void ~= void then void = -500 end
+            local top = math.huge
+            if flag("car_cap", true) then
+                top = flag("car_cap_y", 165)
+                local floorY = groundAt(middle)
+                if floorY then top = math.min(top, floorY + 48.5) end
+            end
+            position = v3(position.X, math.clamp(position.Y, void + 15, math.max(top, void + 16)), position.Z)
+            local face = flag("car_face", "Direction of travel")
+            local cf
+            if face == "Center" then
+                cf = CFrame.lookAt(position, v3(middle.X, position.Y, middle.Z) + v3(0, 0.001, 0))
+            elseif face == "Fixed" then
+                cf = CFrame.new(position)
+            else
+                local ahead = middle + api.pattern(i, n, angle + dir * 0.05, false) - position
+                if ahead.Magnitude > 1e-3 then cf = CFrame.lookAt(position, position + ahead) else cf = CFrame.new(position) end
+            end
+            local tilt = flag("car_tilt", 0)
+            if tilt ~= 0 then cf = cf * CFrame.Angles(0, 0, math.rad(tilt)) end
+            return cf
+        end
+
+        local function parkCFrame(entry, k)
+            local forward = entry.forward
+            local right = forward:Cross(v3(0, 1, 0))
+            right = right.Magnitude > 0.01 and right.Unit or v3(1, 0, 0)
+            local distance = flag("car_forward", 25)
+            local lane, row, tier = k % 5, math.floor(k / 5) % 4, math.floor(k / 20)
+            local flat = entry.spawn.Position + forward * (distance + row * 22) + right * ((lane - 2) * 12)
+            local lift = tier * 10
+            if flag("car_cap", true) then lift = math.min(lift, math.max(flag("car_cap_y", 165) - flat.Y, 0)) end
+            local key = math.floor(flat.X) .. "|" .. math.floor(flat.Z)
+            if entry.groundKey ~= key then
+                entry.groundKey = key
+                local params = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Exclude
+                local ignore = { workspace.CurrentCamera }
+                local folder = carFolder()
+                if folder then ignore[#ignore + 1] = folder end
+                if LocalPlayer.Character then ignore[#ignore + 1] = LocalPlayer.Character end
+                params.FilterDescendantsInstances = ignore
+                local hit = workspace:Raycast(v3(flat.X, entry.spawn.Position.Y + 25, flat.Z), v3(0, -400, 0), params)
+                entry.ground = hit and hit.Position.Y or entry.spawn.Position.Y - entry.drop
+            end
+            local position = v3(flat.X, entry.ground + entry.drop + 0.4 + lift, flat.Z)
+            return CFrame.lookAt(position, position + forward)
+        end
+
+        local function carParts(entry)
+            local now = clock()
+            if entry.parts and now - entry.partsAt < 1 then return entry.parts end
+            local list = {}
+            local model = entry.model
+            if model and model.Parent then
+                for _, descendant in ipairs(model:GetDescendants()) do
+                    if descendant:IsA("BasePart") and not descendant.Anchored then
+                        list[#list + 1] = descendant
+                        if #list >= 60 then break end
+                    end
+                end
+            end
+            if #list == 0 then list[1] = entry.seat end
+            entry.parts, entry.partsAt = list, now
+            return list
+        end
+
+        local function placeEntry(entry, cf, velocity)
+            local seat = entry.seat
+            entry.goal = cf
+            entry.goalVelocity = velocity or ZERO
+            local model = entry.model
+            if entry.offset and model and model.Parent and model:IsA("Model") then
+                local ok = pcall(model.PivotTo, model, cf * entry.offset)
+                if not ok then seat.CFrame = cf end
+            else
+                seat.CFrame = cf
+            end
+            for _, part in ipairs(carParts(entry)) do
+                part.AssemblyLinearVelocity = entry.goalVelocity
+                part.AssemblyAngularVelocity = ZERO
+            end
+        end
+
+        local function holdStep()
+            for _, entry in ipairs(cars) do
+                local goal = entry.goal
+                if goal and entry.seat.Parent and entry.seat.Occupant == nil then
+                    local seat = entry.seat
+                    local model = entry.model
+                    if entry.offset and model and model.Parent and model:IsA("Model") then
+                        pcall(model.PivotTo, model, goal * entry.offset)
+                    else
+                        seat.CFrame = goal
+                    end
+                    seat.AssemblyLinearVelocity = entry.goalVelocity or ZERO
+                    seat.AssemblyAngularVelocity = ZERO
+                end
+            end
+        end
+
+        local function engineStep(dt)
+            local orbiting = flag("car_orbit_on", false)
+            local frozen = flag("car_freeze", false)
+            if not (orbiting or state.spawning or frozen) then return end
+            prune()
+            local count = #cars
+            if count == 0 then return end
+            local _, _, root = localParts()
+            if not root then return end
+            if frozen then
+                for _, entry in ipairs(cars) do
+                    local seat = entry.seat
+                    if seat.Occupant == nil then
+                        entry.frozen = entry.frozen or seat.CFrame
+                        placeEntry(entry, entry.frozen, ZERO)
+                    end
+                end
+                return
+            end
+            local middle
+            if orbiting then
+                local spin = math.rad(flag("car_spin", 90))
+                if flag("car_dir", "Clockwise") ~= "Clockwise" then spin = -spin end
+                angle = (angle + spin * dt) % (math.pi * 2)
+                middle = orbitCenter(dt, root)
+            else
+                center = nil
+            end
+            for index, entry in ipairs(cars) do
+                local seat = entry.seat
+                if seat.Occupant == nil then
+                    if not orbiting then ghostEntry(entry) end
+                    local goal = orbiting and orbitCFrame(index, count, middle) or parkCFrame(entry, index - 1)
+                    local velocity = ZERO
+                    if orbiting and entry.lastGoal and dt > 0 then
+                        velocity = (goal.Position - entry.lastGoal.Position) / dt
+                        if velocity.Magnitude > 150 then velocity = velocity.Unit * 150 end
+                    end
+                    entry.lastGoal = goal
+                    placeEntry(entry, goal, velocity)
+                end
+            end
+        end
+
+        local function startEngine()
+            engineUsers += 1
+            if engineUsers > 1 then return end
+            local radiusSaved = {}
+            for _, name in ipairs({ "SimulationRadius", "MaximumSimulationRadius" }) do
+                if type(gethiddenproperty) == "function" and type(sethiddenproperty) == "function" then
+                    local okRead, value = pcall(gethiddenproperty, LocalPlayer, name)
+                    if okRead and type(value) == "number" then
+                        radiusSaved[name] = value
+                        pcall(sethiddenproperty, LocalPlayer, name, 1e9)
+                    end
+                end
+            end
+            bag.add({ Disconnect = function()
+                for name, value in pairs(radiusSaved) do pcall(sethiddenproperty, LocalPlayer, name, value) end
+            end })
+            local stepSignal = RunService.PreSimulation or RunService.Stepped
+            bag.add(stepSignal:Connect(function(first, second)
+                local dt = second or first
+                if type(dt) ~= "number" then dt = 1 / 60 end
+                local ok, err = pcall(engineStep, math.min(dt, 0.1))
+                if not ok and clock() - lastCenterAt > 5 then
+                    lastCenterAt = clock()
+                    warnf("car orbit:", err)
+                end
+            end))
+            bag.add(RunService.Heartbeat:Connect(function()
+                if not flag("car_dual", true) then return end
+                pcall(holdStep)
+            end))
+            local nextState, nextRegrab = 0, 0
+            bag.add(RunService.Heartbeat:Connect(function()
+                local now = clock()
+                if flag("car_regrab", false) and now >= nextRegrab then
+                    nextRegrab = now + math.max(flag("car_regrab_cd", 2), 0.25)
+                    pcall(function()
+                        local added = grabNear(flag("car_grab_range", 250))
+                        local pulled = reclaim()
+                        state.regrabs += added + pulled
+                    end)
+                end
+                if now < nextState then return end
+                nextState = now + 0.25
+                pcall(refreshState)
+            end))
+        end
+
+        local function stopEngine()
+            engineUsers = math.max(engineUsers - 1, 0)
+            if engineUsers == 0 then
+                bag.clear()
+                center = nil
+            end
+        end
+
+        local function spawnLoop(token)
+            local pads = findPads()
+            local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+            local interact = remotes and remotes:FindFirstChild("InteractWithItem")
+            if #pads == 0 or not interact then
+                state.status = #pads == 0 and "Police garage spawners not found" or "InteractWithItem remote not found"
+                say(state.status)
+                state.spawning = false
+                switchOff("car_spawn_on")
+                return
+            end
+            local list = flag("car_both", true) and { pads[1], pads[2] } or { pads[1] }
+            local _, _, root = localParts()
+            local home = root and root.CFrame
+            local stand = list[1].Position
+            if list[2] then stand = (list[1].Position + list[2].Position) / 2 end
+            stand += v3(0, 4, 0)
+            local folder = carFolder()
+            local watch
+            if folder then
+                watch = folder.ChildAdded:Connect(function(child)
+                    task.spawn(function()
+                        local seat
+                        for _ = 1, 20 do
+                            seat = child:FindFirstChildWhichIsA("VehicleSeat", true)
+                            if seat then break end
+                            task.wait(0.1)
+                        end
+                        if not seat or token ~= spawnToken then return end
+                        for _, pad in ipairs(pads) do
+                            if (seat.Position - pad.Position).Magnitude < 80 then
+                                if adopt(seat) then state.detail = "Last car: " .. child.Name end
+                                return
+                            end
+                        end
+                    end)
+                end)
+            end
+            local holdConn
+            local mode = flag("car_stand", "Next to spawner")
+            if mode == "Pinned on spawner" then
+                holdConn = RunService.Heartbeat:Connect(function()
+                    local _, _, mine = localParts()
+                    if mine then
+                        mine.CFrame = CFrame.new(stand)
+                        mine.AssemblyLinearVelocity = ZERO
+                    end
+                end)
+            elseif mode == "Next to spawner" then
+                local spot = list[1].Position + v3(0, 3, 0)
+                local _, _, mine = localParts()
+                if mine then
+                    mine.CFrame = CFrame.new(spot)
+                    mine.AssemblyLinearVelocity = ZERO
+                end
+                holdConn = RunService.Heartbeat:Connect(function()
+                    local _, _, mine2 = localParts()
+                    if not mine2 then return end
+                    local nearest = math.huge
+                    for _, pad in ipairs(list) do
+                        nearest = math.min(nearest, (pad.Position - mine2.Position).Magnitude)
+                    end
+                    if nearest > 12 then
+                        mine2.CFrame = CFrame.new(spot)
+                        mine2.AssemblyLinearVelocity = ZERO
+                    end
+                end)
+            end
+            state.status = "Spawning"
+            local refused, idle = 0, 0
+            local lastCount = #cars
+            while token == spawnToken do
+                refreshState()
+                local target = math.floor(flag("car_target", 20))
+                if state.count >= target then
+                    state.status = string.format("Done, %d cars", state.count)
+                    break
+                end
+                local round = 0
+                for _, pad in ipairs(list) do
+                    task.spawn(function()
+                        local ok, result = pcall(function() return interact:InvokeServer(pad) end)
+                        if ok and result == false then refused += 1 end
+                        round += 1
+                    end)
+                end
+                task.wait(math.max(flag("car_delay", 0.25), 0.05))
+                if #cars > lastCount then
+                    lastCount, refused, idle = #cars, 0, 0
+                else
+                    idle += 1
+                end
+                if refused >= 8 or idle >= 24 then
+                    state.status = refused >= 8 and "The spawner refused, you may be on the wrong team" or "No new cars appear, the spawn spot may be blocked"
+                    say(state.status)
+                    break
+                end
+            end
+            if watch then watch:Disconnect() end
+            if holdConn then holdConn:Disconnect() end
+            if token == spawnToken then
+                state.spawning = false
+                if mode ~= "Stay where I am" and flag("car_return", true) and home then
+                    local _, _, mine = localParts()
+                    if mine then mine.CFrame = home end
+                end
+                switchOff("car_spawn_on")
+            end
+        end
+
+        feature("car_spawn_on", function()
+            spawnToken += 1
+            local token = spawnToken
+            state.spawning = true
+            state.detail = ""
+            startEngine()
+            task.spawn(spawnLoop, token)
+        end, function()
+            spawnToken += 1
+            state.spawning = false
+            if state.status == "Spawning" then state.status = "Stopped" end
+            stopEngine()
+        end)
+
+        feature("car_regrab", function()
+            startEngine()
+        end, function()
+            stopEngine()
+        end)
+
+        feature("car_freeze", function()
+            for _, entry in ipairs(cars) do entry.frozen = nil end
+            startEngine()
+            state.status = "Frozen in place"
+        end, function()
+            for _, entry in ipairs(cars) do entry.frozen = nil end
+            stopEngine()
+            if state.status == "Frozen in place" then state.status = flag("car_orbit_on", false) and "Orbiting" or "Idle" end
+        end)
+
+        local stripConn
+        feature("car_strip", function()
+            if stripConn then stripConn:Disconnect() end
+            local nextAt = 0
+            stripConn = RunService.Heartbeat:Connect(function()
+                local now = clock()
+                if now < nextAt then return end
+                nextAt = now + 0.5
+                for _, entry in ipairs(cars) do
+                    if entry.model and entry.model.Parent then pcall(stripEntry, entry) end
+                end
+            end)
+        end, function()
+            if stripConn then stripConn:Disconnect() stripConn = nil end
+            for _, entry in ipairs(cars) do unstripEntry(entry) end
+        end)
+
+        feature("car_orbit_on", function()
+            angle = 0
+            center = nil
+            startEngine()
+            state.status = state.spawning and state.status or "Orbiting"
+        end, function()
+            stopEngine()
+            if not state.spawning and state.status == "Orbiting" then state.status = "Idle" end
+        end)
+
+        onUnload(function()
+            spawnToken += 1
+            state.spawning = false
+            if stripConn then stripConn:Disconnect() stripConn = nil end
+            for _, entry in ipairs(cars) do unstripEntry(entry) unghostEntry(entry) end
+            bag.clear()
+            table.clear(cars)
+            Actions.carOrbit = nil
         end)
     end
 
@@ -9667,10 +14558,39 @@ do
                 return hum ~= nil and hum.Health > 0 and char:FindFirstChild("HumanoidRootPart") ~= nil
             end
 
-            local function step(dt)
+            local magnet, aimOn, bound = false, false, false
+
+            local function aimWanted()
+                if aimOn and keyActive("Aim_Global_Key") then return true end
+                return magnet and keyActive("Trigger_Global_Key")
+            end
+
+            local step
+            local function refreshBind()
+                local want = aimOn or magnet
+                if want == bound then return end
+                bound = want
+                if want then
+                    lockedPlayer, lastPlayer, accX, accY = nil, nil, 0, 0
+                    RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function(dt)
+                        local ok, err = pcall(step, dt)
+                        if not ok then warnf("aim assist error:", err) end
+                    end)
+                else
+                    pcall(function() RunService:UnbindFromRenderStep(name) end)
+                    lockedPlayer, lastPlayer = nil, nil
+                end
+            end
+
+            Actions.aimMagnet = function(on)
+                magnet = on and true or false
+                refreshBind()
+            end
+
+            function step(dt)
                 local cam = Camera()
                 local _, _, root = localParts()
-                if not cam or not root or typing() or not keyActive("Aim_Global_Key") then
+                if not cam or not root or typing() or not aimWanted() then
                     lockedPlayer, lastPlayer = nil, nil
                     accX, accY = 0, 0
                     return
@@ -9727,14 +14647,16 @@ do
             end
 
             feature("Aim_Global_Enabled", function()
-                lockedPlayer, lastPlayer, accX, accY = nil, nil, 0, 0
-                RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function(dt)
-                    local ok, err = pcall(step, dt)
-                    if not ok then warnf("aim assist error:", err) end
-                end)
+                aimOn = true
+                refreshBind()
             end, function()
-                pcall(function() RunService:UnbindFromRenderStep(name) end)
-                lockedPlayer, lastPlayer = nil, nil
+                aimOn = false
+                refreshBind()
+            end)
+
+            onUnload(function()
+                magnet, aimOn = false, false
+                refreshBind()
             end)
         end
 
@@ -10045,7 +14967,7 @@ do
         do
             local bag = newBag()
             local hookedCast, original = nil, nil
-            local wants = { silent = false, fx = false, auto = false, assist = false }
+            local wants = { silent = false, fx = false, auto = false, assist = false, rage = false }
             local autoNext, loopToken, warnedStack = 0, 0, false
             local lastOrigin, lastNew
 
@@ -10054,7 +14976,7 @@ do
             end
 
             local function anyWanted()
-                return wants.silent or wants.fx or wants.auto or wants.assist
+                return wants.silent or wants.fx or wants.auto or wants.assist or wants.rage
             end
 
             local function redirect(...)
@@ -10224,6 +15146,13 @@ do
                 refresh()
             end
 
+            Actions.rageHook = function(on)
+                wants.rage = on and true or false
+                refresh()
+            end
+            Actions.readyGun = readyGun
+            Actions.gunTool = equippedGun
+
             Actions.fireAt = function(part, position)
                 if not part or not part.Parent then return false end
                 if not hookedCast then
@@ -10232,6 +15161,80 @@ do
                 Gun.force = { part = part, pos = position or part.Position, expires = clock() + 0.6 }
                 fireGun()
                 return true
+            end
+
+            local SWITCH_ORDER = {
+                { label = "AK-47", tools = { "ak47" } },
+                { label = "M4A1", tools = { "m4a1", "m4" } },
+                { label = "MP5", tools = { "mp5" } },
+                { label = "FAL", tools = { "fal" } },
+                { label = "Remington 870", tools = { "remington870", "r870", "remington" } },
+                { label = "M700", tools = { "m700" } },
+                { label = "M9", tools = { "m9" } },
+                { label = "Revolver", tools = { "revolver" } },
+                { label = "Taser", tools = { "taser" } },
+            }
+            local switchNext = 0
+
+            local function pickedIn(value, key)
+                if type(value) ~= "table" then return false end
+                if value[key] == true then return true end
+                for _, chosen in pairs(value) do
+                    if chosen == key then return true end
+                end
+                return false
+            end
+
+            local function toolFor(entry, holders)
+                for _, holder in ipairs(holders) do
+                    for _, child in ipairs(holder:GetChildren()) do
+                        if child:IsA("Tool") then
+                            local name = fxKey(child.Name)
+                            for _, alias in ipairs(entry.tools) do
+                                if name == alias then return child end
+                            end
+                        end
+                    end
+                end
+                return nil
+            end
+
+            local function autoSwitch(now, head)
+                if now < switchNext then return end
+                local chosen = flag("silent_switch_weapons", {})
+                local order = {}
+                for _, entry in ipairs(SWITCH_ORDER) do
+                    if pickedIn(chosen, entry.label) then order[#order + 1] = entry end
+                end
+                if #order == 0 then return end
+                local entity = selectTarget("silent", aimRef(), head.Position, { limit = 1000, ignoreDown = false, skipWall = flag("silent_wallbang", false) })
+                if not entity then return end
+                switchNext = now + math.max(flag("silent_switch_delay", 0.3), 0.03)
+                local character = LocalPlayer.Character
+                local hum = character and character:FindFirstChildOfClass("Humanoid")
+                if not hum then return end
+                local current = character:FindFirstChildOfClass("Tool")
+                local holders = { character }
+                local pack = LocalPlayer:FindFirstChildOfClass("Backpack")
+                if pack then holders[#holders + 1] = pack end
+                local available = {}
+                for _, entry in ipairs(order) do
+                    local tool = toolFor(entry, holders)
+                    if tool then available[#available + 1] = tool end
+                end
+                if #available == 0 then return end
+                local index = 0
+                for position, tool in ipairs(available) do
+                    if tool == current then index = position break end
+                end
+                for step = 1, #available do
+                    local candidate = available[(index + step - 1) % #available + 1]
+                    local ammo = candidate:GetAttribute("Local_CurrentAmmo")
+                    if candidate ~= current and (ammo == nil or ammo > 0) then
+                        hum:EquipTool(candidate)
+                        return
+                    end
+                end
             end
 
             feature("Silent_Global_Enabled", function()
@@ -10257,6 +15260,7 @@ do
                         local _, _, root = localParts()
                         local cam = Camera()
                         local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                        if root and cam and head and flag("silent_switch", false) then pcall(autoSwitch, now, head) end
                         if root and cam and head and readyGun() then
                             local data = Gun.data()
                             local entity, part = selectTarget("silent", aimRef(), head.Position, {
@@ -10283,19 +15287,745 @@ do
             end)
 
             onUnload(function()
-                wants.silent, wants.fx, wants.auto, wants.assist = false, false, false, false
+                wants.silent, wants.fx, wants.auto, wants.assist, wants.rage = false, false, false, false, false
                 loopToken += 1
                 unhook()
                 ShotEvents.hooked = nil
-                Actions.fxHook, Actions.autoHook, Actions.assistHook = noop, noop, noop
+                Actions.fxHook, Actions.autoHook, Actions.assistHook, Actions.rageHook = noop, noop, noop, noop
                 Actions.fireAt = function() return false end
+            end)
+        end
+
+        do
+            local R = {
+                target = nil, entity = nil, center = nil, vel = ZERO, phase = "peek", lastPhase = "", phaseEnd = 0, peekAt = 0,
+                nextShot = 0, voidPos = nil, voidRoll = 0, skip = {}, safe = false, status = "off", lastEval = 0,
+                lastHealth = 0, lastDamage = 0, equipAt = 0, reloadAt = 0, getAt = 0, getUntil = 0, viewing = false, shownText = "", randAngle = 0, goal = nil, goalAt = 0, goalFor = nil,
+                smart = { state = "waiting", t = nil, timer = 0, health = nil, dropped = false },
+            }
+            Actions.rage = R
+            local bag = newBag()
+            local hist = setmetatable({}, { __mode = "k" })
+            local statusText
+            local errors = 0
+            local ALIASES = {
+                ["AK-47"] = { "ak47" }, ["M4A1"] = { "m4a1", "m4" }, ["MP5"] = { "mp5" }, ["FAL"] = { "fal" },
+                ["Remington 870"] = { "remington870", "r870", "remington" }, ["M700"] = { "m700" }, ["M9"] = { "m9" }, ["Revolver"] = { "revolver" },
+            }
+            local HEAD_OFFSET = v3(0, 1.5, 0)
+            local WEAPON_ORDER = { "AK-47", "M4A1", "MP5", "FAL", "Remington 870", "M700", "M9", "Revolver" }
+
+            local function picked(value, key)
+                if type(value) ~= "table" then return false end
+                if value[key] == true then return true end
+                for _, chosen in pairs(value) do
+                    if chosen == key then return true end
+                end
+                return false
+            end
+
+            local function findPlayer(text)
+                text = string.lower(tostring(text or ""))
+                if text == "" then return nil end
+                local partial
+                for _, player in ipairs(Players:GetPlayers()) do
+                    local name, display = string.lower(player.Name), string.lower(player.DisplayName)
+                    if name == text or display == text then return player end
+                    if not partial and (string.sub(name, 1, #text) == text or string.sub(display, 1, #text) == text) then partial = player end
+                end
+                if partial then return partial end
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if string.find(string.lower(player.Name), text, 1, true) or string.find(string.lower(player.DisplayName), text, 1, true) then return player end
+                end
+                return nil
+            end
+
+            Actions.rageList = function(listFlag, add)
+                local option = Options[listFlag]
+                if not option or type(option.SetValue) ~= "function" then return end
+                if not add then
+                    pcall(function() option:SetValue({}) end)
+                    return
+                end
+                local player = findPlayer(flag("rb_search", ""))
+                if not player then player = Actions.selectedPlayer and Actions.selectedPlayer() end
+                if not player then say("Type a name or select a player in the Players tab first") return end
+                local value = {}
+                if type(option.Value) == "table" then
+                    for key, chosen in pairs(option.Value) do value[key] = chosen end
+                end
+                value[player.Name] = true
+                pcall(function() option:SetValue(value) end)
+                say(player.Name .. " added")
+            end
+
+            local function addAtCursor()
+                if not flag("rb_add", false) or typing() then return end
+                local cam = Camera()
+                if not cam then return end
+                local mouse = UserInputService:GetMouseLocation()
+                local best, bestDist
+                for _, e in ipairs(otherEntities()) do
+                    local screen, onScreen = cam:WorldToViewportPoint(e.Root.Position)
+                    if onScreen then
+                        local d = (Vector2.new(screen.X, screen.Y) - mouse).Magnitude
+                        if d <= 600 and (not bestDist or d < bestDist) then best, bestDist = e.Player, d end
+                    end
+                end
+                if not best then say("No player near the cursor") return end
+                local option = Options.rb_targets
+                if not option or type(option.SetValue) ~= "function" then return end
+                local value = {}
+                if type(option.Value) == "table" then
+                    for key, chosen in pairs(option.Value) do value[key] = chosen end
+                end
+                if value[best.Name] then
+                    value[best.Name] = nil
+                    say(best.Name .. " removed")
+                else
+                    value[best.Name] = true
+                    say(best.Name .. " added")
+                end
+                pcall(function() option:SetValue(value) end)
+            end
+            task.defer(function()
+                local key = Options.rb_add_key
+                if key and type(key.OnClick) == "function" then key:OnClick(addAtCursor) end
+            end)
+
+            local function refreshNames()
+                local names = {}
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player ~= LocalPlayer then names[#names + 1] = player.Name end
+                end
+                table.sort(names, function(a, b) return a:lower() < b:lower() end)
+                for _, listFlag in ipairs({ "rb_targets", "rb_white" }) do
+                    local option = Options[listFlag]
+                    if option and type(option.SetValues) == "function" then pcall(function() option:SetValues(names) end) end
+                end
+            end
+            track(Players.PlayerAdded:Connect(function() task.defer(refreshNames) end))
+            track(Players.PlayerRemoving:Connect(function(player)
+                hist[player] = nil
+                R.skip[player] = nil
+                task.defer(refreshNames)
+            end))
+
+            local function inBounds(position)
+                local limit = flag("rb_bounds", 8000)
+                return math.abs(position.X) < limit and math.abs(position.Z) < limit and position.Y > -400 and position.Y < 4000
+            end
+
+            local function centerOf(e)
+                local position = e.Root.Position
+                local now = clock()
+                if inBounds(position) then
+                    hist[e.Player] = { pos = position, t = now }
+                    return position, e.Root.AssemblyLinearVelocity, true
+                end
+                if flag("rb_res", false) then
+                    local last = hist[e.Player]
+                    if last and now - last.t <= flag("rb_res_time", 2) then return last.pos, ZERO, false end
+                end
+                return nil
+            end
+
+            local function usable(e)
+                local player = e.Player
+                if Relations[player.UserId] == "Friendly" then return false end
+                if picked(flag("rb_white", {}), player.Name) then return false end
+                local until_ = R.skip[player]
+                if until_ and until_ > clock() then return false end
+                if flag("rb_team", false) and relationOf(player) == "Friendly" then return false end
+                if flag("rb_ff", false) and e.Character:FindFirstChildOfClass("ForceField") then return false end
+                if flag("rb_hostile", false) and isPeaceful(player) then return false end
+                if flag("rb_down", false) and (e.Character:GetAttribute("Tased") or e.Character:GetAttribute("Arrested")) then return false end
+                return true
+            end
+
+            local function pickTarget(realPos)
+                local mode = flag("rb_tmode", "Target list")
+                local list = flag("rb_targets", {})
+                local range = flag("rb_range", 2000)
+                local nearby = flag("rb_nearby", false)
+                local nearRange = flag("rb_nearby_range", 60)
+                local selected = mode == "Players tab" and Actions.selectedPlayer and Actions.selectedPlayer() or nil
+                local cam = Camera()
+                local mouse = UserInputService:GetMouseLocation()
+                local best, bestScore, bestPos, bestVel, bestLive
+                for _, e in ipairs(otherEntities()) do
+                    if usable(e) then
+                        local position, velocity, live = centerOf(e)
+                        if position then
+                            local distance = (position - realPos).Magnitude
+                            local want
+                            if mode == "Target list" then
+                                want = picked(list, e.Player.Name) or (nearby and distance <= nearRange)
+                            elseif mode == "Players tab" then
+                                want = selected == e.Player or (nearby and distance <= nearRange)
+                            else
+                                want = true
+                            end
+                            if want and distance <= range then
+                                local score = distance
+                                if mode == "Closest to cursor" and cam then
+                                    local screen, onScreen = cam:WorldToViewportPoint(position)
+                                    score = onScreen and (Vector2.new(screen.X, screen.Y) - mouse).Magnitude or (1e6 + distance)
+                                end
+                                if Relations[e.Player.UserId] == "Priority" then score -= 1e7 end
+                                if R.target == e.Player then score -= 12 end
+                                if not bestScore or score < bestScore then
+                                    best, bestScore, bestPos, bestVel, bestLive = e, score, position, velocity, live
+                                end
+                            end
+                        end
+                    end
+                end
+                return best, bestPos, bestVel, bestLive
+            end
+
+            local function findWeapon(label)
+                local aliases = ALIASES[label]
+                if not aliases then return nil end
+                local holders = { LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }
+                for _, holder in ipairs(holders) do
+                    if holder then
+                        for _, child in ipairs(holder:GetChildren()) do
+                            if child:IsA("Tool") then
+                                local key = fxKey(child.Name)
+                                for _, alias in ipairs(aliases) do
+                                    if key == alias then return child end
+                                end
+                            end
+                        end
+                    end
+                end
+                return nil
+            end
+
+            local function gunState()
+                local tool = Actions.gunTool and Actions.gunTool()
+                if not tool then return nil, true, false end
+                local ammo = tool:GetAttribute("Local_CurrentAmmo")
+                local reloading = (tool:GetAttribute("Local_ReloadSession") or 0) > 0
+                return tool, (ammo ~= nil and ammo <= 0) or reloading, reloading
+            end
+
+            local function randomChoice(list)
+                return list[math.random(1, #list)]
+            end
+
+            local function voidPoint(now)
+                local currentPattern = flag("rb_pattern", "Under map")
+                if R.voidPattern ~= currentPattern then R.voidPattern, R.voidPos = currentPattern, nil end
+                if R.voidPos and now - R.voidRoll < flag("rb_switch", 0.05) then return R.voidPos end
+                R.voidRoll = now
+                local depth = flag("rb_depth", 1)
+                local pattern = flag("rb_pattern", "Under map")
+                if pattern == "Under map" then
+                    local base = R.realPos or ZERO
+                    local destroyAt = workspace.FallenPartsDestroyHeight
+                    if type(destroyAt) ~= "number" or destroyAt ~= destroyAt then destroyAt = -500 end
+                    local y = math.min(math.max(destroyAt + 30, -2500), base.Y - 10)
+                    R.voidPos = v3(base.X + math.random(-40, 40), y, base.Z + math.random(-40, 40))
+                    return R.voidPos
+                end
+                local main, a, b
+                if pattern == "Far" then
+                    main = randomChoice({ 2e6, 5e6, 1e7, 2e7, 5e7 }) * depth
+                    a = (randomChoice({ 1e5, 2.5e5, 5e5, 1e6, 2e6 }) + math.random(1e4, 2e4)) * depth
+                    b = (randomChoice({ 1e5, 2.5e5, 5e5, 1e6, 2e6 }) + math.random(1e4, 2e4)) * depth
+                elseif pattern == "Extreme" then
+                    main = randomChoice({ 1e8, 2.5e8, 5e8 }) * depth
+                    a = randomChoice({ 1e7, 2.5e7, 5e7 }) * depth
+                    b = randomChoice({ 1e7, 2.5e7, 5e7 }) * depth
+                else
+                    main = math.random(150000, 250000) * depth
+                    a = math.random(1000, 5000) * depth
+                    b = math.random(1000, 5000) * depth
+                end
+                main = math.clamp(main, -5e8, 5e8)
+                a = math.clamp(a, -5e8, 5e8)
+                b = math.clamp(b, -5e8, 5e8)
+                local chosen = {}
+                local value = flag("rb_dir", { "+Y" })
+                for _, name in ipairs({ "+Y", "+X", "+Z" }) do
+                    if picked(value, name) then chosen[#chosen + 1] = name end
+                end
+                local direction = #chosen > 0 and chosen[math.random(1, #chosen)] or "+Y"
+                if direction == "+X" then
+                    R.voidPos = v3(main, a, b)
+                elseif direction == "+Z" then
+                    R.voidPos = v3(a, b, main)
+                else
+                    R.voidPos = v3(a, main, b)
+                end
+                return R.voidPos
+            end
+
+            local function voidCenter(root)
+                local base = Actions.sp.realPos(root)
+                if flag("rb_pattern", "Under map") == "Under map" then
+                    local destroyAt = workspace.FallenPartsDestroyHeight
+                    if type(destroyAt) ~= "number" or destroyAt ~= destroyAt then destroyAt = -500 end
+                    return v3(base.X, math.min(math.max(destroyAt + 30, -2500), base.Y - 10), base.Z)
+                end
+                if not R.voidPos then voidPoint(clock()) end
+                return R.voidPos
+            end
+
+            local marker, markerLine, markerText
+            local function hideMarker()
+                if marker then marker.Parent = nil end
+                if markerLine then markerLine.Visible = false end
+                if markerText then markerText.Visible = false end
+            end
+            local function destroyMarker()
+                if marker then pcall(function() marker:Destroy() end) marker = nil end
+                if markerLine then pcall(function() markerLine:Remove() end) markerLine = nil end
+                if markerText then pcall(function() markerText:Remove() end) markerText = nil end
+            end
+            local function updateMarker()
+                if not (flag("rb_void_show", false) and flag("rb_void", false)) then hideMarker() return end
+                local cam = Camera()
+                local _, _, root = localParts()
+                if not cam or not root then hideMarker() return end
+                local at = voidCenter(root)
+                if not at then hideMarker() return end
+                local picker = Options.rb_void_color
+                local color = picker and typeof(picker.Value) == "Color3" and picker.Value or Color3.fromRGB(255, 80, 80)
+                if not marker then
+                    marker = Instance.new("Part")
+                    marker.Name = "AsterVoidMarker"
+                    marker.Shape = Enum.PartType.Ball
+                    marker.Size = v3(5, 5, 5)
+                    marker.Anchored = true
+                    marker.CanCollide = false
+                    marker.CanQuery = false
+                    marker.CanTouch = false
+                    marker.CastShadow = false
+                    marker.Material = Enum.Material.Neon
+                    marker.Transparency = 0.25
+                end
+                marker.Color = color
+                marker.Position = at
+                if marker.Parent ~= cam then marker.Parent = cam end
+                if Drawing and type(Drawing.new) == "function" then
+                    if not markerLine then
+                        local ok, line = pcall(Drawing.new, "Line")
+                        if ok and line then markerLine = line table.insert(getgenv().TS_Drawings, line) end
+                    end
+                    if not markerText then
+                        local ok, text = pcall(Drawing.new, "Text")
+                        if ok and text then
+                            markerText = text
+                            text.Size, text.Center, text.Outline, text.Font = 14, true, true, 2
+                            table.insert(getgenv().TS_Drawings, text)
+                        end
+                    end
+                    local view = cam.ViewportSize
+                    local screen = cam:WorldToViewportPoint(at)
+                    local x, y = screen.X, screen.Y
+                    if screen.Z < 0 then x, y = view.X - x, view.Y - y end
+                    x = math.clamp(x, 40, view.X - 40)
+                    y = math.clamp(y, 40, view.Y - 40)
+                    local distance = (at - root.Position).Magnitude
+                    if markerLine then
+                        markerLine.From = Vector2.new(view.X / 2, view.Y)
+                        markerLine.To = Vector2.new(x, y)
+                        markerLine.Color = color
+                        markerLine.Thickness = 1
+                        markerLine.Visible = true
+                    end
+                    if markerText then
+                        markerText.Text = string.format("void %d studs", math.floor(distance))
+                        markerText.Color = color
+                        markerText.Position = Vector2.new(x, y - 20)
+                        markerText.Visible = true
+                    end
+                end
+            end
+
+            local function wantVoid(now, empty)
+                if not flag("rb_void", false) then return false end
+                local when = flag("rb_void_when", "While targeting")
+                if when == "While reloading" then return empty end
+                if when ~= "Smart" then return true end
+                local S = R.smart
+                local hum = R.entity and R.entity.Humanoid
+                local health = hum and hum.Health or 100
+                local dt = S.t and (now - S.t) or 0
+                S.t = now
+                if S.health and health < S.health then S.dropped = true end
+                S.health = health
+                S.timer += dt
+                if S.state == "waiting" then
+                    if S.timer >= flag("rb_smart_wait", 8) then
+                        S.timer = 0
+                        if not S.dropped and health > 0 then S.state = "voiding" end
+                        S.dropped = false
+                    end
+                    return false
+                end
+                if S.timer >= flag("rb_smart_void", 5) then
+                    S.state, S.timer = "waiting", 0
+                end
+                return true
+            end
+
+            local function choosePart(e)
+                local mode = flag("rb_part", "Head")
+                if mode == "Random" then mode = math.random(1, 2) == 1 and "Head" or "Torso" end
+                if mode == "Torso" then
+                    return e.Character:FindFirstChild("UpperTorso") or e.Character:FindFirstChild("Torso") or e.Root
+                end
+                return e.Head
+            end
+
+            local function peekAt(e, base, now)
+                local mode = R.randomSpot and "Random" or flag("rb_peek_mode", "Behind")
+                local distance = flag("rb_peek_dist", 6)
+                local height = flag("rb_peek_height", 2)
+                local function ring(angle, extra)
+                    return base + v3(math.cos(angle) * distance, height + (extra or 0), math.sin(angle) * distance)
+                end
+                local angle
+                if mode == "Above" then
+                    local goal = base + v3(0, math.max(height, 2), 0)
+                    if flag("rb_los", "Off") ~= "Visible only" then return goal end
+                    local start = 0
+                    if WB.status(goal + HEAD_OFFSET, e.Head, goal) == "visible" then return goal end
+                    angle = start
+                elseif mode == "Behind" then
+                    local look = e.Root.CFrame.LookVector
+                    angle = math.atan2(-look.Z, -look.X)
+                elseif mode == "Random" then
+                    angle = R.randAngle
+                else
+                    angle = now * flag("rb_spiral_speed", 6)
+                end
+                local goal = ring(angle)
+                if flag("rb_los", "Off") ~= "Visible only" then return goal end
+                WB.tick()
+                if WB.status(goal + HEAD_OFFSET, e.Head, goal) == "visible" then return goal end
+                for _, extra in ipairs({ 0, 4, 8 }) do
+                    for step = 1, 8 do
+                        local candidate = ring(angle + step * math.pi / 4, extra)
+                        if WB.status(candidate + HEAD_OFFSET, e.Head, candidate) == "visible" then return candidate end
+                    end
+                end
+                return nil
+            end
+
+            local function fireNow(part, aim)
+                if not R.run then return end
+                if Actions.readyGun and Actions.readyGun() then
+                    Actions.fireAt(part, aim)
+                end
+            end
+
+            local function rageRequest(root, realPos)
+                if not R.run then return nil end
+                local now = clock()
+                R.realPos = realPos
+                local _, hum = localParts()
+                local tool, empty = gunState()
+                if empty and R.altReady then empty = false end
+                local voidOn = flag("rb_void", false)
+                local when = flag("rb_void_when", "While targeting")
+                local e = R.entity
+                local settings = flag("rb_settings", {})
+                local style = picked(settings, "Show server position") and Actions.sp.visualStyle("misc_desync_fill", "misc_desync_line") or nil
+                R.randomSpot = picked(settings, "Random peek spot")
+
+                if now < R.getUntil or (Actions.gettingWeapon and Actions.gettingWeapon()) then
+                    R.status = "getting weapon"
+                    return nil
+                end
+
+                if flag("rb_safe", false) and hum and hum.MaxHealth > 0 then
+                    local limit = flag("rb_safe_hp", 20) / 100
+                    local fraction = hum.Health / hum.MaxHealth
+                    if fraction <= limit then R.safe = true
+                    elseif fraction >= math.min(limit + 0.25, 1) then R.safe = false end
+                else
+                    R.safe = false
+                end
+
+                if R.safe then
+                    R.status = "safe mode"
+                    if voidOn then return voidPoint(now), 1e9, style end
+                    return nil
+                end
+
+                if not e or not R.center then
+                    local listed = flag("rb_targets", {})
+                    R.status = (flag("rb_tmode", "Target list") == "Target list" and next(listed) == nil) and "no targets selected" or "waiting for target"
+                    R.lastPhase = ""
+                    if voidOn and when == "Always" then
+                        if now >= R.phaseEnd then
+                            R.phase = R.phase == "void" and "peek" or "void"
+                            R.phaseEnd = now + (R.phase == "void" and flag("rb_in_time", 0.35) or flag("rb_out_time", 0.2))
+                        end
+                        if R.phase == "void" then return voidPoint(now), 1e9, style end
+                    end
+                    return nil
+                end
+
+                if not tool then
+                    R.status = "no gun"
+                    return nil
+                end
+
+                if e.Character:FindFirstChildOfClass("ForceField") then
+                    R.status = "target has forcefield"
+                    R.lastPhase = ""
+                    if voidOn then return voidPoint(now), 1e9, style end
+                    return nil
+                end
+
+                if empty then
+                    R.status = flag("rb_reload", false) and "reloading" or "gun empty"
+                    R.lastPhase = ""
+                    if voidOn then return voidPoint(now), 1e9, style end
+                    return nil
+                end
+
+                local hide = wantVoid(now, empty)
+                if hide then
+                    if now >= R.phaseEnd then
+                        if R.phase == "void" then
+                            R.phase = "peek"
+                            R.phaseEnd = now + flag("rb_out_time", 0.2)
+                            R.randAngle = math.random() * math.pi * 2
+                        else
+                            R.phase = "void"
+                            R.phaseEnd = now + flag("rb_in_time", 0.35)
+                        end
+                    end
+                else
+                    R.phase = "peek"
+                    R.phaseEnd = 0
+                end
+
+                if R.phase == "void" then
+                    R.status = "hiding in void"
+                    R.lastPhase = "void"
+                    return voidPoint(now), 1e9, style
+                end
+
+                if R.lastPhase ~= "peek" then
+                    R.lastPhase = "peek"
+                    R.peekAt = now
+                end
+
+                local lead = 0
+                if flag("rb_pred", false) then lead = flag("rb_pred_base", 0.07) * flag("rb_pred_mult", 1) end
+                local base = R.center + R.vel * lead
+                local goal
+                if R.goal and R.goalFor == e.Player and now - R.goalAt < 0.05 then
+                    goal = R.goal
+                else
+                    goal = peekAt(e, base, now)
+                    R.goal, R.goalAt, R.goalFor = goal, now, e.Player
+                end
+                if not goal then
+                    R.status = "no clear spot"
+                    if voidOn then return voidPoint(now), 1e9, style end
+                    return nil
+                end
+
+                R.status = "killing " .. e.Player.Name
+                if now - R.peekAt >= flag("rb_shot_delay", 0.03) and now >= R.nextShot then
+                    R.nextShot = now + 1 / math.max(flag("rb_rate", 12), 1)
+                    if R.randomSpot then R.randAngle = math.random() * math.pi * 2 end
+                    local part = choosePart(e)
+                    local aim = part.Position
+                    if not (R.live) then aim = R.center + (part.Position - e.Root.Position) end
+                    aim += R.vel * lead
+                    task.defer(fireNow, part, aim)
+                end
+                return goal, 1e9, style
+            end
+
+            local function housekeeping(now)
+                local char, hum, root = localParts()
+                if not root then
+                    R.target, R.entity, R.center = nil, nil, nil
+                    return
+                end
+                local realPos = Actions.sp.realPos(root)
+                local e, position, velocity, live = pickTarget(realPos)
+                if e then
+                    if R.target ~= e.Player then
+                        R.target = e.Player
+                        R.lastHealth = e.Humanoid.Health
+                        R.lastDamage = now
+                        R.smart.state, R.smart.timer, R.smart.dropped, R.smart.health, R.smart.t = "waiting", 0, false, nil, nil
+                        R.goal = nil
+                    end
+                    if e.Humanoid.Health < R.lastHealth then R.lastDamage = now end
+                    R.lastHealth = e.Humanoid.Health
+                    if flag("rb_swap", false) and now - R.lastDamage > flag("rb_swap_time", 4) then
+                        R.skip[e.Player] = now + flag("rb_swap_time", 4) * 2
+                        R.lastDamage = now
+                    end
+                else
+                    R.target = nil
+                end
+                R.entity, R.center, R.vel, R.live = e, position, velocity or ZERO, live ~= false
+
+                local chosen = flag("rb_weapons", {})
+                local pool = {}
+                for _, name in ipairs(WEAPON_ORDER) do
+                    if picked(chosen, name) then
+                        local owned = findWeapon(name)
+                        if owned then pool[#pool + 1] = owned end
+                    end
+                end
+                R.altReady = false
+                if e and hum and #pool > 0 then
+                    local held = char:FindFirstChildOfClass("Tool")
+                    local function ready(tool)
+                        local ammo = tool:GetAttribute("Local_CurrentAmmo")
+                        return (ammo == nil or ammo > 0) and (tool:GetAttribute("Local_ReloadSession") or 0) <= 0
+                    end
+                    local heldIndex = 0
+                    for index, tool in ipairs(pool) do
+                        if tool == held then heldIndex = index end
+                    end
+                    local heldReady = heldIndex > 0 and ready(held)
+                    for _, tool in ipairs(pool) do
+                        if tool ~= held and ready(tool) then R.altReady = true break end
+                    end
+                    if not heldReady or (#pool > 1 and now >= R.equipAt) then
+                        local pick
+                        for step = 1, #pool do
+                            local tool = pool[(heldIndex + step - 1) % #pool + 1]
+                            if tool ~= held and ready(tool) then pick = tool break end
+                        end
+                        if heldIndex == 0 and not pick then pick = pool[1] end
+                        if pick then
+                            R.equipAt = now + math.max(flag("rb_switch_delay", 0.15), 0.05)
+                            pcall(function() hum:EquipTool(pick) end)
+                        end
+                    end
+                end
+
+                local settings = flag("rb_settings", {})
+                local cam = Camera()
+                if e and picked(settings, "View target") and cam then
+                    if cam.CameraSubject ~= e.Humanoid then cam.CameraSubject = e.Humanoid end
+                    R.viewing = true
+                elseif R.viewing then
+                    R.viewing = false
+                    if cam and hum then cam.CameraSubject = hum end
+                end
+
+                local wanted = flag("rb_autoget", {})
+                if now >= R.getAt and hum and hum.Health > 0 and not (Actions.gettingWeapon and Actions.gettingWeapon()) then
+                    for _, name in ipairs({ "AK-47", "Remington 870", "MP5", "M700", "M4A1", "FAL" }) do
+                        if picked(wanted, name) and not findWeapon(name) then
+                            R.getAt = now + 3
+                            R.getUntil = now + 0.6
+                            if Actions.getWeapon then Actions.getWeapon(name) end
+                            break
+                        end
+                    end
+                end
+
+                local text = "Result: none"
+                if e then
+                    local who = e.Player.DisplayName ~= "" and e.Player.DisplayName or e.Player.Name
+                    text = string.sub("Result: " .. who, 1, 28)
+                end
+                if text ~= R.shownText and Actions.rageResult and Actions.rageResult.SetText then
+                    R.shownText = text
+                    Actions.rageResult:SetText(text)
+                end
+
+                local tool, empty, reloading = gunState()
+                if tool and empty and not reloading and flag("rb_reload", false) and now >= R.reloadAt then
+                    R.reloadAt = now + 0.6
+                    if Actions.reloadGun then Actions.reloadGun() end
+                end
+            end
+
+            local function newText()
+                if not (Drawing and type(Drawing.new) == "function") then return nil end
+                local ok, text = pcall(Drawing.new, "Text")
+                if not ok or not text then return nil end
+                table.insert(getgenv().TS_Drawings, text)
+                text.Size, text.Center, text.Outline, text.Font = 14, true, true, 2
+                text.Color = Color3.new(1, 1, 1)
+                text.Visible = false
+                return text
+            end
+
+            feature("rb_enabled", function()
+                R.run = true
+                R.phase, R.lastPhase, R.phaseEnd, R.voidPos = "peek", "", 0, nil
+                task.spawn(Gun.find)
+                if Actions.rageHook then Actions.rageHook(true) end
+                Actions.sp.enable("rage", rageRequest)
+                local accumulated = 0
+                bag.add(RunService.Heartbeat:Connect(function(dt)
+                    accumulated += dt
+                    if accumulated < 0.08 then return end
+                    accumulated = 0
+                    local ok, err = pcall(housekeeping, clock())
+                    if not ok then
+                        errors += 1
+                        if errors <= 3 then warnf("ragebot error:", err) end
+                    end
+                end))
+                bag.add(RunService.RenderStepped:Connect(function()
+                    pcall(updateMarker)
+                end))
+                bag.add(RunService.RenderStepped:Connect(function()
+                    if not flag("rb_status", false) then
+                        if statusText then statusText.Visible = false end
+                        return
+                    end
+                    statusText = statusText or newText()
+                    local cam = Camera()
+                    if not statusText or not cam then return end
+                    local e = R.entity
+                    local line = "ragebot: " .. R.status
+                    if e then line = line .. string.format(" | %s %d hp", e.Player.DisplayName ~= "" and e.Player.DisplayName or e.Player.Name, math.floor(e.Humanoid.Health)) end
+                    statusText.Text = line
+                    statusText.Size = 16
+                    statusText.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2 + flag("rb_status_y", 40))
+                    statusText.Visible = true
+                end))
+            end, function()
+                R.run = false
+                bag.clear()
+                Actions.sp.disable("rage")
+                if Actions.rageHook then Actions.rageHook(false) end
+                R.target, R.entity, R.center, R.goal, R.safe = nil, nil, nil, nil, false
+                R.status = "off"
+                hideMarker()
+                if R.viewing then
+                    R.viewing = false
+                    local _, ownHum = localParts()
+                    local cam = Camera()
+                    if cam and ownHum then cam.CameraSubject = ownHum end
+                end
+                if statusText then pcall(function() statusText.Visible = false end) end
+            end)
+
+            onUnload(function()
+                R.run = false
+                destroyMarker()
+                if statusText then pcall(function() statusText:Remove() end) statusText = nil end
             end)
         end
 
         do
             local bag = newBag()
             local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterType = Enum.RaycastFilterType.Include
             pcall(function() params.CollisionGroup = "ClientBullet" end)
             local seenSince, nextShot = nil, 0
             local TORSO = { Torso = true, UpperTorso = true, LowerTorso = true, HumanoidRootPart = true }
@@ -10303,7 +16033,15 @@ do
             feature("Trigger_Global_Enabled", function()
                 seenSince, nextShot = nil, 0
                 task.spawn(Gun.find)
+                local magnetOn = false
+                Actions.aimMagnet(flag("trigger_magnet", false))
+                magnetOn = flag("trigger_magnet", false)
                 bag.add(RunService.Heartbeat:Connect(function()
+                    local wantMagnet = flag("trigger_magnet", false)
+                    if wantMagnet ~= magnetOn then
+                        magnetOn = wantMagnet
+                        Actions.aimMagnet(wantMagnet)
+                    end
                     local cam = Camera()
                     local _, _, root = localParts()
                     if not cam or not root or typing() or not keyActive("Trigger_Global_Key") or not readyGun() then
@@ -10312,10 +16050,12 @@ do
                     end
                     local ref = aimRef()
                     local ray = cam:ViewportPointToRay(ref.X, ref.Y)
-                    local list = { cam }
-                    if LocalPlayer.Character then list[#list + 1] = LocalPlayer.Character end
+                    local list = {}
+                    for _, other in ipairs(Players:GetPlayers()) do
+                        if other ~= LocalPlayer and other.Character then list[#list + 1] = other.Character end
+                    end
                     params.FilterDescendantsInstances = list
-                    local result = workspace:Raycast(ray.Origin, ray.Direction * 1500, params)
+                    local result = #list > 0 and workspace:Raycast(ray.Origin, ray.Direction * 1500, params) or nil
                     local model = result and result.Instance:FindFirstAncestorOfClass("Model")
                     local player = model and Players:GetPlayerFromCharacter(model)
                     local hum = model and model:FindFirstChildOfClass("Humanoid")
@@ -10332,7 +16072,13 @@ do
                         local data = Gun.data()
                         local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
                         local range = data and tonumber(data.Range) or 1000
-                        if head and (result.Position - head.Position).Magnitude > range then good = false end
+                        if not head then
+                            good = false
+                        elseif (result.Position - head.Position).Magnitude > range then
+                            good = false
+                        elseif not visibleFrom(head.Position, result.Instance, model) then
+                            good = false
+                        end
                     end
                     if not good then seenSince = nil return end
                     local now = clock()
@@ -10345,6 +16091,371 @@ do
             end, function()
                 bag.clear()
                 seenSince = nil
+                Actions.aimMagnet(false)
+            end)
+        end
+
+        do
+            local bag = newBag()
+            local panel
+
+            local function destroyPanel()
+                if panel then pcall(function() panel.outer:Destroy() end) end
+                panel = nil
+            end
+
+            local function buildPanel()
+                if panel and panel.outer.Parent then return panel end
+                destroyPanel()
+                local outer = Library:Create("Frame", { BorderColor3 = Color3.new(0, 0, 0), Position = UDim2.new(1, -370, 0.35, 0), Size = UDim2.fromOffset(350, 118), Visible = false, ZIndex = 100, Parent = Library.ScreenGui })
+                pcall(function() Library:ApplyGlow(outer) end)
+                local inner = Library:Create("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Size = UDim2.new(1, 0, 1, 0), ZIndex = 101, Parent = outer })
+                Library:AddToRegistry(inner, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" }, true)
+                local frame = Library:Create("Frame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, BorderMode = Enum.BorderMode.Inset, Position = UDim2.fromOffset(5, 5), Size = UDim2.new(1, -10, 1, -10), ZIndex = 102, Parent = inner })
+                Library:AddToRegistry(frame, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor" }, true)
+                local accent = Library:Create("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 2), ZIndex = 103, Parent = inner })
+                Library:AddToRegistry(accent, { BackgroundColor3 = "AccentColor" }, true)
+
+                local function slot(x, y)
+                    local box = Library:Create("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(42, 42), ZIndex = 103, Parent = frame })
+                    Library:AddToRegistry(box, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" }, true)
+                    return box
+                end
+                local avatarBox = slot(8, 8)
+                local teamBox = slot(8, 58)
+                local toolBox = slot(290, 8)
+                local sightBox = slot(290, 58)
+                local avatar = Library:Create("ImageLabel", { BackgroundTransparency = 1, Size = UDim2.new(1, -4, 1, -4), Position = UDim2.fromOffset(2, 2), Image = "", ZIndex = 104, Parent = avatarBox })
+                local toolIcon = Library:Create("ImageLabel", { BackgroundTransparency = 1, Size = UDim2.new(1, -6, 1, -6), Position = UDim2.fromOffset(3, 3), Image = "", ScaleType = Enum.ScaleType.Fit, ZIndex = 104, Parent = toolBox })
+                local toolText = Library:CreateLabel({ Size = UDim2.new(1, 0, 1, 0), TextSize = 9, TextWrapped = true, Text = "", ZIndex = 105, Parent = toolBox })
+                local teamFill = Library:Create("Frame", { BackgroundColor3 = Color3.fromRGB(80, 80, 80), BackgroundTransparency = 0.35, BorderSizePixel = 0, Position = UDim2.fromOffset(2, 2), Size = UDim2.new(1, -4, 1, -4), ZIndex = 104, Parent = teamBox })
+                local teamText = Library:CreateLabel({ Size = UDim2.new(1, 0, 1, 0), TextSize = 10, Text = "", ZIndex = 105, Parent = teamBox })
+                local sightFill = Library:Create("Frame", { BackgroundColor3 = Color3.fromRGB(80, 80, 80), BackgroundTransparency = 0.45, BorderSizePixel = 0, Position = UDim2.fromOffset(2, 2), Size = UDim2.new(1, -4, 1, -4), ZIndex = 104, Parent = sightBox })
+                local sightText = Library:CreateLabel({ Size = UDim2.new(1, 0, 1, 0), TextSize = 10, Text = "", ZIndex = 105, Parent = sightBox })
+
+                local nameLabel = Library:CreateLabel({ Position = UDim2.fromOffset(58, 6), Size = UDim2.new(1, -116, 0, 18), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Text = "", ZIndex = 104, Parent = frame })
+                local statusLabel = Library:CreateLabel({ Position = UDim2.fromOffset(58, 24), Size = UDim2.new(1, -116, 0, 14), TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, RichText = true, Text = "", ZIndex = 104, Parent = frame })
+                local divider = Library:Create("Frame", { BackgroundColor3 = Library.OutlineColor, BorderSizePixel = 0, Position = UDim2.fromOffset(58, 42), Size = UDim2.new(1, -116, 0, 1), ZIndex = 104, Parent = frame })
+                Library:AddToRegistry(divider, { BackgroundColor3 = "OutlineColor" }, true)
+
+                local function barRow(caption)
+                    local row = {}
+                    row.caption = Library:CreateLabel({ Size = UDim2.new(1, -116, 0, 12), Position = UDim2.fromOffset(58, 46), TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, TextTransparency = 0.35, Text = caption, ZIndex = 104, Parent = frame })
+                    row.value = Library:CreateLabel({ Size = UDim2.new(1, -116, 0, 12), Position = UDim2.fromOffset(58, 46), TextSize = 11, TextXAlignment = Enum.TextXAlignment.Right, RichText = true, Text = "", ZIndex = 104, Parent = frame })
+                    row.track = Library:Create("Frame", { BackgroundColor3 = Library.OutlineColor, BorderSizePixel = 0, Position = UDim2.fromOffset(58, 60), Size = UDim2.new(1, -116, 0, 3), ZIndex = 104, Parent = frame })
+                    Library:AddToRegistry(row.track, { BackgroundColor3 = "OutlineColor" }, true)
+                    row.fill = Library:Create("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = 105, Parent = row.track })
+                    return row
+                end
+                local healthRow = barRow("health")
+                local rangeRow = barRow("distance")
+
+                Library:MakeDraggable(outer, 120)
+                panel = {
+                    outer = outer, frame = frame, avatar = avatar, avatarId = nil,
+                    toolBox = toolBox, toolIcon = toolIcon, toolText = toolText,
+                    teamFill = teamFill, teamText = teamText, sightFill = sightFill, sightText = sightText,
+                    teamBox = teamBox, sightBox = sightBox,
+                    name = nameLabel, status = statusLabel, health = healthRow, range = rangeRow,
+                    target = nil, nextPick = 0,
+                }
+                return panel
+            end
+
+            local GOOD, WARN, BAD = Color3.fromRGB(110, 220, 120), Color3.fromRGB(240, 200, 90), Color3.fromRGB(230, 95, 95)
+            local function hex(color)
+                return string.format("#%02x%02x%02x", math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5))
+            end
+
+            local function pickInfoTarget()
+                local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                if not head or not Camera() then return nil end
+                local source = flag("tinfo_source", "Silent aim")
+                if source == "Silent aim" then
+                    if not (flag("Silent_Global_Enabled", false) and keyActive("Silent_Global_Key")) then return nil end
+                    local data = Gun.data()
+                    return selectTarget("silent", aimRef(), head.Position, { skipWall = true, limit = data and tonumber(data.Range) or 1000 })
+                end
+                if not flag("Aim_Global_Enabled", false) then return nil end
+                return selectTarget("aim", aimRef(), head.Position, { skipWall = true })
+            end
+
+            local function placeRow(row, y, visible)
+                row.caption.Visible, row.value.Visible, row.track.Visible = visible, visible, visible
+                if visible then
+                    row.caption.Position = UDim2.fromOffset(58, y)
+                    row.value.Position = UDim2.fromOffset(58, y)
+                    row.track.Position = UDim2.fromOffset(58, y + 14)
+                end
+            end
+
+            local function updatePanel()
+                local p = buildPanel()
+                local now = clock()
+                if now >= p.nextPick then
+                    p.nextPick = now + 0.1
+                    local entity, part = pickInfoTarget()
+                    p.target, p.part = entity, part
+                end
+                local entity, part = p.target, p.part
+                local character = entity and entity.Character
+                local hum = character and character:FindFirstChildOfClass("Humanoid")
+                local root = entity and entity.Root
+                local menuOpen = Library.Toggled == true
+                local accentHex = hex(Library.AccentColor)
+                local keyHex = "#8a8a8a"
+                local showHealth = flag("tinfo_health", true)
+                local showStatus = flag("tinfo_status", true)
+                local showExtra = flag("tinfo_extra", true)
+                local y = 46
+                placeRow(p.health, y, showHealth)
+                if showHealth then y += 20 end
+                placeRow(p.range, y, showStatus)
+                p.teamBox.Visible = showExtra
+                p.toolBox.Visible = showExtra
+                p.sightBox.Visible = showStatus
+
+                if not (entity and character and character.Parent and hum and root and root.Parent) then
+                    p.outer.Visible = menuOpen or not flag("tinfo_hide", true)
+                    if p.outer.Visible then
+                        p.name.Text = "No target"
+                        p.status.Text = string.format("<font color=\"%s\">waiting for a target</font>", keyHex)
+                        p.health.value.Text = ""
+                        p.range.value.Text = ""
+                        p.health.fill.Size = UDim2.new(0, 0, 1, 0)
+                        p.range.fill.Size = UDim2.new(0, 0, 1, 0)
+                        if p.avatarId then
+                            p.avatarId = nil
+                            p.avatar.Image = ""
+                        end
+                        p.toolIcon.Image, p.toolText.Text = "", ""
+                        p.teamText.Text, p.sightText.Text = "", ""
+                        p.teamFill.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+                        p.sightFill.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+                    end
+                    return
+                end
+                p.outer.Visible = true
+                local player = entity.Player
+                local display = player.DisplayName ~= "" and player.DisplayName or player.Name
+                p.name.Text = display == player.Name and display or (display .. "  @" .. player.Name)
+
+                if p.avatarId ~= player.UserId then
+                    p.avatarId = player.UserId
+                    p.avatar.Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", player.UserId)
+                end
+
+                local tool = character:FindFirstChildOfClass("Tool")
+                local team = player.Team
+                local teamName = team and team.Name or "none"
+                local toolName = tool and tool.Name or "none"
+                local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                local distance = head and (root.Position - head.Position).Magnitude or 0
+                local statusText = string.format("<font color=\"%s\">team</font> <font color=\"%s\">%s</font>  <font color=\"%s\">tool</font> <font color=\"%s\">%s</font>", keyHex, accentHex, teamName, keyHex, accentHex, toolName)
+                p.status.Text = statusText
+                p.status.Visible = showExtra
+
+                if showExtra then
+                    local texture = tool and tool.TextureId or ""
+                    p.toolIcon.Image = texture
+                    p.toolText.Text = texture == "" and (tool and tool.Name or "") or ""
+                    p.teamFill.BackgroundColor3 = team and team.TeamColor.Color or Color3.fromRGB(80, 80, 80)
+                    p.teamText.Text = team and string.upper(string.sub(team.Name, 1, 3)) or "-"
+                end
+
+                if showHealth then
+                    local max = math.max(hum.MaxHealth, 1)
+                    local ratio = math.clamp(hum.Health / max, 0, 1)
+                    p.health.fill.Size = UDim2.new(ratio, 0, 1, 0)
+                    p.health.fill.BackgroundColor3 = ratio < 0.35 and BAD or Library.AccentColor
+                    p.health.value.Text = string.format("%d / %d", math.floor(hum.Health + 0.5), math.floor(max + 0.5))
+                end
+
+                if showStatus then
+                    local label, color = "Blocked", BAD
+                    if part and part.Parent and head then
+                        WB.tick()
+                        local status = WB.status(head.Position, part)
+                        if status == "visible" then
+                            label, color = "Visible", GOOD
+                        elseif status == "wallbang" then
+                            label, color = flag("silent_wallbang", false) and "Wallbang" or "Behind wall", WARN
+                        end
+                    end
+                    local data = Gun.data()
+                    local limit = data and tonumber(data.Range) or flag("silent_max_dist", 1000)
+                    local closeness = math.clamp(1 - distance / math.max(limit, 1), 0, 1)
+                    p.range.fill.Size = UDim2.new(closeness, 0, 1, 0)
+                    p.range.fill.BackgroundColor3 = color
+                    p.range.value.Text = string.format("%d studs  <font color=\"%s\">%s</font>", math.floor(distance + 0.5), hex(color), label)
+                    p.sightFill.BackgroundColor3 = color
+                    p.sightText.Text = string.upper(string.sub(label, 1, 4))
+                end
+            end
+
+            feature("tinfo_on", function()
+                buildPanel()
+                bag.add(RunService.RenderStepped:Connect(function()
+                    local ok, err = pcall(updatePanel)
+                    if not ok and clock() - (panel and panel.warned or 0) > 5 then
+                        if panel then panel.warned = clock() end
+                        warnf("target info:", err)
+                    end
+                end))
+            end, function()
+                bag.clear()
+                destroyPanel()
+            end)
+
+            onUnload(function()
+                bag.clear()
+                destroyPanel()
+            end)
+        end
+
+        do
+            local bag = newBag()
+            local orbit = { target = nil, angle = 0, last = nil, floorAt = 0, floorY = nil, floorFor = nil, nextPick = 0, ring = nil, ringParts = {} }
+
+            local function destroyRing()
+                if orbit.ring then pcall(function() orbit.ring:Destroy() end) end
+                orbit.ring = nil
+                table.clear(orbit.ringParts)
+            end
+
+            local function pickTarget(root)
+                local cam = Camera()
+                local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+                if not cam or not head then return nil end
+                local entity = selectTarget("silent", aimRef(), head.Position, { skipWall = true, ignoreDown = false, limit = flag("orbit_max", 500) })
+                return entity and entity.Root or nil
+            end
+
+            local silentCache = { at = 0, root = nil }
+            Actions.silentTarget = function()
+                local now = clock()
+                if now - silentCache.at > 0.1 then
+                    silentCache.at = now
+                    local ok, root = pcall(pickTarget)
+                    silentCache.root = ok and root or nil
+                end
+                return silentCache.root
+            end
+            onUnload(function() Actions.silentTarget = nil end)
+
+            local function orbitHeight(center)
+                local void = workspace.FallenPartsDestroyHeight
+                if type(void) ~= "number" or void ~= void then void = -500 end
+                local floorLimit = void + 12
+                local mode = flag("orbit_mode", "Under the map")
+                local depth = flag("orbit_depth", 15)
+                local y
+                if mode == "Near void" then
+                    y = floorLimit + 6
+                elseif mode == "Below target" then
+                    y = center.Y - depth
+                else
+                    local now = clock()
+                    if not orbit.floorY or now - orbit.floorAt > 0.25 or not orbit.floorFor or (orbit.floorFor - center).Magnitude > 4 then
+                        orbit.floorAt, orbit.floorFor = now, center
+                        orbit.floorY = Actions.sp.floorAt(center, true)
+                    end
+                    y = (orbit.floorY or (center.Y - 6)) - depth
+                end
+                return math.max(y, floorLimit)
+            end
+
+            local function updateRing(center, y, radius, color, transparency)
+                local count = 28
+                if not orbit.ring or orbit.ring.Parent == nil then
+                    destroyRing()
+                    local folder = Instance.new("Folder")
+                    folder.Name = "AsterOrbitRing"
+                    for i = 1, count do
+                        local part = Instance.new("Part")
+                        part.Anchored, part.CanCollide, part.CanQuery, part.CanTouch = true, false, false, false
+                        part.CastShadow = false
+                        part.Material = Enum.Material.Neon
+                        part.Size = v3(0.25, 0.25, 1)
+                        part.Parent = folder
+                        orbit.ringParts[i] = part
+                    end
+                    folder.Parent = workspace.CurrentCamera
+                    orbit.ring = folder
+                end
+                local step = (math.pi * 2) / count
+                local length = math.max(radius * step * 1.05, 0.3)
+                for i, part in ipairs(orbit.ringParts) do
+                    local a1 = (i - 1) * step
+                    local p = v3(center.X + math.cos(a1) * radius, y, center.Z + math.sin(a1) * radius)
+                    local a2 = a1 + step
+                    local q = v3(center.X + math.cos(a2) * radius, y, center.Z + math.sin(a2) * radius)
+                    part.Size = v3(0.25, 0.25, length)
+                    part.CFrame = CFrame.lookAt((p + q) / 2, q)
+                    part.Color = color
+                    part.Transparency = transparency
+                end
+            end
+
+            local function orbitRequest(root, realPos)
+                if not (flag("Silent_Global_Enabled", false) and keyActive("Silent_Global_Key")) then
+                    orbit.last = nil
+                    destroyRing()
+                    return nil
+                end
+                local now = clock()
+                local target = orbit.target
+                if not target or not target.Parent or now >= orbit.nextPick then
+                    target = pickTarget(root)
+                    orbit.target = target
+                    orbit.nextPick = now + 0.1
+                end
+                if not target or not target.Parent then
+                    orbit.last = nil
+                    destroyRing()
+                    return nil
+                end
+                local dt = orbit.last and math.min(now - orbit.last, 0.1) or 0
+                orbit.last = now
+                local spin = math.rad(flag("orbit_spin", 180))
+                if flag("orbit_dir", "Clockwise") ~= "Clockwise" then spin = -spin end
+                orbit.angle = (orbit.angle + spin * dt) % (math.pi * 2)
+                local center = target.Position
+                local y = orbitHeight(center)
+                local radius = flag("orbit_radius", 6)
+                local goal = v3(center.X + math.cos(orbit.angle) * radius, y, center.Z + math.sin(orbit.angle) * radius)
+                if flag("orbit_ring", false) then
+                    local color, alpha = Actions.sp.ringStyle()
+                    updateRing(center, y, radius, color, alpha)
+                else
+                    destroyRing()
+                end
+                local style
+                if flag("orbit_visual", false) then
+                    style = Actions.sp.visualStyle("orbit_fill", "orbit_line", flag("orbit_tracer", false) and "orbit_tracer_color" or nil)
+                end
+                return goal, flag("orbit_speed", 150), style
+            end
+
+            function Actions.sp.ringStyle()
+                local option = Options["orbit_ring_color"]
+                local color = option and typeof(option.Value) == "Color3" and option.Value or Color3.fromRGB(180, 120, 255)
+                local alpha = option and tonumber(option.Transparency) or 0.3
+                return color, alpha
+            end
+
+            feature("orbit_on", function()
+                orbit.target, orbit.last, orbit.nextPick, orbit.floorY = nil, nil, 0, nil
+                Actions.sp.enable("orbit", orbitRequest)
+            end, function()
+                Actions.sp.disable("orbit")
+                orbit.target, orbit.last = nil, nil
+                destroyRing()
+            end)
+
+            onUnload(function()
+                Actions.sp.disable("orbit")
+                destroyRing()
             end)
         end
 

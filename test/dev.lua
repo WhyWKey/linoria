@@ -1738,10 +1738,10 @@ local function patchLibrarySource(source)
 [==[        local function FitToggle()
             local Width = Container.AbsoluteSize.X;
             if Width < 60 then return; end;
-            ToggleLabel.Size = UDim2.new(0, math.max(Width - 21, 40), 1, 0);
+            ToggleLabel.Size = UDim2.new(0, math.max(Width - 30, 40), 1, 0);
             local Layout = ToggleLabel:FindFirstChildOfClass('UIListLayout');
             local Used = Layout and Layout.AbsoluteContentSize.X or 0;
-            ToggleRegion.Size = UDim2.new(0, math.max(Width - 23 - Used, 40), 1, 0);
+            ToggleRegion.Size = UDim2.new(0, math.max(Width - 32 - Used, 40), 1, 0);
         end;
         Container:GetPropertyChangedSignal('AbsoluteSize'):Connect(FitToggle);
         do
@@ -2169,7 +2169,7 @@ do
     Smooth:Slider({ Name = "Increment", Flag = "aim_smooth_inc", Min = 0, Max = 200, Default = 50, Suffix = "%/s", Decimals = 1 })
     Smooth:Slider({ Name = "Randomization", Flag = "aim_smooth_rand", Min = 0, Max = 50, Default = 5, Suffix = "%", Decimals = 1 })
 
-    local Trigger = CombatSubs.Aim:Section({ Name = "Triggerbot", Side = 1 })
+    local Trigger = CombatSubs.Aim:Section({ Name = "Triggerbot", Side = 2 })
     local triggerEnabled = Trigger:Toggle({ Name = "Enabled", Flag = "Trigger_Global_Enabled", Default = false })
     triggerEnabled:Keybind({ Name = "Trigger key", Flag = "Trigger_Global_Key", Default = "None", Mode = "Always" })
     Trigger:Dropdown({ Name = "Hit part", Flag = "Trigger_Global_HitPart", Items = { "Head", "Torso", "Any" }, Default = "Head" })

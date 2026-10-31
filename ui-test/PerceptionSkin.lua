@@ -2392,7 +2392,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1028-b' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1030-a' }
 
 local deriving = false
 local function setPicker(key, color)
@@ -3310,7 +3310,7 @@ function Skin.SetTheme(tbl)
 end
 
 local SETTINGS_FLAGS = {
-    'KeybindMenuOpen', 'SkinKeybindMode', 'MenuKeybind', 'LinoriaKeybindTransparency', 'LinoriaUseBlur', 'LinoriaBlurSize',
+    'KeybindMenuOpen', 'SkinKeybindMode', 'LinoriaKeybindTransparency', 'LinoriaUseBlur', 'LinoriaBlurSize',
     'LinoriaUseDarken', 'LinoriaDarkenAmount', 'SkinWireframe', 'SkinWatermark', 'SkinFontSize', 'SkinNotifyAlign', 'SkinNotifySide',
     'SkinNotifyX', 'SkinNotifyY', 'SkinNotifyAlpha', 'PanelColor', 'MutedColor', 'CheckColor', 'ActiveColor', 'SkinPanelAlpha', 'SkinCardAlpha', 'SkinWindowRadius', 'SkinCardRadius', 'SkinControlRadius', 'SkinBorderAlpha', 'SkinShadow', 'SkinUserChip', 'SkinFont', 'SkinNativeCursor', 'SkinAnimations',
 }

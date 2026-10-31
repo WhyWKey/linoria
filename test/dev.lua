@@ -1905,10 +1905,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1030-a | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1031-a | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1030-a",
+    Title = "Aster  |  perception-1031-a",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -2234,12 +2234,14 @@ do
         RV:Dropdown({ Name = "When", Flag = "rb_void_when", Items = { "While targeting", "While reloading", "Smart", "Always" }, Default = "While targeting", Tooltip = "While targeting: hide between peeks the whole time. While reloading: hide only to reload. Smart: peek normally and hide for a while when the target stops taking damage. Always: also hides without a target" })
         RV:Toggle({ Name = "Show void location", Flag = "rb_void_show", Default = false, Tooltip = "A marker, a line and a distance text show where your hiding spot is" }):Colorpicker({ Name = "Void marker", Flag = "rb_void_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
         RV:Slider({ Name = "In void", Flag = "rb_in_time", Min = 0.05, Max = 3, Default = 0.35, Suffix = "s", Decimals = 0.01 })
+        RV:Toggle({ Name = "Wait in void", Flag = "rb_wait_void", Default = false, Tooltip = "With void spam on, you stay hidden in the void while there is no target, for example after a kill, instead of waiting in the map" })
         RV:Slider({ Name = "Out of void", Flag = "rb_out_time", Min = 0.05, Max = 2, Default = 0.2, Suffix = "s", Decimals = 0.01 })
 
         local RVP = RageSubs.Void:Section({ Name = "Void pattern", Side = 1 })
         RVP:Slider({ Name = "Smart wait", Flag = "rb_smart_wait", Min = 1, Max = 30, Default = 8, Suffix = "s", Decimals = 0.5 })
         RVP:Slider({ Name = "Smart void time", Flag = "rb_smart_void", Min = 1, Max = 30, Default = 5, Suffix = "s", Decimals = 0.5 })
         RVP:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "Under map", "High", "Far", "Extreme" }, Default = "Under map", Tooltip = "Under map hides just above the point where the engine destroys parts, below your real position, the same spot the Void desync uses. High, Far and Extreme are far above or beside the map and can be killed by the game's kill planes" })
+        RVP:Slider({ Name = "Under map radius", Flag = "rb_under_radius", Min = 10, Max = 1500, Default = 250, Suffix = " studs", Decimals = 1, Tooltip = "Under map only: every position change teleports you to a random spot this far around you, underneath the map" })
         RVP:Dropdown({ Name = "Direction", Flag = "rb_dir", Items = { "+Y", "+X", "+Z" }, Multi = true, Default = { "+Y" }, Tooltip = "Every position change picks one of the selected directions at random. Does not affect the Under map pattern" })
         RVP:Slider({ Name = "Depth multiplier", Flag = "rb_depth", Min = 0.1, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
         RVP:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
@@ -3597,6 +3599,7 @@ do
 
     local Protect = MiscSubs.Utility:Section({ Name = "Protection", Side = 2 })
     Protect:Toggle({ Name = "Anti taze", Flag = "misc_anti_taze", Default = false })
+    Protect:Toggle({ Name = "Anti taze: block game handler", Flag = "misc_anti_taze_block", Default = false, Tooltip = "Also disables the game's own taze handler. Off keeps the walk speed fix only. Turn it on only if the plain fix is not enough" })
     Protect:Toggle({ Name = "Anti fling", Flag = "misc_anti_fling", Default = false })
     Protect:Toggle({ Name = "Destroy body on death", Flag = "misc_destroy_body", Default = false })
     Protect:Toggle({ Name = "Anti riot shield", Flag = "misc_anti_riot", Default = false })
@@ -4083,7 +4086,7 @@ end
 end
 
 do
-    local SettingsTab, SettingsSubs = Skin.BuildSettings(LinoriaWindow, { ThemeManager = ThemeManager, SaveManager = SaveManager, Folder = "Aster", Game = "configs", MenuKey = "RightControl" })
+    local SettingsTab, SettingsSubs = Skin.BuildSettings(LinoriaWindow, { ThemeManager = ThemeManager, SaveManager = SaveManager, Folder = "Aster", Game = "configs", MenuKey = "Delete" })
 
     do
         local TeleportService = game:GetService("TeleportService")
@@ -4281,10 +4284,10 @@ do
         end
     end
 
-    escapeUnbinds("MenuKeybind", "RightControl")
+    escapeUnbinds("MenuKeybind", "Delete")
     Library:SetWatermark("Aster")
     Library:SetWatermarkVisibility(true)
-    SaveManager:SetIgnoreIndexes({ "MenuKeybind", "Player_Relationship", "Player_Selected" })
+    SaveManager:SetIgnoreIndexes({ "Player_Relationship", "Player_Selected" })
     Loader.setAccent(Library.AccentColor)
     do
         local alive, last = true, Library.AccentColor
@@ -4431,6 +4434,11 @@ do
         return getFlag("esp_hostile_only", false) and isPeaceful(player)
     end
     local function teamAllowed(player)
+        if player ~= LocalPlayer then
+            local explicit = Relations[player.UserId]
+            if explicit == "Friendly" and getFlag("rel_hl_friendly", false) then return true end
+            if explicit == "Priority" and getFlag("rel_hl_priority", false) then return true end
+        end
         if player ~= LocalPlayer and getFlag("esp_enemies_only", false) and not isEnemy(player) then return false end
         if player ~= LocalPlayer and hiddenAsPeaceful(player) then return false end
         return true
@@ -8974,10 +8982,14 @@ do
             if type(getconnections) ~= "function" or not remote then return end
             local ok, list = pcall(getconnections, remote.OnClientEvent)
             if not ok or type(list) ~= "table" then return end
+            if not flag("misc_anti_taze_block", false) then return end
             for _, c in ipairs(list) do
-                if c.Function and sourceOf(c):find("ClientInputHandler") then
-                    pcall(function() c:Disable() end)
-                    disabled[#disabled + 1] = c
+                local isHandler = false
+                pcall(function() isHandler = c.Function ~= nil and sourceOf(c):find("ClientInputHandler") ~= nil end)
+                if isHandler and not table.find(disabled, c) then
+                    local ok = pcall(function() c:Disable() end)
+                    if ok then disabled[#disabled + 1] = c end
+                    task.wait()
                 end
             end
         end
@@ -8986,10 +8998,10 @@ do
             local gun = ReplicatedStorage:FindFirstChild("GunRemotes") or ReplicatedStorage:WaitForChild("GunRemotes", 5)
             remote = gun and (gun:FindFirstChild("PlayerTased") or gun:WaitForChild("PlayerTased", 5))
             if not remote then warnf("PlayerTased remote not found") return end
-            hookGame()
+            task.delay(1, function() pcall(hookGame) end)
             bag.add(LocalPlayer.CharacterAdded:Connect(function()
                 table.clear(disabled)
-                task.delay(1.5, hookGame)
+                task.delay(1.5, function() pcall(hookGame) end)
             end))
             bag.add(remote.OnClientEvent:Connect(function() until_ = clock() + 4 end))
 
@@ -15143,8 +15155,11 @@ do
                     local base = R.realPos or ZERO
                     local destroyAt = workspace.FallenPartsDestroyHeight
                     if type(destroyAt) ~= "number" or destroyAt ~= destroyAt then destroyAt = -500 end
-                    local y = math.min(math.max(destroyAt + 30, -2500), base.Y - 10)
-                    R.voidPos = v3(base.X + math.random(-40, 40), y, base.Z + math.random(-40, 40))
+                    local floorY = math.min(math.max(destroyAt + 30, -2500), base.Y - 10)
+                    local span = math.min(math.max(base.Y - 10 - floorY, 0), 250)
+                    local angle = math.random() * math.pi * 2
+                    local reach = flag("rb_under_radius", 250) * math.sqrt(math.random())
+                    R.voidPos = v3(base.X + math.cos(angle) * reach, floorY + math.random() * span, base.Z + math.sin(angle) * reach)
                     return R.voidPos
                 end
                 local main, a, b
@@ -15379,6 +15394,10 @@ do
                     local listed = flag("rb_targets", {})
                     R.status = (flag("rb_tmode", "Target list") == "Target list" and next(listed) == nil) and "no targets selected" or "waiting for target"
                     R.lastPhase = ""
+                    if voidOn and flag("rb_wait_void", false) and (flag("rb_tmode", "Target list") ~= "Target list" or next(listed) ~= nil) then
+                        R.status = "waiting in void"
+                        return voidPoint(now), 1e9, style
+                    end
                     if voidOn and when == "Always" then
                         if now >= R.phaseEnd then
                             R.phase = R.phase == "void" and "peek" or "void"

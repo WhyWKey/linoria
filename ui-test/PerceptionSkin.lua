@@ -1650,7 +1650,7 @@ local function SkinTab(ctx, Tab, Name, list)
     end
 
     Tab.SubTabs = function(t, names)
-        local bar = { current = names[1], pills = {}, groups = {} }
+        local bar = { current = names[1], pills = {}, groups = {}, hosts = {} }
         local subs = {}
         for _, sd in ipairs(sides) do
             sd.Position = UDim2.new(sd.Position.X.Scale, sd.Position.X.Offset, 0, SUB_H + 10)
@@ -1689,6 +1689,7 @@ local function SkinTab(ctx, Tab, Name, list)
         end
         local slider = NewSlider(TabFrame, SUB_H - 5, 6)
         local function apply()
+            for _, sd in ipairs(sides) do sd.Visible = not bar.hosts[bar.current] end
             for name, group in pairs(bar.groups) do
                 for _, frame in ipairs(group) do frame.Visible = name == bar.current end
             end
@@ -1750,6 +1751,23 @@ local function SkinTab(ctx, Tab, Name, list)
                     return r
                 end
                 return tb
+            end
+            function sub:AddHost()
+                local host = New('Frame', {
+                    Name = 'EmbedHost',
+                    BackgroundTransparency = 1,
+                    BorderSizePixel = 0,
+                    ClipsDescendants = true,
+                    Position = UDim2.new(0, 0, 0, SUB_H + 10),
+                    Size = UDim2.new(1, 0, 1, -(SUB_H + 10)),
+                    ZIndex = 3,
+                    Parent = TabFrame,
+                })
+                table.insert(bar.groups[name], host)
+                bar.hosts[name] = true
+                host.Visible = name == bar.current
+                apply()
+                return host
             end
             function sub:AddLeftTabbox() return addBox(1) end
             function sub:AddRightTabbox() return addBox(2) end
@@ -2392,7 +2410,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1030-a' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1101-b' }
 
 local deriving = false
 local function setPicker(key, color)
@@ -2625,24 +2643,28 @@ function Skin.CreatePanel(Window, o)
     }
     local list = Docks[Window]
     if not list then list = {}; Docks[Window] = list end
-    list[#list + 1] = Panel
+    local Embed = o.Embed
+    if not Embed then list[#list + 1] = Panel end
 
     local Frame = New('Frame', {
-        Name = 'DockPanel',
-        Size = UDim2.new(0, Panel.Width, 1, 0),
+        Name = Embed and 'EmbedPanel' or 'DockPanel',
+        Size = Embed and UDim2.fromScale(1, 1) or UDim2.new(0, Panel.Width, 1, 0),
         BackgroundColor3 = Library.PanelColor,
-        BackgroundTransparency = PanelTransparency,
+        BackgroundTransparency = Embed and 1 or PanelTransparency,
         BorderSizePixel = 0,
         ClipsDescendants = true,
-        Visible = false,
+        Visible = Embed and true or false,
         ZIndex = 1,
-        Parent = Holder,
+        Parent = Embed or Holder,
     })
     Panel.Frame = Frame
-    Panels[#Panels + 1] = Frame
-    Reg(Frame, { BackgroundColor3 = 'PanelColor' })
-    Corner(Frame, Radius, 'window')
-    Stroke(Frame, 'OutlineColor', 1, 0.15, true)
+    Panel.Embedded = Embed and true or false
+    if not Embed then
+        Panels[#Panels + 1] = Frame
+        Reg(Frame, { BackgroundColor3 = 'PanelColor' })
+        Corner(Frame, Radius, 'window')
+        Stroke(Frame, 'OutlineColor', 1, 0.15, true)
+    end
 
     local Drag = New('Frame', {
         BackgroundTransparency = 1,
@@ -2695,6 +2717,10 @@ function Skin.CreatePanel(Window, o)
     end
     local Swap = headButton(Panel.Side == 'Right' and '<' or '>', 48)
     local Close = headButton('x', 14)
+    if Embed then
+        Drag.Visible, Title.Visible, Swap.Visible, Close.Visible = false, false, false, false
+    end
+    local HEAD = Embed and 4 or P_HEAD
 
     local function dock()
         local left, right = 0, 0
@@ -2714,7 +2740,47 @@ function Skin.CreatePanel(Window, o)
     Panel.Dock = dock
 
     local mainBar
+    local columns = setmetatable({}, { __mode = 'k' })
+    local function target(scroll, title, side)
+        local c = columns[scroll]
+        if not c then return scroll end
+        return c[(side == 'Right' or title == 'Preview') and 2 or 1]
+    end
     local function newScroll()
+        if Embed and o.Columns then
+            local box = New('Frame', {
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                ZIndex = 2,
+                Visible = false,
+                Parent = Frame,
+            })
+            local function column(x, w, offset)
+                local sc = New('ScrollingFrame', {
+                    BackgroundTransparency = 1,
+                    BorderSizePixel = 0,
+                    Position = UDim2.new(x, offset, 0, 0),
+                    Size = UDim2.new(w, -4, 1, 0),
+                    CanvasSize = UDim2.new(),
+                    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                    ScrollBarThickness = 2,
+                    ScrollBarImageColor3 = Library.AccentColor,
+                    TopImage = '',
+                    BottomImage = '',
+                    ZIndex = 2,
+                    Parent = box,
+                })
+                New('UIListLayout', {
+                    Padding = UDim.new(0, 8),
+                    SortOrder = Enum.SortOrder.LayoutOrder,
+                    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                    Parent = sc,
+                })
+                return sc
+            end
+            columns[box] = { column(0, 0.42, 0), column(0.42, 0.58, 4) }
+            return box
+        end
         local scroll = New('ScrollingFrame', {
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
@@ -2765,17 +2831,17 @@ function Skin.CreatePanel(Window, o)
 
     local function layout()
         if mainBar then mainBar:Destroy(); mainBar = nil end
-        local top = P_HEAD
+        local top = HEAD
         if #Panel.Pages > 1 then
             local names = {}
             for _, p in ipairs(Panel.Pages) do names[#names + 1] = p.Name end
-            mainBar = TextBar(Frame, names, Panel.Current and Panel.Current.Name or names[1], P_HEAD, function(name)
+            mainBar = TextBar(Frame, names, Panel.Current and Panel.Current.Name or names[1], HEAD, function(name)
                 for _, p in ipairs(Panel.Pages) do
                     if p.Name == name then Panel.Current = p end
                 end
                 show()
             end)
-            top = P_HEAD + SUB_H + 10
+            top = HEAD + SUB_H + 10
         end
         for _, p in ipairs(Panel.Pages) do
             if p.SubBar then p.SubBar:Destroy(); p.SubBar = nil end
@@ -2804,13 +2870,13 @@ function Skin.CreatePanel(Window, o)
     local placeHandles
     function Panel:AddPage(name)
         local page = { Name = name, Subs = {}, Scroll = newScroll() }
-        function page:AddGroupbox(title)
-            return BuildGroupbox(page.Scroll, title)
+        function page:AddGroupbox(title, side)
+            return BuildGroupbox(target(page.Scroll, title, side), title)
         end
         function page:AddSub(subName)
             local sub = { Name = subName, Scroll = newScroll() }
-            function sub:AddGroupbox(title)
-                return BuildGroupbox(sub.Scroll, title)
+            function sub:AddGroupbox(title, side)
+                return BuildGroupbox(target(sub.Scroll, title, side), title)
             end
             page.Subs[#page.Subs + 1] = sub
             page.CurrentSub = page.CurrentSub or sub
@@ -2829,6 +2895,7 @@ function Skin.CreatePanel(Window, o)
     end
 
     function Panel:SetVisible(v)
+        if Embed then return end
         Panel.Shown = v and true or false
         dock()
         show()
@@ -2922,6 +2989,7 @@ function Skin.CreatePanel(Window, o)
         end
     end
     placeHandles()
+    if Embed then Edge.Visible, Grip.Visible = false, false end
     local function beginResize(Input, width, height)
         if Input.UserInputType ~= Enum.UserInputType.MouseButton1 and Input.UserInputType ~= Enum.UserInputType.Touch then return end
         local startW = Panel.Width
@@ -2961,6 +3029,30 @@ function Skin.CreatePanel(Window, o)
         if type(o.OnClose) == 'function' then pcall(o.OnClose, Panel) end
     end)
 
+    if Embed then
+        local RunService = game:GetService('RunService')
+        local function reallyVisible()
+            local inst = Frame
+            while inst do
+                if inst:IsA('GuiObject') and not inst.Visible then return false end
+                if inst:IsA('LayerCollector') then return inst.Enabled end
+                inst = inst.Parent
+            end
+            return false
+        end
+        local conn
+        conn = RunService.Heartbeat:Connect(function()
+            if not Frame.Parent then
+                conn:Disconnect()
+                return
+            end
+            local v = reallyVisible()
+            if v ~= Panel.Shown then
+                Panel.Shown = v
+                show()
+            end
+        end)
+    end
     if o.Visible then Panel:SetVisible(true) end
     return Panel
 end

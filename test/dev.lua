@@ -1908,10 +1908,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-c | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-d | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-c",
+    Title = "Aster  |  perception-1101-d",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -3753,6 +3753,7 @@ CamFov:Toggle({ Name = "FOV changer", Flag = "camera_fov_changer", Default = fal
 CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max = 140, Default = 100, Suffix = "°", Decimals = 1 })
 
     do
+        local Lighting = game:GetService("Lighting")
         local function getFlag(name, default)
             local option = Options and Options[name]
             if option and option.Value ~= nil then return option.Value end

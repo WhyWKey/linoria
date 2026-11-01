@@ -2410,7 +2410,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1101-b' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1101-c' }
 
 local deriving = false
 local function setPicker(key, color)

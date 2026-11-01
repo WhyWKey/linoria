@@ -1764,6 +1764,9 @@ for _, name in ipairs({ "CreatePanel", "BuildSettings", "CreateTargetInfo" }) do
         error("PerceptionSkin.lua on GitHub is outdated (" .. tostring(Skin.Version) .. ", missing " .. name .. "). Upload the newest build-1028-b to ui-test/", 0)
     end
 end
+if tostring(Skin.Version) < "build-1101-a" then
+    error("PerceptionSkin.lua on GitHub is outdated (" .. tostring(Skin.Version) .. "). Upload build-1101-a to ui-test/ (it adds the embedded Effects and Avatar pages)", 0)
+end
 local ThemeManager = loadstring(game:HttpGet(UI_REPO .. "addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(UI_REPO .. "addons/SaveManager.lua"))()
 
@@ -1905,10 +1908,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1031-a | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-c | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1031-a",
+    Title = "Aster  |  perception-1101-c",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -2093,6 +2096,9 @@ local function wrapPage(tab)
                 GroupMeta = GroupMeta or getmetatable(group)
                 return wrapGroup(group, sub, side)
             end
+            function sub:Host()
+                return target:AddHost()
+            end
             function sub:MultiSection(info)
                 local side = pick(info.Side)
                 local box = side == 1 and target:AddLeftTabbox() or target:AddRightTabbox()
@@ -2127,11 +2133,11 @@ local RageSubs    = RageTab:SubTabs({ "Main", "Void", "Aim", "Other" })
 local VisualsPage = Window:Page({ Name = "Visuals", Columns = 2, Subtabs = false })
 local VisualsSubs = VisualsPage:SubTabs({ "ESP", "Viewmodel", "Screen" })
 local WorldPage   = Window:Page({ Name = "World",   Columns = 2, Subtabs = false })
-local WorldSubs   = WorldPage:SubTabs({ "Lighting", "Weather", "Effects", "Indicators" })
+local WorldSubs   = WorldPage:SubTabs({ "Lighting", "Weather", "Sky", "Effects", "Indicators" })
 
 local PlayersPage  = Window:Page({ Name = "Players", Columns = 2, Subtabs = false })
 local MiscPage     = Window:Page({ Name = "Misc",    Columns = 2, Subtabs = false })
-local MiscSubs     = MiscPage:SubTabs({ "Movement", "Combat", "Utility" })
+local MiscSubs     = MiscPage:SubTabs({ "Movement", "Combat", "Utility", "Avatar" })
 local MiscActions  = { clearCheats = noop }
 local TeleportPage = Window:Page({ Name = "Teleport", Columns = 2, Subtabs = false })
 local ShotEvents = { shot = {}, hit = {}, cast = {}, kill = {} }
@@ -2417,35 +2423,26 @@ function Fx:Build()
     self.built = true
     local panel = Skin.CreatePanel(LinoriaWindow, {
         Title = "Effects",
-        Side = "Left",
-        Width = 480,
-        OnClose = function()
-            local toggle = Toggles and Toggles.fx_ui
-            if toggle then toggle:SetValue(false) end
-        end,
+        Columns = true,
+        Embed = WorldSubs.Effects:Host(),
     })
     self.panel = panel
     self.main = setmetatable({}, { __index = function(_, key)
         if key == "Visible" then
-            return panel.Frame.Parent ~= nil and panel.Frame.Visible and Library.Toggled ~= false
+            return panel.Frame.Parent ~= nil and panel.Shown == true and Library.Toggled ~= false
         end
         return panel.Frame[key]
     end })
     for _, name in ipairs(self.order) do
         self.tabs[name].page = panel:AddPage(name)
     end
-    track(RunService.Heartbeat:Connect(function()
-        local toggle = Toggles and Toggles.fx_ui
-        local want = toggle ~= nil and toggle.Value == true
-        if panel.Shown ~= want then panel:SetVisible(want) end
-    end))
     onUnload(function()
         pcall(function() panel.Frame:Destroy() end)
         self.main = nil
     end)
 end
 
-local FX_PREVIEW_HEIGHT = 300
+local FX_PREVIEW_HEIGHT = 420
 
 local function fxShown(sub)
     if sub.hasPreview and not sub.preview then
@@ -2497,16 +2494,25 @@ function Fx:Section(tabName, subName, sectionName)
 end
 
 local function fxSoundList(initial)
-    local STRIDE = 24
+    local STRIDE = 36
     local state = { config = initial }
     local frame = Library:Create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), ZIndex = 5 })
     state.frame = frame
-    local searchOuter, searchFace = fxBevel(frame, 5, UDim2.new(1, 0, 0, 20), UDim2.fromOffset(0, 0))
+    local headOuter, headFace = fxBevel(frame, 5, UDim2.new(1, 0, 0, 44), UDim2.fromOffset(0, 0))
+    local headTag = fxLabel({ Text = initial.noPlay and "SELECTED" or (initial.buttonText == "Preview" and "EFFECT" or "NOW SELECTED"), TextSize = 10, TextTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -90, 0, 14), Position = UDim2.fromOffset(10, 5), ZIndex = 8, Parent = headFace })
+    local headName = fxLabel({ Text = "nothing selected", TextSize = Library.FontSize + 2, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -90, 0, 20), Position = UDim2.fromOffset(10, 19), ZIndex = 8, Parent = headFace })
+    local headPlay
+    if not initial.noPlay then
+        local playOuter, playFace = fxBevel(headFace, 8, UDim2.fromOffset(64, 28), UDim2.new(1, -72, 0.5, -14))
+        fxLabel({ Text = initial.buttonText or "Play", TextSize = 12, Size = UDim2.new(1, 0, 1, 0), ZIndex = 10, Parent = playFace })
+        headPlay = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = 12, Parent = playOuter })
+    end
+    local searchOuter, searchFace = fxBevel(frame, 5, UDim2.new(1, 0, 0, 26), UDim2.fromOffset(0, 50))
     local clip = Library:Create("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.new(0, 5, 0, 0), Size = UDim2.new(1, -5, 1, 0), ZIndex = 7, Parent = searchFace })
     local box = Library:Create("TextBox", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 0), Size = UDim2.fromScale(5, 1), Font = Library.Font, PlaceholderColor3 = Color3.fromRGB(190, 190, 190), PlaceholderText = initial.placeholder or "search sounds...", ClearTextOnFocus = false, Text = "", TextColor3 = Library.FontColor, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8, Parent = clip })
     Library:AddToRegistry(box, { TextColor3 = "FontColor" })
     Library:ApplyTextStroke(box)
-    local list = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 1, -24), CanvasSize = UDim2.new(), ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = frame }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
+    local list = fxCreate("ScrollingFrame", { BackgroundColor3 = Library.BackgroundColor, BorderColor3 = Library.OutlineColor, Position = UDim2.fromOffset(0, 82), Size = UDim2.new(1, 0, 1, -82), CanvasSize = UDim2.new(), ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = 5, Parent = frame }, { BackgroundColor3 = "BackgroundColor", BorderColor3 = "OutlineColor", ScrollBarImageColor3 = "AccentColor" })
 
     local pool = {}
     local filtered = {}
@@ -2527,12 +2533,15 @@ local function fxSoundList(initial)
 
     local function makeRow()
         local buttonWidth = initial.buttonWidth or 38
-        local row = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, -6, 0, 22), ZIndex = 6, Visible = false, Parent = list }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
-        local entry = { frame = row, over = 0 }
-        entry.nameLabel = fxLabel({ Text = "", TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0.6, -40, 1, 0), Position = UDim2.fromOffset(6, 0), ZIndex = 7, Parent = row })
+        local row = fxCreate("Frame", { BackgroundColor3 = Library.MainColor, BorderColor3 = Library.OutlineColor, Size = UDim2.new(1, -6, 0, 32), ZIndex = 6, Visible = false, Parent = list }, { BackgroundColor3 = "MainColor", BorderColor3 = "OutlineColor" })
+        Library:Create("UICorner", { CornerRadius = UDim.new(0, 6), Parent = row })
+        local strip = fxCreate("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 3, 1, -10), Position = UDim2.fromOffset(2, 5), Visible = false, ZIndex = 8, Parent = row }, { BackgroundColor3 = "AccentColor" })
+        Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = strip })
+        local entry = { frame = row, over = 0, strip = strip }
+        entry.nameLabel = fxLabel({ Text = "", TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(0.6, -40, 1, 0), Position = UDim2.fromOffset(14, 0), ZIndex = 7, Parent = row })
         entry.catLabel = fxLabel({ Text = "", TextSize = 11, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Right, Size = UDim2.new(0.4, -52, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), ZIndex = 7, Parent = row })
         local pick = Library:Create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, -buttonWidth - 6, 1, 0), ZIndex = 9, Parent = row })
-        local playOuter, playFace = fxBevel(row, 7, UDim2.fromOffset(buttonWidth, 16), UDim2.new(1, -buttonWidth - 3, 0.5, -8))
+        local playOuter, playFace = fxBevel(row, 7, UDim2.fromOffset(buttonWidth + 8, 22), UDim2.new(1, -buttonWidth - 11, 0.5, -11))
         playOuter.Visible = false
         entry.playOuter = playOuter
         fxLabel({ Text = initial.buttonText or "Play", TextSize = 11, Size = UDim2.new(1, 0, 1, 0), ZIndex = 9, Parent = playFace })
@@ -2574,6 +2583,7 @@ local function fxSoundList(initial)
                 local category = state.config.category and state.config.category(name)
                 entry.name = name
                 entry.frame.Position = UDim2.fromOffset(3, 3 + (index - 1) * STRIDE)
+                entry.strip.Visible = name == shown
                 entry.nameLabel.Text = name
                 entry.catLabel.Text = category or ""
                 fxBorder(entry.frame, name == shown and "AccentColor" or "OutlineColor")
@@ -2611,6 +2621,11 @@ local function fxSoundList(initial)
         state.applyFilter()
     end
 
+    if headPlay then
+        headPlay.MouseButton1Click:Connect(function()
+            if type(shown) == "string" and shown ~= "" and shown ~= "None" then play(shown) end
+        end)
+    end
     box:GetPropertyChangedSignal("Text"):Connect(function() state.applyFilter() end)
     list:GetPropertyChangedSignal("CanvasPosition"):Connect(render)
     list:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() dirty = true render() end)
@@ -2621,6 +2636,8 @@ local function fxSoundList(initial)
             shown = current
             dirty = true
         end
+        local label = type(shown) == "string" and shown ~= "" and shown ~= "None" and shown or "nothing selected"
+        if headName.Text ~= label then headName.Text = label end
         if dirty then render() end
     end))
     return state
@@ -3735,9 +3752,233 @@ EspList:Toggle({ Name = "Chams", Flag = "esp_chams", Default = false }):Colorpic
 CamFov:Toggle({ Name = "FOV changer", Flag = "camera_fov_changer", Default = false })
 CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max = 140, Default = 100, Suffix = "°", Decimals = 1 })
 
-    local EffectsBox = WorldSubs.Effects:Section({ Name = "Windows", Side = 1 })
-    EffectsBox:Toggle({ Name = "Effects window", Flag = "fx_ui", Default = false, Tooltip = "Opens the window with sounds, visual effects and tracers" })
-    EffectsBox:Toggle({ Name = "Avatar spoofer window", Flag = "spoof_ui", Default = false, Tooltip = "Opens a window to browse a player's current look and saved outfits" })
+    do
+        local function getFlag(name, default)
+            local option = Options and Options[name]
+            if option and option.Value ~= nil then return option.Value end
+            return default
+        end
+        local function notify(message)
+            pcall(function() Library:Notify(message, 4) end)
+        end
+        local SKY_FACES = { SkyboxBk = "Back", SkyboxDn = "Down", SkyboxFt = "Front", SkyboxLf = "Left", SkyboxRt = "Right", SkyboxUp = "Up" }
+        local SKY_ORDER = { "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp" }
+
+        local SkySpin = WorldSubs.Sky:Section({ Name = "Rotation", Side = 1 })
+        SkySpin:Toggle({ Name = "Rotate skybox", Flag = "sky_spin", Default = false })
+        SkySpin:Dropdown({ Name = "Mode", Flag = "sky_spin_mode", Items = { "Spin", "Sway" }, Default = "Spin" })
+        SkySpin:Slider({ Name = "Yaw speed", Flag = "sky_spin_y", Min = -90, Max = 90, Default = 6, Decimals = 0.5, Suffix = "°/s" })
+        SkySpin:Slider({ Name = "Pitch speed", Flag = "sky_spin_x", Min = -90, Max = 90, Default = 0, Decimals = 0.5, Suffix = "°/s" })
+        SkySpin:Slider({ Name = "Roll speed", Flag = "sky_spin_z", Min = -90, Max = 90, Default = 0, Decimals = 0.5, Suffix = "°/s" })
+        SkySpin:Slider({ Name = "Sway amount", Flag = "sky_sway_amount", Min = 1, Max = 90, Default = 25, Decimals = 1, Suffix = "°" })
+        SkySpin:Slider({ Name = "Sway rate", Flag = "sky_sway_rate", Min = 0.02, Max = 1, Default = 0.15, Decimals = 0.01, Suffix = " Hz" })
+
+        local SkyTime = WorldSubs.Sky:Section({ Name = "Time of day", Side = 1 })
+        SkyTime:Dropdown({ Name = "Time", Flag = "sky_time_mode", Items = { "Off", "Cycle", "Locked" }, Default = "Off", Tooltip = "Kept on our own clock, so the game resetting the time does not restart the cycle" })
+        SkyTime:Slider({ Name = "Cycle speed", Flag = "sky_cycle_speed", Min = 0.01, Max = 3, Default = 0.25, Decimals = 0.01, Suffix = " h/s" })
+        SkyTime:Slider({ Name = "Locked time", Flag = "sky_time_locked", Min = 0, Max = 24, Default = 14, Decimals = 0.1, Suffix = " h" })
+
+        local SkyBodies = WorldSubs.Sky:Section({ Name = "Sky objects", Side = 2 })
+        SkyBodies:Toggle({ Name = "Change sky objects", Flag = "sky_objects", Default = false })
+        SkyBodies:Toggle({ Name = "Sun and moon", Flag = "sky_bodies", Default = true })
+        SkyBodies:Slider({ Name = "Stars", Flag = "sky_stars", Min = 0, Max = 5000, Default = 3000, Decimals = 50 })
+        SkyBodies:Slider({ Name = "Sun size", Flag = "sky_sun_size", Min = 0, Max = 60, Default = 21, Decimals = 1 })
+        SkyBodies:Slider({ Name = "Moon size", Flag = "sky_moon_size", Min = 0, Max = 60, Default = 11, Decimals = 1 })
+
+        local SkyClouds = WorldSubs.Sky:Section({ Name = "Clouds", Side = 2 })
+        SkyClouds:Toggle({ Name = "Clouds", Flag = "sky_clouds", Default = false }):Colorpicker({ Name = "Cloud color", Flag = "sky_cloud_color", Default = Color3.new(1, 1, 1) })
+        SkyClouds:Slider({ Name = "Cover", Flag = "sky_cloud_cover", Min = 0, Max = 1, Default = 0.6, Decimals = 0.05 })
+        SkyClouds:Slider({ Name = "Density", Flag = "sky_cloud_density", Min = 0, Max = 1, Default = 0.6, Decimals = 0.05 })
+        SkyClouds:Toggle({ Name = "Cloud drift (wind)", Flag = "sky_wind", Default = false, Tooltip = "Roblox has no cloud speed property, so this moves the clouds through the workspace wind" })
+        SkyClouds:Slider({ Name = "Drift direction", Flag = "sky_wind_dir", Min = 0, Max = 360, Default = 0, Decimals = 5, Suffix = "°" })
+        SkyClouds:Slider({ Name = "Drift speed", Flag = "sky_wind_speed", Min = 0, Max = 1000, Default = 60, Decimals = 5 })
+
+        local SkyTex = WorldSubs.Sky:Section({ Name = "Skybox texture", Side = 1 })
+        SkyTex:Label({ Name = "Asset id, rbxassetid link, or a file in your executor workspace folder." })
+        SkyTex:Input({ Name = "All six faces", Flag = "sky_tex_all", Default = "", Placeholder = "e.g. 123456789 or sky/night.png" })
+        for _, face in ipairs(SKY_ORDER) do
+            SkyTex:Input({ Name = SKY_FACES[face], Flag = "sky_tex_" .. face, Default = "", Placeholder = "optional" })
+        end
+
+        local sky, createdSky, savedSky, savedClock, savedWind
+        local clouds, createdClouds, savedClouds
+        local angle = Vector3.zero
+        local clock, hour, reasserting = 0, Lighting.ClockTime, false
+        local was = {}
+
+        local function acquireSky()
+            if sky and sky.Parent then return sky end
+            sky = Lighting:FindFirstChildOfClass("Sky")
+            if not sky then
+                sky = Instance.new("Sky")
+                sky.Name = "AsterSky"
+                sky.Parent = Lighting
+                createdSky = true
+            end
+            if not savedSky then
+                savedSky = {}
+                for _, name in ipairs(SKY_ORDER) do savedSky[name] = sky[name] end
+                for _, name in ipairs({ "SkyboxOrientation", "StarCount", "SunAngularSize", "MoonAngularSize", "CelestialBodiesShown" }) do savedSky[name] = sky[name] end
+            end
+            return sky
+        end
+
+        local function resolveAsset(text)
+            text = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if text == "" then return nil end
+            if text:match("^%d+$") then return "rbxassetid://" .. text end
+            if text:match("^rbxassetid://") or text:match("^rbxasset://") or text:match("^https?://") then return text end
+            if isfile and getcustomasset then
+                local okFile, exists = pcall(isfile, text)
+                if okFile and exists then
+                    local okAsset, asset = pcall(getcustomasset, text)
+                    if okAsset and asset then return asset end
+                end
+            end
+            return nil
+        end
+
+        local function applyTextures()
+            local target = acquireSky()
+            local all = resolveAsset(getFlag("sky_tex_all", ""))
+            local count = 0
+            for _, face in ipairs(SKY_ORDER) do
+                local one = resolveAsset(getFlag("sky_tex_" .. face, "")) or all
+                if one then target[face] = one count += 1 end
+            end
+            notify(count > 0 and ("Sky: applied " .. count .. " face(s)") or "Sky: type an asset id or workspace file first")
+        end
+        SkyTex:Button({ Name = "Apply textures", Callback = applyTextures })
+        SkyTex:Button({ Name = "Restore original skybox", Callback = function()
+            if sky and savedSky then
+                for _, face in ipairs(SKY_ORDER) do sky[face] = savedSky[face] end
+            end
+        end })
+
+        local function hourDiff(a, b)
+            local d = math.abs(a - b) % 24
+            return math.min(d, 24 - d)
+        end
+        local function assertTime()
+            if getFlag("sky_time_mode", "Off") == "Off" then return end
+            if hourDiff(Lighting.ClockTime, hour) > 0.005 then
+                reasserting = true
+                Lighting.ClockTime = hour
+                reasserting = false
+            end
+        end
+
+        local function applyWind(on)
+            if savedWind == nil then savedWind = workspace.GlobalWind end
+            if on then
+                local rad = math.rad(getFlag("sky_wind_dir", 0))
+                workspace.GlobalWind = Vector3.new(math.sin(rad), 0, -math.cos(rad)) * getFlag("sky_wind_speed", 60)
+            else
+                workspace.GlobalWind = savedWind
+            end
+        end
+
+        local function applyClouds(on)
+            local terrain = workspace:FindFirstChildOfClass("Terrain")
+            if not terrain then return end
+            if on then
+                if not clouds or not clouds.Parent then
+                    clouds = terrain:FindFirstChildOfClass("Clouds")
+                    if not clouds then
+                        clouds = Instance.new("Clouds")
+                        clouds.Parent = terrain
+                        createdClouds = true
+                    end
+                    savedClouds = { Cover = clouds.Cover, Density = clouds.Density, Enabled = clouds.Enabled, Color = clouds.Color }
+                end
+                clouds.Enabled = true
+                clouds.Cover = getFlag("sky_cloud_cover", 0.6)
+                clouds.Density = getFlag("sky_cloud_density", 0.6)
+                clouds.Color = getFlag("sky_cloud_color", Color3.new(1, 1, 1))
+            elseif clouds and clouds.Parent then
+                if createdClouds then
+                    clouds:Destroy()
+                    clouds, createdClouds = nil, nil
+                elseif savedClouds then
+                    clouds.Cover, clouds.Density, clouds.Enabled, clouds.Color = savedClouds.Cover, savedClouds.Density, savedClouds.Enabled, savedClouds.Color
+                end
+            end
+        end
+
+        local function restoreAll()
+            if sky and sky.Parent then
+                if createdSky then
+                    sky:Destroy()
+                elseif savedSky then
+                    for key, value in pairs(savedSky) do pcall(function() sky[key] = value end) end
+                end
+            end
+            sky, createdSky, savedSky = nil, nil, nil
+            applyClouds(false)
+            if savedWind ~= nil then pcall(function() workspace.GlobalWind = savedWind end) end
+        end
+
+        track(Lighting:GetPropertyChangedSignal("ClockTime"):Connect(function()
+            if not reasserting then pcall(assertTime) end
+        end))
+        track(RunService.Heartbeat:Connect(function() pcall(assertTime) end))
+        track(RunService.RenderStepped:Connect(function(dt)
+            clock += dt
+            local ok, err = pcall(function()
+                local spin = getFlag("sky_spin", false)
+                if spin then
+                    local target = acquireSky()
+                    if getFlag("sky_spin_mode", "Spin") == "Spin" then
+                        angle += Vector3.new(getFlag("sky_spin_x", 0), getFlag("sky_spin_y", 6), getFlag("sky_spin_z", 0)) * dt
+                        target.SkyboxOrientation = Vector3.new(angle.X % 360, angle.Y % 360, angle.Z % 360)
+                    else
+                        local phase = math.sin(clock * getFlag("sky_sway_rate", 0.15) * math.pi * 2) * getFlag("sky_sway_amount", 25)
+                        target.SkyboxOrientation = Vector3.new(getFlag("sky_spin_x", 0) ~= 0 and phase or 0, getFlag("sky_spin_y", 6) ~= 0 and phase or 0, getFlag("sky_spin_z", 0) ~= 0 and phase or 0)
+                    end
+                elseif was.spin and sky and savedSky then
+                    sky.SkyboxOrientation = savedSky.SkyboxOrientation
+                end
+                was.spin = spin
+
+                local objects = getFlag("sky_objects", false)
+                if objects then
+                    local target = acquireSky()
+                    target.StarCount = getFlag("sky_stars", 3000)
+                    target.SunAngularSize = getFlag("sky_sun_size", 21)
+                    target.MoonAngularSize = getFlag("sky_moon_size", 11)
+                    target.CelestialBodiesShown = getFlag("sky_bodies", true)
+                elseif was.objects and sky and savedSky then
+                    sky.StarCount, sky.SunAngularSize, sky.MoonAngularSize, sky.CelestialBodiesShown = savedSky.StarCount, savedSky.SunAngularSize, savedSky.MoonAngularSize, savedSky.CelestialBodiesShown
+                end
+                was.objects = objects
+
+                local mode = getFlag("sky_time_mode", "Off")
+                if mode ~= was.time then
+                    if mode == "Cycle" then hour = Lighting.ClockTime end
+                    if savedClock == nil then savedClock = Lighting.ClockTime end
+                    was.time = mode
+                end
+                if mode == "Cycle" then
+                    hour = (hour + getFlag("sky_cycle_speed", 0.25) * dt) % 24
+                elseif mode == "Locked" then
+                    hour = getFlag("sky_time_locked", 14) % 24
+                end
+
+                local cloudsOn = getFlag("sky_clouds", false)
+                if cloudsOn or was.clouds then applyClouds(cloudsOn) end
+                was.clouds = cloudsOn
+
+                local windOn = getFlag("sky_wind", false)
+                if windOn or was.wind then applyWind(windOn) end
+                was.wind = windOn
+            end)
+            if not ok and not was.warned then
+                was.warned = true
+                warn("Sky:", err)
+            end
+        end))
+        onUnload(restoreAll)
+    end
 
     local LightMain, LightTime, LightFog = WorldSubs.Lighting:MultiSection({ Sections = { "Light", "Time", "Fog" }, Side = 1 })
     LightMain:Toggle({ Name = "Ambient", Flag = "lighting_toggle_Ambient", Default = false }):Colorpicker({ Name = "Inner ambient", Flag = "lighting_colorAmbient", Default = WHITE }):Colorpicker({ Name = "Outer ambient", Flag = "lighting_colorOutdoorAmbient", Default = WHITE })
@@ -3942,15 +4183,6 @@ BodyExtra:Toggle({ Name = "Remove accessories", Flag = "arm_remove_accessories",
     AuraBox:Dropdown({ Name = "Aura", Flag = "pa_source", Items = AURA_PACK.items, Default = "angel" })
     AuraBox:Toggle({ Name = "Keep pack colors", Flag = "pa_pack_original", Default = true, Tooltip = "Pack auras keep their own colors. Turn off to paint them with the color above like the other auras." })
 
-    local Avatar = WorldSubs.Effects:Section({ Name = "Avatar changer", Side = 2 })
-    Avatar:Input({ Name = "User", Flag = "spoof_avatar_user", Placeholder = "UserId, username or profile URL" })
-    Avatar:Button({ Name = "Apply avatar", Callback = function()
-        task.spawn(function() SpooferActions.apply() end)
-    end })
-    Avatar:Button({ Name = "Reset to my avatar", Callback = function()
-        task.spawn(function() SpooferActions.reset() end)
-    end })
-    Avatar:Toggle({ Name = "Re-apply on respawn", Flag = "spoof_avatar_reapply", Default = true })
 end
 
 do
@@ -6723,6 +6955,44 @@ do
             end)
         end
 
+        local function finishApply(char, humanoid, model, desc)
+            stripAppearance(char)
+            wornKeys = {}
+            copyClothesAndColors(char, model)
+
+            local meshCount = applyCharacterMeshesFromModel(char, model)
+            if desc and humanoid.RigType == Enum.HumanoidRigType.R6 then
+                meshCount += applyR6MeshesFromDescription(char, desc)
+            end
+
+            local accessoryCount = copyAccessories(char, model)
+            local headless = false
+            if desc then
+                local extra, isHeadless = loadAccessoriesFromDescription(char, desc)
+                accessoryCount += extra
+                headless = isHeadless
+            end
+            if not headless then
+                for _, child in ipairs(char:GetChildren()) do
+                    if child:IsA("Accessory") and string.find(string.lower(child.Name), "headless", 1, true) then
+                        headless = true
+                        break
+                    end
+                end
+            end
+            if headless then forceHeadless(char) end
+
+            dedupeAccessories(char)
+            accessoryCount = 0
+            for _, child in ipairs(char:GetChildren()) do
+                if child:IsA("Accessory") then accessoryCount += 1 end
+            end
+
+            pcall(function() model:Destroy() end)
+            notify(string.format("Avatar applied (meshes %d, accessories %d%s)", meshCount, accessoryCount, headless and ", headless" or ""))
+            return true
+        end
+
         local function applyAvatar(rawInput, outfitId)
             local char = LocalPlayer.Character
             local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -6769,41 +7039,7 @@ do
                 return false
             end
 
-            stripAppearance(char)
-            wornKeys = {}
-            copyClothesAndColors(char, model)
-
-            local meshCount = applyCharacterMeshesFromModel(char, model)
-            if desc and humanoid.RigType == Enum.HumanoidRigType.R6 then
-                meshCount += applyR6MeshesFromDescription(char, desc)
-            end
-
-            local accessoryCount = copyAccessories(char, model)
-            local headless = false
-            if desc then
-                local extra, isHeadless = loadAccessoriesFromDescription(char, desc)
-                accessoryCount += extra
-                headless = isHeadless
-            end
-            if not headless then
-                for _, child in ipairs(char:GetChildren()) do
-                    if child:IsA("Accessory") and string.find(string.lower(child.Name), "headless", 1, true) then
-                        headless = true
-                        break
-                    end
-                end
-            end
-            if headless then forceHeadless(char) end
-
-            dedupeAccessories(char)
-            accessoryCount = 0
-            for _, child in ipairs(char:GetChildren()) do
-                if child:IsA("Accessory") then accessoryCount += 1 end
-            end
-
-            pcall(function() model:Destroy() end)
-            notify(string.format("Avatar applied (meshes %d, accessories %d%s)", meshCount, accessoryCount, headless and ", headless" or ""))
-            return true
+            return finishApply(char, humanoid, model, desc)
         end
 
         local function runApply(raw, outfitId)
@@ -6845,6 +7081,7 @@ do
             if ok and type(data) == "table" then
                 if type(data.recent) == "table" then store.recent = data.recent end
                 if type(data.favorites) == "table" then store.favorites = data.favorites end
+                if data.reapply ~= nil then store.reapply = data.reapply end
             end
         end
 
@@ -7334,74 +7571,306 @@ do
             end
         end
 
+        local spoofHost
+        local spoofBroken = false
+        local AvatarEditorService = game:GetService("AvatarEditorService")
+
+        local Builder = { rig = "R15", desc = nil, stamp = 0 }
+        local lastBuilt
+
+        local ACC_SLOTS = {
+            Hat = { acc = "Hat" }, HairAccessory = { acc = "Hair" }, FaceAccessory = { acc = "Face" }, NeckAccessory = { acc = "Neck" },
+            ShoulderAccessory = { acc = "Shoulder" }, FrontAccessory = { acc = "Front" }, BackAccessory = { acc = "Back" }, WaistAccessory = { acc = "Waist" },
+            TShirtAccessory = { acc = "TShirt", layered = true }, ShirtAccessory = { acc = "Shirt", layered = true }, PantsAccessory = { acc = "Pants", layered = true },
+            JacketAccessory = { acc = "Jacket", layered = true }, SweaterAccessory = { acc = "Sweater", layered = true }, ShortsAccessory = { acc = "Shorts", layered = true },
+            LeftShoeAccessory = { acc = "LeftShoe", layered = true }, RightShoeAccessory = { acc = "RightShoe", layered = true }, DressSkirtAccessory = { acc = "DressSkirt", layered = true },
+            EyebrowAccessory = { acc = "Eyebrow" }, EyelashAccessory = { acc = "Eyelash" },
+            Shirt = { prop = "Shirt" }, Pants = { prop = "Pants" }, TShirt = { prop = "GraphicTShirt" },
+            Head = { prop = "Head" }, Face = { prop = "Face" }, Torso = { prop = "Torso" },
+            RightArm = { prop = "RightArm" }, LeftArm = { prop = "LeftArm" }, LeftLeg = { prop = "LeftLeg" }, RightLeg = { prop = "RightLeg" },
+            ClimbAnimation = { prop = "ClimbAnimation" }, FallAnimation = { prop = "FallAnimation" }, IdleAnimation = { prop = "IdleAnimation" },
+            JumpAnimation = { prop = "JumpAnimation" }, MoodAnimation = { prop = "MoodAnimation" }, RunAnimation = { prop = "RunAnimation" },
+            SwimAnimation = { prop = "SwimAnimation" }, WalkAnimation = { prop = "WalkAnimation" },
+        }
+        local PROP_ORDER = { "Head", "Face", "Torso", "LeftArm", "RightArm", "LeftLeg", "RightLeg", "Shirt", "Pants", "GraphicTShirt", "IdleAnimation", "WalkAnimation", "RunAnimation", "JumpAnimation", "FallAnimation", "ClimbAnimation", "SwimAnimation", "MoodAnimation" }
+
+        local ASSET_BY_VALUE = {}
+        pcall(function()
+            for _, item in ipairs(Enum.AvatarAssetType:GetEnumItems()) do ASSET_BY_VALUE[item.Value] = item.Name end
+        end)
+        local function assetTypeName(value)
+            if typeof(value) == "EnumItem" then return value.Name end
+            if type(value) == "number" then return ASSET_BY_VALUE[value] end
+            if type(value) == "string" then return value end
+            return nil
+        end
+
+        local function thumbAsset(id)
+            return string.format("rbxthumb://type=Asset&id=%d&w=150&h=150", id)
+        end
+
+        local function wearAsset(id, typeName)
+            local desc = Builder.desc
+            local slot = typeName and ACC_SLOTS[typeName]
+            if not (desc and slot) then return nil end
+            if slot.acc then
+                local list = desc:GetAccessories(true)
+                for index, entry in ipairs(list) do
+                    if entry.AssetId == id then
+                        table.remove(list, index)
+                        desc:SetAccessories(list, true)
+                        return false
+                    end
+                end
+                local accType = Enum.AccessoryType[slot.acc]
+                if slot.layered then
+                    for index = #list, 1, -1 do
+                        if list[index].IsLayered and list[index].AccessoryType == accType then table.remove(list, index) end
+                    end
+                end
+                local entry = { AssetId = id, AccessoryType = accType, IsLayered = slot.layered == true }
+                if slot.layered then entry.Order = 1 entry.Puffiness = 1 end
+                table.insert(list, entry)
+                desc:SetAccessories(list, true)
+                return true
+            end
+            if desc[slot.prop] == id then
+                desc[slot.prop] = 0
+                return false
+            end
+            desc[slot.prop] = id
+            return true
+        end
+
+        local function wornItems()
+            local out = {}
+            local desc = Builder.desc
+            if not desc then return out end
+            local ok, list = pcall(function() return desc:GetAccessories(true) end)
+            if ok then
+                for _, accessory in ipairs(list) do
+                    out[#out + 1] = { id = accessory.AssetId, label = accessory.AccessoryType.Name }
+                end
+            end
+            for _, prop in ipairs(PROP_ORDER) do
+                local okProp, id = pcall(function() return desc[prop] end)
+                if okProp and type(id) == "number" and id ~= 0 then out[#out + 1] = { id = id, label = prop, prop = prop } end
+            end
+            return out
+        end
+
+        local function isWorn(id)
+            for _, item in ipairs(wornItems()) do
+                if item.id == id then return true end
+            end
+            return false
+        end
+
+        local function removeItem(item)
+            local desc = Builder.desc
+            if not desc then return end
+            if item.prop then
+                desc[item.prop] = 0
+                return
+            end
+            local list = desc:GetAccessories(true)
+            for index, accessory in ipairs(list) do
+                if accessory.AssetId == item.id then table.remove(list, index) break end
+            end
+            desc:SetAccessories(list, true)
+        end
+
+        local function applyBuiltDescription(desc)
+            local char = LocalPlayer.Character
+            local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+            if not humanoid then
+                notify("Avatar builder: no character yet")
+                return false
+            end
+            local okModel, model = pcall(function() return Players:CreateHumanoidModelFromDescription(desc, humanoid.RigType) end)
+            if not okModel or not model then
+                notify("Avatar builder: could not build that avatar")
+                return false
+            end
+            lastUid, lastOutfit = nil, nil
+            lastBuilt = desc:Clone()
+            currentDesc = desc
+            stripAppearance(char)
+            wornKeys = {}
+            return finishApply(char, humanoid, model, desc)
+        end
+
+        local function runBuilt(desc)
+            if busy then
+                notify("Avatar builder: still working on the last one")
+                return false
+            end
+            busy = true
+            local ok, result = pcall(applyBuiltDescription, desc)
+            busy = false
+            if not ok then
+                warn("Avatar builder failed:", result)
+                notify("Avatar builder failed, see the console")
+                return false
+            end
+            return result
+        end
+
+        local function reallyVisible(inst)
+            while inst do
+                if inst:IsA("GuiObject") and not inst.Visible then return false end
+                if inst:IsA("LayerCollector") then return inst.Enabled end
+                inst = inst.Parent
+            end
+            return false
+        end
+
+        local CATEGORIES = {
+            { "All", {} }, { "Hats", { "Hat" } }, { "Hair", { "HairAccessory" } }, { "Face acc.", { "FaceAccessory" } },
+            { "Neck", { "NeckAccessory" } }, { "Shoulder", { "ShoulderAccessory" } }, { "Front", { "FrontAccessory" } },
+            { "Back", { "BackAccessory" } }, { "Waist", { "WaistAccessory" } },
+            { "Shirts", { "Shirt", "ShirtAccessory" } }, { "Pants", { "Pants", "PantsAccessory" } }, { "T-Shirts", { "TShirt", "TShirtAccessory" } },
+            { "Layered", { "JacketAccessory", "SweaterAccessory", "ShortsAccessory", "LeftShoeAccessory", "RightShoeAccessory", "DressSkirtAccessory" } },
+            { "Heads", { "Head" } }, { "Faces", { "Face" } }, { "Bodies", { "Torso", "RightArm", "LeftArm", "LeftLeg", "RightLeg" } },
+            { "Animations", { "IdleAnimation", "WalkAnimation", "RunAnimation", "JumpAnimation", "FallAnimation", "ClimbAnimation", "SwimAnimation" } },
+            { "Bundles", {}, true },
+        }
+        local KIND_NAMES = { "Any", "Limited", "UGC", "Roblox", "Premium", "Free" }
+        local SORTS = {
+            { "Relevance", "Relevance", 0 }, { "Most favorited", "MostFavorited", 1 }, { "Best selling", "Bestselling", 2 },
+            { "Newest", "RecentlyCreated", 3 }, { "Price low", "PriceLowToHigh", 4 }, { "Price high", "PriceHighToLow", 5 },
+        }
+
+        local function buildParams(F)
+            local params = CatalogSearchParams.new()
+            params.SearchKeyword = F.keyword or ""
+            params.IncludeOffSale = not F.onSale
+            pcall(function() params.Limit = 30 end)
+            pcall(function() params.SortType = Enum.CatalogSortType[F.sort] end)
+            local types = {}
+            for _, name in ipairs(F.types) do
+                local ok, item = pcall(function() return Enum.AvatarAssetType[name] end)
+                if ok and item then types[#types + 1] = item end
+            end
+            if #types > 0 then params.AssetTypes = types end
+            if F.bundles then
+                local bundleTypes = {}
+                pcall(function()
+                    for _, item in ipairs(Enum.BundleType:GetEnumItems()) do
+                        if item.Name ~= "Unknown" then bundleTypes[#bundleTypes + 1] = item end
+                    end
+                end)
+                if #bundleTypes > 0 then params.BundleTypes = bundleTypes end
+            end
+            if F.kind == "Limited" then
+                pcall(function() params.CategoryFilter = Enum.CatalogCategoryFilter.Collectibles end)
+            elseif F.kind == "UGC" then
+                pcall(function() params.CategoryFilter = Enum.CatalogCategoryFilter.CommunityCreations end)
+            elseif F.kind == "Premium" then
+                pcall(function() params.CategoryFilter = Enum.CatalogCategoryFilter.Premium end)
+            elseif F.kind == "Roblox" then
+                pcall(function() params.CreatorName = "Roblox" end)
+            elseif F.kind == "Free" then
+                pcall(function() params.MaxPrice = 0 end)
+            end
+            local low, high = tonumber(F.minPrice), tonumber(F.maxPrice)
+            if low then pcall(function() params.MinPrice = low end) end
+            if high then pcall(function() params.MaxPrice = high end) end
+            return params
+        end
+
+        local function normItem(item)
+            local id = item.Id or item.id
+            if type(id) ~= "number" then return nil end
+            local itemType = item.ItemType or item.itemType
+            local isBundle = (typeof(itemType) == "EnumItem" and itemType.Name == "Bundle") or itemType == "Bundle"
+            local restrictions = item.itemRestrictions or item.ItemRestrictions
+            local limited = (type(restrictions) == "table" and #restrictions > 0)
+                or (item.CollectibleItemId ~= nil and item.CollectibleItemId ~= "")
+                or item.IsLimited == true or item.IsLimitedUnique == true
+            return {
+                id = id,
+                name = tostring(item.Name or item.name or id),
+                price = item.Price or item.price or item.lowestPrice,
+                assetName = assetTypeName(item.AssetType or item.assetType),
+                creator = item.CreatorName or item.creatorName,
+                limited = limited,
+                restrictions = restrictions,
+                isBundle = isBundle,
+                priceStatus = tostring(item.PriceStatus or item.priceStatus or ""),
+            }
+        end
+
+        local function httpSearch(F, cursor)
+            local sort = 0
+            for _, entry in ipairs(SORTS) do if entry[2] == F.sort then sort = entry[3] end end
+            local url = "https://catalog.roblox.com/v1/search/items/details?Keyword=" .. HttpService:UrlEncode(F.keyword or "") .. "&Limit=30&SortType=" .. sort
+            if cursor then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
+            if F.kind == "Roblox" then url = url .. "&CreatorName=Roblox" end
+            local data, status, message = httpJson(url)
+            if not data then error("catalog request failed (" .. tostring(status) .. ") " .. tostring(message or ""), 0) end
+            local wanted
+            if #F.types > 0 then
+                wanted = {}
+                for _, name in ipairs(F.types) do wanted[name] = true end
+            end
+            local out = {}
+            for _, raw in ipairs(data.data or {}) do
+                local entry = normItem(raw)
+                if entry then
+                    local keep = true
+                    if wanted and not wanted[entry.assetName or ""] then keep = false end
+                    if F.kind == "Limited" and not entry.limited then keep = false end
+                    if F.kind == "UGC" and (entry.creator == "Roblox" or entry.creator == nil) then keep = false end
+                    if F.kind == "Roblox" and entry.creator ~= "Roblox" then keep = false end
+                    if F.kind == "Free" and entry.price ~= 0 then keep = false end
+                    if F.onSale and entry.price == nil then keep = false end
+                    if keep then out[#out + 1] = entry end
+                end
+            end
+            return out, data.nextPageCursor
+        end
+
         local function openSpoofUi()
-            if spoofUi or not Library.ScreenGui then return end
-            local panel = Skin.CreatePanel(LinoriaWindow, {
-                Title = "Avatar spoofer",
-                Side = "Right",
-                Width = 460,
-                OnClose = function()
-                    local toggle = Toggles and Toggles.spoof_ui
-                    if toggle then toggle:SetValue(false) end
-                end,
-            })
-            local function slot(box, height)
-                local host = lf("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, -4, 0, height), ZIndex = 5, Parent = box.Container })
-                box:Resize()
-                return host
+            if spoofUi or not Library.ScreenGui or not spoofHost then return end
+            local Z = 300
+            local host = spoofHost
+            local root = lf("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(4, 4), Size = UDim2.new(1, -8, 1, -8), ZIndex = Z, Parent = host })
+
+            local function pill(parent, text, size, position, onClick, order)
+                local outer, face = bevel(parent, Z, size, position, order)
+                local label = lbl({ Text = text, TextSize = 12, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 3, Parent = face })
+                local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 6, Parent = outer })
+                hit.MouseEnter:Connect(function() setBorder(outer, "AccentColor") end)
+                hit.MouseLeave:Connect(function() setBorder(outer, "Black") end)
+                hit.MouseButton1Click:Connect(function() onClick(outer, label) end)
+                return outer, label, hit
             end
 
-            local playerBox = panel:AddGroupbox("Player")
-            local searchHost = slot(playerBox, 28)
-            local searchOuter, searchFace = bevel(searchHost, 6, UDim2.new(1, 0, 1, -4), UDim2.fromOffset(0, 2))
-            local clip = lf("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.new(0, 8, 0, 0), Size = UDim2.new(1, -16, 1, 0), ZIndex = 8, Parent = searchFace })
-            local search = lf("TextBox", {
-                BackgroundTransparency = 1,
-                Position = UDim2.fromOffset(0, 0),
-                Size = UDim2.fromScale(5, 1),
-                Font = Library.Font,
-                PlaceholderColor3 = Library.MutedColor,
-                PlaceholderText = "username, UserId, profile URL or outfit:ID, press Enter...",
-                ClearTextOnFocus = false,
-                Text = "",
-                TextColor3 = Library.FontColor,
-                TextSize = Library.FontSize,
-                TextXAlignment = Enum.TextXAlignment.Left,
-                ZIndex = 9,
-                Parent = clip,
-            }, { TextColor3 = "FontColor" })
-            search.Focused:Connect(function() setBorder(searchOuter, "AccentColor") end)
-            search.FocusLost:Connect(function() setBorder(searchOuter, "Black") end)
-            local chipsHost = slot(playerBox, 34)
-            local chips = lf("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 4), Size = UDim2.new(1, 0, 1, -4), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = 7, Parent = chipsHost })
-            Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center, Parent = chips })
-
-            local previewBox = panel:AddGroupbox("Preview")
-            local modeHost = slot(previewBox, 26)
-            Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = modeHost })
-            local modeButtons = {}
-            local setMode
-            for index, entry in ipairs({ { "browse", "Browse" }, { "favorites", "Favorites" } }) do
-                local button = lf("TextButton", { AutoButtonColor = false, BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.fromOffset(84, 24), LayoutOrder = index, Font = Library.Font, TextSize = Library.FontSize, TextColor3 = Library.MutedColor, Text = entry[2], ZIndex = 8, Parent = modeHost })
-                modeButtons[entry[1]] = button
-                button.MouseButton1Click:Connect(function() setMode(entry[1]) end)
+            local function makeInput(parent, size, position, placeholder)
+                local outer, face = bevel(parent, Z, size, position)
+                local clip = lf("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.new(0, 8, 0, 0), Size = UDim2.new(1, -16, 1, 0), ZIndex = Z + 2, Parent = face })
+                local box = lf("TextBox", {
+                    BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 0), Size = UDim2.fromScale(5, 1), Font = Library.Font,
+                    PlaceholderColor3 = Library.MutedColor, PlaceholderText = placeholder, ClearTextOnFocus = false, Text = "",
+                    TextColor3 = Library.FontColor, TextSize = Library.FontSize, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = Z + 3, Parent = clip,
+                }, { TextColor3 = "FontColor" })
+                box.Focused:Connect(function() setBorder(outer, "AccentColor") end)
+                box.FocusLost:Connect(function() setBorder(outer, "Black") end)
+                return outer, box
             end
-            local hintHost = slot(previewBox, 18)
-            local hint = lbl({ Text = "click again to apply", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(0.4, 0, 1, 0), ZIndex = 6, Parent = hintHost })
-            local indicator = lbl({ Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Position = UDim2.new(0.4, 0, 0, 0), Size = UDim2.new(0.6, 0, 1, 0), ZIndex = 6, Parent = hintHost })
-            local barHost = slot(previewBox, 8)
-            local barOuter = lf("Frame", { BackgroundColor3 = Library.PillColor, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 2), Size = UDim2.new(1, 0, 0, 4), Visible = false, ZIndex = 6, Parent = barHost }, { BackgroundColor3 = "PillColor" })
-            Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = barOuter })
-            local barFill = lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = 7, Parent = barOuter }, { BackgroundColor3 = "AccentColor" })
-            Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = barFill })
-            local gridHost = slot(previewBox, 320)
-            local function makeGrid(visible)
-                local frameGrid = lf("ScrollingFrame", { BackgroundColor3 = Library.PanelColor, BorderSizePixel = 0, Size = UDim2.new(1, 0, 1, -4), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, Visible = visible, ZIndex = 7, Parent = gridHost }, { BackgroundColor3 = "PanelColor", ScrollBarImageColor3 = "AccentColor" })
-                Library:Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = frameGrid })
-                local layout = Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 116), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = frameGrid })
-                Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 10), PaddingBottom = UDim.new(0, 6), Parent = frameGrid })
+
+            local function makeGrid(parent, position, size, visible)
+                local grid = lf("ScrollingFrame", {
+                    BackgroundColor3 = Library.PanelColor, BorderSizePixel = 0, Position = position, Size = size, CanvasSize = UDim2.new(),
+                    AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor,
+                    TopImage = "", BottomImage = "", Visible = visible, ZIndex = Z + 1, Parent = parent,
+                }, { BackgroundColor3 = "PanelColor", ScrollBarImageColor3 = "AccentColor" })
+                Library:Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = grid })
+                local layout = Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(98, 116), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+                Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 10), PaddingBottom = UDim.new(0, 6), Parent = grid })
                 local function fit()
-                    local width = frameGrid.AbsoluteSize.X
+                    local width = grid.AbsoluteSize.X
                     if width <= 0 then return end
                     local gap, minimum = 6, 92
                     local usable = width - 16
@@ -7409,51 +7878,522 @@ do
                     local cell = math.floor((usable - (columns - 1) * gap) / columns)
                     layout.CellSize = UDim2.fromOffset(cell, math.floor(cell * 1.18))
                 end
-                frameGrid:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+                grid:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
                 fit()
-                return frameGrid
+                return grid
             end
-            local grid = makeGrid(true)
-            local favGrid = makeGrid(false)
-            local lastHeight = 0
-            track(RunService.Heartbeat:Connect(function()
-                if not gridHost.Parent then return end
-                local total = panel.Frame.AbsoluteSize.Y > 0 and panel.Frame.AbsoluteSize.Y or 700
-                local want = math.max(240, total - 440)
-                if want ~= lastHeight then
-                    lastHeight = want
-                    gridHost.Size = UDim2.new(1, -4, 0, want)
-                    previewBox:Resize()
-                end
-            end))
 
-            local actionBox = panel:AddGroupbox("Actions")
-            local statusHost = slot(actionBox, 20)
-            local status = lbl({ Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(1, 0, 1, 0), ZIndex = 6, Parent = statusHost })
-            actionBox:AddButton("Apply selected", function()
-                local ui = spoofUi
-                local info = ui and ui.selected
+            local function chipRow(parent, y, names, current, onPick)
+                local scroll = lf("ScrollingFrame", {
+                    BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(0, y), Size = UDim2.new(1, 0, 0, 26),
+                    CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
+                    ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = Z, Parent = parent,
+                })
+                Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center, Parent = scroll })
+                local buttons = {}
+                local function paint(pick)
+                    for name, button in pairs(buttons) do
+                        local on = name == pick
+                        button.label.TextColor3 = on and (Library.ActiveColor or Library.AccentColor) or Library.MutedColor
+                        setBorder(button.outer, on and "AccentColor" or "Black")
+                    end
+                end
+                for index, name in ipairs(names) do
+                    local width = TextService:GetTextSize(name, 12, Library.Font, Vector2.new(1000, 20)).X + 20
+                    local outer, face = bevel(scroll, Z, UDim2.fromOffset(width, 24), nil, index)
+                    local label = lbl({ Text = name, TextSize = 12, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 3, Parent = face })
+                    local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 6, Parent = outer })
+                    buttons[name] = { outer = outer, label = label }
+                    hit.MouseButton1Click:Connect(function()
+                        paint(name)
+                        onPick(name)
+                    end)
+                end
+                paint(current)
+                return scroll
+            end
+
+            -- left column: preview, wearing, actions ----------------------------------------
+            local LEFT_W, WEAR_H, ACT_H = 250, 156, 30
+            local left = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0, LEFT_W, 1, 0), ZIndex = Z, Parent = root })
+            local previewOuter, previewFace = bevel(left, Z, UDim2.new(1, 0, 1, -(WEAR_H + ACT_H + 12)), UDim2.new())
+            local viewport = lf("ViewportFrame", {
+                BackgroundTransparency = 1, Size = UDim2.new(1, -4, 1, -4), Position = UDim2.fromOffset(2, 2), ZIndex = Z + 2,
+                Ambient = Color3.fromRGB(150, 150, 160), LightColor = Color3.fromRGB(255, 255, 255), LightDirection = Vector3.new(-1, -1, -1), Parent = previewFace,
+            })
+            local camera = Instance.new("Camera")
+            camera.FieldOfView = 35
+            camera.Parent = viewport
+            viewport.CurrentCamera = camera
+            local dragArea = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 5, Parent = previewFace })
+            local previewStatus = lbl({ Text = "", TextSize = 11, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, -18), ZIndex = Z + 8, Parent = previewFace })
+
+            local rigOuter, rigLabel = pill(previewFace, Builder.rig, UDim2.fromOffset(52, 22), UDim2.new(0.5, -26, 0, 6), function() end)
+            rigOuter.ZIndex = Z + 7
+            local meOuter = pill(previewFace, "My avatar", UDim2.fromOffset(78, 22), UDim2.fromOffset(6, 6), function() end)
+            meOuter.ZIndex = Z + 7
+
+            local wearHolder = lf("Frame", { BackgroundColor3 = Library.PanelColor, BorderSizePixel = 0, Position = UDim2.new(0, 0, 1, -(WEAR_H + ACT_H + 6)), Size = UDim2.new(1, 0, 0, WEAR_H), ZIndex = Z, Parent = left }, { BackgroundColor3 = "PanelColor" })
+            Library:Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = wearHolder })
+            local wearTitle = lbl({ Text = "Currently wearing", TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -12, 0, 16), Position = UDim2.fromOffset(8, 3), ZIndex = Z + 3, Parent = wearHolder })
+            local wornGrid = lf("ScrollingFrame", {
+                BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 20), Size = UDim2.new(1, 0, 1, -22), CanvasSize = UDim2.new(),
+                AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = Z + 1, Parent = wearHolder,
+            }, { ScrollBarImageColor3 = "AccentColor" })
+            Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(72, 62), CellPadding = UDim2.fromOffset(4, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = wornGrid })
+            Library:Create("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingTop = UDim.new(0, 2), Parent = wornGrid })
+
+            local actions = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 0, 1, -ACT_H), Size = UDim2.new(1, 0, 0, ACT_H), ZIndex = Z, Parent = left })
+            local reapplyLabel
+            pill(actions, "Apply to me", UDim2.new(0.38, -3, 1, 0), UDim2.new(), function()
+                if Builder.desc then task.spawn(function() runBuilt(Builder.desc) end) end
+            end)
+            pill(actions, "Reset", UDim2.new(0.26, -3, 1, 0), UDim2.new(0.38, 3, 0, 0), function()
+                task.spawn(function()
+                    SpooferActions.reset()
+                    lastBuilt = nil
+                end)
+            end)
+            local _, rl = pill(actions, "", UDim2.new(0.36, -2, 1, 0), UDim2.new(0.64, 2, 0, 0), function(_, label)
+                store.reapply = not (store.reapply ~= false)
+                storeSave()
+                label.Text = store.reapply ~= false and "Respawn: on" or "Respawn: off"
+            end)
+            reapplyLabel = rl
+            reapplyLabel.Text = store.reapply ~= false and "Respawn: on" or "Respawn: off"
+
+            -- right column ----------------------------------------------------------------------
+            local right = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(LEFT_W + 8, 0), Size = UDim2.new(1, -(LEFT_W + 8), 1, 0), ZIndex = Z, Parent = root })
+            local modeRow = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26), ZIndex = Z, Parent = right })
+            Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = modeRow })
+            local modeButtons = {}
+            local setMode
+            for index, entry in ipairs({ { "market", "Marketplace" }, { "players", "Players" }, { "favs", "Favorites" } }) do
+                local outer, label = pill(modeRow, entry[2], UDim2.fromOffset(96, 26), nil, function() setMode(entry[1]) end, index)
+                modeButtons[entry[1]] = { outer = outer, label = label }
+            end
+
+            local PANE_Y = 32
+            local function newPane(visible)
+                return lf("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, PANE_Y), Size = UDim2.new(1, 0, 1, -PANE_Y), Visible = visible, ZIndex = Z, Parent = right })
+            end
+            local marketPane, playersPane, favPane = newPane(true), newPane(false), newPane(false)
+
+            -- marketplace ------------------------------------------------------------------------
+            local F = { keyword = "", types = {}, kind = "Any", sort = "Relevance", sortLabel = "Relevance", minPrice = "", maxPrice = "", onSale = true }
+            local M = { gen = 0, busy = false, pages = nil, cursor = nil, finished = true, count = 0, tiles = {}, filtersOpen = false }
+
+            local searchOuter, searchBox = makeInput(marketPane, UDim2.new(1, -82, 0, 28), UDim2.new(), "search the catalog, press Enter...")
+            local filterOuter, filterLabel = pill(marketPane, "Filters", UDim2.fromOffset(76, 28), UDim2.new(1, -76, 0, 0), function() end)
+            local FILTER_H = 118
+            local filterPanel = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 34), Size = UDim2.new(1, 0, 0, FILTER_H), Visible = false, ZIndex = Z, Parent = marketPane })
+            local mGrid = makeGrid(marketPane, UDim2.fromOffset(0, 34), UDim2.new(1, 0, 1, -54), true)
+            local mStatus = lbl({ Text = "", TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -310, 0, 16), Position = UDim2.new(0, 4, 1, -17), ZIndex = Z + 3, Parent = marketPane })
+
+            do
+                local legend = lf("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 1, -16), Size = UDim2.fromOffset(300, 14), ZIndex = Z + 3, Parent = marketPane })
+                Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = legend })
+                for index, entry in ipairs({ { "off sale", Color3.fromRGB(226, 70, 70) }, { "roblox", Color3.fromRGB(70, 110, 235) }, { "ugc", Color3.fromRGB(170, 170, 170) }, { "limited", Color3.fromRGB(70, 200, 110) }, { "bundle", Color3.fromRGB(150, 90, 230) } }) do
+                    local item = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(TextService:GetTextSize(entry[1], 10, Library.Font, Vector2.new(200, 14)).X + 12, 14), LayoutOrder = index, ZIndex = Z + 3, Parent = legend })
+                    local dot = lf("Frame", { BackgroundColor3 = entry[2], BorderSizePixel = 0, Position = UDim2.fromOffset(0, 4), Size = UDim2.fromOffset(6, 6), ZIndex = Z + 4, Parent = item })
+                    Library:Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = dot })
+                    lbl({ Text = entry[1], TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -9, 1, 0), Position = UDim2.fromOffset(9, 0), ZIndex = Z + 4, Parent = item })
+                end
+            end
+
+            local function layoutMarket()
+                local offset = M.filtersOpen and (FILTER_H + 40) or 34
+                filterPanel.Visible = M.filtersOpen
+                mGrid.Position = UDim2.fromOffset(0, offset)
+                mGrid.Size = UDim2.new(1, 0, 1, -(offset + 20))
+            end
+
+            local categoryNames, categoryTypes, categoryBundle = {}, {}, {}
+            for _, entry in ipairs(CATEGORIES) do
+                categoryNames[#categoryNames + 1] = entry[1]
+                categoryTypes[entry[1]] = entry[2]
+                categoryBundle[entry[1]] = entry[3] == true
+            end
+            local runSearch
+            chipRow(filterPanel, 0, categoryNames, "All", function(name)
+                F.types = categoryTypes[name]
+                F.bundles = categoryBundle[name]
+                runSearch(false)
+            end)
+            chipRow(filterPanel, 30, KIND_NAMES, "Any", function(name)
+                F.kind = name
+                runSearch(false)
+            end)
+            local sortOuter, sortLabel = pill(filterPanel, "Sort: Relevance", UDim2.fromOffset(132, 26), UDim2.fromOffset(0, 60), function(_, label)
+                local nextIndex = 1
+                for index, entry in ipairs(SORTS) do
+                    if entry[2] == F.sort then nextIndex = index % #SORTS + 1 end
+                end
+                F.sort, F.sortLabel = SORTS[nextIndex][2], SORTS[nextIndex][1]
+                label.Text = "Sort: " .. F.sortLabel
+                runSearch(false)
+            end)
+            local _, minBox = makeInput(filterPanel, UDim2.fromOffset(70, 26), UDim2.fromOffset(138, 60), "min R$")
+            local _, maxBox = makeInput(filterPanel, UDim2.fromOffset(70, 26), UDim2.fromOffset(214, 60), "max R$")
+            local _, saleLabel = pill(filterPanel, "On sale only: on", UDim2.fromOffset(132, 26), UDim2.fromOffset(0, 90), function(_, label)
+                F.onSale = not F.onSale
+                label.Text = "On sale only: " .. (F.onSale and "on" or "off")
+                runSearch(false)
+            end)
+            pill(filterPanel, "Apply filters", UDim2.fromOffset(110, 26), UDim2.fromOffset(138, 90), function()
+                F.minPrice, F.maxPrice = minBox.Text, maxBox.Text
+                runSearch(false)
+            end)
+            do
+                local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 6, Parent = filterOuter })
+                hit.MouseButton1Click:Connect(function()
+                    M.filtersOpen = not M.filtersOpen
+                    filterLabel.Text = M.filtersOpen and "Hide" or "Filters"
+                    layoutMarket()
+                end)
+            end
+            layoutMarket()
+
+            local onBuilderChanged
+            local function refreshMarketBorders()
+                for id, tile in pairs(M.tiles) do
+                    if tile.Parent then setBorder(tile, isWorn(id) and "AccentColor" or "Black") end
+                end
+            end
+
+            local function addMarketTile(entry, order)
+                local tile, face = bevel(mGrid, Z + 2, UDim2.fromOffset(98, 116), nil, order)
+                mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -42), Position = UDim2.fromOffset(4, 4), ZIndex = Z + 6, Parent = face })
+                lbl({ Text = entry.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 14), Position = UDim2.new(0, 3, 1, -38), ZIndex = Z + 6, Parent = face })
+                local priceText = "-"
+                if type(entry.price) == "number" then priceText = entry.price == 0 and "Free" or ("R$ " .. tostring(entry.price)) end
+                lbl({ Text = priceText, TextSize = 11, TextTransparency = 0.25, Size = UDim2.new(1, -6, 0, 14), Position = UDim2.new(0, 3, 1, -22), ZIndex = Z + 6, Parent = face })
+                do
+                    local offSale = string.find(string.lower(entry.priceStatus or ""), "off", 1, true) ~= nil
+                        or (entry.price == nil and not entry.limited and not entry.isBundle)
+                    local color, tag
+                    if offSale then color, tag = Color3.fromRGB(226, 70, 70), "off sale"
+                    elseif entry.isBundle then color, tag = Color3.fromRGB(150, 90, 230), "bundle"
+                    elseif entry.limited then color, tag = Color3.fromRGB(70, 200, 110), "limited"
+                    elseif entry.creator and entry.creator ~= "Roblox" then color, tag = Color3.fromRGB(170, 170, 170), "ugc"
+                    else color, tag = Color3.fromRGB(70, 110, 235), "roblox" end
+                    local bar = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.new(0, 4, 1, -5), Size = UDim2.new(1, -8, 0, 3), ZIndex = Z + 8, Parent = face })
+                    Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = bar })
+                    entry.tag = tag
+                end
+                local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 12, Parent = tile })
+                hit.MouseEnter:Connect(function() if not isWorn(entry.id) then setBorder(tile, "AccentColor") end end)
+                hit.MouseLeave:Connect(function() setBorder(tile, isWorn(entry.id) and "AccentColor" or "Black") end)
+                hit.MouseButton1Click:Connect(function()
+                    task.spawn(function()
+                        if entry.isBundle then
+                            local ok, details = pcall(function() return AvatarEditorService:GetItemDetails(entry.id, Enum.AvatarItemType.Bundle) end)
+                            local parts = {}
+                            if ok and type(details) == "table" then
+                                for _, piece in ipairs(details.BundledItems or details.bundledItems or {}) do
+                                    local kind = piece.Type or piece.type
+                                    local pieceId = piece.Id or piece.id
+                                    if (kind == "Asset" or (typeof(kind) == "EnumItem" and kind.Name == "Asset")) and type(pieceId) == "number" then
+                                        local okPiece, info = pcall(function() return AvatarEditorService:GetItemDetails(pieceId, Enum.AvatarItemType.Asset) end)
+                                        local name = okPiece and type(info) == "table" and assetTypeName(info.AssetType) or nil
+                                        if name and ACC_SLOTS[name] then parts[#parts + 1] = { id = pieceId, name = name } end
+                                    end
+                                end
+                            end
+                            if #parts == 0 then
+                                notify("Avatar builder: could not read the pieces of " .. entry.name)
+                                return
+                            end
+                            local allWorn = true
+                            for _, piece in ipairs(parts) do
+                                if not isWorn(piece.id) then allWorn = false end
+                            end
+                            for _, piece in ipairs(parts) do
+                                if allWorn or not isWorn(piece.id) then pcall(wearAsset, piece.id, piece.name) end
+                            end
+                            if onBuilderChanged then onBuilderChanged() end
+                            return
+                        end
+                        local typeName = entry.assetName
+                        if not typeName then
+                            local ok, details = pcall(function() return AvatarEditorService:GetItemDetails(entry.id, Enum.AvatarItemType.Asset) end)
+                            if ok and type(details) == "table" then
+                                typeName = assetTypeName(details.AssetType)
+                                entry.assetName = typeName
+                            end
+                        end
+                        if not typeName or not ACC_SLOTS[typeName] then
+                            notify("Avatar builder: " .. entry.name .. " is a type the builder can't wear yet")
+                            return
+                        end
+                        if not Builder.desc then return end
+                        local ok, result = pcall(wearAsset, entry.id, typeName)
+                        if not ok then
+                            warn("Avatar builder: wearing failed:", result)
+                            notify("Avatar builder: could not add that item")
+                            return
+                        end
+                        if onBuilderChanged then onBuilderChanged() end
+                    end)
+                end)
+                setBorder(tile, isWorn(entry.id) and "AccentColor" or "Black")
+                M.tiles[entry.id] = tile
+                return tile
+            end
+
+            function runSearch(append)
+                if append and (M.busy or M.finished) then return end
+                if not append then
+                    M.gen += 1
+                    M.pages, M.cursor, M.finished, M.count = nil, nil, false, 0
+                    table.clear(M.tiles)
+                    for _, child in ipairs(mGrid:GetChildren()) do
+                        if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
+                    end
+                end
+                local gen = M.gen
+                M.busy = true
+                mStatus.Text = "searching..."
+                task.spawn(function()
+                    local items, source
+                    local okAll, err = pcall(function()
+                        local engineOk, engineErr = pcall(function()
+                            if not append then
+                                local params = buildParams(F)
+                                local okS, res = pcall(function() return AvatarEditorService:SearchCatalogAsync(params) end)
+                                if not okS then okS, res = pcall(function() return AvatarEditorService:SearchCatalog(params) end) end
+                                if not okS then error(res, 0) end
+                                M.pages = res
+                            elseif M.pages then
+                                M.pages:AdvanceToNextPageAsync()
+                            end
+                            if not M.pages then error("no pages", 0) end
+                            items = {}
+                            for _, raw in ipairs(M.pages:GetCurrentPage()) do
+                                local entry = normItem(raw)
+                                if entry then items[#items + 1] = entry end
+                            end
+                            M.finished = M.pages.IsFinished == true
+                            source = "catalog"
+                        end)
+                        if not engineOk then
+                            if M.pages == nil and M.httpOnly ~= true then M.httpOnly = true end
+                            local cursor = append and M.cursor or nil
+                            local list, nextCursor = httpSearch(F, cursor)
+                            items, M.cursor = list, nextCursor
+                            M.finished = nextCursor == nil
+                            source = "web"
+                            if not append then warn("Avatar builder: AvatarEditorService failed (" .. tostring(engineErr) .. "), used the web catalog instead") end
+                        end
+                    end)
+                    if gen ~= M.gen or not spoofUi then
+                        M.busy = false
+                        return
+                    end
+                    M.busy = false
+                    if not okAll then
+                        mStatus.Text = "catalog unavailable: " .. tostring(err)
+                        warn("Avatar builder: catalog search failed:", err)
+                        return
+                    end
+                    for _, entry in ipairs(items) do
+                        M.count += 1
+                        addMarketTile(entry, M.count)
+                    end
+                    if M.count == 0 then
+                        mStatus.Text = "no items found, try other filters"
+                    else
+                        mStatus.Text = string.format("%d items%s  |  click an item to wear it, click again to take it off", M.count, M.finished and "" or "  (scroll for more)")
+                    end
+                end)
+            end
+
+            searchBox.FocusLost:Connect(function(enter)
+                if not enter then return end
+                F.keyword = searchBox.Text
+                runSearch(false)
+            end)
+            mGrid:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+                if mGrid.CanvasPosition.Y + mGrid.AbsoluteSize.Y >= mGrid.AbsoluteCanvasSize.Y - 140 then runSearch(true) end
+            end)
+
+            -- builder state hooks -------------------------------------------------------------------
+            local angle, dragging = 0.6, false
+            local function refreshWorn()
+                for _, child in ipairs(wornGrid:GetChildren()) do
+                    if child:IsA("Frame") then child:Destroy() end
+                end
+                local items = wornItems()
+                wearTitle.Text = string.format("Currently wearing (%d)  -  click to remove", #items)
+                for index, item in ipairs(items) do
+                    local tile, face = bevel(wornGrid, Z + 2, UDim2.fromOffset(72, 62), nil, index)
+                    mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(item.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -18), Position = UDim2.fromOffset(4, 3), ZIndex = Z + 6, Parent = face })
+                    lbl({ Text = item.label, TextSize = 10, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -4, 0, 13), Position = UDim2.new(0, 2, 1, -15), ZIndex = Z + 6, Parent = face })
+                    local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 12, Parent = tile })
+                    hit.MouseEnter:Connect(function() setBorder(tile, "AccentColor") end)
+                    hit.MouseLeave:Connect(function() setBorder(tile, "Black") end)
+                    hit.MouseButton1Click:Connect(function()
+                        pcall(removeItem, item)
+                        if onBuilderChanged then onBuilderChanged() end
+                    end)
+                end
+            end
+
+            local modelRef
+            local function rebuildPreview()
+                Builder.stamp += 1
+                local stamp = Builder.stamp
+                previewStatus.Text = "building preview..."
+                task.delay(0.3, function()
+                    if stamp ~= Builder.stamp or not Builder.desc then return end
+                    local rig = Builder.rig == "R6" and Enum.HumanoidRigType.R6 or Enum.HumanoidRigType.R15
+                    local copy = Builder.desc:Clone()
+                    local ok, model = pcall(function() return Players:CreateHumanoidModelFromDescription(copy, rig) end)
+                    if stamp ~= Builder.stamp or not viewport.Parent then
+                        if ok and model then pcall(function() model:Destroy() end) end
+                        return
+                    end
+                    if not ok or not model then
+                        previewStatus.Text = "preview failed"
+                        return
+                    end
+                    previewStatus.Text = ""
+                    if modelRef then pcall(function() modelRef:Destroy() end) end
+                    for _, part in ipairs(model:GetDescendants()) do
+                        if part:IsA("BasePart") then part.Anchored = true end
+                    end
+                    model.Parent = viewport
+                    local cf, size = model:GetBoundingBox()
+                    modelRef = model
+                    local ui = spoofUi
+                    if ui then
+                        ui.center = cf.Position
+                        ui.height = size.Y
+                        ui.dist = math.max(size.Y, size.X) / (2 * math.tan(math.rad(camera.FieldOfView / 2))) * 1.1 + size.Z / 2
+                        ui.modelReady = true
+                    end
+                end)
+            end
+
+            function onBuilderChanged()
+                refreshWorn()
+                rebuildPreview()
+                refreshMarketBorders()
+            end
+
+            local function setDescription(desc)
+                Builder.desc = desc
+                onBuilderChanged()
+            end
+
+            local function loadMine()
+                task.spawn(function()
+                    local desc
+                    if currentDesc then
+                        local ok, copy = pcall(function() return currentDesc:Clone() end)
+                        if ok then desc = copy end
+                    end
+                    if not desc then
+                        local ok, fetched = pcall(function() return Players:GetHumanoidDescriptionFromUserIdAsync(LocalPlayer.UserId) end)
+                        if ok and fetched then desc = fetched end
+                    end
+                    if not spoofUi then return end
+                    setDescription(desc or Instance.new("HumanoidDescription"))
+                end)
+            end
+
+            do
+                local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 9, Parent = rigOuter })
+                hit.MouseButton1Click:Connect(function()
+                    Builder.rig = Builder.rig == "R15" and "R6" or "R15"
+                    rigLabel.Text = Builder.rig
+                    rebuildPreview()
+                end)
+                local meHit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 9, Parent = meOuter })
+                meHit.MouseButton1Click:Connect(loadMine)
+            end
+
+            dragArea.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = true
+                    local last = input.Position.X
+                    local changed, ended
+                    changed = UserInputService.InputChanged:Connect(function(change)
+                        if change.UserInputType == Enum.UserInputType.MouseMovement or change.UserInputType == Enum.UserInputType.Touch then
+                            angle -= (change.Position.X - last) * 0.012
+                            last = change.Position.X
+                        end
+                    end)
+                    ended = UserInputService.InputEnded:Connect(function(finish)
+                        if finish.UserInputType == Enum.UserInputType.MouseButton1 or finish.UserInputType == Enum.UserInputType.Touch then
+                            dragging = false
+                            changed:Disconnect()
+                            ended:Disconnect()
+                        end
+                    end)
+                end
+            end)
+
+            -- players pane (look up anyone, browse their saved outfits) ---------------------------------
+            local pSearchOuter, search = makeInput(playersPane, UDim2.new(1, 0, 0, 28), UDim2.new(), "username, UserId, profile URL or outfit:ID, press Enter...")
+            local chips = lf("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 32), Size = UDim2.new(1, 0, 0, 30), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = Z + 1, Parent = playersPane })
+            Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center, Parent = chips })
+            local hint = lbl({ Text = "click again to apply", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(0.4, 0, 0, 16), Position = UDim2.fromOffset(2, 64), ZIndex = Z + 3, Parent = playersPane })
+            local indicator = lbl({ Text = "", TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(0.6, 0, 0, 16), Position = UDim2.new(0.4, 0, 0, 64), ZIndex = Z + 3, Parent = playersPane })
+            local barOuter = lf("Frame", { BackgroundColor3 = Library.PillColor, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 82), Size = UDim2.new(1, 0, 0, 4), Visible = false, ZIndex = Z + 3, Parent = playersPane }, { BackgroundColor3 = "PillColor" })
+            Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = barOuter })
+            local barFill = lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0), ZIndex = Z + 4, Parent = barOuter }, { BackgroundColor3 = "AccentColor" })
+            Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = barFill })
+            local grid = makeGrid(playersPane, UDim2.fromOffset(0, 90), UDim2.new(1, 0, 1, -146), true)
+            local status = lbl({ Text = "", TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 12, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 4, 1, -52), ZIndex = Z + 3, Parent = playersPane })
+            local pActions = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 0, 1, -30), Size = UDim2.new(1, 0, 0, 28), ZIndex = Z, Parent = playersPane })
+            pill(pActions, "Apply selected", UDim2.new(0.5, -3, 1, 0), UDim2.new(), function()
+                local info = spoofUi and spoofUi.selected
                 if not info then notify("Avatar spoofer: pick an avatar first") return end
                 task.spawn(function()
                     if info.kind == "outfit" then SpooferActions.applyOutfit(info.id) else SpooferActions.applyUser(info.uid) end
                 end)
             end)
-            actionBox:AddButton("Reset to my avatar", function() task.spawn(function() SpooferActions.reset() end) end)
+            pill(pActions, "Edit in builder", UDim2.new(0.5, -3, 1, 0), UDim2.new(0.5, 3, 0, 0), function()
+                local info = spoofUi and spoofUi.selected
+                if not info or info.kind == "random" then notify("Avatar spoofer: pick an avatar first") return end
+                task.spawn(function()
+                    local ok, desc = pcall(function()
+                        if info.kind == "outfit" then return Players:GetHumanoidDescriptionFromOutfitId(info.id) end
+                        return Players:GetHumanoidDescriptionFromUserIdAsync(info.uid)
+                    end)
+                    if not ok or not desc then notify("Avatar builder: could not load that avatar") return end
+                    if not spoofUi then return end
+                    setDescription(desc)
+                    setMode("market")
+                    notify("Avatar builder: loaded " .. tostring(info.name))
+                end)
+            end)
+
+            -- favorites pane ---------------------------------------------------------------------------
+            local favGrid = makeGrid(favPane, UDim2.new(), UDim2.new(1, 0, 1, 0), true)
 
             function setMode(mode)
                 local ui = spoofUi
                 if not ui then return end
                 ui.mode = mode
-                ui.grid.Visible = mode == "browse"
-                ui.favGrid.Visible = mode == "favorites"
-                ui.activeGrid = mode == "favorites" and ui.favGrid or ui.grid
+                marketPane.Visible = mode == "market"
+                playersPane.Visible = mode == "players"
+                favPane.Visible = mode == "favs"
+                ui.activeGrid = mode == "favs" and favGrid or grid
                 for name, button in pairs(modeButtons) do
-                    button.TextColor3 = name == mode and (Library.ActiveColor or Library.AccentColor) or Library.MutedColor
+                    local on = name == mode
+                    button.label.TextColor3 = on and (Library.ActiveColor or Library.AccentColor) or Library.MutedColor
+                    setBorder(button.outer, on and "AccentColor" or "Black")
                 end
-                if mode == "favorites" then refreshFavorites() end
+                if mode == "favs" then refreshFavorites() end
+                if mode == "players" and not ui.playersLoaded then
+                    ui.playersLoaded = true
+                    loadTarget(LocalPlayer.UserId, "You")
+                end
             end
 
-            spoofUi = { panel = panel, main = panel.Frame, grid = grid, favGrid = favGrid, activeGrid = grid, mode = "browse", chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0, thumbsDone = true }
+            spoofUi = { panel = { Frame = root, Shown = true }, main = root, grid = grid, favGrid = favGrid, activeGrid = grid, mode = "market", chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0, thumbsDone = true, shown = true, angle = angle, center = Vector3.zero, dist = 8, height = 5 }
             local owner = spoofUi
             task.spawn(function()
                 while spoofUi == owner do
@@ -7516,7 +8456,6 @@ do
                 local text = search.Text
                 local outfitId = tonumber(string.match(text, "[Oo]utfits?[:%s/=]*(%d+)"))
                 if outfitId then
-
                     local info = { kind = "outfit", id = outfitId, name = "Outfit " .. outfitId }
                     local tile = addTile(info, string.format("rbxthumb://type=Outfit&id=%d&w=150&h=150", outfitId), 5)
                     selectTile(info, tile)
@@ -7531,21 +8470,40 @@ do
                     loadTarget(uid, name)
                 end)
             end)
+            owner.rotate = function(dt)
+                if not modelRef or not owner.shown then return end
+                if not dragging then angle += dt * 0.5 end
+                camera.CFrame = CFrame.lookAt(owner.center + Vector3.new(math.sin(angle) * owner.dist, owner.height * 0.05, math.cos(angle) * owner.dist), owner.center)
+            end
+            owner.destroyModel = function()
+                if modelRef then pcall(function() modelRef:Destroy() end) end
+                modelRef = nil
+            end
             refreshChips()
-            setMode("browse")
-            loadTarget(LocalPlayer.UserId, "You")
+            setMode("market")
+            loadMine()
+            runSearch(false)
         end
 
-        track(RunService.Heartbeat:Connect(function()
-            local wanted = getFlag("spoof_ui", false)
-            if wanted and not spoofUi then
-                local ok, err = pcall(openSpoofUi)
-                if not ok then warn("Avatar spoofer window failed:", err) destroySpoofUi() end
-            elseif spoofUi then
-                spoofUi.hidden = not wanted
-            end
+        pcall(function() spoofHost = MiscSubs.Avatar:Host() end)
 
-            if spoofUi and spoofUi.panel.Shown ~= wanted then spoofUi.panel:SetVisible(wanted) end
+        track(RunService.Heartbeat:Connect(function(dt)
+            if not spoofHost then return end
+            local visible = reallyVisible(spoofHost) and Library.Toggled ~= false
+            if visible and not spoofUi and not spoofBroken then
+                local ok, err = pcall(openSpoofUi)
+                if not ok then
+                    spoofBroken = true
+                    warn("Avatar spoofer failed:", err)
+                    destroySpoofUi()
+                end
+            end
+            local ui = spoofUi
+            if ui then
+                ui.shown = visible
+                ui.panel.Shown = visible
+                if visible and ui.rotate then ui.rotate(dt) end
+            end
         end))
 
         SpooferActions.prefetch = function(uid, outfitId) prefetchAvatar(uid, outfitId) end
@@ -7553,9 +8511,14 @@ do
         SpooferActions.applyOutfit = function(outfitId) return runApply(nil, outfitId) end
 
         track(LocalPlayer.CharacterAdded:Connect(function()
-            if not (lastUid or lastOutfit) or not getFlag("spoof_avatar_reapply", true) then return end
+            if not (lastUid or lastOutfit or lastBuilt) or store.reapply == false then return end
             task.delay(1.25, function()
-                if (lastUid or lastOutfit) and getFlag("spoof_avatar_reapply", true) then runApply(lastUid, lastOutfit) end
+                if store.reapply == false then return end
+                if lastBuilt then
+                    runBuilt(lastBuilt:Clone())
+                elseif lastUid or lastOutfit then
+                    runApply(lastUid, lastOutfit)
+                end
             end)
         end))
 

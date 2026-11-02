@@ -1908,10 +1908,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-e | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-f | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-e",
+    Title = "Aster  |  perception-1101-f",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -3774,7 +3774,6 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
         local function notify(message)
             pcall(function() Library:Notify(message, 4) end)
         end
-        local SKY_FACES = { SkyboxBk = "Back", SkyboxDn = "Down", SkyboxFt = "Front", SkyboxLf = "Left", SkyboxRt = "Right", SkyboxUp = "Up" }
         local SKY_ORDER = { "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp" }
 
         local SkySpin = Fx:Section("Sky", "Motion", "Rotation")
@@ -3806,13 +3805,6 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
         SkyClouds:Slider({ Name = "Drift direction", Flag = "sky_wind_dir", Min = 0, Max = 360, Default = 0, Decimals = 5, Suffix = "°" })
         SkyClouds:Slider({ Name = "Drift speed", Flag = "sky_wind_speed", Min = 0, Max = 1000, Default = 60, Decimals = 5 })
 
-        local SkyTex = Fx:Section("Sky", "Skyboxes", "Skybox texture")
-        SkyTex:Label({ Name = "Asset id, rbxassetid link, or a file in your executor workspace folder." })
-        SkyTex:Input({ Name = "All six faces", Flag = "sky_tex_all", Default = "", Placeholder = "e.g. 123456789 or sky/night.png" })
-        for _, face in ipairs(SKY_ORDER) do
-            SkyTex:Input({ Name = SKY_FACES[face], Flag = "sky_tex_" .. face, Default = "", Placeholder = "optional" })
-        end
-
         local sky, createdSky, savedSky, savedClock, savedWind
         local clouds, createdClouds, savedClouds
         local angle = Vector3.zero
@@ -3835,38 +3827,6 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
             end
             return sky
         end
-
-        local function resolveAsset(text)
-            text = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
-            if text == "" then return nil end
-            if text:match("^%d+$") then return "rbxassetid://" .. text end
-            if text:match("^rbxassetid://") or text:match("^rbxasset://") or text:match("^https?://") then return text end
-            if isfile and getcustomasset then
-                local okFile, exists = pcall(isfile, text)
-                if okFile and exists then
-                    local okAsset, asset = pcall(getcustomasset, text)
-                    if okAsset and asset then return asset end
-                end
-            end
-            return nil
-        end
-
-        local function applyTextures()
-            local target = acquireSky()
-            local all = resolveAsset(getFlag("sky_tex_all", ""))
-            local count = 0
-            for _, face in ipairs(SKY_ORDER) do
-                local one = resolveAsset(getFlag("sky_tex_" .. face, "")) or all
-                if one then target[face] = one count += 1 end
-            end
-            notify(count > 0 and ("Sky: applied " .. count .. " face(s)") or "Sky: type an asset id or workspace file first")
-        end
-        SkyTex:Button({ Name = "Apply textures", Callback = applyTextures })
-        SkyTex:Button({ Name = "Restore original skybox", Callback = function()
-            if sky and savedSky then
-                for _, face in ipairs(SKY_ORDER) do sky[face] = savedSky[face] end
-            end
-        end })
 
         local function hourDiff(a, b)
             local d = math.abs(a - b) % 24
@@ -7882,7 +7842,7 @@ do
                 return outer, box
             end
 
-            local function makeGrid(parent, position, size, visible)
+            local function makeGrid(parent, position, size, visible, cards)
                 local grid = lf("ScrollingFrame", {
                     BackgroundColor3 = Library.PanelColor, BorderSizePixel = 0, Position = position, Size = size, CanvasSize = UDim2.new(),
                     AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor,
@@ -7894,11 +7854,11 @@ do
                 local function fit()
                     local width = grid.AbsoluteSize.X
                     if width <= 0 then return end
-                    local gap, minimum = 6, 92
+                    local gap, minimum = 6, cards and 196 or 92
                     local usable = width - 16
                     local columns = math.max(1, math.floor((usable + gap) / (minimum + gap)))
                     local cell = math.floor((usable - (columns - 1) * gap) / columns)
-                    layout.CellSize = UDim2.fromOffset(cell, math.floor(cell * 1.18))
+                    layout.CellSize = UDim2.fromOffset(cell, cards and 62 or math.floor(cell * 1.18))
                 end
                 grid:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
                 fit()
@@ -7936,8 +7896,8 @@ do
             end
 
             -- left column: header, preview, wearing, actions ----------------------------------
-            local LEFT_W, WEAR_H, ACT_H, HEAD_H = 262, 132, 30, 26
-            local left = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0, LEFT_W, 1, 0), ZIndex = Z, Parent = root })
+            local LEFT_W, WEAR_H, ACT_H, HEAD_H = 250, 94, 30, 26
+            local left = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.new(1, -LEFT_W, 0, 0), Size = UDim2.new(0, LEFT_W, 1, 0), ZIndex = Z, Parent = root })
             if not Builder.rigSet then
                 local character = LocalPlayer.Character
                 local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -7989,10 +7949,10 @@ do
             local wearTitle = lbl({ Text = "Currently wearing", TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -12, 0, 16), Position = UDim2.fromOffset(8, 3), ZIndex = Z + 3, Parent = wearHolder })
             local wornGrid = lf("ScrollingFrame", {
                 BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 1, -24), CanvasSize = UDim2.new(),
-                AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = Z + 2, Parent = wearHolder,
+                AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollingDirection = Enum.ScrollingDirection.X, ScrollBarThickness = 2, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = Z + 2, Parent = wearHolder,
             }, { ScrollBarImageColor3 = "AccentColor" })
-            Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(58, 54), CellPadding = UDim2.fromOffset(4, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = wornGrid })
-            Library:Create("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 4), Parent = wornGrid })
+            Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center, Parent = wornGrid })
+            Library:Create("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), Parent = wornGrid })
 
             local actions = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 0, 1, -ACT_H), Size = UDim2.new(1, 0, 0, ACT_H), ZIndex = Z, Parent = left })
             local reapplyLabel
@@ -8014,17 +7974,23 @@ do
             reapplyLabel.Text = store.reapply ~= false and "Respawn: on" or "Respawn: off"
 
             -- right column ----------------------------------------------------------------------
-            local right = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(LEFT_W + 8, 0), Size = UDim2.new(1, -(LEFT_W + 8), 1, 0), ZIndex = Z, Parent = root })
-            local modeRow = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26), ZIndex = Z, Parent = right })
+            local right = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.new(), Size = UDim2.new(1, -(LEFT_W + 12), 1, 0), ZIndex = Z, Parent = root })
+            local modeRow = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 28), ZIndex = Z, Parent = right })
             Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = modeRow })
             local modeButtons = {}
             local setMode
-            for index, entry in ipairs({ { "market", "Marketplace" }, { "players", "Players" }, { "favs", "Favorites" } }) do
-                local outer, label = pill(modeRow, entry[2], UDim2.fromOffset(96, 26), nil, function() setMode(entry[1]) end, index)
-                modeButtons[entry[1]] = { outer = outer, label = label }
+            lf("Frame", { BackgroundColor3 = Library.OutlineColor, BackgroundTransparency = 0.5, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 27), Size = UDim2.new(1, 0, 0, 1), ZIndex = Z, Parent = right }, { BackgroundColor3 = "OutlineColor" })
+            for index, entry in ipairs({ { "market", "Catalog" }, { "players", "Players" }, { "favs", "Saved" } }) do
+                local width = TextService:GetTextSize(entry[2], 13, Library.Font, Vector2.new(300, 20)).X + 26
+                local outer = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(width, 28), LayoutOrder = index, ZIndex = Z, Parent = modeRow })
+                local label = lbl({ Text = entry[2], TextSize = 13, Size = UDim2.new(1, 0, 1, -3), ZIndex = Z + 3, Parent = outer })
+                local line = lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Position = UDim2.new(0, 8, 1, -3), Size = UDim2.new(1, -16, 0, 2), Visible = false, ZIndex = Z + 4, Parent = outer }, { BackgroundColor3 = "AccentColor" })
+                local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 6, Parent = outer })
+                hit.MouseButton1Click:Connect(function() setMode(entry[1]) end)
+                modeButtons[entry[1]] = { outer = outer, label = label, line = line }
             end
 
-            local PANE_Y = 32
+            local PANE_Y = 36
             local function newPane(visible)
                 return lf("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, PANE_Y), Size = UDim2.new(1, 0, 1, -PANE_Y), Visible = visible, ZIndex = Z, Parent = right })
             end
@@ -8034,12 +8000,12 @@ do
             local F = { keyword = "", types = {}, kind = "Any", sort = "Relevance", sortLabel = "Relevance", minPrice = "", maxPrice = "", onSale = false, catName = "All", bundles = false }
             local M = { gen = 0, busy = false, pages = nil, cursor = nil, finished = true, count = 0, tiles = {}, filtersOpen = false }
 
-            local GRID_TOP, FOOT_H, POP_TOP = 52, 34, 34
+            local GRID_TOP, FOOT_H, POP_TOP = 82, 34, 64
             local runSearch, togglePop
             local searchOuter, searchBox = makeInput(marketPane, UDim2.new(1, -98, 0, 28), UDim2.new(), "search the catalog, press Enter...")
             local filterOuter, filterLabel = pill(marketPane, "Filters", UDim2.fromOffset(92, 28), UDim2.new(1, -92, 0, 0), function() if togglePop then togglePop() end end)
-            local summary = lbl({ Text = "All items", TextSize = 11, TextTransparency = 0.35, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -4, 0, 14), Position = UDim2.fromOffset(4, 33), ZIndex = Z + 3, Parent = marketPane })
-            local mGrid = makeGrid(marketPane, UDim2.fromOffset(0, GRID_TOP), UDim2.new(1, 0, 1, -(GRID_TOP + FOOT_H + 4)), true)
+            local summary = lbl({ Text = "All items", TextSize = 11, TextTransparency = 0.35, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -4, 0, 14), Position = UDim2.fromOffset(4, 64), ZIndex = Z + 3, Parent = marketPane })
+            local mGrid = makeGrid(marketPane, UDim2.fromOffset(0, GRID_TOP), UDim2.new(1, 0, 1, -(GRID_TOP + FOOT_H + 4)), true, true)
             local mStatus = lbl({ Text = "", TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -8, 0, 15), Position = UDim2.new(0, 4, 1, -FOOT_H), ZIndex = Z + 3, Parent = marketPane })
 
             do
@@ -8122,7 +8088,37 @@ do
                 filterLabel.Text = (popOuter.Visible and "Close" or "Filters") .. (#parts > 0 and ("  (" .. #parts .. ")") or "")
             end
 
-            local catGroup = choiceGroup(popSection("CATEGORY", 1), categoryNames, "All", function(name)
+            local function tabGroup(parent, y, names, current, onPick)
+                local scroll = lf("ScrollingFrame", {
+                    BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(0, y), Size = UDim2.new(1, 0, 0, 26),
+                    CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
+                    ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = Z + 2, Parent = parent,
+                })
+                Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 0), SortOrder = Enum.SortOrder.LayoutOrder, Parent = scroll })
+                local buttons, group = {}, {}
+                function group.paint(pick)
+                    for name, button in pairs(buttons) do
+                        local on = name == pick
+                        button.label.TextColor3 = on and (Library.ActiveColor or Library.AccentColor) or Library.MutedColor
+                        button.line.Visible = on
+                    end
+                end
+                for index, name in ipairs(names) do
+                    local width = TextService:GetTextSize(name, 12, Library.Font, Vector2.new(300, 20)).X + 20
+                    local box = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(width, 26), LayoutOrder = index, ZIndex = Z + 2, Parent = scroll })
+                    local label = lbl({ Text = name, TextSize = 12, Size = UDim2.new(1, 0, 1, -3), ZIndex = Z + 4, Parent = box })
+                    local line = lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Position = UDim2.new(0, 6, 1, -3), Size = UDim2.new(1, -12, 0, 2), Visible = false, ZIndex = Z + 4, Parent = box }, { BackgroundColor3 = "AccentColor" })
+                    local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 6, Parent = box })
+                    buttons[name] = { label = label, line = line }
+                    hit.MouseButton1Click:Connect(function()
+                        group.paint(name)
+                        onPick(name)
+                    end)
+                end
+                group.paint(current)
+                return group
+            end
+            local catGroup = tabGroup(marketPane, 34, categoryNames, "All", function(name)
                 F.catName = name
                 F.types = categoryTypes[name]
                 F.bundles = categoryBundle[name]
@@ -8134,7 +8130,7 @@ do
                 updateSummary()
                 runSearch(false)
             end)
-            lbl({ Text = "Limited only lists Roblox limiteds, UGC limiteds are left out. Classic clothing only, no layered clothing.", TextSize = 10, TextTransparency = 0.5, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Size = UDim2.new(1, 0, 0, 28), LayoutOrder = 3, ZIndex = Z + 33, Parent = popScroll })
+            lbl({ Text = "Limited only lists Roblox limiteds, UGC limiteds are left out. Classic clothing only. Categories are the tabs above the list.", TextSize = 10, TextTransparency = 0.5, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Size = UDim2.new(1, 0, 0, 28), LayoutOrder = 3, ZIndex = Z + 33, Parent = popScroll })
             local sortGroup = choiceGroup(popSection("SORT BY", 4), sortNames, "Relevance", function(name)
                 F.sort, F.sortLabel = sortKey[name], name
                 updateSummary()
@@ -8202,25 +8198,25 @@ do
             end
 
             local function addMarketTile(entry, order)
-                local tile, face = bevel(mGrid, Z + 2, UDim2.fromOffset(98, 116), nil, order)
-                mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -42), Position = UDim2.fromOffset(4, 4), ZIndex = Z + 6, Parent = face })
-                lbl({ Text = entry.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 14), Position = UDim2.new(0, 3, 1, -38), ZIndex = Z + 6, Parent = face })
+                local tile, face = bevel(mGrid, Z + 2, UDim2.fromOffset(200, 62), nil, order)
+                local offSale = string.find(string.lower(entry.priceStatus or ""), "off", 1, true) ~= nil
+                    or (entry.price == nil and not entry.limited and not entry.isBundle)
+                local color, tag
+                if offSale then color, tag = Color3.fromRGB(226, 70, 70), "off sale"
+                elseif entry.isBundle then color, tag = Color3.fromRGB(150, 90, 230), "bundle"
+                elseif entry.limited then color, tag = Color3.fromRGB(70, 200, 110), "limited"
+                elseif entry.creator and entry.creator ~= "Roblox" then color, tag = Color3.fromRGB(170, 170, 170), "ugc"
+                else color, tag = Color3.fromRGB(70, 110, 235), "roblox" end
+                entry.tag = tag
+                local stripe = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.fromOffset(6, 9), Size = UDim2.new(0, 3, 1, -18), ZIndex = Z + 8, Parent = face })
+                Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = stripe })
+                mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromOffset(48, 48), Position = UDim2.fromOffset(15, 7), ZIndex = Z + 6, Parent = face })
+                lbl({ Text = entry.name, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -76, 0, 16), Position = UDim2.fromOffset(70, 6), ZIndex = Z + 6, Parent = face })
+                local kindText = tag .. (entry.assetName and ("  |  " .. entry.assetName) or "")
+                lbl({ Text = kindText, TextSize = 10, TextTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -76, 0, 14), Position = UDim2.fromOffset(70, 23), ZIndex = Z + 6, Parent = face })
                 local priceText = "-"
                 if type(entry.price) == "number" then priceText = entry.price == 0 and "Free" or ("R$ " .. tostring(entry.price)) end
-                lbl({ Text = priceText, TextSize = 11, TextTransparency = 0.25, Size = UDim2.new(1, -6, 0, 14), Position = UDim2.new(0, 3, 1, -22), ZIndex = Z + 6, Parent = face })
-                do
-                    local offSale = string.find(string.lower(entry.priceStatus or ""), "off", 1, true) ~= nil
-                        or (entry.price == nil and not entry.limited and not entry.isBundle)
-                    local color, tag
-                    if offSale then color, tag = Color3.fromRGB(226, 70, 70), "off sale"
-                    elseif entry.isBundle then color, tag = Color3.fromRGB(150, 90, 230), "bundle"
-                    elseif entry.limited then color, tag = Color3.fromRGB(70, 200, 110), "limited"
-                    elseif entry.creator and entry.creator ~= "Roblox" then color, tag = Color3.fromRGB(170, 170, 170), "ugc"
-                    else color, tag = Color3.fromRGB(70, 110, 235), "roblox" end
-                    local bar = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.new(0, 4, 1, -5), Size = UDim2.new(1, -8, 0, 3), ZIndex = Z + 8, Parent = face })
-                    Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = bar })
-                    entry.tag = tag
-                end
+                lbl({ Text = priceText, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -76, 0, 16), Position = UDim2.fromOffset(70, 40), ZIndex = Z + 6, Parent = face })
                 local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 12, Parent = tile })
                 hit.MouseEnter:Connect(function() if not isWorn(entry.id) then setBorder(tile, "AccentColor") end end)
                 hit.MouseLeave:Connect(function() setBorder(tile, isWorn(entry.id) and "AccentColor" or "Black") end)
@@ -8370,7 +8366,7 @@ do
                 local items = wornItems()
                 wearTitle.Text = string.format("Currently wearing (%d)  -  click to remove", #items)
                 for index, item in ipairs(items) do
-                    local tile, face = bevel(wornGrid, Z + 3, UDim2.fromOffset(58, 54), nil, index)
+                    local tile, face = bevel(wornGrid, Z + 3, UDim2.fromOffset(56, 58), nil, index)
                     mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(item.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -18), Position = UDim2.fromOffset(4, 3), ZIndex = Z + 6, Parent = face })
                     lbl({ Text = item.label, TextSize = 10, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -4, 0, 13), Position = UDim2.new(0, 2, 1, -15), ZIndex = Z + 6, Parent = face })
                     local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 12, Parent = tile })
@@ -8546,6 +8542,7 @@ do
                     local on = name == mode
                     button.label.TextColor3 = on and (Library.ActiveColor or Library.AccentColor) or Library.MutedColor
                     setBorder(button.outer, on and "AccentColor" or "Black")
+                    if button.line then button.line.Visible = on end
                 end
                 if mode == "favs" then refreshFavorites() end
                 if mode == "players" and not ui.playersLoaded then

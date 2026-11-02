@@ -1908,10 +1908,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-g | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-h | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-g",
+    Title = "Aster  |  perception-1101-h",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -8044,7 +8044,7 @@ do
             local modeButtons = {}
             local setMode
             lf("Frame", { BackgroundColor3 = Library.OutlineColor, BackgroundTransparency = 0.5, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 27), Size = UDim2.new(1, 0, 0, 1), ZIndex = Z, Parent = right }, { BackgroundColor3 = "OutlineColor" })
-            for index, entry in ipairs({ { "market", "Catalog" }, { "id", "By ID" }, { "outfits", "Outfits" }, { "players", "Players" }, { "favs", "Favorites" } }) do
+            for index, entry in ipairs({ { "market", "Catalog" }, { "colors", "Body" }, { "id", "By ID" }, { "outfits", "Outfits" }, { "players", "Players" }, { "favs", "Favorites" } }) do
                 local width = TextService:GetTextSize(entry[2], 13, Library.Font, Vector2.new(300, 20)).X + 26
                 local outer = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(width, 28), LayoutOrder = index, ZIndex = Z, Parent = modeRow })
                 local label = lbl({ Text = entry[2], TextSize = 13, Size = UDim2.new(1, 0, 1, -3), ZIndex = Z + 3, Parent = outer })
@@ -8059,7 +8059,7 @@ do
                 return lf("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, PANE_Y), Size = UDim2.new(1, 0, 1, -PANE_Y), Visible = visible, ZIndex = Z, Parent = right })
             end
             local marketPane, playersPane, favPane = newPane(true), newPane(false), newPane(false)
-            local idPane, outPane = newPane(false), newPane(false)
+            local idPane, outPane, colorPane = newPane(false), newPane(false), newPane(false)
 
             -- marketplace ------------------------------------------------------------------------
             local F = { keyword = "", types = {}, kind = "Any", sort = "Relevance", sortLabel = "Relevance", minPrice = "", maxPrice = "", onSale = false, catName = "All", bundleType = nil, robloxOnly = false }
@@ -8323,19 +8323,15 @@ do
                 local tile, face = bevel(mGrid, Z + 2, list and UDim2.new(1, -2, 0, 52) or UDim2.fromOffset(98, 116), nil, order)
                 local color, tag = entryStyle(entry)
                 entry.tag = tag
-                local priceText = "-"
-                if type(entry.price) == "number" then priceText = entry.price == 0 and "Free" or ("R$ " .. tostring(entry.price)) end
                 if list then
                     local stripe = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.fromOffset(6, 8), Size = UDim2.new(0, 3, 1, -16), ZIndex = Z + 8, Parent = face })
                     Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = stripe })
                     mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromOffset(40, 40), Position = UDim2.fromOffset(15, 6), ZIndex = Z + 6, Parent = face })
-                    lbl({ Text = entry.name, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -170, 0, 16), Position = UDim2.fromOffset(64, 6), ZIndex = Z + 6, Parent = face })
-                    lbl({ Text = tag .. (entry.assetName and ("  |  " .. entry.assetName) or ""), TextSize = 10, TextTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -170, 0, 14), Position = UDim2.fromOffset(64, 26), ZIndex = Z + 6, Parent = face })
-                    lbl({ Text = priceText, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Right, Size = UDim2.new(0, 96, 1, 0), Position = UDim2.new(1, -104, 0, 0), ZIndex = Z + 6, Parent = face })
+                    lbl({ Text = entry.name, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -74, 0, 16), Position = UDim2.fromOffset(64, 6), ZIndex = Z + 6, Parent = face })
+                    lbl({ Text = tag .. (entry.assetName and ("  |  " .. entry.assetName) or ""), TextSize = 10, TextTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -74, 0, 14), Position = UDim2.fromOffset(64, 26), ZIndex = Z + 6, Parent = face })
                 else
-                    mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -42), Position = UDim2.fromOffset(4, 4), ZIndex = Z + 6, Parent = face })
-                    lbl({ Text = entry.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 14), Position = UDim2.new(0, 3, 1, -38), ZIndex = Z + 6, Parent = face })
-                    lbl({ Text = priceText, TextSize = 11, TextTransparency = 0.25, Size = UDim2.new(1, -6, 0, 14), Position = UDim2.new(0, 3, 1, -22), ZIndex = Z + 6, Parent = face })
+                    mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -28), Position = UDim2.fromOffset(4, 4), ZIndex = Z + 6, Parent = face })
+                    lbl({ Text = entry.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 14), Position = UDim2.new(0, 3, 1, -22), ZIndex = Z + 6, Parent = face })
                     local bar = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.new(0, 4, 1, -5), Size = UDim2.new(1, -8, 0, 3), ZIndex = Z + 8, Parent = face })
                     Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = bar })
                 end
@@ -8635,10 +8631,17 @@ do
                 refreshWorn()
                 rebuildPreview()
                 refreshMarketBorders()
+                local ui = spoofUi
+                if ui and ui.refreshColors then ui.refreshColors() end
             end
 
             local function setDescription(desc)
                 Builder.desc = desc
+                Builder.baseColors = {}
+                for _, prop in ipairs({ "HeadColor", "TorsoColor", "LeftArmColor", "RightArmColor", "LeftLegColor", "RightLegColor" }) do
+                    local okColor, color = pcall(function() return desc[prop] end)
+                    if okColor and typeof(color) == "Color3" then Builder.baseColors[prop] = color end
+                end
                 onBuilderChanged()
             end
 
@@ -8899,6 +8902,109 @@ do
                 end)
             end
 
+            -- body colors ----------------------------------------------------------------------------
+            local refreshColors
+            do
+                local PARTS = {
+                    { "All parts", nil }, { "Head", "HeadColor" }, { "Torso", "TorsoColor" }, { "Left arm", "LeftArmColor" },
+                    { "Right arm", "RightArmColor" }, { "Left leg", "LeftLegColor" }, { "Right leg", "RightLegColor" },
+                }
+                local PROPS = { "HeadColor", "TorsoColor", "LeftArmColor", "RightArmColor", "LeftLegColor", "RightLegColor" }
+                local PALETTE = {
+                    { 255, 255, 255 }, { 229, 228, 223 }, { 163, 162, 165 }, { 99, 95, 98 }, { 27, 42, 53 }, { 17, 17, 17 },
+                    { 245, 205, 48 }, { 253, 234, 141 }, { 218, 134, 122 }, { 196, 40, 28 }, { 123, 46, 47 }, { 105, 64, 40 },
+                    { 205, 164, 120 }, { 234, 184, 146 }, { 204, 142, 105 }, { 240, 213, 160 }, { 124, 92, 70 }, { 91, 64, 45 },
+                    { 218, 133, 65 }, { 226, 155, 64 }, { 255, 152, 220 }, { 233, 118, 193 }, { 170, 85, 255 }, { 98, 37, 209 },
+                    { 13, 105, 172 }, { 33, 84, 185 }, { 116, 134, 157 }, { 4, 175, 236 }, { 128, 187, 219 }, { 61, 21, 133 },
+                    { 40, 127, 71 }, { 75, 151, 75 }, { 161, 196, 140 }, { 52, 142, 64 }, { 0, 143, 156 }, { 18, 238, 212 },
+                    { 124, 156, 107 }, { 99, 125, 104 }, { 215, 197, 154 }, { 159, 131, 95 }, { 180, 128, 255 }, { 255, 89, 89 },
+                }
+                local selected = 1
+                local rows = {}
+                lbl({ Text = "Body colors", TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(2, 0), ZIndex = Z + 3, Parent = colorPane })
+                local partList = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 24), Size = UDim2.new(0, 150, 1, -24), ZIndex = Z, Parent = colorPane })
+                Library:Create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 5), Parent = partList })
+                local right2 = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(158, 24), Size = UDim2.new(1, -158, 1, -24), ZIndex = Z, Parent = colorPane })
+                local targetLabel = lbl({ Text = "", TextSize = 11, TextTransparency = 0.35, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 16), ZIndex = Z + 3, Parent = right2 })
+                local palette = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 0, 200), ZIndex = Z, Parent = right2 })
+                Library:Create("UIGridLayout", { CellSize = UDim2.fromOffset(30, 30), CellPadding = UDim2.fromOffset(5, 5), SortOrder = Enum.SortOrder.LayoutOrder, Parent = palette })
+
+                local function currentColor(prop)
+                    if not (Builder.desc and prop) then return Color3.fromRGB(120, 120, 120) end
+                    local ok, color = pcall(function() return Builder.desc[prop] end)
+                    return ok and typeof(color) == "Color3" and color or Color3.fromRGB(120, 120, 120)
+                end
+
+                local function paintRows()
+                    for index, row in ipairs(rows) do
+                        local prop = PARTS[index][2]
+                        row.swatch.BackgroundColor3 = prop and currentColor(prop) or currentColor("TorsoColor")
+                        row.label.TextColor3 = index == selected and (Library.ActiveColor or Library.AccentColor) or Library.FontColor
+                        setBorder(row.outer, index == selected and "AccentColor" or "Black")
+                    end
+                    targetLabel.Text = selected == 1 and "Pick a color, it is applied to every part" or ("Pick a color for the " .. string.lower(PARTS[selected][1]))
+                end
+                function refreshColors() paintRows() end
+
+                local function setColor(color)
+                    if not Builder.desc then notify("Avatar builder: still loading your avatar") return end
+                    if selected == 1 then
+                        for _, prop in ipairs(PROPS) do pcall(function() Builder.desc[prop] = color end) end
+                    else
+                        local prop = PARTS[selected][2]
+                        pcall(function() Builder.desc[prop] = color end)
+                    end
+                    if onBuilderChanged then onBuilderChanged() end
+                end
+
+                for index, part in ipairs(PARTS) do
+                    local outer, face = bevel(partList, Z + 2, UDim2.new(1, 0, 0, 34), nil, index)
+                    local swatch = lf("Frame", { BackgroundColor3 = Color3.fromRGB(120, 120, 120), BorderSizePixel = 0, Position = UDim2.fromOffset(8, 7), Size = UDim2.fromOffset(20, 20), ZIndex = Z + 5, Parent = face })
+                    Library:Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = swatch })
+                    local label = lbl({ Text = part[1], TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -40, 1, 0), Position = UDim2.fromOffset(36, 0), ZIndex = Z + 5, Parent = face })
+                    local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 8, Parent = outer })
+                    hit.MouseButton1Click:Connect(function()
+                        selected = index
+                        paintRows()
+                    end)
+                    rows[index] = { outer = outer, swatch = swatch, label = label }
+                end
+
+                for index, rgb in ipairs(PALETTE) do
+                    local color = Color3.fromRGB(rgb[1], rgb[2], rgb[3])
+                    local cell = lf("TextButton", { BackgroundColor3 = color, BorderSizePixel = 0, Text = "", AutoButtonColor = false, LayoutOrder = index, ZIndex = Z + 2, Parent = palette })
+                    Library:Create("UICorner", { CornerRadius = UDim.new(0, 5), Parent = cell })
+                    Library:Create("UIStroke", { Color = Library.OutlineColor, Thickness = 1, Transparency = 0.4, Parent = cell })
+                    cell.MouseButton1Click:Connect(function() setColor(color) end)
+                end
+
+                local hexOuter, hexBox = makeInput(right2, UDim2.new(1, -92, 0, 28), UDim2.fromOffset(0, 232), "hex color, e.g. #ff8844")
+                local function hexApply()
+                    local r, g, b = string.match(hexBox.Text, "#?(%x%x)(%x%x)(%x%x)")
+                    if r then
+                        setColor(Color3.fromRGB(tonumber(r, 16), tonumber(g, 16), tonumber(b, 16)))
+                    else
+                        notify("Avatar builder: type a color like #ff8844")
+                    end
+                end
+                hexBox.FocusLost:Connect(function(enter) if enter then hexApply() end end)
+                local function colorPill(text, size, position, onClick)
+                    local outer, face = bevel(right2, Z, size, position)
+                    lbl({ Text = text, TextSize = 12, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 3, Parent = face })
+                    local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 6, Parent = outer })
+                    hit.MouseEnter:Connect(function() setBorder(outer, "AccentColor") end)
+                    hit.MouseLeave:Connect(function() setBorder(outer, "Black") end)
+                    hit.MouseButton1Click:Connect(onClick)
+                end
+                colorPill("Set", UDim2.fromOffset(86, 28), UDim2.new(1, -86, 0, 232), hexApply)
+                colorPill("Reset to original colors", UDim2.new(1, 0, 0, 28), UDim2.fromOffset(0, 270), function()
+                    if not (Builder.desc and Builder.baseColors) then return end
+                    for prop, color in pairs(Builder.baseColors) do pcall(function() Builder.desc[prop] = color end) end
+                    if onBuilderChanged then onBuilderChanged() end
+                end)
+                paintRows()
+            end
+
             -- players pane (look up anyone, browse their saved outfits) ---------------------------------
             local pSearchOuter, search = makeInput(playersPane, UDim2.new(1, 0, 0, 28), UDim2.new(), "username, UserId, profile URL or outfit:ID, press Enter...")
             local chips = lf("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 32), Size = UDim2.new(1, 0, 0, 30), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, ZIndex = Z + 1, Parent = playersPane })
@@ -8946,6 +9052,8 @@ do
                 playersPane.Visible = mode == "players"
                 favPane.Visible = mode == "favs"
                 idPane.Visible = mode == "id"
+                colorPane.Visible = mode == "colors"
+                if mode == "colors" and ui.refreshColors then ui.refreshColors() end
                 outPane.Visible = mode == "outfits"
                 if mode == "outfits" and ui.refreshOutfits then ui.refreshOutfits() end
                 ui.activeGrid = mode == "favs" and favGrid or grid
@@ -8965,6 +9073,7 @@ do
             spoofUi = { panel = { Frame = root, Shown = true }, main = root, grid = grid, favGrid = favGrid, activeGrid = grid, mode = "market", chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0, thumbsDone = true, shown = true, angle = angle, center = Vector3.zero, dist = 8, height = 5 }
             local owner = spoofUi
             owner.refreshOutfits = refreshOutfits
+            owner.refreshColors = refreshColors
             task.spawn(function()
                 while spoofUi == owner do
                     local now = os.clock()

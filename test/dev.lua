@@ -1908,10 +1908,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-f | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-g | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-f",
+    Title = "Aster  |  perception-1101-g",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -6595,16 +6595,32 @@ do
                     return
                 end
 
-                local attachment = handle:FindFirstChildWhichIsA("Attachment")
-                local targetAttachment
-                if attachment then
-                    for _, d in ipairs(char:GetDescendants()) do
-                        if d:IsA("Attachment") and d.Name == attachment.Name and not d:IsDescendantOf(copy) then
-                            targetAttachment = d
-                            break
-                        end
+                local preset = handle:FindFirstChild("AccessoryWeld")
+                if preset and preset:IsA("JointInstance") and not fromAsset then
+                    local own = preset.Part0 == handle
+                    local other = own and preset.Part1 or preset.Part0
+                    local mapped = other and other ~= handle and (char:FindFirstChild(other.Name) or char:FindFirstChild(other.Name, true))
+                    if mapped then
+                        if own then preset.Part1 = mapped else preset.Part0 = mapped end
+                        copy.Parent = char
+                        wornKeys[key] = true
+                        return
                     end
                 end
+
+                local attachment, targetAttachment
+                for _, candidate in ipairs(handle:GetChildren()) do
+                    if candidate:IsA("Attachment") then
+                        for _, d in ipairs(char:GetDescendants()) do
+                            if d:IsA("Attachment") and d.Name == candidate.Name and not d:IsDescendantOf(copy) then
+                                attachment, targetAttachment = candidate, d
+                                break
+                            end
+                        end
+                        if attachment then break end
+                    end
+                end
+                attachment = attachment or handle:FindFirstChildWhichIsA("Attachment")
 
                 if fromAsset then
                     local isHead = targetAttachment ~= nil and targetAttachment.Parent ~= nil and targetAttachment.Parent.Name == "Head"
@@ -7043,7 +7059,7 @@ do
         local UserInputService = game:GetService("UserInputService")
         local spoofUi
 
-        local store = { recent = {}, favorites = {} }
+        local store = { recent = {}, favorites = {}, outfits = {} }
         local STORE_PATH = "Aster/spoofer.json"
         do
             local ok, data = pcall(function()
@@ -7054,6 +7070,7 @@ do
             if ok and type(data) == "table" then
                 if type(data.recent) == "table" then store.recent = data.recent end
                 if type(data.favorites) == "table" then store.favorites = data.favorites end
+                if type(data.outfits) == "table" then store.outfits = data.outfits end
                 if data.reapply ~= nil then store.reapply = data.reapply end
             end
         end
@@ -7556,7 +7573,7 @@ do
             ShoulderAccessory = { acc = "Shoulder" }, FrontAccessory = { acc = "Front" }, BackAccessory = { acc = "Back" }, WaistAccessory = { acc = "Waist" },
             EyebrowAccessory = { acc = "Eyebrow" }, EyelashAccessory = { acc = "Eyelash" },
             Shirt = { prop = "Shirt" }, Pants = { prop = "Pants" }, TShirt = { prop = "GraphicTShirt" },
-            Head = { prop = "Head" }, Face = { prop = "Face" }, Torso = { prop = "Torso" },
+            Head = { prop = "Head" }, DynamicHead = { prop = "Head" }, Face = { prop = "Face" }, Torso = { prop = "Torso" },
             RightArm = { prop = "RightArm" }, LeftArm = { prop = "LeftArm" }, LeftLeg = { prop = "LeftLeg" }, RightLeg = { prop = "RightLeg" },
             ClimbAnimation = { prop = "ClimbAnimation" }, FallAnimation = { prop = "FallAnimation" }, IdleAnimation = { prop = "IdleAnimation" },
             JumpAnimation = { prop = "JumpAnimation" }, MoodAnimation = { prop = "MoodAnimation" }, RunAnimation = { prop = "RunAnimation" },
@@ -7579,7 +7596,7 @@ do
             return string.format("rbxthumb://type=Asset&id=%d&w=150&h=150", id)
         end
 
-        local function wearAsset(id, typeName)
+        local function wearAsset(id, typeName, onlyAdd)
             local desc = Builder.desc
             local slot = typeName and ACC_SLOTS[typeName]
             if not (desc and slot) then return nil end
@@ -7587,6 +7604,7 @@ do
                 local list = desc:GetAccessories(true)
                 for index, entry in ipairs(list) do
                     if entry.AssetId == id then
+                        if onlyAdd then return true end
                         table.remove(list, index)
                         desc:SetAccessories(list, true)
                         return false
@@ -7598,6 +7616,7 @@ do
                 return true
             end
             if desc[slot.prop] == id then
+                if onlyAdd then return true end
                 desc[slot.prop] = 0
                 return false
             end
@@ -7655,6 +7674,13 @@ do
                 notify("Avatar builder: could not build that avatar")
                 return false
             end
+            if humanoid.RigType == Enum.HumanoidRigType.R6 and type(desc.Head) == "number" and desc.Head ~= 0 then
+                local okInfo, info = pcall(function() return AvatarEditorService:GetItemDetails(desc.Head, Enum.AvatarItemType.Asset) end)
+                if okInfo and type(info) == "table" and assetTypeName(info.AssetType) == "DynamicHead" then
+                    desc.Head = 0
+                    notify("Avatar builder: dynamic heads do not work on R6, kept the default head")
+                end
+            end
             lastUid, lastOutfit = nil, nil
             lastBuilt = desc:Clone()
             currentDesc = desc
@@ -7688,19 +7714,51 @@ do
             return false
         end
 
+        local function assembleModel(model)
+            local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+            if not root then return end
+            local done = { [root] = true }
+            local joints = {}
+            for _, inst in ipairs(model:GetDescendants()) do
+                if inst:IsA("JointInstance") then joints[#joints + 1] = inst end
+            end
+            local progress, guard = true, 0
+            while progress and guard < 40 do
+                progress = false
+                guard += 1
+                for _, joint in ipairs(joints) do
+                    local p0, p1 = joint.Part0, joint.Part1
+                    if p0 and p1 then
+                        if done[p0] and not done[p1] then
+                            p1.CFrame = p0.CFrame * joint.C0 * joint.C1:Inverse()
+                            done[p1] = true
+                            progress = true
+                        elseif done[p1] and not done[p0] then
+                            p0.CFrame = p1.CFrame * joint.C1 * joint.C0:Inverse()
+                            done[p0] = true
+                            progress = true
+                        end
+                    end
+                end
+            end
+        end
+
+        -- { name, asset types, bundle type, roblox only, shown in All }
         local CATEGORIES = {
-            { "All", {} }, { "Hats", { "Hat" } }, { "Hair", { "HairAccessory" } }, { "Face acc.", { "FaceAccessory" } },
-            { "Neck", { "NeckAccessory" } }, { "Shoulder", { "ShoulderAccessory" } }, { "Front", { "FrontAccessory" } },
-            { "Back", { "BackAccessory" } }, { "Waist", { "WaistAccessory" } },
-            { "Shirts", { "Shirt" } }, { "T-Shirts", { "TShirt" } }, { "Pants", { "Pants" } },
-            { "Heads", { "Head" } }, { "Faces", { "Face" } }, { "Bodies", { "Torso", "RightArm", "LeftArm", "LeftLeg", "RightLeg" } },
-            { "Animations", { "IdleAnimation", "WalkAnimation", "RunAnimation", "JumpAnimation", "FallAnimation", "ClimbAnimation", "SwimAnimation" } },
-            { "Bundles", {}, true },
+            { "All", {}, nil, false, false }, { "Hats", { "Hat" }, nil, false, true }, { "Hair", { "HairAccessory" }, nil, false, true },
+            { "Face acc.", { "FaceAccessory" }, nil, false, true }, { "Neck", { "NeckAccessory" }, nil, false, true },
+            { "Shoulder", { "ShoulderAccessory" }, nil, false, true }, { "Front", { "FrontAccessory" }, nil, false, true },
+            { "Back", { "BackAccessory" }, nil, false, true }, { "Waist", { "WaistAccessory" }, nil, false, true },
+            { "Shirts", { "Shirt" }, nil, false, true }, { "T-Shirts", { "TShirt" }, nil, false, true }, { "Pants", { "Pants" }, nil, false, true },
+            { "Heads", { "DynamicHead" }, nil, false, true },
+            { "Bodies", {}, "BodyParts", true, false },
+            { "Animations", {}, "Animations", false, false },
+            { "Emotes", { "EmoteAnimation" }, nil, true, false },
         }
         do
             local everything = {}
             for _, entry in ipairs(CATEGORIES) do
-                if entry[3] ~= true then
+                if entry[5] then
                     for _, name in ipairs(entry[2]) do everything[#everything + 1] = name end
                 end
             end
@@ -7724,14 +7782,11 @@ do
                 if ok and item then types[#types + 1] = item end
             end
             if #types > 0 then params.AssetTypes = types end
-            if F.bundles then
-                local bundleTypes = {}
-                pcall(function()
-                    for _, item in ipairs(Enum.BundleType:GetEnumItems()) do
-                        if item.Name ~= "Unknown" then bundleTypes[#bundleTypes + 1] = item end
-                    end
-                end)
-                if #bundleTypes > 0 then params.BundleTypes = bundleTypes end
+            if F.bundleType then
+                pcall(function() params.BundleTypes = { Enum.BundleType[F.bundleType] } end)
+            end
+            if F.robloxOnly then
+                pcall(function() params.CreatorName = "Roblox" end)
             end
             if F.kind == "Limited" then
                 pcall(function() params.CategoryFilter = Enum.CatalogCategoryFilter.Collectibles end)
@@ -7757,9 +7812,15 @@ do
             local itemType = item.ItemType or item.itemType
             local isBundle = (typeof(itemType) == "EnumItem" and itemType.Name == "Bundle") or itemType == "Bundle"
             local restrictions = item.itemRestrictions or item.ItemRestrictions
-            local limited = (type(restrictions) == "table" and #restrictions > 0)
-                or (item.CollectibleItemId ~= nil and item.CollectibleItemId ~= "")
-                or item.IsLimited == true or item.IsLimitedUnique == true
+            local limited = item.IsLimited == true or item.IsLimitedUnique == true
+            if type(restrictions) == "table" then
+                for _, restriction in pairs(restrictions) do
+                    local text = string.lower(tostring(restriction))
+                    if string.find(text, "limited", 1, true) or string.find(text, "collectible", 1, true) then limited = true end
+                end
+            end
+            local collectible = item.CollectibleItemId
+            if type(collectible) == "string" and collectible ~= "" and not string.match(collectible, "^[0%-]+$") then limited = true end
             return {
                 id = id,
                 name = tostring(item.Name or item.name or id),
@@ -7774,6 +7835,7 @@ do
         end
 
         local function passesKind(F, entry)
+            if F.robloxOnly and entry.creator ~= nil and entry.creator ~= "Roblox" then return false end
             if F.kind == "Limited" then
                 if entry.creator ~= nil and entry.creator ~= "Roblox" then return false end
             elseif F.kind == "Roblox" then
@@ -7789,7 +7851,7 @@ do
             for _, entry in ipairs(SORTS) do if entry[2] == F.sort then sort = entry[3] end end
             local url = "https://catalog.roblox.com/v1/search/items/details?Keyword=" .. HttpService:UrlEncode(F.keyword or "") .. "&Limit=30&SortType=" .. sort
             if cursor then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
-            if F.kind == "Roblox" or F.kind == "Limited" then url = url .. "&CreatorName=Roblox" end
+            if F.kind == "Roblox" or F.kind == "Limited" or F.robloxOnly then url = url .. "&CreatorName=Roblox" end
             local data, status, message = httpJson(url)
             if not data then error("catalog request failed (" .. tostring(status) .. ") " .. tostring(message or ""), 0) end
             local wanted
@@ -7842,7 +7904,7 @@ do
                 return outer, box
             end
 
-            local function makeGrid(parent, position, size, visible, cards)
+            local function makeGrid(parent, position, size, visible)
                 local grid = lf("ScrollingFrame", {
                     BackgroundColor3 = Library.PanelColor, BorderSizePixel = 0, Position = position, Size = size, CanvasSize = UDim2.new(),
                     AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor,
@@ -7854,13 +7916,15 @@ do
                 local function fit()
                     local width = grid.AbsoluteSize.X
                     if width <= 0 then return end
-                    local gap, minimum = 6, cards and 196 or 92
+                    local mode = grid:GetAttribute("mode") or "tiles"
+                    local gap, minimum = 6, mode == "list" and 1000000 or 92
                     local usable = width - 16
                     local columns = math.max(1, math.floor((usable + gap) / (minimum + gap)))
                     local cell = math.floor((usable - (columns - 1) * gap) / columns)
-                    layout.CellSize = UDim2.fromOffset(cell, cards and 62 or math.floor(cell * 1.18))
+                    layout.CellSize = UDim2.fromOffset(cell, mode == "list" and 52 or math.floor(cell * 1.18))
                 end
                 grid:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+                grid:GetAttributeChangedSignal("mode"):Connect(fit)
                 fit()
                 return grid
             end
@@ -7980,7 +8044,7 @@ do
             local modeButtons = {}
             local setMode
             lf("Frame", { BackgroundColor3 = Library.OutlineColor, BackgroundTransparency = 0.5, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 27), Size = UDim2.new(1, 0, 0, 1), ZIndex = Z, Parent = right }, { BackgroundColor3 = "OutlineColor" })
-            for index, entry in ipairs({ { "market", "Catalog" }, { "players", "Players" }, { "favs", "Saved" } }) do
+            for index, entry in ipairs({ { "market", "Catalog" }, { "id", "By ID" }, { "outfits", "Outfits" }, { "players", "Players" }, { "favs", "Favorites" } }) do
                 local width = TextService:GetTextSize(entry[2], 13, Library.Font, Vector2.new(300, 20)).X + 26
                 local outer = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(width, 28), LayoutOrder = index, ZIndex = Z, Parent = modeRow })
                 local label = lbl({ Text = entry[2], TextSize = 13, Size = UDim2.new(1, 0, 1, -3), ZIndex = Z + 3, Parent = outer })
@@ -7995,36 +8059,42 @@ do
                 return lf("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, PANE_Y), Size = UDim2.new(1, 0, 1, -PANE_Y), Visible = visible, ZIndex = Z, Parent = right })
             end
             local marketPane, playersPane, favPane = newPane(true), newPane(false), newPane(false)
+            local idPane, outPane = newPane(false), newPane(false)
 
             -- marketplace ------------------------------------------------------------------------
-            local F = { keyword = "", types = {}, kind = "Any", sort = "Relevance", sortLabel = "Relevance", minPrice = "", maxPrice = "", onSale = false, catName = "All", bundles = false }
-            local M = { gen = 0, busy = false, pages = nil, cursor = nil, finished = true, count = 0, tiles = {}, filtersOpen = false }
+            local F = { keyword = "", types = {}, kind = "Any", sort = "Relevance", sortLabel = "Relevance", minPrice = "", maxPrice = "", onSale = false, catName = "All", bundleType = nil, robloxOnly = false }
+            local M = { gen = 0, busy = false, pages = nil, cursor = nil, finished = true, count = 0, tiles = {}, entries = {}, view = "list", filtersOpen = false }
 
             local GRID_TOP, FOOT_H, POP_TOP = 82, 34, 64
             local runSearch, togglePop
-            local searchOuter, searchBox = makeInput(marketPane, UDim2.new(1, -98, 0, 28), UDim2.new(), "search the catalog, press Enter...")
-            local filterOuter, filterLabel = pill(marketPane, "Filters", UDim2.fromOffset(92, 28), UDim2.new(1, -92, 0, 0), function() if togglePop then togglePop() end end)
-            local summary = lbl({ Text = "All items", TextSize = 11, TextTransparency = 0.35, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -4, 0, 14), Position = UDim2.fromOffset(4, 64), ZIndex = Z + 3, Parent = marketPane })
-            local mGrid = makeGrid(marketPane, UDim2.fromOffset(0, GRID_TOP), UDim2.new(1, 0, 1, -(GRID_TOP + FOOT_H + 4)), true, true)
-            local mStatus = lbl({ Text = "", TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -8, 0, 15), Position = UDim2.new(0, 4, 1, -FOOT_H), ZIndex = Z + 3, Parent = marketPane })
-
-            do
-                local legend = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 4, 1, -17), Size = UDim2.new(1, -8, 0, 14), ZIndex = Z + 3, Parent = marketPane })
-                Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Left, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = legend })
-                for index, entry in ipairs({ { "off sale", Color3.fromRGB(226, 70, 70) }, { "roblox", Color3.fromRGB(70, 110, 235) }, { "ugc", Color3.fromRGB(170, 170, 170) }, { "limited", Color3.fromRGB(70, 200, 110) }, { "bundle", Color3.fromRGB(150, 90, 230) } }) do
-                    local item = lf("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(TextService:GetTextSize(entry[1], 10, Library.Font, Vector2.new(200, 14)).X + 12, 14), LayoutOrder = index, ZIndex = Z + 3, Parent = legend })
-                    local dot = lf("Frame", { BackgroundColor3 = entry[2], BorderSizePixel = 0, Position = UDim2.fromOffset(0, 4), Size = UDim2.fromOffset(6, 6), ZIndex = Z + 4, Parent = item })
-                    Library:Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = dot })
-                    lbl({ Text = entry[1], TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -9, 1, 0), Position = UDim2.fromOffset(9, 0), ZIndex = Z + 4, Parent = item })
+            local setView
+            local viewButtons = {}
+            local function paintView()
+                for name, button in pairs(viewButtons) do
+                    local on = name == M.view
+                    button.label.TextColor3 = on and (Library.ActiveColor or Library.AccentColor) or Library.MutedColor
+                    setBorder(button.outer, on and "AccentColor" or "Black")
                 end
             end
+            local searchOuter, searchBox = makeInput(marketPane, UDim2.new(1, -(92 + 48 + 48 + 18), 0, 28), UDim2.new(), "search the catalog, press Enter...")
+            for index, name in ipairs({ "list", "grid" }) do
+                local outer, label = pill(marketPane, name == "list" and "List" or "Grid", UDim2.fromOffset(48, 28), UDim2.new(1, -(92 + 48 + 48 + 12) + (index - 1) * 52, 0, 0), function() if setView then setView(name) end end)
+                viewButtons[name] = { outer = outer, label = label }
+            end
+            paintView()
+            local filterOuter, filterLabel = pill(marketPane, "Filters", UDim2.fromOffset(92, 28), UDim2.new(1, -92, 0, 0), function() if togglePop then togglePop() end end)
+            local summary = lbl({ Text = "All items", TextSize = 11, TextTransparency = 0.35, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -4, 0, 14), Position = UDim2.fromOffset(4, 64), ZIndex = Z + 3, Parent = marketPane })
+            local mGrid = makeGrid(marketPane, UDim2.fromOffset(0, GRID_TOP), UDim2.new(1, 0, 1, -(GRID_TOP + FOOT_H + 4)), true)
+            mGrid:SetAttribute("mode", "list")
+            local mStatus = lbl({ Text = "", TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -8, 0, 15), Position = UDim2.new(0, 4, 1, -20), ZIndex = Z + 3, Parent = marketPane })
 
             -- filter popover (floats over the grid) ------------------------------------------------
-            local categoryNames, categoryTypes, categoryBundle = {}, {}, {}
+            local categoryNames, categoryTypes, categoryBundle, categoryRoblox = {}, {}, {}, {}
             for _, entry in ipairs(CATEGORIES) do
                 categoryNames[#categoryNames + 1] = entry[1]
                 categoryTypes[entry[1]] = entry[2]
-                categoryBundle[entry[1]] = entry[3] == true
+                categoryBundle[entry[1]] = entry[3] or false
+                categoryRoblox[entry[1]] = entry[4] == true
             end
             local sortNames, sortKey = {}, {}
             for _, entry in ipairs(SORTS) do
@@ -8080,9 +8150,6 @@ do
                 if F.catName ~= "All" then parts[#parts + 1] = F.catName end
                 if F.kind ~= "Any" then parts[#parts + 1] = F.kind == "Limited" and "Limited (Roblox)" or F.kind end
                 if F.sortLabel ~= "Relevance" then parts[#parts + 1] = F.sortLabel end
-                if tonumber(F.minPrice) or tonumber(F.maxPrice) then
-                    parts[#parts + 1] = string.format("R$ %s-%s", tonumber(F.minPrice) and F.minPrice or "0", tonumber(F.maxPrice) and F.maxPrice or "any")
-                end
                 if F.onSale then parts[#parts + 1] = "on sale only" end
                 summary.Text = #parts > 0 and table.concat(parts, "  |  ") or "All items"
                 filterLabel.Text = (popOuter.Visible and "Close" or "Filters") .. (#parts > 0 and ("  (" .. #parts .. ")") or "")
@@ -8121,7 +8188,8 @@ do
             local catGroup = tabGroup(marketPane, 34, categoryNames, "All", function(name)
                 F.catName = name
                 F.types = categoryTypes[name]
-                F.bundles = categoryBundle[name]
+                F.bundleType = categoryBundle[name] or nil
+                F.robloxOnly = categoryRoblox[name]
                 updateSummary()
                 runSearch(false)
             end)
@@ -8130,17 +8198,15 @@ do
                 updateSummary()
                 runSearch(false)
             end)
-            lbl({ Text = "Limited only lists Roblox limiteds, UGC limiteds are left out. Classic clothing only. Categories are the tabs above the list.", TextSize = 10, TextTransparency = 0.5, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Size = UDim2.new(1, 0, 0, 28), LayoutOrder = 3, ZIndex = Z + 33, Parent = popScroll })
+            lbl({ Text = "Limited only lists Roblox limiteds, UGC limiteds are left out. Bodies and Emotes always list Roblox items only.", TextSize = 10, TextTransparency = 0.5, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Size = UDim2.new(1, 0, 0, 28), LayoutOrder = 3, ZIndex = Z + 33, Parent = popScroll })
             local sortGroup = choiceGroup(popSection("SORT BY", 4), sortNames, "Relevance", function(name)
                 F.sort, F.sortLabel = sortKey[name], name
                 updateSummary()
                 runSearch(false)
             end)
 
-            local priceBody = popSection("PRICE", 5, 28)
-            local _, minBox = makeInput(priceBody, UDim2.new(0.28, -4, 0, 26), UDim2.new(), "min R$")
-            local _, maxBox = makeInput(priceBody, UDim2.new(0.28, -4, 0, 26), UDim2.new(0.28, 2, 0, 0), "max R$")
-            local saleOuter, saleFace = bevel(priceBody, Z + 33, UDim2.new(0.44, -4, 0, 26), UDim2.new(0.56, 6, 0, 0))
+            local saleBody = popSection("AVAILABILITY", 5, 28)
+            local saleOuter, saleFace = bevel(saleBody, Z + 33, UDim2.new(0.5, -4, 0, 26), UDim2.new())
             local saleLabel = lbl({ Text = "On sale only", TextSize = 11, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 36, Parent = saleFace })
             local function paintSale()
                 saleLabel.TextColor3 = F.onSale and (Library.ActiveColor or Library.AccentColor) or Library.MutedColor
@@ -8153,14 +8219,6 @@ do
                 updateSummary()
                 runSearch(false)
             end)
-            local function applyPrice()
-                if minBox.Text == F.minPrice and maxBox.Text == F.maxPrice then return end
-                F.minPrice, F.maxPrice = minBox.Text, maxBox.Text
-                updateSummary()
-                runSearch(false)
-            end
-            minBox.FocusLost:Connect(applyPrice)
-            maxBox.FocusLost:Connect(applyPrice)
 
             local footer = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 10, 1, -38), Size = UDim2.new(1, -20, 0, 28), ZIndex = Z + 32, Parent = popFace })
             local function popPill(text, size, position, onClick)
@@ -8172,9 +8230,8 @@ do
                 hit.MouseButton1Click:Connect(onClick)
             end
             popPill("Reset all", UDim2.new(0.4, -3, 1, 0), UDim2.new(), function()
-                F.catName, F.types, F.bundles, F.kind = "All", categoryTypes["All"], false, "Any"
-                F.sort, F.sortLabel, F.minPrice, F.maxPrice, F.onSale = "Relevance", "Relevance", "", "", false
-                minBox.Text, maxBox.Text = "", ""
+                F.catName, F.types, F.bundleType, F.robloxOnly, F.kind = "All", categoryTypes["All"], nil, false, "Any"
+                F.sort, F.sortLabel, F.onSale = "Relevance", "Relevance", false
                 catGroup.paint("All")
                 kindGroup.paint("Any")
                 sortGroup.paint("Relevance")
@@ -8190,91 +8247,226 @@ do
             end
             updateSummary()
 
-            local onBuilderChanged
+            local onBuilderChanged, openBundlePicker, playEmote
             local function refreshMarketBorders()
                 for id, tile in pairs(M.tiles) do
                     if tile.Parent then setBorder(tile, isWorn(id) and "AccentColor" or "Black") end
                 end
             end
 
-            local function addMarketTile(entry, order)
-                local tile, face = bevel(mGrid, Z + 2, UDim2.fromOffset(200, 62), nil, order)
+            local function bundlePieces(bundleId)
+                local out = {}
+                local ok, details = pcall(function() return AvatarEditorService:GetItemDetails(bundleId, Enum.AvatarItemType.Bundle) end)
+                if not (ok and type(details) == "table") then return out, nil end
+                for _, piece in ipairs(details.BundledItems or details.bundledItems or {}) do
+                    local kind = piece.Type or piece.type
+                    local pieceId = piece.Id or piece.id
+                    local isAsset = kind == "Asset" or (typeof(kind) == "EnumItem" and kind.Name == "Asset")
+                    if isAsset and type(pieceId) == "number" then
+                        local okPiece, info = pcall(function() return AvatarEditorService:GetItemDetails(pieceId, Enum.AvatarItemType.Asset) end)
+                        local good = okPiece and type(info) == "table"
+                        local typeName = good and assetTypeName(info.AssetType) or nil
+                        out[#out + 1] = {
+                            id = pieceId,
+                            name = tostring(piece.Name or piece.name or (good and info.Name) or pieceId),
+                            typeName = typeName,
+                            supported = typeName ~= nil and ACC_SLOTS[typeName] ~= nil,
+                        }
+                    end
+                end
+                return out, details
+            end
+
+            local function entryStyle(entry)
                 local offSale = string.find(string.lower(entry.priceStatus or ""), "off", 1, true) ~= nil
                     or (entry.price == nil and not entry.limited and not entry.isBundle)
-                local color, tag
-                if offSale then color, tag = Color3.fromRGB(226, 70, 70), "off sale"
-                elseif entry.isBundle then color, tag = Color3.fromRGB(150, 90, 230), "bundle"
-                elseif entry.limited then color, tag = Color3.fromRGB(70, 200, 110), "limited"
-                elseif entry.creator and entry.creator ~= "Roblox" then color, tag = Color3.fromRGB(170, 170, 170), "ugc"
-                else color, tag = Color3.fromRGB(70, 110, 235), "roblox" end
+                if offSale then return Color3.fromRGB(226, 70, 70), "off sale" end
+                if entry.isBundle then return Color3.fromRGB(150, 90, 230), "bundle" end
+                if entry.limited then return Color3.fromRGB(70, 200, 110), "limited" end
+                if entry.creator and entry.creator ~= "Roblox" then return Color3.fromRGB(170, 170, 170), "ugc" end
+                return Color3.fromRGB(70, 110, 235), "roblox"
+            end
+
+            local function activateEntry(entry)
+                if entry.isBundle then
+                    if openBundlePicker then openBundlePicker(entry) end
+                    return
+                end
+                if entry.assetName == "EmoteAnimation" then
+                    if playEmote then playEmote(entry) end
+                    return
+                end
+                local typeName = entry.assetName
+                if not typeName then
+                    local ok, details = pcall(function() return AvatarEditorService:GetItemDetails(entry.id, Enum.AvatarItemType.Asset) end)
+                    if ok and type(details) == "table" then
+                        typeName = assetTypeName(details.AssetType)
+                        entry.assetName = typeName
+                    end
+                end
+                if not typeName or not ACC_SLOTS[typeName] then
+                    notify("Avatar builder: " .. entry.name .. " is a type the builder can't wear yet")
+                    return
+                end
+                if not Builder.desc then return end
+                local ok, result = pcall(wearAsset, entry.id, typeName)
+                if not ok then
+                    warn("Avatar builder: wearing failed:", result)
+                    notify("Avatar builder: could not add that item")
+                    return
+                end
+                if onBuilderChanged then onBuilderChanged() end
+            end
+
+            local function addMarketTile(entry, order)
+                local list = M.view == "list"
+                local tile, face = bevel(mGrid, Z + 2, list and UDim2.new(1, -2, 0, 52) or UDim2.fromOffset(98, 116), nil, order)
+                local color, tag = entryStyle(entry)
                 entry.tag = tag
-                local stripe = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.fromOffset(6, 9), Size = UDim2.new(0, 3, 1, -18), ZIndex = Z + 8, Parent = face })
-                Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = stripe })
-                mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromOffset(48, 48), Position = UDim2.fromOffset(15, 7), ZIndex = Z + 6, Parent = face })
-                lbl({ Text = entry.name, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -76, 0, 16), Position = UDim2.fromOffset(70, 6), ZIndex = Z + 6, Parent = face })
-                local kindText = tag .. (entry.assetName and ("  |  " .. entry.assetName) or "")
-                lbl({ Text = kindText, TextSize = 10, TextTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -76, 0, 14), Position = UDim2.fromOffset(70, 23), ZIndex = Z + 6, Parent = face })
                 local priceText = "-"
                 if type(entry.price) == "number" then priceText = entry.price == 0 and "Free" or ("R$ " .. tostring(entry.price)) end
-                lbl({ Text = priceText, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -76, 0, 16), Position = UDim2.fromOffset(70, 40), ZIndex = Z + 6, Parent = face })
+                if list then
+                    local stripe = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.fromOffset(6, 8), Size = UDim2.new(0, 3, 1, -16), ZIndex = Z + 8, Parent = face })
+                    Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = stripe })
+                    mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromOffset(40, 40), Position = UDim2.fromOffset(15, 6), ZIndex = Z + 6, Parent = face })
+                    lbl({ Text = entry.name, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -170, 0, 16), Position = UDim2.fromOffset(64, 6), ZIndex = Z + 6, Parent = face })
+                    lbl({ Text = tag .. (entry.assetName and ("  |  " .. entry.assetName) or ""), TextSize = 10, TextTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -170, 0, 14), Position = UDim2.fromOffset(64, 26), ZIndex = Z + 6, Parent = face })
+                    lbl({ Text = priceText, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Right, Size = UDim2.new(0, 96, 1, 0), Position = UDim2.new(1, -104, 0, 0), ZIndex = Z + 6, Parent = face })
+                else
+                    mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -42), Position = UDim2.fromOffset(4, 4), ZIndex = Z + 6, Parent = face })
+                    lbl({ Text = entry.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 14), Position = UDim2.new(0, 3, 1, -38), ZIndex = Z + 6, Parent = face })
+                    lbl({ Text = priceText, TextSize = 11, TextTransparency = 0.25, Size = UDim2.new(1, -6, 0, 14), Position = UDim2.new(0, 3, 1, -22), ZIndex = Z + 6, Parent = face })
+                    local bar = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.new(0, 4, 1, -5), Size = UDim2.new(1, -8, 0, 3), ZIndex = Z + 8, Parent = face })
+                    Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = bar })
+                end
                 local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 12, Parent = tile })
                 hit.MouseEnter:Connect(function() if not isWorn(entry.id) then setBorder(tile, "AccentColor") end end)
                 hit.MouseLeave:Connect(function() setBorder(tile, isWorn(entry.id) and "AccentColor" or "Black") end)
-                hit.MouseButton1Click:Connect(function()
-                    task.spawn(function()
-                        if entry.isBundle then
-                            local ok, details = pcall(function() return AvatarEditorService:GetItemDetails(entry.id, Enum.AvatarItemType.Bundle) end)
-                            local parts = {}
-                            if ok and type(details) == "table" then
-                                for _, piece in ipairs(details.BundledItems or details.bundledItems or {}) do
-                                    local kind = piece.Type or piece.type
-                                    local pieceId = piece.Id or piece.id
-                                    if (kind == "Asset" or (typeof(kind) == "EnumItem" and kind.Name == "Asset")) and type(pieceId) == "number" then
-                                        local okPiece, info = pcall(function() return AvatarEditorService:GetItemDetails(pieceId, Enum.AvatarItemType.Asset) end)
-                                        local name = okPiece and type(info) == "table" and assetTypeName(info.AssetType) or nil
-                                        if name and ACC_SLOTS[name] then parts[#parts + 1] = { id = pieceId, name = name } end
-                                    end
-                                end
-                            end
-                            if #parts == 0 then
-                                notify("Avatar builder: could not read the pieces of " .. entry.name)
-                                return
-                            end
-                            local allWorn = true
-                            for _, piece in ipairs(parts) do
-                                if not isWorn(piece.id) then allWorn = false end
-                            end
-                            for _, piece in ipairs(parts) do
-                                if allWorn or not isWorn(piece.id) then pcall(wearAsset, piece.id, piece.name) end
-                            end
-                            if onBuilderChanged then onBuilderChanged() end
-                            return
-                        end
-                        local typeName = entry.assetName
-                        if not typeName then
-                            local ok, details = pcall(function() return AvatarEditorService:GetItemDetails(entry.id, Enum.AvatarItemType.Asset) end)
-                            if ok and type(details) == "table" then
-                                typeName = assetTypeName(details.AssetType)
-                                entry.assetName = typeName
-                            end
-                        end
-                        if not typeName or not ACC_SLOTS[typeName] then
-                            notify("Avatar builder: " .. entry.name .. " is a type the builder can't wear yet")
-                            return
-                        end
-                        if not Builder.desc then return end
-                        local ok, result = pcall(wearAsset, entry.id, typeName)
-                        if not ok then
-                            warn("Avatar builder: wearing failed:", result)
-                            notify("Avatar builder: could not add that item")
-                            return
-                        end
-                        if onBuilderChanged then onBuilderChanged() end
-                    end)
-                end)
+                hit.MouseButton1Click:Connect(function() task.spawn(activateEntry, entry) end)
                 setBorder(tile, isWorn(entry.id) and "AccentColor" or "Black")
                 M.tiles[entry.id] = tile
                 return tile
+            end
+
+            local function clearTiles()
+                table.clear(M.tiles)
+                for _, child in ipairs(mGrid:GetChildren()) do
+                    if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
+                end
+            end
+
+            function setView(view)
+                if M.view == view then return end
+                M.view = view
+                mGrid:SetAttribute("mode", view == "list" and "list" or "tiles")
+                paintView()
+                clearTiles()
+                for index, entry in ipairs(M.entries) do addMarketTile(entry, index) end
+            end
+
+            function playEmote(entry)
+                local character = LocalPlayer.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                if not humanoid then notify("Emotes: no character yet") return end
+                if M.emoteTrack then
+                    pcall(function() M.emoteTrack:Stop() end)
+                    M.emoteTrack = nil
+                    if M.emoteId == entry.id then
+                        M.emoteId = nil
+                        notify("Emote stopped")
+                        return
+                    end
+                end
+                local ok, success, track = pcall(function() return humanoid:PlayEmoteAndGetAnimTrackById(entry.id) end)
+                if ok and success and track then
+                    M.emoteTrack, M.emoteId = track, entry.id
+                    notify("Playing " .. entry.name .. ", click it again to stop")
+                else
+                    notify("Emotes: could not play " .. entry.name)
+                end
+            end
+
+            function openBundlePicker(entry)
+                if M.picker then pcall(function() M.picker:Destroy() end) M.picker = nil end
+                local overlay = lf("TextButton", { BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 60, Parent = root })
+                M.picker = overlay
+                local cardOuter, card = bevel(overlay, Z + 61, UDim2.new(0, 380, 0.82, 0), UDim2.fromScale(0.5, 0.5))
+                cardOuter.AnchorPoint = Vector2.new(0.5, 0.5)
+                lbl({ Text = entry.name, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -24, 0, 20), Position = UDim2.fromOffset(12, 10), ZIndex = Z + 64, Parent = card })
+                local sub = lbl({ Text = "loading the parts of this bundle...", TextSize = 11, TextTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, Size = UDim2.new(1, -24, 0, 30), Position = UDim2.fromOffset(12, 32), ZIndex = Z + 64, Parent = card })
+                local rows = lf("ScrollingFrame", {
+                    BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 66), Size = UDim2.new(1, -16, 1, -112), CanvasSize = UDim2.new(),
+                    AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = Z + 62, Parent = card,
+                }, { ScrollBarImageColor3 = "AccentColor" })
+                Library:Create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4), Parent = rows })
+                local footer = lf("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 10, 1, -38), Size = UDim2.new(1, -20, 0, 28), ZIndex = Z + 62, Parent = card })
+                local pieces, selected, checks = {}, {}, {}
+                local function footPill(text, x, w, onClick)
+                    local outer, face = bevel(footer, Z + 63, UDim2.new(w, -4, 1, 0), UDim2.new(x, 2, 0, 0))
+                    lbl({ Text = text, TextSize = 12, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 66, Parent = face })
+                    local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 68, Parent = outer })
+                    hit.MouseEnter:Connect(function() setBorder(outer, "AccentColor") end)
+                    hit.MouseLeave:Connect(function() setBorder(outer, "Black") end)
+                    hit.MouseButton1Click:Connect(onClick)
+                end
+                local function paintChecks()
+                    for id, check in pairs(checks) do check.Visible = selected[id] == true end
+                end
+                local function close()
+                    if M.picker == overlay then M.picker = nil end
+                    pcall(function() overlay:Destroy() end)
+                end
+                footPill("All", 0, 0.2, function()
+                    for _, piece in ipairs(pieces) do if piece.supported then selected[piece.id] = true end end
+                    paintChecks()
+                end)
+                footPill("None", 0.2, 0.2, function() table.clear(selected) paintChecks() end)
+                footPill("Wear selected", 0.4, 0.38, function()
+                    local count = 0
+                    for _, piece in ipairs(pieces) do
+                        if selected[piece.id] and piece.supported then
+                            local ok = pcall(wearAsset, piece.id, piece.typeName, true)
+                            if ok then count += 1 end
+                        end
+                    end
+                    close()
+                    if count > 0 and onBuilderChanged then onBuilderChanged() end
+                    notify(count > 0 and string.format("Avatar builder: wearing %d part(s) of %s", count, entry.name) or "Avatar builder: nothing selected")
+                end)
+                footPill("Cancel", 0.78, 0.22, close)
+                task.spawn(function()
+                    local list = bundlePieces(entry.id)
+                    if M.picker ~= overlay then return end
+                    pieces = list
+                    if #list == 0 then
+                        sub.Text = "Could not read the parts of this bundle."
+                        return
+                    end
+                    sub.Text = Builder.rig == "R6" and "Pick the parts you want. You are on R6, so R15-only parts may look wrong." or "Pick the parts you want to wear, the rest stay as they are."
+                    for index, piece in ipairs(list) do
+                        local outer, face = bevel(rows, Z + 63, UDim2.new(1, -4, 0, 48), nil, index)
+                        mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(piece.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromOffset(38, 38), Position = UDim2.fromOffset(6, 5), ZIndex = Z + 66, Parent = face })
+                        lbl({ Text = piece.name, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -96, 0, 16), Position = UDim2.fromOffset(52, 7), ZIndex = Z + 66, Parent = face })
+                        lbl({ Text = piece.supported and tostring(piece.typeName) or (tostring(piece.typeName) .. "  (not wearable here)"), TextSize = 10, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -96, 0, 14), Position = UDim2.fromOffset(52, 26), ZIndex = Z + 66, Parent = face })
+                        local box = lf("Frame", { BackgroundColor3 = Library.PanelColor, BorderSizePixel = 0, Position = UDim2.new(1, -32, 0.5, -10), Size = UDim2.fromOffset(20, 20), ZIndex = Z + 66, Parent = face })
+                        Library:Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = box })
+                        Library:Create("UIStroke", { Color = Library.OutlineColor, Thickness = 1, Parent = box })
+                        local check = lf("Frame", { BackgroundColor3 = Library.AccentColor, BorderSizePixel = 0, Position = UDim2.fromOffset(4, 4), Size = UDim2.fromOffset(12, 12), Visible = false, ZIndex = Z + 67, Parent = box })
+                        Library:Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = check })
+                        checks[piece.id] = check
+                        if piece.supported then
+                            selected[piece.id] = true
+                            local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 69, Parent = outer })
+                            hit.MouseButton1Click:Connect(function()
+                                selected[piece.id] = not selected[piece.id] or nil
+                                paintChecks()
+                            end)
+                        else
+                            face.BackgroundTransparency = 0.6
+                        end
+                    end
+                    paintChecks()
+                end)
             end
 
             function runSearch(append)
@@ -8282,10 +8474,8 @@ do
                 if not append then
                     M.gen += 1
                     M.pages, M.cursor, M.finished, M.count, M.auto = nil, nil, false, 0, 0
-                    table.clear(M.tiles)
-                    for _, child in ipairs(mGrid:GetChildren()) do
-                        if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
-                    end
+                    M.entries = {}
+                    clearTiles()
                 end
                 local gen = M.gen
                 M.busy = true
@@ -8334,12 +8524,14 @@ do
                     end
                     for _, entry in ipairs(items) do
                         M.count += 1
+                        M.entries[#M.entries + 1] = entry
                         addMarketTile(entry, M.count)
                     end
                     if M.count == 0 then
                         mStatus.Text = "no items found, try other filters"
                     else
-                        mStatus.Text = string.format("%d items%s  |  click to wear, click again to take off", M.count, M.finished and "" or "  (scroll for more)")
+                        local clickText = (F.bundleType and "click a bundle to choose its parts") or (F.catName == "Emotes" and "click an emote to play it") or "click to wear, click again to take off"
+                        mStatus.Text = string.format("%d items%s  |  %s", M.count, M.finished and "" or "  (scroll for more)", clickText)
                     end
                     if M.count < 16 and not M.finished and (M.auto or 0) < 6 then
                         M.auto = (M.auto or 0) + 1
@@ -8412,6 +8604,7 @@ do
                         return
                     end
                     if modelRef then pcall(function() modelRef:Destroy() end) end
+                    pcall(assembleModel, model)
                     for _, part in ipairs(model:GetDescendants()) do
                         if part:IsA("BasePart") then
                             part.Anchored = true
@@ -8420,16 +8613,16 @@ do
                         end
                     end
                     model.Parent = viewport
-                    local okBox, cf, size = pcall(function() return model:GetBoundingBox() end)
-                    if not okBox or size.Y <= 0.1 then
-                        cf, size = CFrame.new(0, 3, 0), Vector3.new(4, 6, 2)
-                    end
+                    local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+                    local rootPos = root and root.Position or Vector3.new(0, 3, 0)
+                    if rootPos ~= rootPos then rootPos = Vector3.new(0, 3, 0) end
                     modelRef = model
                     local ui = spoofUi
                     if ui then
-                        ui.center = cf.Position
-                        ui.height = size.Y
-                        ui.dist = math.max(size.Y, size.X) / (2 * math.tan(math.rad(camera.FieldOfView / 2))) * 1.15 + size.Z / 2
+                        local height = 6.6
+                        ui.center = rootPos + Vector3.new(0, 0.3, 0)
+                        ui.height = height
+                        ui.dist = height / (2 * math.tan(math.rad(camera.FieldOfView / 2))) * 1.08 + 1
                         ui.modelReady = true
                     end
                     fallback.Visible = false
@@ -8460,7 +8653,18 @@ do
                         local ok, fetched = pcall(function() return Players:GetHumanoidDescriptionFromUserIdAsync(LocalPlayer.UserId) end)
                         if ok and fetched then desc = fetched end
                     end
+                    if not desc then
+                        local character = LocalPlayer.Character
+                        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                        if humanoid then
+                            local ok, applied = pcall(function() return humanoid:GetAppliedDescription() end)
+                            if ok and applied then desc = applied end
+                        end
+                    end
                     if not spoofUi then return end
+                    if not desc then
+                        notify("Avatar builder: could not read your avatar, starting from an empty one")
+                    end
                     setDescription(desc or Instance.new("HumanoidDescription"))
                 end)
             end
@@ -8490,6 +8694,210 @@ do
                     end)
                 end
             end)
+
+            -- by id pane + saved outfits ------------------------------------------------------------
+            local refreshOutfits
+            do
+                lbl({ Text = "Wear by id", TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(2, 0), ZIndex = Z + 3, Parent = idPane })
+                lbl({ Text = "Paste asset ids or catalog links for clothes, hats, heads, bodies and animations. Several at once work, separate them with spaces or commas. A bundle id opens its parts.", TextSize = 11, TextWrapped = true, TextTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Size = UDim2.new(1, -4, 0, 44), Position = UDim2.fromOffset(2, 20), ZIndex = Z + 3, Parent = idPane })
+                local _, idBox = makeInput(idPane, UDim2.new(1, 0, 0, 30), UDim2.fromOffset(0, 68), "e.g. 607785314, 1029025 or a catalog link")
+                local results = lf("ScrollingFrame", {
+                    BackgroundColor3 = Library.PanelColor, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 138), Size = UDim2.new(1, 0, 1, -138), CanvasSize = UDim2.new(),
+                    AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = Z + 1, Parent = idPane,
+                }, { BackgroundColor3 = "PanelColor", ScrollBarImageColor3 = "AccentColor" })
+                Library:Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = results })
+                Library:Create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2), Parent = results })
+                Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), Parent = results })
+                local resultOrder = 0
+                local function addResult(text, good)
+                    resultOrder += 1
+                    local row = lbl({ Text = text, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, 0, 0, 16), LayoutOrder = resultOrder, ZIndex = Z + 3, Parent = results })
+                    row.TextColor3 = good and Color3.fromRGB(110, 210, 140) or Color3.fromRGB(230, 110, 110)
+                end
+                local function clearResults()
+                    resultOrder = 0
+                    for _, child in ipairs(results:GetChildren()) do
+                        if child:IsA("TextLabel") then child:Destroy() end
+                    end
+                end
+                local function runIds(mode)
+                    local ids = {}
+                    for number in string.gmatch(idBox.Text, "%d+") do
+                        local value = tonumber(number)
+                        if value and value > 0 then ids[#ids + 1] = value end
+                    end
+                    if #ids == 0 then notify("Avatar builder: type at least one id") return end
+                    if not Builder.desc then notify("Avatar builder: still loading your avatar") return end
+                    clearResults()
+                    task.spawn(function()
+                        local changed = false
+                        for _, id in ipairs(ids) do
+                            local ok, info = pcall(function() return AvatarEditorService:GetItemDetails(id, Enum.AvatarItemType.Asset) end)
+                            if ok and type(info) == "table" and info.AssetType ~= nil then
+                                local typeName = assetTypeName(info.AssetType)
+                                local name = tostring(info.Name or id)
+                                if mode == "off" then
+                                    local removed = false
+                                    for _, item in ipairs(wornItems()) do
+                                        if item.id == id then pcall(removeItem, item) removed = true end
+                                    end
+                                    changed = changed or removed
+                                    addResult(string.format("%s  |  %s", name, removed and "taken off" or "was not worn"), removed)
+                                elseif typeName and ACC_SLOTS[typeName] then
+                                    local okWear, result = pcall(wearAsset, id, typeName, true)
+                                    local good = okWear and result ~= nil
+                                    changed = changed or good
+                                    addResult(string.format("%s  |  %s  |  %s", name, typeName, good and "worn" or "failed"), good)
+                                else
+                                    addResult(string.format("%s  |  %s  |  not wearable here", name, tostring(typeName)), false)
+                                end
+                            else
+                                local pieces = bundlePieces(id)
+                                if #pieces > 0 and mode ~= "off" then
+                                    addResult(string.format("bundle %d  |  opened its parts", id), true)
+                                    openBundlePicker({ id = id, name = "Bundle " .. id, isBundle = true })
+                                else
+                                    addResult(string.format("%d  |  not found", id), false)
+                                end
+                            end
+                        end
+                        if changed and onBuilderChanged then onBuilderChanged() end
+                    end)
+                end
+                local function idPill(text, x, w, onClick)
+                    local outer, face = bevel(idPane, Z, UDim2.new(w, -4, 0, 28), UDim2.new(x, 2, 0, 104))
+                    lbl({ Text = text, TextSize = 12, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 3, Parent = face })
+                    local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 6, Parent = outer })
+                    hit.MouseEnter:Connect(function() setBorder(outer, "AccentColor") end)
+                    hit.MouseLeave:Connect(function() setBorder(outer, "Black") end)
+                    hit.MouseButton1Click:Connect(onClick)
+                end
+                idPill("Wear", 0, 0.4, function() runIds("wear") end)
+                idPill("Take off", 0.4, 0.3, function() runIds("off") end)
+                idPill("Clear", 0.7, 0.3, function() idBox.Text = "" clearResults() end)
+
+                -- saved outfits
+                local COLOR_PROPS = { "HeadColor", "TorsoColor", "LeftArmColor", "RightArmColor", "LeftLegColor", "RightLegColor" }
+                local SCALE_PROPS = { "HeightScale", "WidthScale", "DepthScale", "HeadScale", "BodyTypeScale", "ProportionScale" }
+                local function serializeDesc(desc)
+                    local out = { acc = {}, props = {}, colors = {}, scales = {} }
+                    local okAcc, list = pcall(function() return desc:GetAccessories(true) end)
+                    if okAcc then
+                        for _, entry in ipairs(list) do
+                            out.acc[#out.acc + 1] = { id = entry.AssetId, kind = entry.AccessoryType.Name, layered = entry.IsLayered == true, order = entry.Order, puff = entry.Puffiness }
+                        end
+                    end
+                    for _, prop in ipairs(PROP_ORDER) do
+                        local okProp, value = pcall(function() return desc[prop] end)
+                        if okProp and type(value) == "number" and value ~= 0 then out.props[prop] = value end
+                    end
+                    for _, prop in ipairs(COLOR_PROPS) do
+                        local okColor, color = pcall(function() return desc[prop] end)
+                        if okColor and typeof(color) == "Color3" then out.colors[prop] = { color.R, color.G, color.B } end
+                    end
+                    for _, prop in ipairs(SCALE_PROPS) do
+                        local okScale, value = pcall(function() return desc[prop] end)
+                        if okScale and type(value) == "number" then out.scales[prop] = value end
+                    end
+                    return out
+                end
+                local function deserializeDesc(data)
+                    local desc = Instance.new("HumanoidDescription")
+                    for prop, value in pairs(data.props or {}) do pcall(function() desc[prop] = value end) end
+                    for prop, rgb in pairs(data.colors or {}) do
+                        if type(rgb) == "table" then pcall(function() desc[prop] = Color3.new(rgb[1], rgb[2], rgb[3]) end) end
+                    end
+                    for prop, value in pairs(data.scales or {}) do pcall(function() desc[prop] = value end) end
+                    local list = {}
+                    for _, entry in ipairs(data.acc or {}) do
+                        local okType, accType = pcall(function() return Enum.AccessoryType[entry.kind] end)
+                        if okType and accType then
+                            local item = { AssetId = entry.id, AccessoryType = accType, IsLayered = entry.layered == true }
+                            if entry.layered then item.Order = entry.order or 1 item.Puffiness = entry.puff or 1 end
+                            list[#list + 1] = item
+                        end
+                    end
+                    pcall(function() desc:SetAccessories(list, true) end)
+                    return desc
+                end
+
+                lbl({ Text = "Saved outfits", TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(2, 0), ZIndex = Z + 3, Parent = outPane })
+                local _, nameBox = makeInput(outPane, UDim2.new(1, -112, 0, 30), UDim2.fromOffset(0, 22), "outfit name (optional)")
+                local outList = lf("ScrollingFrame", {
+                    BackgroundColor3 = Library.PanelColor, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 60), Size = UDim2.new(1, 0, 1, -60), CanvasSize = UDim2.new(),
+                    AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = Library.AccentColor, TopImage = "", BottomImage = "", ZIndex = Z + 1, Parent = outPane,
+                }, { BackgroundColor3 = "PanelColor", ScrollBarImageColor3 = "AccentColor" })
+                Library:Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = outList })
+                Library:Create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6), Parent = outList })
+                Library:Create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 10), PaddingBottom = UDim.new(0, 6), Parent = outList })
+
+                local function smallButton(parent, text, x, w, onClick)
+                    local outer, face = bevel(parent, Z + 3, UDim2.new(0, w, 0, 24), UDim2.new(1, x, 0.5, -12))
+                    lbl({ Text = text, TextSize = 11, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 6, Parent = face })
+                    local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 8, Parent = outer })
+                    hit.MouseEnter:Connect(function() setBorder(outer, "AccentColor") end)
+                    hit.MouseLeave:Connect(function() setBorder(outer, "Black") end)
+                    hit.MouseButton1Click:Connect(onClick)
+                end
+
+                function refreshOutfits()
+                    for _, child in ipairs(outList:GetChildren()) do
+                        if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
+                    end
+                    if #store.outfits == 0 then
+                        lbl({ Text = "No saved outfits yet. Build something in the catalog, then press Save current.", TextSize = 11, TextTransparency = 0.4, TextWrapped = true, Size = UDim2.new(1, -8, 0, 40), ZIndex = Z + 3, Parent = outList })
+                        return
+                    end
+                    for index, outfit in ipairs(store.outfits) do
+                        local row, face = bevel(outList, Z + 2, UDim2.new(1, -2, 0, 62), nil, index)
+                        local shown = 0
+                        local ids = {}
+                        for _, entry in ipairs(outfit.data.acc or {}) do ids[#ids + 1] = entry.id end
+                        for _, prop in ipairs(PROP_ORDER) do
+                            local id = outfit.data.props and outfit.data.props[prop]
+                            if id then ids[#ids + 1] = id end
+                        end
+                        for _, id in ipairs(ids) do
+                            if shown >= 4 then break end
+                            mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromOffset(40, 40), Position = UDim2.fromOffset(8 + shown * 42, 11), ZIndex = Z + 6, Parent = face })
+                            shown += 1
+                        end
+                        lbl({ Text = tostring(outfit.name), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -420, 0, 16), Position = UDim2.fromOffset(184, 12), ZIndex = Z + 6, Parent = face })
+                        lbl({ Text = string.format("%d items", #ids), TextSize = 10, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -420, 0, 14), Position = UDim2.fromOffset(184, 32), ZIndex = Z + 6, Parent = face })
+                        smallButton(face, "Delete", -62, 54, function()
+                            table.remove(store.outfits, index)
+                            storeSave()
+                            refreshOutfits()
+                        end)
+                        smallButton(face, "Apply", -122, 54, function()
+                            task.spawn(function() runBuilt(deserializeDesc(outfit.data)) end)
+                        end)
+                        smallButton(face, "Edit", -182, 54, function()
+                            setDescription(deserializeDesc(outfit.data))
+                            setMode("market")
+                            notify("Avatar builder: loaded " .. tostring(outfit.name))
+                        end)
+                    end
+                end
+
+                local saveOuter, saveFace = bevel(outPane, Z, UDim2.fromOffset(106, 30), UDim2.new(1, -106, 0, 22))
+                lbl({ Text = "Save current", TextSize = 12, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 3, Parent = saveFace })
+                local saveHit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 6, Parent = saveOuter })
+                saveHit.MouseEnter:Connect(function() setBorder(saveOuter, "AccentColor") end)
+                saveHit.MouseLeave:Connect(function() setBorder(saveOuter, "Black") end)
+                saveHit.MouseButton1Click:Connect(function()
+                    if not Builder.desc then notify("Avatar builder: nothing to save yet") return end
+                    local data = serializeDesc(Builder.desc)
+                    if next(data.props) == nil and #data.acc == 0 then notify("Avatar builder: the builder is empty, wear something first") return end
+                    local name = nameBox.Text ~= "" and nameBox.Text or ("Outfit " .. (#store.outfits + 1))
+                    table.insert(store.outfits, 1, { name = name, rig = Builder.rig, data = data })
+                    while #store.outfits > 40 do table.remove(store.outfits) end
+                    nameBox.Text = ""
+                    storeSave()
+                    refreshOutfits()
+                    notify("Avatar builder: saved " .. name)
+                end)
+            end
 
             -- players pane (look up anyone, browse their saved outfits) ---------------------------------
             local pSearchOuter, search = makeInput(playersPane, UDim2.new(1, 0, 0, 28), UDim2.new(), "username, UserId, profile URL or outfit:ID, press Enter...")
@@ -8537,6 +8945,9 @@ do
                 marketPane.Visible = mode == "market"
                 playersPane.Visible = mode == "players"
                 favPane.Visible = mode == "favs"
+                idPane.Visible = mode == "id"
+                outPane.Visible = mode == "outfits"
+                if mode == "outfits" and ui.refreshOutfits then ui.refreshOutfits() end
                 ui.activeGrid = mode == "favs" and favGrid or grid
                 for name, button in pairs(modeButtons) do
                     local on = name == mode
@@ -8553,6 +8964,7 @@ do
 
             spoofUi = { panel = { Frame = root, Shown = true }, main = root, grid = grid, favGrid = favGrid, activeGrid = grid, mode = "market", chips = chips, search = search, status = status, indicator = indicator, pool = {}, lazy = {}, token = 0, thumbsDone = true, shown = true, angle = angle, center = Vector3.zero, dist = 8, height = 5 }
             local owner = spoofUi
+            owner.refreshOutfits = refreshOutfits
             task.spawn(function()
                 while spoofUi == owner do
                     local now = os.clock()

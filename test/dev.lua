@@ -1764,8 +1764,8 @@ for _, name in ipairs({ "CreatePanel", "BuildSettings", "CreateTargetInfo" }) do
         error("PerceptionSkin.lua on GitHub is outdated (" .. tostring(Skin.Version) .. ", missing " .. name .. "). Upload the newest build-1028-b to ui-test/", 0)
     end
 end
-if tostring(Skin.Version) < "build-1101-c" then
-    error("PerceptionSkin.lua on GitHub is outdated (" .. tostring(Skin.Version) .. "). Upload build-1101-c to ui-test/ (embedded Effects and Avatar pages, columns)", 0)
+if tostring(Skin.Version) < "build-1103-a" then
+    error("PerceptionSkin.lua on GitHub is outdated (" .. tostring(Skin.Version) .. "). Upload build-1103-a to ui-test/ (adds the third column when the menu is wide)", 0)
 end
 local ThemeManager = loadstring(game:HttpGet(UI_REPO .. "addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(UI_REPO .. "addons/SaveManager.lua"))()
@@ -1908,10 +1908,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-i | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-j | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-i",
+    Title = "Aster  |  perception-1101-j",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -2197,6 +2197,7 @@ do
         RB:Dropdown({ Name = "Hit part", Flag = "rb_part", Items = { "Head", "Torso", "Random" }, Default = "Head" })
         RB:Slider({ Name = "Shots per second", Flag = "rb_rate", Min = 1, Max = 30, Default = 12, Suffix = "/s", Decimals = 1 })
         RB:Slider({ Name = "Shot delay after peeking", Flag = "rb_shot_delay", Min = 0, Max = 0.3, Default = 0.03, Suffix = "s", Decimals = 0.01, Tooltip = "How long you stand at the peek spot before the first shot, so the server has your new position" })
+        RB:Toggle({ Name = "Wallbang", Flag = "rb_wallbang", Default = true, Tooltip = "Shots from the ragebot use the wallbang methods from the Gun tab, so they hit through walls and cover" })
         RB:Toggle({ Name = "Auto reload", Flag = "rb_reload", Default = false, Tooltip = "Reloads when the gun is empty. With void spam on you stay hidden while it reloads" })
 
         local RTR = RageSubs.Main:Section({ Name = "Target rules", Side = 1 })
@@ -2246,8 +2247,11 @@ do
         local RVP = RageSubs.Void:Section({ Name = "Void pattern", Side = 1 })
         RVP:Slider({ Name = "Smart wait", Flag = "rb_smart_wait", Min = 1, Max = 30, Default = 8, Suffix = "s", Decimals = 0.5 })
         RVP:Slider({ Name = "Smart void time", Flag = "rb_smart_void", Min = 1, Max = 30, Default = 5, Suffix = "s", Decimals = 0.5 })
-        RVP:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "Under map", "High", "Far", "Extreme" }, Default = "Under map", Tooltip = "Under map hides just above the point where the engine destroys parts, below your real position, the same spot the Void desync uses. High, Far and Extreme are far above or beside the map and can be killed by the game's kill planes" })
+        RVP:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "Under map", "Map edge", "High", "Far", "Extreme" }, Default = "Under map", Tooltip = "Map edge circles the outer edge of the whole map, so you are hard to target and players can run into kill planes chasing you. Under map hides just above the point where the engine destroys parts, below your real position, the same spot the Void desync uses. High, Far and Extreme are far above or beside the map and can be killed by the game's kill planes" })
         RVP:Slider({ Name = "Under map radius", Flag = "rb_under_radius", Min = 10, Max = 1500, Default = 250, Suffix = " studs", Decimals = 1, Tooltip = "Under map only: every position change teleports you to a random spot this far around you, underneath the map" })
+        RVP:Slider({ Name = "Edge speed", Flag = "rb_edge_speed", Min = 50, Max = 3000, Default = 400, Suffix = " studs/s", Decimals = 10, Tooltip = "Map edge only: how fast you travel around the map" })
+        RVP:Slider({ Name = "Edge margin", Flag = "rb_edge_margin", Min = -100, Max = 400, Default = 25, Suffix = " studs", Decimals = 1, Tooltip = "Map edge only: distance outside the outermost map part. Negative goes inside it" })
+        RVP:Slider({ Name = "Edge height", Flag = "rb_edge_y", Min = -250, Max = 250, Default = 0, Suffix = " studs", Decimals = 1, Tooltip = "Map edge only: height relative to you. It never goes below the point where parts are destroyed" })
         RVP:Dropdown({ Name = "Direction", Flag = "rb_dir", Items = { "+Y", "+X", "+Z" }, Multi = true, Default = { "+Y" }, Tooltip = "Every position change picks one of the selected directions at random. Does not affect the Under map pattern" })
         RVP:Slider({ Name = "Depth multiplier", Flag = "rb_depth", Min = 0.1, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
         RVP:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
@@ -3639,10 +3643,6 @@ do
     Detect:Toggle({ Name = "Cheat detector", Flag = "misc_cheat_detector", Default = false })
     Detect:Toggle({ Name = "Teleport check", Flag = "misc_cheat_teleport", Default = true })
     Detect:Button({ Name = "Clear flags", Callback = function() MiscActions.clearCheats() end })
-
-    local Fling = MiscSubs.Combat:Section({ Name = "Fling cars", Side = 1 })
-    Fling:Toggle({ Name = "Fling cars", Flag = "misc_fling_cars", Default = false })
-    Fling:Slider({ Name = "Target range", Flag = "misc_fling_range", Min = 20, Max = 1000, Default = 300, Suffix = " studs", Decimals = 1 })
 
     local Invis = MiscSubs.Utility:Section({ Name = "Invisibility", Side = 1 })
     local invisToggle = Invis:Toggle({ Name = "Invisibility", Flag = "misc_invis", Default = false })
@@ -10424,7 +10424,7 @@ do
             if tool.Name == "Taser" then return false end
             local o = originals[tool]
             if not o then
-                o = { SpreadRadius = tool:GetAttribute("SpreadRadius"), FireRate = tool:GetAttribute("FireRate"), AutoFire = tool:GetAttribute("AutoFire"), Range = tool:GetAttribute("Range") }
+                o = { SpreadRadius = tool:GetAttribute("SpreadRadius"), FireRate = tool:GetAttribute("FireRate"), AutoFire = tool:GetAttribute("AutoFire"), Range = tool:GetAttribute("Range"), AccurateRange = tool:GetAttribute("AccurateRange") }
                 originals[tool] = o
             end
             local noSpread = not restoreOnly and flag("gun_no_spread", false)
@@ -10433,9 +10433,18 @@ do
             if o.SpreadRadius ~= nil then tool:SetAttribute("SpreadRadius", noSpread and 0 or o.SpreadRadius) end
             if o.FireRate ~= nil then tool:SetAttribute("FireRate", o.FireRate * (pct / 100)) end
             if o.AutoFire ~= nil or auto then tool:SetAttribute("AutoFire", auto and true or o.AutoFire) end
-            if o.Range ~= nil then
-                local ranged = not restoreOnly and flag("gun_range_on", false)
-                tool:SetAttribute("Range", ranged and flag("gun_range", 1000) or o.Range)
+            local ranged = not restoreOnly and flag("gun_range_on", false)
+            if o.Range ~= nil or ranged then
+                if o.Range ~= nil then
+                    local want = ranged and flag("gun_range", 1000) or o.Range
+                    if tool:GetAttribute("Range") ~= want then tool:SetAttribute("Range", want) end
+                elseif ranged then
+                    tool:SetAttribute("Range", flag("gun_range", 1000))
+                end
+            end
+            if o.AccurateRange ~= nil then
+                local want = ranged and math.max(o.AccurateRange, flag("gun_range", 1000)) or o.AccurateRange
+                if tool:GetAttribute("AccurateRange") ~= want then tool:SetAttribute("AccurateRange", want) end
             end
             return true
         end
@@ -10452,12 +10461,16 @@ do
 
         local function sweep(restoreOnly)
             local sig = restoreOnly and "restore" or signature()
+            local character = LocalPlayer.Character
             for _, tool in ipairs(allTools()) do
+                local held = tool.Parent == character
                 if applied[tool] ~= sig then
-                    applied[tool] = sig
-                    if apply(tool, restoreOnly) and tool.Parent == LocalPlayer.Character then
-                        reequip(tool)
+                    if apply(tool, restoreOnly) then
+                        applied[tool] = sig
+                        if held then reequip(tool) end
                     end
+                elseif held and not restoreOnly then
+                    apply(tool, false)
                 end
             end
         end
@@ -14130,51 +14143,6 @@ do
     end)()
 
     do
-        local bag, saved, car = newBag(), {}, nil
-        feature("misc_fling_cars", function()
-            local container = waitForCars(3)
-            car = container and container:FindFirstChild("Squad")
-            if not car then
-                say("Squad car not found")
-                switchOff("misc_fling_cars")
-                return
-            end
-            local root = car.PrimaryPart or car:FindFirstChildWhichIsA("BasePart", true)
-            if not root then switchOff("misc_fling_cars") return end
-            for _, d in ipairs(car:GetDescendants()) do
-                if d:IsA("BasePart") then
-                    saved[d] = d.CanCollide
-                    d.CanCollide = false
-                end
-            end
-            bag.add(RunService.Heartbeat:Connect(function()
-                local _, _, myRoot = localParts()
-                if not myRoot or not root.Parent then return end
-                local best, bestDist
-                local limit = flag("misc_fling_range", 300)
-                for _, e in ipairs(otherEntities()) do
-                    local d = (e.Root.Position - myRoot.Position).Magnitude
-                    if d <= limit and (not bestDist or d < bestDist) and not e.Character:FindFirstChildOfClass("ForceField") then best, bestDist = e, d end
-                end
-                if not best then return end
-                local goal = best.Root.Position + v3(math.random(-2, 2), 3, math.random(-2, 2))
-                local spin = CFrame.Angles(math.rad(math.random(-45, 45)), 0, math.rad(math.random(-45, 45)))
-                car:PivotTo(car:GetPivot():Lerp(CFrame.lookAt(goal, goal + v3(0, 10, 0)) * spin, 0.5))
-                root.AssemblyLinearVelocity = v3(math.random(-1, 1), 1, math.random(-1, 1)) * 800
-            end))
-        end, function()
-            bag.clear()
-            for part, value in pairs(saved) do pcall(function() part.CanCollide = value end) end
-            table.clear(saved)
-            if car then
-                local root = car.PrimaryPart or car:FindFirstChildWhichIsA("BasePart", true)
-                if root then pcall(function() root.AssemblyLinearVelocity = ZERO end) end
-            end
-            car = nil
-        end)
-    end
-
-    do
         local bag, animTrack, token = newBag(), nil, 0
         local held, saved, autoRotate, platform = nil, {}, nil, nil
 
@@ -15720,6 +15688,13 @@ do
             return false
         end
 
+        function Gun.range(data)
+            local tool = Actions.gunTool and Actions.gunTool()
+            local attribute = tool and tool:GetAttribute("Range")
+            if type(attribute) == "number" and attribute > 0 then return attribute end
+            return data and tonumber(data.Range) or nil
+        end
+
         function Gun.data()
             if not Gun.shoot then return nil end
             local ok, data = pcall(debug.getupvalue, Gun.shoot, 10)
@@ -16269,7 +16244,7 @@ do
             local data = Gun.data()
             WB.filter = flag("wb_damage", true) and {
                 shooter = shooter, center = center, spot = flag("wb_spot", 7.5),
-                range = data and tonumber(data.Range) or nil,
+                range = Gun.range(data),
             } or nil
             local newOrigin, newTarget = scan(shooter, position, blocked and (blocked.Position + blocked.Normal * 0.01) or nil, center, flag("wb_hitbox", true))
 
@@ -16349,7 +16324,25 @@ do
                 local force = Gun.force
                 if force then
                     Gun.force = nil
-                    if clock() < force.expires and force.part.Parent then return force.part, force.pos end
+                    if clock() < force.expires and force.part.Parent then
+                        local forcedPart = force.part
+                        local _, _, forcedRoot = localParts()
+                        if typeof(origin) == "Vector3" and forcedRoot and flag("rb_wallbang", true) then
+                            WB.updateIgnore()
+                            local status, moved, moveHit = wallbangPlan(origin, forcedPart, forcedRoot)
+                            if not status and forcedPart.Parent then
+                                for _, alt in ipairs(altParts(forcedPart.Parent, forcedPart)) do
+                                    status, moved, moveHit = wallbangPlan(origin, alt, forcedRoot)
+                                    if status then forcedPart = alt break end
+                                end
+                            end
+                            if status == "moved" then
+                                lastOrigin, lastNew = origin, moved
+                                return forcedPart, moveHit or forcedPart.Position
+                            end
+                        end
+                        return forcedPart, force.pos
+                    end
                 end
 
                 if typeof(origin) ~= "Vector3" then return original(...) end
@@ -16368,7 +16361,7 @@ do
                     entity, part, wallbang = { Character = A.part.Parent }, A.part, true
                 else
                     entity, part = selectTarget("silent", aimRef(), origin, {
-                        limit = data and tonumber(data.Range) or 1000,
+                        limit = Gun.range(data) or 1000,
                         ignoreDown = taser,
                         skipWall = wallbang,
                     })
@@ -16628,7 +16621,7 @@ do
                         if root and cam and head and readyGun() then
                             local data = Gun.data()
                             local entity, part = selectTarget("silent", aimRef(), head.Position, {
-                                limit = data and tonumber(data.Range) or 1000,
+                                limit = Gun.range(data) or 1000,
                                 ignoreDown = data and data.Behavior == "Taser",
                                 skipWall = flag("silent_wallbang", false),
                             })
@@ -16879,6 +16872,61 @@ do
                 return list[math.random(1, #list)]
             end
 
+            local function mapBounds()
+                local now = clock()
+                if R.bounds and now - (R.boundsAt or 0) < 90 then return R.bounds end
+                if R.boundsBusy then return R.bounds end
+                R.boundsBusy = true
+                task.spawn(function()
+                    local xs, zs = {}, {}
+                    local count = 0
+                    local ok = pcall(function()
+                        for _, part in ipairs(workspace:GetDescendants()) do
+                            if part:IsA("BasePart") and part.Anchored and part.Size.Magnitude < 1500 then
+                                local position = part.Position
+                                if math.abs(position.X) < 20000 and math.abs(position.Z) < 20000 then
+                                    xs[#xs + 1] = position.X
+                                    zs[#zs + 1] = position.Z
+                                end
+                            end
+                            count += 1
+                            if count % 4000 == 0 then task.wait() end
+                        end
+                    end)
+                    if ok and #xs > 20 then
+                        table.sort(xs)
+                        table.sort(zs)
+                        local low, high = math.max(1, math.floor(#xs * 0.01)), math.min(#xs, math.ceil(#xs * 0.99))
+                        R.bounds = { minX = xs[low], maxX = xs[high], minZ = zs[low], maxZ = zs[high] }
+                    end
+                    R.boundsAt = clock()
+                    R.boundsBusy = false
+                end)
+                return R.bounds
+            end
+
+            local function edgePoint(now)
+                local base = R.realPos or ZERO
+                local bounds = mapBounds() or { minX = base.X - 500, maxX = base.X + 500, minZ = base.Z - 500, maxZ = base.Z + 500 }
+                local margin = flag("rb_edge_margin", 25)
+                local x0, x1 = bounds.minX - margin, bounds.maxX + margin
+                local z0, z1 = bounds.minZ - margin, bounds.maxZ + margin
+                local w, h = math.max(x1 - x0, 10), math.max(z1 - z0, 10)
+                local dt = math.min(now - (R.edgeAt or now), 0.5)
+                R.edgeAt = now
+                R.edgeD = ((R.edgeD or math.random() * 2 * (w + h)) + flag("rb_edge_speed", 400) * dt) % (2 * (w + h))
+                local d = R.edgeD
+                local px, pz
+                if d < w then px, pz = x0 + d, z0
+                elseif d < w + h then px, pz = x1, z0 + (d - w)
+                elseif d < 2 * w + h then px, pz = x1 - (d - w - h), z1
+                else px, pz = x0, z1 - (d - 2 * w - h) end
+                local destroyAt = workspace.FallenPartsDestroyHeight
+                if type(destroyAt) ~= "number" or destroyAt ~= destroyAt or destroyAt < -1e5 or destroyAt > 1e4 then destroyAt = -500 end
+                local y = math.max(base.Y + flag("rb_edge_y", 0), destroyAt + 30)
+                return v3(px, y, pz)
+            end
+
             local function voidPoint(now)
                 local currentPattern = flag("rb_pattern", "Under map")
                 if R.voidPattern ~= currentPattern then R.voidPattern, R.voidPos = currentPattern, nil end
@@ -16886,6 +16934,10 @@ do
                 R.voidRoll = now
                 local depth = flag("rb_depth", 1)
                 local pattern = flag("rb_pattern", "Under map")
+                if pattern == "Map edge" then
+                    R.voidPos = edgePoint(now)
+                    return R.voidPos
+                end
                 if pattern == "Under map" then
                     local base = R.realPos or ZERO
                     local destroyAt = workspace.FallenPartsDestroyHeight
@@ -17442,7 +17494,7 @@ do
                     if good then
                         local data = Gun.data()
                         local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
-                        local range = data and tonumber(data.Range) or 1000
+                        local range = Gun.range(data) or 1000
                         if not head then
                             good = false
                         elseif (result.Position - head.Position).Magnitude > range then
@@ -17489,7 +17541,7 @@ do
                 if not head or not Camera() then return nil end
                 if flag("Silent_Global_Enabled", false) and keyActive("Silent_Global_Key") then
                     local data = Gun.data()
-                    local entity, part = selectTarget("silent", aimRef(), head.Position, { skipWall = true, limit = data and tonumber(data.Range) or 1000 })
+                    local entity, part = selectTarget("silent", aimRef(), head.Position, { skipWall = true, limit = Gun.range(data) or 1000 })
                     if entity then return entity, part end
                 end
                 if flag("Aim_Global_Enabled", false) then
@@ -17547,7 +17599,7 @@ do
                     Health = hum.Health,
                     MaxHealth = hum.MaxHealth,
                     Distance = distance,
-                    Range = data and tonumber(data.Range) or flag("silent_max_dist", 1000),
+                    Range = Gun.range(data) or flag("silent_max_dist", 1000),
                     Sight = sight,
                     Team = team and team.Name or "none",
                     TeamColor = team and team.TeamColor.Color or nil,

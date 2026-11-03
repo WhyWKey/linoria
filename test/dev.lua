@@ -1908,10 +1908,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-h | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-i | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-h",
+    Title = "Aster  |  perception-1101-i",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -3628,7 +3628,7 @@ do
 
     local Protect = MiscSubs.Utility:Section({ Name = "Protection", Side = 2 })
     Protect:Toggle({ Name = "Anti taze", Flag = "misc_anti_taze", Default = false })
-    Protect:Toggle({ Name = "Anti taze: block game handler", Flag = "misc_anti_taze_block", Default = false, Tooltip = "Also disables the game's own taze handler. Off keeps the walk speed fix only. Turn it on only if the plain fix is not enough" })
+    Protect:Toggle({ Name = "Anti taze: no animation", Flag = "misc_anti_taze_block", Default = false, Tooltip = "Also stops the taze animation and keeps your backpack usable. It never touches the game's scripts, so it can not crash the game" })
     Protect:Toggle({ Name = "Anti fling", Flag = "misc_anti_fling", Default = false })
     Protect:Toggle({ Name = "Destroy body on death", Flag = "misc_destroy_body", Default = false })
     Protect:Toggle({ Name = "Anti riot shield", Flag = "misc_anti_riot", Default = false })
@@ -5602,8 +5602,15 @@ do
         saved[inst] = nil
     end
 
+    local hiddenAppearance = {}
     local function restoreTree(root)
         if not root then return end
+        for appearance, parent in pairs(hiddenAppearance) do
+            if parent and (parent == root or parent:IsDescendantOf(root)) then
+                pcall(function() appearance.Parent = parent end)
+                hiddenAppearance[appearance] = nil
+            end
+        end
         restoreInstance(root)
         for _, inst in ipairs(root:GetDescendants()) do restoreInstance(inst) end
     end
@@ -5624,6 +5631,11 @@ do
                 else
                     setProp(inst, "TextureID", data.TextureID)
                 end
+            end
+        elseif inst:IsA("SurfaceAppearance") then
+            if cfg.material or cfg.color then
+                hiddenAppearance[inst] = inst.Parent
+                pcall(function() inst.Parent = nil end)
             end
         elseif inst:IsA("SpecialMesh") then
             local data = snapshot(inst)
@@ -6791,6 +6803,13 @@ do
 
                     task.delay(0.75, clearFaces)
                     task.delay(2, clearFaces)
+                    local watcher
+                    watcher = head.ChildAdded:Connect(function(child)
+                        if child:IsA("Decal") or child:IsA("Texture") then
+                            task.defer(function() pcall(function() child:Destroy() end) end)
+                        end
+                    end)
+                    task.delay(20, function() if watcher then watcher:Disconnect() end end)
                 else
                     for _, d in ipairs(sourceHead:GetChildren()) do
                         if d:IsA("Decal") then pcall(function() d:Clone().Parent = head end) end
@@ -7674,13 +7693,6 @@ do
                 notify("Avatar builder: could not build that avatar")
                 return false
             end
-            if humanoid.RigType == Enum.HumanoidRigType.R6 and type(desc.Head) == "number" and desc.Head ~= 0 then
-                local okInfo, info = pcall(function() return AvatarEditorService:GetItemDetails(desc.Head, Enum.AvatarItemType.Asset) end)
-                if okInfo and type(info) == "table" and assetTypeName(info.AssetType) == "DynamicHead" then
-                    desc.Head = 0
-                    notify("Avatar builder: dynamic heads do not work on R6, kept the default head")
-                end
-            end
             lastUid, lastOutfit = nil, nil
             lastBuilt = desc:Clone()
             currentDesc = desc
@@ -7785,7 +7797,7 @@ do
             if F.bundleType then
                 pcall(function() params.BundleTypes = { Enum.BundleType[F.bundleType] } end)
             end
-            if F.robloxOnly then
+            if onlyRoblox(F) then
                 pcall(function() params.CreatorName = "Roblox" end)
             end
             if F.kind == "Limited" then
@@ -7806,6 +7818,7 @@ do
             return params
         end
 
+        local sampled
         local function normItem(item)
             local id = item.Id or item.id
             if type(id) ~= "number" then return nil end
@@ -7816,11 +7829,17 @@ do
             if type(restrictions) == "table" then
                 for _, restriction in pairs(restrictions) do
                     local text = string.lower(tostring(restriction))
-                    if string.find(text, "limited", 1, true) or string.find(text, "collectible", 1, true) then limited = true end
+                    if text == "limited" or text == "limitedunique" or text == "collectible" then limited = true end
                 end
             end
-            local collectible = item.CollectibleItemId
-            if type(collectible) == "string" and collectible ~= "" and not string.match(collectible, "^[0%-]+$") then limited = true end
+            if not sampled or sampled < 3 then
+                sampled = (sampled or 0) + 1
+                local list = {}
+                if type(restrictions) == "table" then
+                    for _, restriction in pairs(restrictions) do list[#list + 1] = tostring(restriction) end
+                end
+                print(string.format("[Aster] catalog sample %s | restrictions [%s] | collectible %s | limited %s", tostring(item.Name or item.name), table.concat(list, ","), tostring(item.CollectibleItemId), tostring(limited)))
+            end
             return {
                 id = id,
                 name = tostring(item.Name or item.name or id),
@@ -7834,8 +7853,17 @@ do
             }
         end
 
+        local function gameIsR6()
+            local character = LocalPlayer.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            return humanoid ~= nil and humanoid.RigType == Enum.HumanoidRigType.R6
+        end
+        local function onlyRoblox(F)
+            return F.robloxOnly == true or (F.bundleType ~= nil and gameIsR6())
+        end
+
         local function passesKind(F, entry)
-            if F.robloxOnly and entry.creator ~= nil and entry.creator ~= "Roblox" then return false end
+            if onlyRoblox(F) and entry.creator ~= nil and entry.creator ~= "Roblox" then return false end
             if F.kind == "Limited" then
                 if entry.creator ~= nil and entry.creator ~= "Roblox" then return false end
             elseif F.kind == "Roblox" then
@@ -7851,7 +7879,7 @@ do
             for _, entry in ipairs(SORTS) do if entry[2] == F.sort then sort = entry[3] end end
             local url = "https://catalog.roblox.com/v1/search/items/details?Keyword=" .. HttpService:UrlEncode(F.keyword or "") .. "&Limit=30&SortType=" .. sort
             if cursor then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
-            if F.kind == "Roblox" or F.kind == "Limited" or F.robloxOnly then url = url .. "&CreatorName=Roblox" end
+            if F.kind == "Roblox" or F.kind == "Limited" or onlyRoblox(F) then url = url .. "&CreatorName=Roblox" end
             local data, status, message = httpJson(url)
             if not data then error("catalog request failed (" .. tostring(status) .. ") " .. tostring(message or ""), 0) end
             local wanted
@@ -8247,7 +8275,7 @@ do
             end
             updateSummary()
 
-            local onBuilderChanged, openBundlePicker, playEmote
+            local onBuilderChanged, openBundlePicker, playEmote, openEmotePopup
             local function refreshMarketBorders()
                 for id, tile in pairs(M.tiles) do
                     if tile.Parent then setBorder(tile, isWorn(id) and "AccentColor" or "Black") end
@@ -8293,7 +8321,7 @@ do
                     return
                 end
                 if entry.assetName == "EmoteAnimation" then
-                    if playEmote then playEmote(entry) end
+                    if openEmotePopup then openEmotePopup(entry) end
                     return
                 end
                 local typeName = entry.assetName
@@ -8376,10 +8404,81 @@ do
                 local ok, success, track = pcall(function() return humanoid:PlayEmoteAndGetAnimTrackById(entry.id) end)
                 if ok and success and track then
                     M.emoteTrack, M.emoteId = track, entry.id
-                    notify("Playing " .. entry.name .. ", click it again to stop")
+                    notify("Playing " .. entry.name)
                 else
                     notify("Emotes: could not play " .. entry.name)
                 end
+            end
+
+            local function equipEmote(entry, slot)
+                local desc = Builder.desc
+                if not desc then notify("Avatar builder: still loading your avatar") return end
+                local function withSlot(target)
+                    pcall(function() target:AddEmote(entry.name, entry.id) end)
+                    local list = {}
+                    local okGet, equipped = pcall(function() return target:GetEquippedEmotes() end)
+                    if okGet and type(equipped) == "table" then
+                        for _, item in ipairs(equipped) do
+                            if item.Slot ~= slot and item.Name ~= entry.name then list[#list + 1] = { Slot = item.Slot, Name = item.Name } end
+                        end
+                    end
+                    list[#list + 1] = { Slot = slot, Name = entry.name }
+                    local okSet = pcall(function() target:SetEquippedEmotes(list) end)
+                    return okSet
+                end
+                withSlot(desc)
+                local character = LocalPlayer.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                if not humanoid then return end
+                local okApplied, applied = pcall(function() return humanoid:GetAppliedDescription() end)
+                if not (okApplied and applied) then
+                    notify("Avatar builder: emote saved in the builder, could not reach the emote wheel")
+                    return
+                end
+                if not withSlot(applied) then
+                    notify("Avatar builder: emote saved in the builder, the wheel refused it")
+                    return
+                end
+                local okApply = pcall(function()
+                    if humanoid.ApplyDescriptionAsync then humanoid:ApplyDescriptionAsync(applied) else humanoid:ApplyDescription(applied) end
+                end)
+                notify(okApply and string.format("Emote wheel: %s is now in slot %d", entry.name, slot) or "Avatar builder: the wheel refused the emote")
+                if okApply and lastBuilt then
+                    task.delay(1.2, function()
+                        if lastBuilt then runBuilt(lastBuilt:Clone()) end
+                    end)
+                end
+            end
+
+            function openEmotePopup(entry)
+                if M.picker then pcall(function() M.picker:Destroy() end) M.picker = nil end
+                local overlay = lf("TextButton", { BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 60, Parent = root })
+                M.picker = overlay
+                local cardOuter, card = bevel(overlay, Z + 61, UDim2.fromOffset(340, 300), UDim2.fromScale(0.5, 0.5))
+                cardOuter.AnchorPoint = Vector2.new(0.5, 0.5)
+                mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromOffset(64, 64), Position = UDim2.fromOffset(14, 14), ZIndex = Z + 64, Parent = card })
+                lbl({ Text = entry.name, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -100, 0, 20), Position = UDim2.fromOffset(88, 18), ZIndex = Z + 64, Parent = card })
+                lbl({ Text = "Play it on your character, or put it in a slot of your emote wheel.", TextSize = 11, TextWrapped = true, TextTransparency = 0.4, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Size = UDim2.new(1, -100, 0, 34), Position = UDim2.fromOffset(88, 40), ZIndex = Z + 64, Parent = card })
+                local function cardPill(text, position, size, onClick)
+                    local outer, face = bevel(card, Z + 63, size, position)
+                    lbl({ Text = text, TextSize = 12, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 66, Parent = face })
+                    local hit = lf("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 68, Parent = outer })
+                    hit.MouseEnter:Connect(function() setBorder(outer, "AccentColor") end)
+                    hit.MouseLeave:Connect(function() setBorder(outer, "Black") end)
+                    hit.MouseButton1Click:Connect(onClick)
+                end
+                cardPill("Play / stop", UDim2.fromOffset(14, 92), UDim2.new(1, -28, 0, 30), function() playEmote(entry) end)
+                lbl({ Text = "EMOTE WHEEL SLOT", TextSize = 10, TextTransparency = 0.45, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -28, 0, 14), Position = UDim2.fromOffset(14, 134), ZIndex = Z + 64, Parent = card })
+                for slot = 1, 8 do
+                    local column, row = (slot - 1) % 4, math.floor((slot - 1) / 4)
+                    cardPill(tostring(slot), UDim2.new(0, 14 + column * ((340 - 28 + 6) / 4), 0, 154 + row * 40), UDim2.fromOffset((340 - 28 - 18) / 4, 34), function()
+                        task.spawn(equipEmote, entry, slot)
+                    end)
+                end
+                cardPill("Close", UDim2.new(0, 14, 1, -44), UDim2.new(1, -28, 0, 30), function()
+                    if M.picker == overlay then M.picker = nil end
+                    pcall(function() overlay:Destroy() end)
+                end)
             end
 
             function openBundlePicker(entry)
@@ -8493,7 +8592,10 @@ do
                             items = {}
                             for _, raw in ipairs(M.pages:GetCurrentPage()) do
                                 local entry = normItem(raw)
-                                if entry and passesKind(F, entry) then items[#items + 1] = entry end
+                                if entry and passesKind(F, entry) then
+                                    if F.kind == "Limited" then entry.limited = true end
+                                    items[#items + 1] = entry
+                                end
                             end
                             M.finished = M.pages.IsFinished == true
                             source = "catalog"
@@ -8526,7 +8628,7 @@ do
                     if M.count == 0 then
                         mStatus.Text = "no items found, try other filters"
                     else
-                        local clickText = (F.bundleType and "click a bundle to choose its parts") or (F.catName == "Emotes" and "click an emote to play it") or "click to wear, click again to take off"
+                        local clickText = (F.bundleType and "click a bundle to choose its parts") or (F.catName == "Emotes" and "click an emote to play it or put it in your wheel") or "click to wear, click again to take off"
                         mStatus.Text = string.format("%d items%s  |  %s", M.count, M.finished and "" or "  (scroll for more)", clickText)
                     end
                     if M.count < 16 and not M.finished and (M.auto or 0) < 6 then
@@ -10168,8 +10270,10 @@ do
                 applyWorkspace()
                 bag.add(workspace:GetPropertyChangedSignal("Gravity"):Connect(function()
                     if changing then return end
-                    old = workspace.Gravity
-                    applyWorkspace()
+                    if workspace.Gravity ~= flag("misc_gravity_value", 196) then
+                        old = workspace.Gravity
+                        applyWorkspace()
+                    end
                 end))
                 bag.add(RunService.Heartbeat:Connect(function()
                     if workspace.Gravity ~= flag("misc_gravity_value", 196) then applyWorkspace() end
@@ -10611,48 +10715,37 @@ do
     end
 
     do
-        local bag, disabled, until_ = newBag(), {}, 0
+        local bag, until_ = newBag(), 0
         local lastSpeed, lastJump = 16, 7.2
-        local remote
-
-        local function sourceOf(connection)
-            local ok, src = pcall(function() return connection.Function and debug.info(connection.Function, "s") end)
-            return ok and type(src) == "string" and src or ""
-        end
-
-        local function hookGame()
-            if type(getconnections) ~= "function" or not remote then return end
-            local ok, list = pcall(getconnections, remote.OnClientEvent)
-            if not ok or type(list) ~= "table" then return end
-            if not flag("misc_anti_taze_block", false) then return end
-            for _, c in ipairs(list) do
-                local isHandler = false
-                pcall(function() isHandler = c.Function ~= nil and sourceOf(c):find("ClientInputHandler") ~= nil end)
-                if isHandler and not table.find(disabled, c) then
-                    local ok = pcall(function() c:Disable() end)
-                    if ok then disabled[#disabled + 1] = c end
-                    task.wait()
-                end
-            end
-        end
-
+        local TASE_ANIMS = { ["279227693"] = true, ["279229192"] = true }
         feature("misc_anti_taze", function()
             local gun = ReplicatedStorage:FindFirstChild("GunRemotes") or ReplicatedStorage:WaitForChild("GunRemotes", 5)
-            remote = gun and (gun:FindFirstChild("PlayerTased") or gun:WaitForChild("PlayerTased", 5))
+            local remote = gun and (gun:FindFirstChild("PlayerTased") or gun:WaitForChild("PlayerTased", 5))
             if not remote then warnf("PlayerTased remote not found") return end
-            task.delay(1, function() pcall(hookGame) end)
-            bag.add(LocalPlayer.CharacterAdded:Connect(function()
-                table.clear(disabled)
-                task.delay(1.5, function() pcall(hookGame) end)
+            bag.add(remote.OnClientEvent:Connect(function()
+                until_ = clock() + 4
+                task.delay(0.15, function()
+                    pcall(function() game:GetService("StarterGui"):SetCore("ResetButtonCallback", true) end)
+                end)
             end))
-            bag.add(remote.OnClientEvent:Connect(function() until_ = clock() + 4 end))
-
             bag.add(RunService.Heartbeat:Connect(function()
                 local _, hum = localParts()
                 if not hum then return end
                 if clock() < until_ then
                     if hum.WalkSpeed < lastSpeed then hum.WalkSpeed = lastSpeed end
                     if hum.JumpHeight < lastJump then hum.JumpHeight = lastJump end
+                    if flag("misc_anti_taze_block", false) then
+                        pcall(function()
+                            LocalPlayer:SetAttribute("BackpackEnabled", true)
+                            local animator = hum:FindFirstChildOfClass("Animator")
+                            if animator then
+                                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                                    local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
+                                    if id and TASE_ANIMS[id] then track:Stop(0) end
+                                end
+                            end
+                        end)
+                    end
                 else
                     if hum.WalkSpeed > 0 then lastSpeed = hum.WalkSpeed end
                     if hum.JumpHeight > 0 then lastJump = hum.JumpHeight end
@@ -10660,8 +10753,6 @@ do
             end))
         end, function()
             bag.clear()
-            for _, c in ipairs(disabled) do pcall(function() c:Enable() end) end
-            table.clear(disabled)
             until_ = 0
         end)
     end
@@ -14063,7 +14154,7 @@ do
                 local limit = flag("misc_fling_range", 300)
                 for _, e in ipairs(otherEntities()) do
                     local d = (e.Root.Position - myRoot.Position).Magnitude
-                    if d <= limit and (not bestDist or d < bestDist) then best, bestDist = e, d end
+                    if d <= limit and (not bestDist or d < bestDist) and not e.Character:FindFirstChildOfClass("ForceField") then best, bestDist = e, d end
                 end
                 if not best then return end
                 local goal = best.Root.Position + v3(math.random(-2, 2), 3, math.random(-2, 2))
@@ -14431,12 +14522,14 @@ do
                 local speed = flag("misc_vfly_speed", 60)
                 local vertical = up + down
                 root.AssemblyLinearVelocity = v3(0, 2.25, 0)
+                root.AssemblyAngularVelocity = ZERO
                 if flag("misc_vfly_camera", true) then
                     local yaw = select(2, cam.CFrame:ToEulerAnglesYXZ())
                     local move = CFrame.fromEulerAnglesYXZ(0, yaw, 0):VectorToObjectSpace(hum.MoveDirection)
-                    root.CFrame = CFrame.lookAlong(root.Position, cam.CFrame.LookVector) * CFrame.new(v3(move.X, vertical, move.Z) * speed * dt)
+                    root.CFrame = CFrame.new(root.Position) * CFrame.fromEulerAnglesYXZ(0, yaw, 0) * CFrame.new(v3(move.X, vertical, move.Z) * speed * dt)
                 else
-                    root.CFrame = CFrame.lookAlong(root.Position, cam.CFrame.LookVector) + (hum.MoveDirection + v3(0, vertical, 0)) * speed * dt
+                    local yaw2 = select(2, cam.CFrame:ToEulerAnglesYXZ())
+                    root.CFrame = CFrame.new(root.Position + (hum.MoveDirection + v3(0, vertical, 0)) * speed * dt) * CFrame.fromEulerAnglesYXZ(0, yaw2, 0)
                 end
                 if flag("misc_vfly_cap", false) then
                     capHeight(root, nil, workspace:FindFirstChild("CarContainer"))
@@ -17515,13 +17608,13 @@ do
 
             local function orbitHeight(center)
                 local void = workspace.FallenPartsDestroyHeight
-                if type(void) ~= "number" or void ~= void then void = -500 end
+                if type(void) ~= "number" or void ~= void or void < -1e5 or void > 1e4 then void = -500 end
                 local floorLimit = void + 12
                 local mode = flag("orbit_mode", "Under the map")
                 local depth = flag("orbit_depth", 15)
                 local y
                 if mode == "Near void" then
-                    y = floorLimit + 6
+                    y = math.min(void + 30, center.Y - 10)
                 elseif mode == "Below target" then
                     y = center.Y - depth
                 else

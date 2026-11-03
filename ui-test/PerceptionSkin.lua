@@ -1635,27 +1635,117 @@ local function SkinTab(ctx, Tab, Name, list)
     for _, i in ipairs(list) do
         if i.ClassName == 'ScrollingFrame' then sides[#sides + 1] = i end
     end
-    if sides[1] then
-        sides[1].Position = UDim2.new(0, 0, 0, 0)
-        sides[1].Size = UDim2.new(0.5, -5, 1, 0)
-    end
-    if sides[2] then
-        sides[2].Position = UDim2.new(0.5, 5, 0, 0)
-        sides[2].Size = UDim2.new(0.5, -5, 1, 0)
-    end
-
     local TabFrame
     for _, i in ipairs(list) do
         if i.ClassName == 'Frame' and i.Name == 'TabFrame' then TabFrame = i; break end
     end
 
+    -- columns: two normally, three when the menu is stretched wide ---------------------------
+    local COL_MIN, COL_GAP = 290, 10
+    local sideList = { sides[1], sides[2] }
+    local state = { top = 0, cols = 2, hostMode = false, pending = false, seq = 0 }
+    local requestReflow
+    if sides[1] and sides[2] then
+        local third = sides[2]:Clone()
+        for _, c in ipairs(third:GetChildren()) do
+            if c:IsA('GuiObject') then c:Destroy() end
+        end
+        third.Name = 'Side3'
+        third.Visible = false
+        third.CanvasSize = UDim2.new()
+        third.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        third.Parent = sides[2].Parent
+        pcall(function() Library:AddToRegistry(third, { ScrollBarImageColor3 = 'AccentColor' }) end)
+        sideList[3] = third
+    end
+
+    local function layoutSides()
+        local n = state.cols
+        for i, sd in ipairs(sideList) do
+            sd.Position = UDim2.new((i - 1) / n, (i - 1) * COL_GAP / n, 0, state.top)
+            sd.Size = UDim2.new(1 / n, -COL_GAP * (n - 1) / n, 1, -state.top)
+            sd.Visible = i <= n and not state.hostMode
+        end
+    end
+    layoutSides()
+
+    local function boxesInOrder()
+        local out = {}
+        for index, sd in ipairs(sideList) do
+            for _, c in ipairs(sd:GetChildren()) do
+                if c:IsA('GuiObject') then
+                    if not c:GetAttribute('SkinSeq') then
+                        state.seq = state.seq + 1
+                        c:SetAttribute('SkinSeq', state.seq)
+                        c:SetAttribute('SkinSide', math.min(index, 2))
+                        c:GetPropertyChangedSignal('Visible'):Connect(function() if requestReflow then requestReflow() end end)
+                    end
+                    out[#out + 1] = c
+                end
+            end
+        end
+        table.sort(out, function(a, b) return a:GetAttribute('SkinSeq') < b:GetAttribute('SkinSeq') end)
+        return out
+    end
+
+    local function reflow()
+        state.pending = false
+        if not sideList[3] then return end
+        local n = state.cols
+        for _, sd in ipairs(sideList) do
+            local layout = sd:FindFirstChildOfClass('UIListLayout')
+            if layout then layout.SortOrder = Enum.SortOrder.LayoutOrder end
+        end
+        local heights = { 0, 0, 0 }
+        for _, box in ipairs(boxesInOrder()) do
+            local target = box:GetAttribute('SkinSide') or 1
+            if n >= 3 and box.Visible then
+                target = 1
+                for i = 2, n do
+                    if heights[i] < heights[target] then target = i end
+                end
+                heights[target] = heights[target] + math.max(box.Size.Y.Offset, 40) + 8
+            end
+            box.LayoutOrder = box:GetAttribute('SkinSeq')
+            if box.Parent ~= sideList[target] then box.Parent = sideList[target] end
+        end
+    end
+
+    function requestReflow()
+        if state.pending then return end
+        state.pending = true
+        task.defer(reflow)
+    end
+
+    if sideList[3] then
+        for _, sd in ipairs(sideList) do
+            sd.ChildAdded:Connect(function(child)
+                if child:IsA('GuiObject') then requestReflow() end
+            end)
+        end
+        local function recount()
+            local width = TabFrame and TabFrame.AbsoluteSize.X or 0
+            local n = width >= COL_MIN * 3 + COL_GAP * 2 and 3 or 2
+            if n ~= state.cols then
+                state.cols = n
+                layoutSides()
+                requestReflow()
+            end
+        end
+        if TabFrame then
+            TabFrame:GetPropertyChangedSignal('AbsoluteSize'):Connect(recount)
+            TabFrame:GetPropertyChangedSignal('Visible'):Connect(function()
+                if TabFrame.Visible then requestReflow() end
+            end)
+            task.defer(recount)
+        end
+    end
+
     Tab.SubTabs = function(t, names)
         local bar = { current = names[1], pills = {}, groups = {}, hosts = {} }
         local subs = {}
-        for _, sd in ipairs(sides) do
-            sd.Position = UDim2.new(sd.Position.X.Scale, sd.Position.X.Offset, 0, SUB_H + 10)
-            sd.Size = UDim2.new(sd.Size.X.Scale, sd.Size.X.Offset, 1, -(SUB_H + 10))
-        end
+        state.top = SUB_H + 10
+        layoutSides()
 
         local widths = {}
         for index, name in ipairs(names) do
@@ -1689,7 +1779,9 @@ local function SkinTab(ctx, Tab, Name, list)
         end
         local slider = NewSlider(TabFrame, SUB_H - 5, 6)
         local function apply()
-            for _, sd in ipairs(sides) do sd.Visible = not bar.hosts[bar.current] end
+            state.hostMode = bar.hosts[bar.current] and true or false
+            layoutSides()
+            if requestReflow then requestReflow() end
             for name, group in pairs(bar.groups) do
                 for _, frame in ipairs(group) do frame.Visible = name == bar.current end
             end
@@ -2410,7 +2502,7 @@ Guard('fonts', function()
     end
 end)
 
-local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1101-c' }
+local Skin = { AutoDerive = true, ActiveFollow = true, Manual = {}, Version = 'build-1103-a' }
 
 local deriving = false
 local function setPicker(key, color)

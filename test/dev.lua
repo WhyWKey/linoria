@@ -1912,10 +1912,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-m | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-o | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-m",
+    Title = "Aster  |  perception-1101-o",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -2179,7 +2179,9 @@ do
     Aim:Slider({ Name = "Miss size", Flag = "aim_miss_size", Min = 0.5, Max = 6, Default = 2.5, Suffix = " studs", Decimals = 0.1 })
     Aim:Toggle({ Name = "Lock target", Flag = "aim_lock", Default = false })
     Aim:Dropdown({ Name = "Hitscan priority", Flag = "aim_priority", Items = { "Closest", "Head", "Body" }, Default = "Closest" })
-    Aim:Dropdown({ Name = "Hitscan points", Flag = "aim_points", Items = { "Head", "Body" }, Multi = true, Default = { "Head", "Body" } })
+    Aim:Dropdown({ Name = "Hitscan points", Flag = "aim_points", Items = { "Head", "Torso", "Lower torso", "Root", "Left arm", "Right arm", "Left leg", "Right leg" }, Multi = true, Default = { "Head", "Torso" }, Tooltip = "Every hitbox the target can be aimed at. Arms and legs cover all R6 and R15 limb parts, Torso covers Torso and UpperTorso, Root is the HumanoidRootPart" })
+    Aim:Toggle({ Name = "Multipoint", Flag = "aim_multipoint", Default = false, Tooltip = "Also scans points on the edges of each hitbox and aims at the one closest to your crosshair (and visible, with wall check on)" })
+    Aim:Slider({ Name = "Point spread", Flag = "aim_mp_scale", Min = 10, Max = 100, Default = 70, Suffix = "%", Decimals = 1, Tooltip = "How far from the center of a hitbox the edge points are. Lower stays safely inside the hitbox" })
     Aim:Slider({ Name = "Reaction time", Flag = "aim_reaction", Min = 0, Max = 500, Default = 0, Suffix = "ms", Decimals = 1 })
     Aim:Slider({ Name = "Max distance", Flag = "aim_max_dist", Min = 50, Max = 2000, Default = 1000, Suffix = " studs", Decimals = 1 })
 
@@ -2341,7 +2343,9 @@ do
     Silent:Toggle({ Name = "Dynamic FOV", Flag = "silent_dynamic", Default = false })
     Silent:Slider({ Name = "Dynamic FOV amount", Flag = "silent_dynamic_amount", Min = 0, Max = 100, Default = 50, Suffix = "%", Decimals = 1 })
     Silent:Dropdown({ Name = "Hitscan priority", Flag = "silent_priority", Items = { "Closest", "Head", "Body" }, Default = "Head" })
-    Silent:Dropdown({ Name = "Hitscan points", Flag = "silent_points", Items = { "Head", "Body" }, Multi = true, Default = { "Head", "Body" } })
+    Silent:Dropdown({ Name = "Hitscan points", Flag = "silent_points", Items = { "Head", "Torso", "Lower torso", "Root", "Left arm", "Right arm", "Left leg", "Right leg" }, Multi = true, Default = { "Head", "Torso" }, Tooltip = "Every hitbox the target can be aimed at. Arms and legs cover all R6 and R15 limb parts, Torso covers Torso and UpperTorso, Root is the HumanoidRootPart" })
+    Silent:Toggle({ Name = "Multipoint", Flag = "silent_multipoint", Default = false, Tooltip = "Also scans points on the edges of each hitbox and aims at the one closest to your crosshair (and visible, with wall check on)" })
+    Silent:Slider({ Name = "Point spread", Flag = "silent_mp_scale", Min = 10, Max = 100, Default = 70, Suffix = "%", Decimals = 1, Tooltip = "How far from the center of a hitbox the edge points are. Lower stays safely inside the hitbox" })
     Silent:Slider({ Name = "Hit chance", Flag = "Silent_Global_HitChance", Min = 1, Max = 100, Default = 100, Suffix = "%", Decimals = 1 })
     Silent:Slider({ Name = "Max distance", Flag = "silent_max_dist", Min = 50, Max = 2000, Default = 1000, Suffix = " studs", Decimals = 1 })
 
@@ -2887,8 +2891,8 @@ local function fxApplyPreset(preset)
         fxSet("lighting_colorAmbient", preset.ambient)
         fxSet("lighting_colorOutdoorAmbient", preset.outer)
         if preset.clock then
-            fxSet("lighting_toggle_ClockTime", true)
-            fxSet("lighting_number_ClockTime", preset.clock)
+            fxSet("sky_time_mode", "Locked")
+            fxSet("sky_time_locked", preset.clock)
         end
     end
     if fxPart("atmo_part_atmos") then
@@ -3065,9 +3069,10 @@ function FxAtmo.apply(item)
 end
 
 function FxAtmo.reset()
-    for _, flag in ipairs({ "skybox_enabled", "atmosphere_enabled", "bloom_enabled", "color_correction_enabled", "sunrays_enabled", "lighting_toggle_Ambient", "lighting_toggle_ClockTime" }) do
+    for _, flag in ipairs({ "skybox_enabled", "atmosphere_enabled", "bloom_enabled", "color_correction_enabled", "sunrays_enabled", "lighting_toggle_Ambient" }) do
         fxSet(flag, false)
     end
+    fxSet("sky_time_mode", "Off")
     fxAtmoTell("Sky, atmosphere and post effects turned off")
 end
 
@@ -3814,9 +3819,7 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     do
         local Lighting = game:GetService("Lighting")
         local function getFlag(name, default)
-            local option = Options and Options[name]
-            if option and option.Value ~= nil then return option.Value end
-            return default
+            return readFlag(name, default)
         end
         local function notify(message)
             pcall(function() Library:Notify(message, 4) end)
@@ -3833,7 +3836,7 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
         SkySpin:Slider({ Name = "Sway rate", Flag = "sky_sway_rate", Min = 0.02, Max = 1, Default = 0.15, Decimals = 0.01, Suffix = " Hz" })
 
         local SkyTime = Fx:Section("Sky", "Motion", "Time of day", "Right")
-        SkyTime:Dropdown({ Name = "Time", Flag = "sky_time_mode", Items = { "Off", "Cycle", "Locked" }, Default = "Off", Tooltip = "Kept on our own clock, so the game resetting the time does not restart the cycle" })
+        SkyTime:Dropdown({ Name = "Time", Flag = "sky_time_mode", Items = { "Off", "Cycle", "Locked" }, Default = "Off", Tooltip = "Locked holds one hour, Cycle runs the day. It is kept on our own clock, so the game resetting the time does not undo it. This is the only time of day control" })
         SkyTime:Slider({ Name = "Cycle speed", Flag = "sky_cycle_speed", Min = 0.01, Max = 3, Default = 0.25, Decimals = 0.01, Suffix = " h/s" })
         SkyTime:Slider({ Name = "Locked time", Flag = "sky_time_locked", Min = 0, Max = 24, Default = 14, Decimals = 0.1, Suffix = " h" })
 
@@ -3974,8 +3977,17 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
 
                 local mode = getFlag("sky_time_mode", "Off")
                 if mode ~= was.time then
-                    if mode == "Cycle" then hour = Lighting.ClockTime end
-                    if savedClock == nil then savedClock = Lighting.ClockTime end
+                    if mode == "Off" then
+                        if savedClock ~= nil then
+                            reasserting = true
+                            Lighting.ClockTime = savedClock
+                            reasserting = false
+                            savedClock = nil
+                        end
+                    else
+                        if savedClock == nil then savedClock = Lighting.ClockTime end
+                        if mode == "Cycle" then hour = Lighting.ClockTime end
+                    end
                     was.time = mode
                 end
                 if mode == "Cycle" then
@@ -4000,7 +4012,7 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
         onUnload(restoreAll)
     end
 
-    local LightMain, LightTime, LightFog = WorldSubs.Lighting:MultiSection({ Sections = { "Light", "Time", "Fog" }, Side = 1 })
+    local LightMain, LightFog = WorldSubs.Lighting:MultiSection({ Sections = { "Light", "Fog" }, Side = 1 })
     LightMain:Toggle({ Name = "Ambient", Flag = "lighting_toggle_Ambient", Default = false }):Colorpicker({ Name = "Inner ambient", Flag = "lighting_colorAmbient", Default = WHITE }):Colorpicker({ Name = "Outer ambient", Flag = "lighting_colorOutdoorAmbient", Default = WHITE })
     LightMain:Toggle({ Name = "Brightness", Flag = "lighting_toggle_Brightness", Default = false })
     LightMain:Slider({ Name = "Brightness value", Flag = "lighting_number_Brightness", Min = 0, Max = 5, Default = 1.7, Decimals = 0.01 })
@@ -4012,8 +4024,6 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
     LightMain:Slider({ Name = "Light brightness", Flag = "maplights_brightness", Min = 0, Max = 10, Default = 1, Decimals = 0.01 })
     LightMain:Slider({ Name = "Light range", Flag = "maplights_range", Min = 0, Max = 5, Default = 1, Decimals = 0.01 })
     LightMain:Toggle({ Name = "Light shadows", Flag = "maplights_shadows", Default = false })
-    LightTime:Toggle({ Name = "Clock time", Flag = "lighting_toggle_ClockTime", Default = false })
-    LightTime:Slider({ Name = "Clock time value", Flag = "lighting_number_ClockTime", Min = 0, Max = 24, Default = 9.2, Decimals = 0.01 })
     LightFog:Toggle({ Name = "Fog start", Flag = "lighting_toggle_FogStart", Default = false })
     LightFog:Slider({ Name = "Fog start value", Flag = "lighting_number_FogStart", Suffix = " stud(s)", Min = 0, Max = 5000, Default = 0, Decimals = 1 })
     LightFog:Toggle({ Name = "Fog end", Flag = "lighting_toggle_FogEnd", Default = false })
@@ -5078,7 +5088,6 @@ do
         applyLightingProp("OutdoorAmbient", getFlag("lighting_toggle_Ambient", false), getColor("lighting_colorOutdoorAmbient", originalLighting.OutdoorAmbient))
         applyLightingProp("Brightness", getFlag("lighting_toggle_Brightness", false), getFlag("lighting_number_Brightness", originalLighting.Brightness))
         applyLightingProp("ExposureCompensation", getFlag("lighting_toggle_ExposureCompensation", false), getFlag("lighting_number_ExposureCompensation", originalLighting.ExposureCompensation))
-        applyLightingProp("ClockTime", getFlag("lighting_toggle_ClockTime", false), getFlag("lighting_number_ClockTime", originalLighting.ClockTime))
         applyLightingProp("FogStart", getFlag("lighting_toggle_FogStart", false), getFlag("lighting_number_FogStart", originalLighting.FogStart))
         applyLightingProp("FogEnd", getFlag("lighting_toggle_FogEnd", false), getFlag("lighting_number_FogEnd", originalLighting.FogEnd))
         applyLightingProp("FogColor", getFlag("lighting_toggle_FogColor", false), getColor("lighting_colorFogColor", originalLighting.FogColor))
@@ -7190,6 +7199,7 @@ do
         local preferOriginal = false
         local function httpJson(url)
             local lastStatus, lastMessage
+            local attempts = {}
             local mirror = (string.gsub(url, "roblox%.com", "roproxy.com"))
             for _, candidate in ipairs(preferOriginal and { url, mirror } or { mirror, url }) do
                 local body, status
@@ -7211,7 +7221,10 @@ do
                     end
                 end
 
-                if not body and status and status >= 400 and status < 500 and status ~= 403 and status ~= 401 then return nil, status, lastMessage end
+                attempts[#attempts + 1] = (string.match(candidate, "//([^/]+)") or candidate) .. ":" .. tostring(status or (body and "ok") or "no reply")
+                if not body and status and status >= 400 and status < 500 and status ~= 403 and status ~= 401 and candidate == url then
+                    return nil, status, (lastMessage and (lastMessage .. " ") or "") .. "[" .. table.concat(attempts, " ") .. "]"
+                end
                 if not body and status then lastStatus = status end
                 if body then
                     local okJson, data = pcall(function() return HttpService:JSONDecode(body) end)
@@ -7229,7 +7242,7 @@ do
                 end
                 lastStatus = status or lastStatus
             end
-            return nil, lastStatus, lastMessage
+            return nil, lastStatus, (lastMessage and (lastMessage .. " ") or "") .. "[" .. table.concat(attempts, " ") .. "]"
         end
 
         local function httpJsonRetry(url, onWait, alive)
@@ -7931,7 +7944,11 @@ do
             local data, status, message = httpJson(url)
             if not data then
                 local alt = string.gsub(url, "^https://catalog%.roblox%.com/v1/", "https://apis.roblox.com/catalog/v1/")
-                if alt ~= url then data, status, message = httpJson(alt) end
+                if alt ~= url then
+                    local firstMessage = message
+                    data, status, message = httpJson(alt)
+                    message = tostring(firstMessage) .. " | " .. tostring(message)
+                end
             end
             if not data then error("catalog request failed (" .. tostring(status) .. ") " .. tostring(message or ""), 0) end
             local wanted
@@ -8637,10 +8654,26 @@ do
                                 if not okS then okS, res = pcall(function() return AvatarEditorService:SearchCatalog(params) end) end
                                 if not okS then
                                     local firstErr = res
-                                    local plain = CatalogSearchParams.new()
-                                    plain.SearchKeyword = F.keyword or ""
-                                    okS, res = pcall(function() return AvatarEditorService:SearchCatalogAsync(plain) end)
-                                    if not okS then error(tostring(firstErr) .. " / " .. tostring(res), 0) end
+                                    local relaxed = CatalogSearchParams.new()
+                                    relaxed.SearchKeyword = F.keyword or ""
+                                    pcall(function() relaxed.SortType = Enum.CatalogSortType[F.sort] end)
+                                    pcall(function() if F.bundleType then relaxed.BundleTypes = { Enum.BundleType[F.bundleType] } end end)
+                                    pcall(function()
+                                        local assetTypes = {}
+                                        for _, name in ipairs(F.types) do
+                                            local good, item = pcall(function() return Enum.AvatarAssetType[name] end)
+                                            if good and item then assetTypes[#assetTypes + 1] = item end
+                                        end
+                                        if #assetTypes > 0 then relaxed.AssetTypes = assetTypes end
+                                    end)
+                                    okS, res = pcall(function() return AvatarEditorService:SearchCatalogAsync(relaxed) end)
+                                    if not okS then
+                                        local plain = CatalogSearchParams.new()
+                                        plain.SearchKeyword = F.keyword or ""
+                                        local okP, resP = pcall(function() return AvatarEditorService:SearchCatalogAsync(plain) end)
+                                        if not okP then error(tostring(firstErr) .. " / " .. tostring(res) .. " / " .. tostring(resP), 0) end
+                                        res = resP
+                                    end
                                 end
                                 M.pages = res
                             elseif M.pages then
@@ -8661,12 +8694,12 @@ do
                         if not engineOk then
                             if M.pages == nil and M.httpOnly ~= true then M.httpOnly = true end
                             local cursor = append and M.cursor or nil
+                            M.engineErr = tostring(engineErr)
+                            warn("Avatar builder: AvatarEditorService failed (" .. M.engineErr .. "), trying the web catalog")
                             local list, nextCursor = httpSearch(F, cursor)
                             items, M.cursor = list, nextCursor
                             M.finished = nextCursor == nil
                             source = "web"
-                            if not append then warn("Avatar builder: AvatarEditorService failed (" .. tostring(engineErr) .. "), used the web catalog instead") end
-                            M.engineErr = tostring(engineErr)
                         end
                     end)
                     if gen ~= M.gen or not spoofUi then
@@ -8676,7 +8709,7 @@ do
                     M.busy = false
                     if not okAll then
                         mStatus.Text = "catalog unavailable: " .. tostring(err) .. (M.engineErr and ("  |  engine: " .. M.engineErr) or "")
-                        warn("Avatar builder: catalog search failed:", err)
+                        warn("Avatar builder: catalog search failed:", err, "| engine:", tostring(M.engineErr))
                         return
                     end
                     for _, entry in ipairs(items) do
@@ -15789,12 +15822,60 @@ do
         sight.FilterType = Enum.RaycastFilterType.Exclude
         sight.RespectCanCollide = true
 
-        local function visibleFrom(from, part, char)
+        local function visibleFrom(from, part, char, at)
             local list = { Camera() }
             if LocalPlayer.Character then list[#list + 1] = LocalPlayer.Character end
             list[#list + 1] = char
             sight.FilterDescendantsInstances = list
-            return workspace:Raycast(from, part.Position - from, sight) == nil
+            return workspace:Raycast(from, (at or part.Position) - from, sight) == nil
+        end
+
+        local HIT_GROUPS = {
+            ["Head"] = { "Head" },
+            ["Torso"] = { "UpperTorso", "Torso" },
+            ["Lower torso"] = { "LowerTorso" },
+            ["Root"] = { "HumanoidRootPart" },
+            ["Left arm"] = { "Left Arm", "LeftUpperArm", "LeftLowerArm", "LeftHand" },
+            ["Right arm"] = { "Right Arm", "RightUpperArm", "RightLowerArm", "RightHand" },
+            ["Left leg"] = { "Left Leg", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot" },
+            ["Right leg"] = { "Right Leg", "RightUpperLeg", "RightLowerLeg", "RightFoot" },
+        }
+        local MP_OFFSETS = { v3(1, 0, 0), v3(-1, 0, 0), v3(0, 1, 0), v3(0, -1, 0), v3(0, 0, 1), v3(0, 0, -1) }
+
+        local function hitSelection(prefix)
+            local picker = Options[prefix .. "_points"]
+            local value = picker and picker.Value
+            local chosen, any = {}, false
+            for group in pairs(HIT_GROUPS) do
+                if has(value, group) then chosen[group] = true any = true end
+            end
+            if has(value, "Body") then chosen["Torso"] = true any = true end
+            if not any then chosen["Head"] = true end
+            return chosen
+        end
+
+        local function hitParts(char, chosen)
+            local list = {}
+            for group, names in pairs(HIT_GROUPS) do
+                if chosen[group] then
+                    for _, name in ipairs(names) do
+                        local found = char:FindFirstChild(name)
+                        if found and found:IsA("BasePart") then list[#list + 1] = found end
+                    end
+                end
+            end
+            return list
+        end
+
+        local function partPoints(part, multipoint, scale)
+            if not multipoint then return { part.Position } end
+            local half = part.Size * 0.5 * scale
+            local cf = part.CFrame
+            local list = { part.Position }
+            for _, off in ipairs(MP_OFFSETS) do
+                list[#list + 1] = cf:PointToWorldSpace(v3(half.X * off.X, half.Y * off.Y, half.Z * off.Z))
+            end
+            return list
         end
 
         local function pointFlags(prefix)
@@ -15820,7 +15901,10 @@ do
             local bestRadius
             local maxDist = math.min(flag(prefix .. "_max_dist", 1000), opts.limit or math.huge)
             local priority = flag(prefix .. "_priority", "Closest")
-            local wantHead, wantBody = pointFlags(prefix)
+            local chosenGroups = hitSelection(prefix)
+            local multipoint = flag(prefix .. "_multipoint", false)
+            local mpScale = flag(prefix .. "_mp_scale", 70) / 100
+            local bestPoint
             local team = flag(prefix .. "_team", false)
             local ignoreDown = opts.ignoreDown or flag(prefix .. "_ignore_down", false)
             local wall = flag(prefix .. "_wall", false) and not opts.skipWall
@@ -15844,21 +15928,20 @@ do
                         end
                         local headPart = e.Character:FindFirstChild("Head")
                         local bodyPart = e.Character:FindFirstChild("UpperTorso") or e.Character:FindFirstChild("Torso") or e.Root
-                        local parts = {}
-                        if wantHead and headPart then parts[#parts + 1] = headPart end
-                        if wantBody and bodyPart then parts[#parts + 1] = bodyPart end
+                        local parts = hitParts(e.Character, chosenGroups)
                         for _, part in ipairs(parts) do
-                            local screen, onScreen = cam:WorldToViewportPoint(part.Position)
+                          for _, point in ipairs(partPoints(part, multipoint, mpScale)) do
+                            local screen, onScreen = cam:WorldToViewportPoint(point)
                             if onScreen then
                                 local d = (Vector2.new(screen.X, screen.Y) - ref).Magnitude
                                 local partRadius = radius
                                 if dynamic and dynMode ~= "Distance" and (opts.current == e.Player or d <= baseFov * 0.45) then
                                     partRadius = radius * (1 + amount)
                                 end
-                                if (opts.ignoreFov or d <= partRadius) and (not wall or visibleFrom(from, part, e.Character)) then
+                                if (opts.ignoreFov or d <= partRadius) and (not wall or visibleFrom(from, part, e.Character, point)) then
                                     local score = d
                                     if targetMode == "Distance" then
-                                        score = distance
+                                        score = distance + d * 0.001
                                     elseif targetMode == "Lowest health" then
                                         score = e.Humanoid.Health * 10 + d * 0.05
                                     end
@@ -15867,16 +15950,17 @@ do
                                     if priority == "Body" and part == headPart then score += 1000 end
                                     if Relations[e.Player.UserId] == "Priority" then score -= 100000 end
                                     if not bestScore or score < bestScore then
-                                        bestEntity, bestPart, bestScore, bestDist, bestRadius = e, part, score, d, partRadius
+                                        bestEntity, bestPart, bestScore, bestDist, bestRadius, bestPoint = e, part, score, d, partRadius, point
                                     end
                                 end
                             end
+                          end
                         end
                     end
                 end
             end
             Dyn[prefix] = bestRadius
-            return bestEntity, bestPart, bestDist
+            return bestEntity, bestPart, bestDist, bestPoint
         end
 
         local function newCircle()
@@ -16040,7 +16124,7 @@ do
                     opts.ignoreFov = true
                 end
                 local eye = root.Parent and root.Parent:FindFirstChild("Head")
-                local entity, part = selectTarget("aim", ref, eye and eye.Position or root.Position, opts)
+                local entity, part, _, pickedPoint = selectTarget("aim", ref, eye and eye.Position or root.Position, opts)
                 if not entity then
                     lockedPlayer, lastPlayer = nil, nil
                     return
@@ -16063,11 +16147,11 @@ do
                 end
 
                 if magnetOnly then alpha *= flag("trigger_magnet_str", 100) / 100 end
-                local goal = part.Position
+                local goal = pickedPoint or part.Position
                 local eyePos = eye and eye.Position or root.Position
                 if flag("aim_pred", false) and Actions.predict and entity.Character then
                     local okP, predicted = pcall(Actions.predict.point, entity.Character, part, eyePos, "aim")
-                    if okP and typeof(predicted) == "Vector3" then goal = predicted end
+                    if okP and typeof(predicted) == "Vector3" then goal += predicted - part.Position end
                 end
                 local missChance = flag("aim_miss", 0)
                 if missChance > 0 then
@@ -16615,11 +16699,11 @@ do
                 local data = Gun.data()
                 local taser = data and data.Behavior == "Taser"
                 local wallbang = flag("silent_wallbang", false)
-                local entity, part
+                local entity, part, pickedPoint
                 if assisted then
                     entity, part, wallbang = { Character = A.part.Parent }, A.part, true
                 else
-                    entity, part = selectTarget("silent", aimRef(), origin, {
+                    entity, part, _, pickedPoint = selectTarget("silent", aimRef(), origin, {
                         limit = Gun.range(data) or 1000,
                         ignoreDown = taser,
                         skipWall = wallbang,
@@ -16646,10 +16730,11 @@ do
                     end
                 end
                 local aimPos = usePart.Position
+                if pickedPoint and usePart == part then aimPos = pickedPoint end
                 if silentOn and not assisted and flag("silent_pred", false) then
                     local okP, predicted, note = pcall(Predict.point, entity.Character, usePart, newOrigin or origin, "silent")
                     if okP and typeof(predicted) == "Vector3" then
-                        aimPos = predicted
+                        aimPos += predicted - usePart.Position
                         Predict.note = note
                     end
                 end

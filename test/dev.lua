@@ -1912,10 +1912,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-l | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-m | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-l",
+    Title = "Aster  |  perception-1101-m",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -2167,6 +2167,16 @@ do
     Aim:Slider({ Name = "FOV", Flag = "aim_fov", Min = 10, Max = 800, Default = 120, Suffix = "px", Decimals = 1 })
     Aim:Toggle({ Name = "Dynamic FOV", Flag = "aim_dynamic", Default = false })
     Aim:Slider({ Name = "Dynamic FOV amount", Flag = "aim_dynamic_amount", Min = 0, Max = 100, Default = 50, Suffix = "%", Decimals = 1 })
+    Aim:Dropdown({ Name = "Dynamic FOV mode", Flag = "aim_dynamic_mode", Items = { "Distance", "Cursor", "Both" }, Default = "Distance", Tooltip = "Distance: the FOV is largest on close players and shrinks with range. Cursor: once a target is near your cursor (or already locked) the FOV grows so you keep it. Both: both together" })
+    Aim:Slider({ Name = "Near distance", Flag = "aim_dyn_near", Min = 5, Max = 150, Default = 25, Suffix = " studs", Decimals = 1, Tooltip = "At or below this distance the FOV is at its largest" })
+    Aim:Slider({ Name = "Far distance", Flag = "aim_dyn_far", Min = 50, Max = 1500, Default = 300, Suffix = " studs", Decimals = 1, Tooltip = "At or beyond this distance the FOV is at its smallest" })
+    Aim:Dropdown({ Name = "Target priority", Flag = "aim_target", Items = { "Crosshair", "Distance", "Lowest health" }, Default = "Crosshair" })
+    Aim:Slider({ Name = "Stickiness", Flag = "aim_sticky", Min = 0, Max = 100, Default = 30, Suffix = "%", Decimals = 1, Tooltip = "Bonus for staying on the current target so it does not flicker between two players" })
+    Aim:Toggle({ Name = "Only while shooting", Flag = "aim_only_shoot", Default = false, Tooltip = "The assist only moves your aim while you hold the fire button" })
+    Aim:Toggle({ Name = "Prediction", Flag = "aim_pred", Default = false, Tooltip = "Aims slightly ahead of moving players, from their tracked speed and your ping" })
+    Aim:Slider({ Name = "Prediction strength", Flag = "aim_pred_mult", Min = 0, Max = 2, Default = 0.7, Suffix = "x", Decimals = 0.1 })
+    Aim:Slider({ Name = "Miss chance", Flag = "aim_miss", Min = 0, Max = 60, Default = 0, Suffix = "%", Decimals = 1, Tooltip = "Now and then the assist aims a little off the target, like a real player" })
+    Aim:Slider({ Name = "Miss size", Flag = "aim_miss_size", Min = 0.5, Max = 6, Default = 2.5, Suffix = " studs", Decimals = 0.1 })
     Aim:Toggle({ Name = "Lock target", Flag = "aim_lock", Default = false })
     Aim:Dropdown({ Name = "Hitscan priority", Flag = "aim_priority", Items = { "Closest", "Head", "Body" }, Default = "Closest" })
     Aim:Dropdown({ Name = "Hitscan points", Flag = "aim_points", Items = { "Head", "Body" }, Multi = true, Default = { "Head", "Body" } })
@@ -2179,6 +2189,11 @@ do
     Smooth:Slider({ Name = "End", Flag = "aim_smooth_end", Min = 0, Max = 99, Default = 20, Suffix = "%", Decimals = 1 })
     Smooth:Slider({ Name = "Increment", Flag = "aim_smooth_inc", Min = 0, Max = 200, Default = 50, Suffix = "%/s", Decimals = 1 })
     Smooth:Slider({ Name = "Randomization", Flag = "aim_smooth_rand", Min = 0, Max = 50, Default = 5, Suffix = "%", Decimals = 1 })
+    Smooth:Toggle({ Name = "Humanize", Flag = "aim_human", Default = false, Tooltip = "Curved path, a small overshoot that corrects itself, slower fine adjustments and tiny jitter. It also lets go while you flick your own mouse" })
+    Smooth:Slider({ Name = "Curve", Flag = "aim_curve", Min = 0, Max = 60, Default = 20, Suffix = "%", Decimals = 1 })
+    Smooth:Slider({ Name = "Overshoot", Flag = "aim_over", Min = 0, Max = 60, Default = 15, Suffix = "%", Decimals = 1 })
+    Smooth:Slider({ Name = "Jitter", Flag = "aim_jitter", Min = 0, Max = 6, Default = 1.5, Suffix = "px", Decimals = 0.1 })
+    Smooth:Slider({ Name = "Flick release", Flag = "aim_flick", Min = 0, Max = 200, Default = 80, Suffix = "px", Decimals = 1, Tooltip = "Camera method only. The assist pauses for a moment when your own mouse moves more than this in one frame. 0 turns it off" })
 
     local Trigger = CombatSubs.Aim:Section({ Name = "Triggerbot", Side = 2 })
     local triggerEnabled = Trigger:Toggle({ Name = "Enabled", Flag = "Trigger_Global_Enabled", Default = false })
@@ -2187,6 +2202,10 @@ do
     Trigger:Slider({ Name = "Delay", Flag = "Trigger_Global_Delay", Min = 0, Max = 300, Default = 40, Suffix = "ms", Decimals = 1 })
     Trigger:Slider({ Name = "Reaction time", Flag = "Trigger_Global_Reaction", Min = 0, Max = 200, Default = 0, Suffix = "ms", Decimals = 1 })
     Trigger:Toggle({ Name = "Magnet", Flag = "trigger_magnet", Default = false, Tooltip = "While the trigger key is held, the aim assist (its FOV, hitscan, smoothing and method settings) pulls onto the target as well, and the triggerbot fires once the crosshair is on it. Set the trigger key mode to Hold so it only works while held. The aim assist toggle itself can stay off." })
+    Trigger:Slider({ Name = "Burst shots", Flag = "trigger_burst", Min = 0, Max = 10, Default = 0, Suffix = " shots", Decimals = 1, Tooltip = "Fires this many shots, then pauses. 0 means no bursts" })
+    Trigger:Slider({ Name = "Burst pause", Flag = "trigger_burst_pause", Min = 50, Max = 1000, Default = 250, Suffix = "ms", Decimals = 1 })
+    Trigger:Slider({ Name = "Magnet strength", Flag = "trigger_magnet_str", Min = 10, Max = 100, Default = 100, Suffix = "%", Decimals = 1, Tooltip = "How hard the magnet pulls when only the trigger key is held" })
+    Trigger:Slider({ Name = "Magnet FOV", Flag = "trigger_magnet_fov", Min = 0, Max = 400, Default = 0, Suffix = "px", Decimals = 1, Tooltip = "FOV used by the magnet. 0 uses the aim assist FOV" })
     Trigger:Toggle({ Name = "Team check", Flag = "trigger_team", Default = false })
     Trigger:Toggle({ Name = "Forcefield check", Flag = "trigger_ff", Default = false })
     Trigger:Toggle({ Name = "Hostile only (inmates)", Flag = "trigger_hostile", Default = false })
@@ -2399,6 +2418,7 @@ do
     GunMods:Toggle({ Name = "Gun modifications", Flag = "gun_mods", Default = false })
     GunMods:Slider({ Name = "Fire delay (% of stock)", Flag = "gun_fire_rate", Min = 1, Max = 100, Default = 100, Suffix = "%", Decimals = 1 })
     GunMods:Toggle({ Name = "No spread", Flag = "gun_no_spread", Default = false })
+    GunMods:Slider({ Name = "Spread %", Flag = "gun_spread_pct", Min = 0, Max = 100, Default = 100, Suffix = "%", Decimals = 1, Tooltip = "Scales the stock spread down, for example 40% keeps some spread so shots still land a bit off-center. No spread overrides this" })
     GunMods:Toggle({ Name = "Full automatic", Flag = "gun_full_auto", Default = false })
     GunMods:Toggle({ Name = "Custom range", Flag = "gun_range_on", Default = false })
     GunMods:Slider({ Name = "Range", Flag = "gun_range", Min = 10, Max = 100000, Default = 1000, Suffix = " studs", Decimals = 1 })
@@ -10451,6 +10471,7 @@ do
         local function signature()
             return table.concat({
                 tostring(flag("gun_no_spread", false)),
+                tostring(flag("gun_spread_pct", 100)),
                 tostring(flag("gun_full_auto", false)),
                 tostring(flag("gun_fire_rate", 100)),
                 tostring(flag("gun_range_on", false)),
@@ -10469,7 +10490,8 @@ do
             local noSpread = not restoreOnly and flag("gun_no_spread", false)
             local auto = not restoreOnly and flag("gun_full_auto", false)
             local pct = restoreOnly and 100 or flag("gun_fire_rate", 100)
-            if o.SpreadRadius ~= nil then tool:SetAttribute("SpreadRadius", noSpread and 0 or o.SpreadRadius) end
+            local spreadPct = restoreOnly and 100 or flag("gun_spread_pct", 100)
+            if o.SpreadRadius ~= nil then tool:SetAttribute("SpreadRadius", noSpread and 0 or o.SpreadRadius * (spreadPct / 100)) end
             if o.FireRate ~= nil then tool:SetAttribute("FireRate", o.FireRate * (pct / 100)) end
             if o.AutoFire ~= nil or auto then tool:SetAttribute("AutoFire", auto and true or o.AutoFire) end
             local ranged = not restoreOnly and flag("gun_range_on", false)
@@ -15783,13 +15805,19 @@ do
             return head, body
         end
 
+        local Dyn = {}
         local function selectTarget(prefix, ref, from, opts)
             opts = opts or {}
             local cam = Camera()
             if not cam then return end
-            local baseFov = flag(prefix .. "_fov", 120)
+            local baseFov = opts.fov or flag(prefix .. "_fov", 120)
             local dynamic = flag(prefix .. "_dynamic", false)
             local amount = flag(prefix .. "_dynamic_amount", 50) / 100
+            local dynMode = flag(prefix .. "_dynamic_mode", "Distance")
+            local nearD, farD = flag(prefix .. "_dyn_near", 25), flag(prefix .. "_dyn_far", 300)
+            local targetMode = flag(prefix .. "_target", "Crosshair")
+            local sticky = flag(prefix .. "_sticky", 30) / 100
+            local bestRadius
             local maxDist = math.min(flag(prefix .. "_max_dist", 1000), opts.limit or math.huge)
             local priority = flag(prefix .. "_priority", "Closest")
             local wantHead, wantBody = pointFlags(prefix)
@@ -15810,9 +15838,9 @@ do
                     if not skip and ignoreDown and (e.Character:GetAttribute("Tased") or e.Character:GetAttribute("Arrested")) then skip = true end
                     if not skip then
                         local radius = baseFov
-                        if dynamic then
-                            local scale = math.clamp(80 / math.max(distance, 5), 0.35, 2.5)
-                            radius = baseFov * (1 + (scale - 1) * amount)
+                        if dynamic and dynMode ~= "Cursor" then
+                            local t = math.clamp((distance - nearD) / math.max(farD - nearD, 1), 0, 1)
+                            radius = baseFov * ((1 + amount) * (1 - t) + (1 - amount * 0.75) * t)
                         end
                         local headPart = e.Character:FindFirstChild("Head")
                         local bodyPart = e.Character:FindFirstChild("UpperTorso") or e.Character:FindFirstChild("Torso") or e.Root
@@ -15823,13 +15851,23 @@ do
                             local screen, onScreen = cam:WorldToViewportPoint(part.Position)
                             if onScreen then
                                 local d = (Vector2.new(screen.X, screen.Y) - ref).Magnitude
-                                if (opts.ignoreFov or d <= radius) and (not wall or visibleFrom(from, part, e.Character)) then
+                                local partRadius = radius
+                                if dynamic and dynMode ~= "Distance" and (opts.current == e.Player or d <= baseFov * 0.45) then
+                                    partRadius = radius * (1 + amount)
+                                end
+                                if (opts.ignoreFov or d <= partRadius) and (not wall or visibleFrom(from, part, e.Character)) then
                                     local score = d
+                                    if targetMode == "Distance" then
+                                        score = distance
+                                    elseif targetMode == "Lowest health" then
+                                        score = e.Humanoid.Health * 10 + d * 0.05
+                                    end
+                                    if opts.current == e.Player then score *= (1 - sticky * 0.6) end
                                     if priority == "Head" and part ~= headPart then score += 1000 end
                                     if priority == "Body" and part == headPart then score += 1000 end
                                     if Relations[e.Player.UserId] == "Priority" then score -= 100000 end
                                     if not bestScore or score < bestScore then
-                                        bestEntity, bestPart, bestScore, bestDist = e, part, score, d
+                                        bestEntity, bestPart, bestScore, bestDist, bestRadius = e, part, score, d, partRadius
                                     end
                                 end
                             end
@@ -15837,6 +15875,7 @@ do
                     end
                 end
             end
+            Dyn[prefix] = bestRadius
             return bestEntity, bestPart, bestDist
         end
 
@@ -15904,6 +15943,7 @@ do
         end
 
         local circles = { aim = newCircle(), silent = newCircle() }
+        local circleRadius = {}
         local circleFeature = { aim = "Aim_Global_Enabled", silent = "Silent_Global_Enabled" }
         track(RunService.RenderStepped:Connect(function()
             local cam = Camera()
@@ -15915,7 +15955,10 @@ do
                     local picker = Options[prefix .. "_fov_color"]
                     local color = picker and typeof(picker.Value) == "Color3" and picker.Value or Color3.new(1, 1, 1)
                     local opacity = 1 - (picker and tonumber(picker.Transparency) or 0)
-                    circle.update(true, ref, flag(prefix .. "_fov", 120), color, opacity, flag(prefix .. "_fov_thick", 1), flag(prefix .. "_fov_filled", false))
+                    local want = flag(prefix .. "_fov", 120)
+                    if flag(prefix .. "_dynamic", false) and Dyn[prefix] then want = Dyn[prefix] end
+                    circleRadius[prefix] = (circleRadius[prefix] or want) + (want - (circleRadius[prefix] or want)) * 0.2
+                    circle.update(true, ref, circleRadius[prefix], color, opacity, flag(prefix .. "_fov_thick", 1), flag(prefix .. "_fov_filled", false))
                 else
                     circle.update(false)
                 end
@@ -15929,6 +15972,7 @@ do
             local name = "TS_AimAssist"
             local lockedPlayer, acquiredAt, lastPlayer = nil, 0, nil
             local accX, accY, warned = 0, 0, false
+            local pauseUntil, humanFor, bend, over, startLen, missRoll, missOff = 0, nil, 0, 0, 1, 0, Vector3.zero
 
             local function valid(player)
                 local char = player and player.Character
@@ -15974,9 +16018,26 @@ do
                     return
                 end
                 local ref = aimRef()
-                local opts
+                if flag("aim_only_shoot", false) then
+                    local tool = Actions.gunTool and Actions.gunTool()
+                    local shooting = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or (tool ~= nil and tool:GetAttribute("Local_IsShooting") == true)
+                    if not shooting then return end
+                end
+                local human = flag("aim_human", false)
+                if human and flag("aim_method", "Camera") == "Camera" then
+                    local limit = flag("aim_flick", 80)
+                    if limit > 0 and UserInputService:GetMouseDelta().Magnitude > limit then pauseUntil = clock() + 0.18 end
+                    if clock() < pauseUntil then return end
+                end
+                local magnetOnly = not (aimOn and keyActive("Aim_Global_Key"))
+                local opts = { current = lastPlayer }
+                if magnetOnly then
+                    local magnetFov = flag("trigger_magnet_fov", 0)
+                    if magnetFov > 0 then opts.fov = magnetFov end
+                end
                 if flag("aim_lock", false) and lockedPlayer and valid(lockedPlayer) then
-                    opts = { only = lockedPlayer, ignoreFov = true }
+                    opts.only = lockedPlayer
+                    opts.ignoreFov = true
                 end
                 local eye = root.Parent and root.Parent:FindFirstChild("Head")
                 local entity, part = selectTarget("aim", ref, eye and eye.Position or root.Position, opts)
@@ -16001,7 +16062,27 @@ do
                     alpha = 1 - (smoothing / 100) ^ (math.min(dt, 0.1) * 60)
                 end
 
+                if magnetOnly then alpha *= flag("trigger_magnet_str", 100) / 100 end
                 local goal = part.Position
+                local eyePos = eye and eye.Position or root.Position
+                if flag("aim_pred", false) and Actions.predict and entity.Character then
+                    local okP, predicted = pcall(Actions.predict.point, entity.Character, part, eyePos, "aim")
+                    if okP and typeof(predicted) == "Vector3" then goal = predicted end
+                end
+                local missChance = flag("aim_miss", 0)
+                if missChance > 0 then
+                    local nowT = clock()
+                    if nowT >= missRoll then
+                        missRoll = nowT + 0.7
+                        if rand:NextNumber() * 100 < missChance then
+                            local offset = Vector3.new(rand:NextNumber() * 2 - 1, rand:NextNumber() * 2 - 1, rand:NextNumber() * 2 - 1)
+                            missOff = offset.Magnitude > 0.01 and offset.Unit * flag("aim_miss_size", 2.5) or Vector3.zero
+                        else
+                            missOff = Vector3.zero
+                        end
+                    end
+                    goal += missOff
+                end
                 local method = flag("aim_method", "Camera")
                 if method == "Mouse" and type(mousemoverel) ~= "function" then
                     if not warned then
@@ -16010,10 +16091,36 @@ do
                     end
                     method = "Camera"
                 end
+                local screenPoint = cam:WorldToViewportPoint(goal)
+                local goalScreen = Vector2.new(screenPoint.X, screenPoint.Y)
+                if human then
+                    local delta = goalScreen - ref
+                    local len = delta.Magnitude
+                    if len > 1 then
+                        if acquiredAt ~= humanFor then
+                            humanFor = acquiredAt
+                            bend = (rand:NextNumber() * 0.5 + 0.5) * (rand:NextNumber() < 0.5 and -1 or 1)
+                            over = rand:NextNumber()
+                            startLen = len
+                        end
+                        local dir = delta / len
+                        local perp = Vector2.new(-dir.Y, dir.X)
+                        local fade = math.clamp(len / math.max(startLen, 1), 0, 1)
+                        local shifted = delta + perp * (len * bend * flag("aim_curve", 20) / 100 * fade)
+                        shifted += dir * (startLen * over * flag("aim_over", 15) / 100 * math.max(0, 1 - held / 0.3))
+                        local jitter = flag("aim_jitter", 1.5)
+                        shifted += Vector2.new(rand:NextNumber() * 2 - 1, rand:NextNumber() * 2 - 1) * jitter
+                        alpha *= 0.55 + 0.45 * math.clamp(len / math.max(flag("aim_fov", 120), 1), 0, 1)
+                        goalScreen = ref + shifted
+                        if method ~= "Mouse" then
+                            local ray = cam:ViewportPointToRay(goalScreen.X, goalScreen.Y)
+                            goal = ray.Origin + ray.Direction * (goal - cam.CFrame.Position).Magnitude
+                        end
+                    end
+                end
                 if method == "Mouse" then
-                    local screen = cam:WorldToViewportPoint(goal)
-                    accX += (screen.X - ref.X) * alpha
-                    accY += (screen.Y - ref.Y) * alpha
+                    accX += (goalScreen.X - ref.X) * alpha
+                    accY += (goalScreen.Y - ref.Y) * alpha
                     local ix = accX >= 0 and math.floor(accX) or math.ceil(accX)
                     local iy = accY >= 0 and math.floor(accY) or math.ceil(accY)
                     accX -= ix
@@ -16348,7 +16455,7 @@ do
             local tracks = {}
             local MAXAGE = 0.45
             local conn = RunService.Heartbeat:Connect(function()
-                if not (flag("silent_pred", false) or flag("rb_pred", false)) then
+                if not (flag("silent_pred", false) or flag("rb_pred", false) or flag("aim_pred", false) or (Actions.rage and Actions.rage.tune and Actions.rage.tune.force)) then
                     if next(tracks) then table.clear(tracks) end
                     return
                 end
@@ -17943,10 +18050,12 @@ do
             params.FilterType = Enum.RaycastFilterType.Include
             pcall(function() params.CollisionGroup = "ClientBullet" end)
             local seenSince, nextShot = nil, 0
+            local burstUntil, burstShots = 0, 0
             local TORSO = { Torso = true, UpperTorso = true, LowerTorso = true, HumanoidRootPart = true }
 
             feature("Trigger_Global_Enabled", function()
                 seenSince, nextShot = nil, 0
+                burstUntil, burstShots = 0, 0
                 task.spawn(Gun.find)
                 local magnetOn = false
                 Actions.aimMagnet(flag("trigger_magnet", false))
@@ -17998,9 +18107,17 @@ do
                     if not good then seenSince = nil return end
                     local now = clock()
                     seenSince = seenSince or now
-                    if now - seenSince >= flag("Trigger_Global_Reaction", 0) / 1000 and now >= nextShot then
+                    if now - seenSince >= flag("Trigger_Global_Reaction", 0) / 1000 and now >= nextShot and now >= burstUntil then
                         nextShot = now + flag("Trigger_Global_Delay", 40) / 1000
                         fireGun()
+                        local burst = flag("trigger_burst", 0)
+                        if burst > 0 then
+                            burstShots += 1
+                            if burstShots >= burst then
+                                burstShots = 0
+                                burstUntil = now + flag("trigger_burst_pause", 250) / 1000
+                            end
+                        end
                     end
                 end))
             end, function()

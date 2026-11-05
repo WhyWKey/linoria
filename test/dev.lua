@@ -1752,6 +1752,10 @@ local function patchLibrarySource(source)
         Toggle:Display();
         Groupbox:AddBlank(Info.BlankSize or 5 + 2);]==])
 
+    swap("                if KeyPicker.Mode == 'Toggle' then\n                    local Key = KeyPicker.Value;\n",
+         "                if KeyPicker.Mode == 'Toggle' and (not InputService:GetFocusedTextBox()) then\n                    local Key = KeyPicker.Value;\n")
+    swap("                local Key = KeyPicker.Value;\n                if Key == 'MB3' or Key == 'MB4' or Key == 'MB5' then\n",
+         "                if InputService:GetFocusedTextBox() then return false; end;\n                local Key = KeyPicker.Value;\n                if Key == 'MB3' or Key == 'MB4' or Key == 'MB5' then\n")
     swap("Cursor.ZIndex = 100;", "Cursor.ZIndex = 5000;")
     swap("CursorOutline.ZIndex = 99;", "CursorOutline.ZIndex = 4999;")
     return source
@@ -1908,10 +1912,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-k | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-l | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-k",
+    Title = "Aster  |  perception-1101-l",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -2197,13 +2201,14 @@ do
         RB:Dropdown({ Name = "Hit part", Flag = "rb_part", Items = { "Head", "Torso", "Random" }, Default = "Head" })
         RB:Slider({ Name = "Shots per second", Flag = "rb_rate", Min = 1, Max = 30, Default = 12, Suffix = "/s", Decimals = 1 })
         RB:Slider({ Name = "Shot delay after peeking", Flag = "rb_shot_delay", Min = 0, Max = 0.3, Default = 0.03, Suffix = "s", Decimals = 0.01, Tooltip = "How long you stand at the peek spot before the first shot, so the server has your new position" })
+        RB:Toggle({ Name = "Auto weapon by distance", Flag = "rb_aw", Default = false, Tooltip = "Uses the Remington 870 up close, the M700 far away and your other selected weapons in between. Needs those weapons in the Weapons list" })
+        RB:Slider({ Name = "Shotgun below", Flag = "rb_aw_close", Min = 10, Max = 120, Default = 45, Suffix = " studs", Decimals = 1 })
+        RB:Slider({ Name = "Sniper above", Flag = "rb_aw_far", Min = 100, Max = 800, Default = 250, Suffix = " studs", Decimals = 1 })
         RB:Toggle({ Name = "Wallbang", Flag = "rb_wallbang", Default = true, Tooltip = "Shots from the ragebot use the wallbang methods from the Gun tab, so they hit through walls and cover" })
         RB:Toggle({ Name = "Auto reload", Flag = "rb_reload", Default = false, Tooltip = "Reloads when the gun is empty. With void spam on you stay hidden while it reloads" })
 
         local RTR = RageSubs.Main:Section({ Name = "Target rules", Side = 1 })
         RTR:Slider({ Name = "Max distance", Flag = "rb_range", Min = 50, Max = 20000, Default = 2000, Suffix = " studs", Decimals = 1 })
-        RTR:Toggle({ Name = "Kill all nearby", Flag = "rb_nearby", Default = false, Tooltip = "In Target list and Players tab mode, anyone within the range below is a target too" })
-        RTR:Slider({ Name = "Nearby range", Flag = "rb_nearby_range", Min = 10, Max = 300, Default = 60, Suffix = " studs", Decimals = 1 })
         RTR:Toggle({ Name = "Swap targets", Flag = "rb_swap", Default = false, Tooltip = "Moves on to the next player when the current one takes no damage for the time below" })
         RTR:Slider({ Name = "Swap after", Flag = "rb_swap_time", Min = 1, Max = 30, Default = 4, Suffix = "s", Decimals = 0.5 })
         RTR:Toggle({ Name = "Skip forcefield targets", Flag = "rb_ff", Default = false, Tooltip = "Picks another target while one has a forcefield. Off: you stay hidden in the void until the forcefield is gone" })
@@ -2213,7 +2218,7 @@ do
 
         local RT = RageSubs.Main:Section({ Name = "Target", Side = 2 })
         RT:Toggle({ Name = "Add target to list", Flag = "rb_add", Default = false, Tooltip = "Press the key to add the player closest to your cursor to the target list. Press again on the same player to remove them" }):Keybind({ Name = "Add target key", Flag = "rb_add_key", Default = "G", Sync = false })
-        RT:Dropdown({ Name = "Mode", Flag = "rb_tmode", Items = { "Target list", "Players tab", "Closest", "Closest to cursor" }, Default = "Target list", Tooltip = "Target list: only the players in the list below, nobody else. Players tab: only the player selected in the Players tab. Closest and Closest to cursor shoot anyone" })
+        RT:Dropdown({ Name = "Mode", Flag = "rb_tmode", Items = { "Target list", "Players tab" }, Default = "Target list", Tooltip = "Target list: only the players in the list below, nobody else. Players tab: only the player selected in the Players tab" })
         local names = {}
         for _, player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer then names[#names + 1] = player.Name end
@@ -2229,6 +2234,8 @@ do
         RT:Button({ Name = "Clear whitelist", Callback = function() if Actions.rageList then Actions.rageList("rb_white", false) end end })
 
         local RS = RageSubs.Main:Section({ Name = "Status and safety", Side = 2 })
+        RS:Toggle({ Name = "Hit feedback", Flag = "rb_feedback", Default = true, Tooltip = "The status text also shows hits, misses and why the last shot missed" })
+        RS:Toggle({ Name = "Auto tune", Flag = "rb_autotune", Default = false, Tooltip = "After a few misses in a row it stays longer at the peek spot, waits longer before shooting and leads more. It relaxes again after hits" })
         RS:Toggle({ Name = "Show status", Flag = "rb_status", Default = false, Tooltip = "A line of text at the top of the screen with what the ragebot is doing" })
         RS:Slider({ Name = "Status offset", Flag = "rb_status_y", Min = -300, Max = 300, Default = 40, Suffix = "px", Decimals = 1, Tooltip = "Vertical distance of the status text from the middle of the screen" })
         RS:Toggle({ Name = "Safe mode", Flag = "rb_safe", Default = false, Tooltip = "Below the health percentage you stay hidden (or at home when void spam is off) until you healed" })
@@ -2243,6 +2250,11 @@ do
         RV:Slider({ Name = "In void", Flag = "rb_in_time", Min = 0.05, Max = 3, Default = 0.35, Suffix = "s", Decimals = 0.01 })
         RV:Toggle({ Name = "Wait in void", Flag = "rb_wait_void", Default = false, Tooltip = "With void spam on, you stay hidden in the void while there is no target, for example after a kill, instead of waiting in the map" })
         RV:Slider({ Name = "Out of void", Flag = "rb_out_time", Min = 0.05, Max = 2, Default = 0.2, Suffix = "s", Decimals = 0.01 })
+
+        local RVS = RageSubs.Void:Section({ Name = "Void safety", Side = 1 })
+        RVS:Toggle({ Name = "Avoid kill bricks", Flag = "rb_void_safe", Default = true, Tooltip = "Void spots inside or near kill parts are skipped. Parts are found by name, and a spot you died at in the void is avoided from then on" })
+        RVS:Slider({ Name = "Safe margin", Flag = "rb_void_safe_margin", Min = 2, Max = 60, Default = 12, Suffix = " studs", Decimals = 1 })
+        RVS:Input({ Name = "Kill part names", Flag = "rb_void_safe_names", Default = "kill,lava,death,deadly,acid,hurt,damage,toxic,spike,laser", Placeholder = "words separated by commas", Tooltip = "A part whose name or parent name contains one of these words counts as a kill brick" })
 
         local RVP = RageSubs.Void:Section({ Name = "Void pattern", Side = 1 })
         RVP:Slider({ Name = "Smart wait", Flag = "rb_smart_wait", Min = 1, Max = 30, Default = 8, Suffix = "s", Decimals = 0.5 })
@@ -2262,24 +2274,19 @@ do
         VH:Slider({ Name = "Low health", Flag = "vh_hp", Min = 5, Max = 95, Default = 35, Suffix = "%", Decimals = 1, Tooltip = "Low health only: hide below this health, come back once you healed 25% more" })
 
         local RP = RageSubs.Void:Section({ Name = "Peek spot", Side = 2 })
-        RP:Dropdown({ Name = "Position", Flag = "rb_peek_mode", Items = { "Behind", "Above", "Random", "Spiral" }, Default = "Behind", Tooltip = "Where you appear next to the target" })
+        RP:Dropdown({ Name = "Position", Flag = "rb_peek_mode", Items = { "Behind", "Front", "Left", "Right", "Side swap", "Swing", "Above", "Random", "Spiral" }, Default = "Behind", Tooltip = "Where you appear next to the target. Side swap alternates left and right every peek, Swing sways behind the target, Spiral circles it" })
+        RP:Toggle({ Name = "Peek memory", Flag = "rb_peek_memory", Default = true, Tooltip = "Skips spots that missed twice in a row and, in Random and Spiral, comes back to the spot that hit last" })
         RP:Slider({ Name = "Distance", Flag = "rb_peek_dist", Min = 1, Max = 40, Default = 6, Suffix = " studs", Decimals = 0.5 })
         RP:Slider({ Name = "Height offset", Flag = "rb_peek_height", Min = -6, Max = 20, Default = 2, Suffix = " studs", Decimals = 0.5 })
-        RP:Slider({ Name = "Spiral speed", Flag = "rb_spiral_speed", Min = 0.5, Max = 30, Default = 6, Suffix = " rad/s", Decimals = 0.5 })
+        RP:Slider({ Name = "Spiral / swing speed", Flag = "rb_spiral_speed", Min = 0.5, Max = 30, Default = 6, Suffix = " rad/s", Decimals = 0.5 })
         RP:Dropdown({ Name = "Line of sight check", Flag = "rb_los", Items = { "Off", "Visible only" }, Default = "Off", Tooltip = "Visible only searches around the target for a spot with a clear line to the head and stays hidden when there is none" })
 
         local RR = RageSubs.Aim:Section({ Name = "Prediction and resolver", Side = 1 })
         RR:Toggle({ Name = "Prediction", Flag = "rb_pred", Default = false, Tooltip = "Aims ahead of a moving target" })
-        RR:Toggle({ Name = "Auto time", Flag = "rb_pred_auto", Default = true, Tooltip = "Lead time comes from your ping plus the extra time below, the target speed comes from its tracked movement" })
-        RR:Slider({ Name = "Extra time", Flag = "rb_pred_extra", Min = 0, Max = 0.2, Default = 0.02, Suffix = "s", Decimals = 0.01, Tooltip = "Added to the ping based lead time (auto)" })
-        RR:Slider({ Name = "Base time", Flag = "rb_pred_base", Min = 0, Max = 0.5, Default = 0.07, Suffix = "s", Decimals = 0.01, Tooltip = "Manual lead time, only used with Auto time off" })
-        RR:Slider({ Name = "Multiplier", Flag = "rb_pred_mult", Min = 0, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
+        RR:Slider({ Name = "Lead adjust", Flag = "rb_pred_extra", Min = 0, Max = 0.2, Default = 0.02, Suffix = "s", Decimals = 0.01, Tooltip = "Added to the lead time, which is worked out from your ping and the target speed" })
         RR:Slider({ Name = "Max lead", Flag = "rb_pred_cap", Min = 5, Max = 80, Default = 25, Suffix = " studs", Decimals = 1, Tooltip = "The aim point never moves further than this from the target" })
         RR:Toggle({ Name = "Landing check", Flag = "rb_pred_check", Default = true, Tooltip = "Checks that the predicted point is in range, not inside a wall and reachable. Otherwise the shot aims at the current position" })
-        RR:Slider({ Name = "Erratic limit", Flag = "rb_pred_erratic", Min = 10, Max = 150, Default = 45, Suffix = " studs/s", Decimals = 1, Tooltip = "A target that changes direction or speed by more than this gets a shorter lead" })
         RR:Toggle({ Name = "Resolver", Flag = "rb_res", Default = false, Tooltip = "A target that hides outside the map is aimed at where it was last inside the map. Without it, hidden targets are skipped" })
-        RR:Slider({ Name = "Resolver memory", Flag = "rb_res_time", Min = 0.5, Max = 10, Default = 2, Suffix = "s", Decimals = 0.1 })
-        RR:Slider({ Name = "Map limit", Flag = "rb_bounds", Min = 1000, Max = 20000, Default = 8000, Suffix = " studs", Decimals = 1, Tooltip = "Further from the center than this counts as outside the map" })
     end
 
     local Wall = RageSubs.Aim:Section({ Name = "Wallbang", Side = 2 })
@@ -16401,7 +16408,7 @@ do
                 else
                     lead = flag(prefix .. "_pred_base", 0.07)
                 end
-                return math.clamp(lead * flag(prefix .. "_pred_mult", 1), 0, 1)
+                return math.clamp(lead * (flag(prefix .. "_pred_mult", 1) + (prefix == "rb" and Predict.boost or 0)), 0, 1)
             end
 
             -- returns aimPosition, note, valid
@@ -16812,6 +16819,9 @@ do
                 nextShot = 0, voidPos = nil, voidRoll = 0, skip = {}, safe = false, status = "off", lastEval = 0,
                 lastHealth = 0, lastDamage = 0, equipAt = 0, reloadAt = 0, getAt = 0, getUntil = 0, viewing = false, shownText = "", randAngle = 0, goal = nil, goalAt = 0, goalFor = nil,
                 smart = { state = "waiting", t = nil, timer = 0, health = nil, dropped = false },
+                peekMem = setmetatable({}, { __mode = "k" }), peekCount = 0, deathZones = {},
+                stat = { shots = 0, hits = 0, misses = 0, missRun = 0, hitRun = 0, why = "", pending = {} },
+                tune = { out = 0, delay = 0, boost = 0, force = false, steps = 0 },
             }
             Actions.rage = R
             local bag = newBag()
@@ -16955,10 +16965,11 @@ do
 
             local function pickTarget(realPos)
                 local mode = flag("rb_tmode", "Target list")
+                if mode ~= "Players tab" then mode = "Target list" end
                 local list = flag("rb_targets", {})
                 local range = flag("rb_range", 2000)
-                local nearby = flag("rb_nearby", false)
-                local nearRange = flag("rb_nearby_range", 60)
+                local nearby = false
+                local nearRange = 0
                 local selected = mode == "Players tab" and Actions.selectedPlayer and Actions.selectedPlayer() or nil
                 local cam = Camera()
                 local mouse = UserInputService:GetMouseLocation()
@@ -17058,6 +17069,89 @@ do
                 return R.bounds
             end
 
+            local killParts, killAt, killBusy = {}, -1e9, false
+            local function scanKill()
+                local now = clock()
+                if killBusy or now - killAt < 60 then return end
+                killBusy, killAt = true, now
+                task.spawn(function()
+                    local words = {}
+                    for word in string.gmatch(string.lower(tostring(flag("rb_void_safe_names", "kill,lava,death,deadly,acid,hurt,damage,toxic,spike,laser"))), "[^,%s]+") do
+                        words[#words + 1] = word
+                    end
+                    local found, count = {}, 0
+                    local function named(text)
+                        text = string.lower(text)
+                        for _, word in ipairs(words) do
+                            if string.find(text, word, 1, true) then return true end
+                        end
+                        return false
+                    end
+                    pcall(function()
+                        if #words == 0 then return end
+                        for _, part in ipairs(workspace:GetDescendants()) do
+                            if part:IsA("BasePart") and part.Size.Magnitude < 5000 then
+                                local hit = named(part.Name) or (part.Parent ~= nil and part.Parent ~= workspace and named(part.Parent.Name))
+                                if hit then
+                                    local model = part:FindFirstAncestorOfClass("Model")
+                                    if not (model and model:FindFirstChildOfClass("Humanoid")) then
+                                        found[#found + 1] = part
+                                        if #found >= 500 then break end
+                                    end
+                                end
+                            end
+                            count += 1
+                            if count % 4000 == 0 then task.wait() end
+                        end
+                    end)
+                    killParts = found
+                    killBusy = false
+                end)
+            end
+
+            local function voidClear(point)
+                for _, zone in ipairs(R.deathZones) do
+                    if (zone[1] - point).Magnitude < zone[2] then return false end
+                end
+                local margin = flag("rb_void_safe_margin", 12)
+                for _, part in ipairs(killParts) do
+                    if part.Parent then
+                        local rel = part.CFrame:PointToObjectSpace(point)
+                        local half = part.Size / 2
+                        if math.abs(rel.X) <= half.X + margin and math.abs(rel.Y) <= half.Y + margin and math.abs(rel.Z) <= half.Z + margin then
+                            return false
+                        end
+                    end
+                end
+                return true
+            end
+
+            local function pickSafe(generate)
+                if not flag("rb_void_safe", true) then return generate() end
+                scanKill()
+                local last
+                for _ = 1, 14 do
+                    last = generate()
+                    if voidClear(last) then return last end
+                end
+                return last
+            end
+
+            local function watchDeaths(addTo)
+                local function hook(char)
+                    local hum = char:WaitForChild("Humanoid", 5)
+                    if not hum then return end
+                    hum.Died:Connect(function()
+                        if R.voidPos and clock() - (R.voidUsedAt or -100) < 1.5 and #R.deathZones < 30 then
+                            R.deathZones[#R.deathZones + 1] = { R.voidPos, flag("rb_void_safe_margin", 12) + 25 }
+                            warn("[Aster] void: you died in the void, that spot is avoided from now on")
+                        end
+                    end)
+                end
+                if LocalPlayer.Character then task.spawn(hook, LocalPlayer.Character) end
+                addTo.add(LocalPlayer.CharacterAdded:Connect(hook))
+            end
+
             local function edgePoint(now)
                 local base = R.realPos or ZERO
                 local bounds = mapBounds() or { minX = base.X - 500, maxX = base.X + 500, minZ = base.Z - 500, maxZ = base.Z + 500 }
@@ -17092,7 +17186,7 @@ do
                 local depth = flag("rb_depth", 1)
                 local pattern = flag("rb_pattern", "Under map")
                 if pattern == "Map edge" then
-                    R.voidPos = edgePoint(now)
+                    R.voidPos = pickSafe(function() return edgePoint(now) end)
                     return R.voidPos
                 end
                 if pattern == "Under map" then
@@ -17101,9 +17195,11 @@ do
                     if type(destroyAt) ~= "number" or destroyAt ~= destroyAt then destroyAt = -500 end
                     local floorY = math.min(math.max(destroyAt + 30, -2500), base.Y - 10)
                     local span = math.min(math.max(base.Y - 10 - floorY, 0), 250)
-                    local angle = math.random() * math.pi * 2
-                    local reach = flag("rb_under_radius", 250) * math.sqrt(math.random())
-                    R.voidPos = v3(base.X + math.cos(angle) * reach, floorY + math.random() * span, base.Z + math.sin(angle) * reach)
+                    R.voidPos = pickSafe(function()
+                        local angle = math.random() * math.pi * 2
+                        local reach = flag("rb_under_radius", 250) * math.sqrt(math.random())
+                        return v3(base.X + math.cos(angle) * reach, floorY + math.random() * span, base.Z + math.sin(angle) * reach)
+                    end)
                     return R.voidPos
                 end
                 local main, a, b
@@ -17273,13 +17369,49 @@ do
                     local start = 0
                     if WB.status(goal + HEAD_OFFSET, e.Head, goal) == "visible" then return goal end
                     angle = start
-                elseif mode == "Behind" then
-                    local look = e.Root.CFrame.LookVector
-                    angle = math.atan2(-look.Z, -look.X)
+                elseif mode == "Behind" or mode == "Front" or mode == "Left" or mode == "Right" or mode == "Side swap" or mode == "Swing" then
+                    local cf = e.Root.CFrame
+                    local look, right = cf.LookVector, cf.RightVector
+                    if mode == "Front" then
+                        angle = math.atan2(look.Z, look.X)
+                    elseif mode == "Left" then
+                        angle = math.atan2(-right.Z, -right.X)
+                    elseif mode == "Right" then
+                        angle = math.atan2(right.Z, right.X)
+                    elseif mode == "Side swap" then
+                        local sign = R.peekCount % 2 == 0 and 1 or -1
+                        angle = math.atan2(right.Z * sign, right.X * sign)
+                    elseif mode == "Swing" then
+                        angle = math.atan2(-look.Z, -look.X) + math.sin(now * flag("rb_spiral_speed", 6) * 0.5) * 1.2
+                    else
+                        angle = math.atan2(-look.Z, -look.X)
+                    end
                 elseif mode == "Random" then
                     angle = R.randAngle
                 else
                     angle = now * flag("rb_spiral_speed", 6)
+                end
+                R.usedAngle = nil
+                if mode ~= "Above" then
+                    local mem = R.peekMem[e.Player]
+                    if mem and flag("rb_peek_memory", true) then
+                        local function bucket(value) return math.floor((value % (math.pi * 2)) / (math.pi / 8)) end
+                        local function banned(value)
+                            local entry = mem.bad[bucket(value)]
+                            return entry ~= nil and entry[1] >= 2 and now - entry[2] < 12
+                        end
+                        if mem.good and now - mem.good[2] < 20 and (mode == "Random" or mode == "Spiral") and not banned(mem.good[1]) and math.random() < 0.5 then
+                            angle = mem.good[1]
+                        else
+                            for step = 0, 15 do
+                                if not banned(angle + step * math.pi / 8) then
+                                    angle = angle + step * math.pi / 8
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    R.usedAngle = angle
                 end
                 local goal = ring(angle)
                 if flag("rb_los", "Off") ~= "Visible only" then return goal end
@@ -17298,7 +17430,97 @@ do
                 if not R.run then return end
                 if Actions.readyGun and Actions.readyGun() then
                     Actions.fireAt(part, aim)
+                    local e = R.entity
+                    if e then
+                        local st = R.stat
+                        st.shots += 1
+                        local list = st.pending
+                        list[#list + 1] = { t = clock(), hp = e.Humanoid.Health, player = e.Player, angle = R.usedAngle, note = R.predNote }
+                        if #list > 40 then table.remove(list, 1) end
+                    end
                 end
+            end
+
+            local function tuneStep(up)
+                local t = R.tune
+                if up then
+                    t.out = math.min(t.out + 0.05, 0.4)
+                    t.delay = math.min(t.delay + 0.01, 0.1)
+                    t.boost = math.min(t.boost + 0.15, 0.6)
+                    t.force = true
+                    t.steps += 1
+                else
+                    t.out = math.max(t.out - 0.05, 0)
+                    t.delay = math.max(t.delay - 0.01, 0)
+                    t.boost = math.max(t.boost - 0.15, 0)
+                    t.steps = math.max(t.steps - 1, 0)
+                    if t.steps == 0 then t.force = false end
+                end
+                Actions.predict.boost = t.boost
+            end
+
+            local function angleBucket(value) return math.floor((value % (math.pi * 2)) / (math.pi / 8)) end
+
+            local function evaluateShots(e, now)
+                local st = R.stat
+                local list = st.pending
+                if #list == 0 then return end
+                local hum = e and e.Humanoid
+                for index = 1, #list do
+                    local shot = list[index]
+                    if shot and hum and shot.player == e.Player and hum.Health < shot.hp - 0.01 and now - shot.t >= 0.03 then
+                        st.hits += 1
+                        st.hitRun += 1
+                        st.missRun = 0
+                        if shot.angle then
+                            local mem = R.peekMem[shot.player]
+                            if not mem then mem = { bad = {} } R.peekMem[shot.player] = mem end
+                            mem.good = { shot.angle, now }
+                            mem.bad[angleBucket(shot.angle)] = nil
+                        end
+                        for later = 1, #list do
+                            local other = list[later]
+                            if other and other.player == shot.player then other.hp = hum.Health end
+                        end
+                        list[index] = false
+                        if st.hitRun >= 8 and flag("rb_autotune", false) then
+                            st.hitRun = 0
+                            tuneStep(false)
+                        end
+                        break
+                    end
+                end
+                local keep = {}
+                for index = 1, #list do
+                    local shot = list[index]
+                    if shot then
+                        if now - shot.t > 0.9 then
+                            st.misses += 1
+                            st.missRun += 1
+                            st.hitRun = 0
+                            local why = "no hit registered"
+                            local note = shot.note or ""
+                            if string.find(note, "no line", 1, true) then why = "no line to predicted spot"
+                            elseif string.find(note, "out of range", 1, true) then why = "out of range"
+                            elseif shot.player.Character and shot.player.Character:FindFirstChildOfClass("ForceField") then why = "target forcefield" end
+                            st.why = why
+                            if shot.angle then
+                                local mem = R.peekMem[shot.player]
+                                if not mem then mem = { bad = {} } R.peekMem[shot.player] = mem end
+                                local key = angleBucket(shot.angle)
+                                local entry = mem.bad[key]
+                                mem.bad[key] = { (entry and entry[1] or 0) + 1, now }
+                            end
+                            if flag("rb_autotune", false) and st.missRun >= 5 then
+                                st.missRun = 0
+                                tuneStep(true)
+                            end
+                        else
+                            keep[#keep + 1] = shot
+                        end
+                    end
+                end
+                st.pending = keep
             end
 
             local function rageRequest(root, realPos)
@@ -17315,6 +17537,7 @@ do
                 local style = picked(settings, "Show server position") and Actions.sp.visualStyle("misc_desync_fill", "misc_desync_line") or nil
                 R.randomSpot = picked(settings, "Random peek spot")
                 local function inVoid(why)
+                    R.voidUsedAt = now
                     R.status = "in void (" .. why .. ")"
                     return voidPoint(now), 1e9, style
                 end
@@ -17388,7 +17611,7 @@ do
                     if now >= R.phaseEnd then
                         if R.phase == "void" then
                             R.phase = "peek"
-                            R.phaseEnd = now + flag("rb_out_time", 0.2)
+                            R.phaseEnd = now + flag("rb_out_time", 0.2) + R.tune.out
                             R.randAngle = math.random() * math.pi * 2
                         else
                             R.phase = "void"
@@ -17407,11 +17630,12 @@ do
 
                 if R.lastPhase ~= "peek" then
                     R.lastPhase = "peek"
+                    R.peekCount += 1
                     R.peekAt = now
                 end
 
                 local lead, pvel = 0, R.vel
-                local predOn = flag("rb_pred", false)
+                local predOn = flag("rb_pred", false) or R.tune.force
                 R.predNote = nil
                 if predOn then
                     lead = Actions.predict.lead("rb")
@@ -17432,7 +17656,7 @@ do
                 end
 
                 R.status = "killing " .. e.Player.Name
-                if now - R.peekAt >= flag("rb_shot_delay", 0.03) and now >= R.nextShot then
+                if now - R.peekAt >= flag("rb_shot_delay", 0.03) + R.tune.delay and now >= R.nextShot then
                     R.nextShot = now + 1 / math.max(flag("rb_rate", 12), 1)
                     if R.randomSpot then R.randAngle = math.random() * math.pi * 2 end
                     local part = choosePart(e)
@@ -17476,13 +17700,18 @@ do
                     R.target = nil
                 end
                 R.entity, R.center, R.vel, R.live = e, position, velocity or ZERO, live ~= false
+                pcall(evaluateShots, e, now)
 
                 local chosen = flag("rb_weapons", {})
                 local pool = {}
+                local poolName = {}
                 for _, name in ipairs(WEAPON_ORDER) do
                     if picked(chosen, name) then
                         local owned = findWeapon(name)
-                        if owned then pool[#pool + 1] = owned end
+                        if owned then
+                            pool[#pool + 1] = owned
+                            poolName[owned] = name
+                        end
                     end
                 end
                 R.altReady = false
@@ -17491,6 +17720,17 @@ do
                     local function ready(tool)
                         local ammo = tool:GetAttribute("Local_CurrentAmmo")
                         return (ammo == nil or ammo > 0) and (tool:GetAttribute("Local_ReloadSession") or 0) <= 0
+                    end
+                    if flag("rb_aw", false) and R.center then
+                        local distance = (R.center - realPos).Magnitude
+                        local want = distance <= flag("rb_aw_close", 45) and "close" or distance >= flag("rb_aw_far", 250) and "far" or "mid"
+                        local fitting = {}
+                        for _, tool in ipairs(pool) do
+                            local name = poolName[tool]
+                            local class = name == "Remington 870" and "close" or name == "M700" and "far" or "mid"
+                            if class == want and ready(tool) then fitting[#fitting + 1] = tool end
+                        end
+                        if #fitting > 0 then pool = fitting end
                     end
                     local heldIndex = 0
                     for index, tool in ipairs(pool) do
@@ -17598,6 +17838,7 @@ do
                     return nil
                 end
                 R.vhStatus = "in void (" .. why .. ")"
+                R.voidUsedAt = clock()
                 return voidPoint(clock()), 1e9, nil
             end
 
@@ -17605,6 +17846,7 @@ do
             feature("vh_enabled", function()
                 R.vhLow, R.vhStatus = false, "starting"
                 task.spawn(Gun.find)
+                watchDeaths(vhBag)
                 Actions.sp.enable("voidhide", voidHideRequest)
                 vhBag.add(RunService.RenderStepped:Connect(function()
                     if R.run or not flag("rb_status", false) then
@@ -17624,7 +17866,11 @@ do
             feature("rb_enabled", function()
                 R.run = true
                 R.phase, R.lastPhase, R.phaseEnd, R.voidPos = "peek", "", 0, nil
+                R.stat = { shots = 0, hits = 0, misses = 0, missRun = 0, hitRun = 0, why = "", pending = {} }
+                R.tune = { out = 0, delay = 0, boost = 0, force = false, steps = 0 }
+                Actions.predict.boost = 0
                 task.spawn(Gun.find)
+                watchDeaths(bag)
                 if Actions.rageHook then Actions.rageHook(true) end
                 Actions.sp.enable("rage", rageRequest)
                 local accumulated = 0
@@ -17651,7 +17897,16 @@ do
                     if not statusText or not cam then return end
                     local e = R.entity
                     local line = "ragebot: " .. R.status
-                    if R.predNote and flag("rb_pred", false) then line = line .. " | pred " .. R.predNote end
+                    if R.predNote and (flag("rb_pred", false) or R.tune.force) then line = line .. " | pred " .. R.predNote end
+                    if flag("rb_feedback", true) then
+                        local st = R.stat
+                        local total = st.hits + st.misses
+                        if total > 0 then
+                            line = line .. string.format(" | hits %d/%d (%d%%)", st.hits, total, math.floor(st.hits / total * 100 + 0.5))
+                            if st.why ~= "" and st.misses > 0 then line = line .. " | last miss: " .. st.why end
+                        end
+                        if R.tune.steps > 0 then line = line .. string.format(" | tuned +%.2fs", R.tune.out) end
+                    end
                     if e then line = line .. string.format(" | %s %d hp", e.Player.DisplayName ~= "" and e.Player.DisplayName or e.Player.Name, math.floor(e.Humanoid.Health)) end
                     statusText.Text = line
                     statusText.Size = 16

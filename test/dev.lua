@@ -1912,10 +1912,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-o | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-q | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-o",
+    Title = "Aster  |  perception-1101-q",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -2265,7 +2265,7 @@ do
         Actions.rageNames = names
 
         local RV = RageSubs.Void:Section({ Name = "Void spam", Side = 1 })
-        RV:Toggle({ Name = "Void spam", Flag = "rb_void", Default = false, Tooltip = "Switches between a hiding spot far outside the map and the peek spot" })
+        RV:Toggle({ Name = "Void spam", Flag = "rb_void", Default = false, Tooltip = "Switches between a hiding spot far outside the map and the peek spot" }):Keybind({ Name = "Void key", Flag = "rb_void_key", Default = "None", Mode = "Hold" })
         RV:Dropdown({ Name = "When", Flag = "rb_void_when", Items = { "While targeting", "While reloading", "Smart", "Always" }, Default = "While targeting", Tooltip = "While targeting: hide between peeks the whole time. While reloading: hide only to reload. Smart: peek normally and hide for a while when the target stops taking damage. Always: also hides without a target" })
         RV:Toggle({ Name = "Show void location", Flag = "rb_void_show", Default = false, Tooltip = "A marker, a line and a distance text show where your hiding spot is" }):Colorpicker({ Name = "Void marker", Flag = "rb_void_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
         RV:Slider({ Name = "In void", Flag = "rb_in_time", Min = 0.05, Max = 3, Default = 0.35, Suffix = "s", Decimals = 0.01 })
@@ -2290,8 +2290,8 @@ do
         RVP:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
 
         local VH = RageSubs.Void:Section({ Name = "Void hide", Side = 2 })
-        VH:Toggle({ Name = "Void hide", Flag = "vh_enabled", Default = false, Tooltip = "Hides your server position in the void without the ragebot. Uses the pattern, interval and depth settings of this tab. The status text shows why you are in the void" })
-        VH:Dropdown({ Name = "Hide when", Flag = "vh_when", Items = { "Always", "Low health", "While reloading" }, Default = "Always" })
+        VH:Toggle({ Name = "Void hide", Flag = "vh_enabled", Default = false, Tooltip = "Hides your server position in the void without the ragebot. Uses the pattern, interval and depth settings of this tab. The status text shows why you are in the void" }):Keybind({ Name = "Void key", Flag = "vh_key", Default = "None", Mode = "Hold" })
+        VH:Dropdown({ Name = "Hide when", Flag = "vh_when", Items = { "Always", "Keybind", "Low health", "While reloading" }, Default = "Always", Tooltip = "Keybind: you are only in the void while the Void key is held (or toggled, depending on its mode)" })
         VH:Slider({ Name = "Low health", Flag = "vh_hp", Min = 5, Max = 95, Default = 35, Suffix = "%", Decimals = 1, Tooltip = "Low health only: hide below this health, come back once you healed 25% more" })
 
         local RP = RageSubs.Void:Section({ Name = "Peek spot", Side = 2 })
@@ -3658,6 +3658,9 @@ do
     Character:Toggle({ Name = "Gravity", Flag = "misc_gravity", Default = false })
     Character:Dropdown({ Name = "Gravity mode", Flag = "misc_gravity_mode", Items = { "Workspace", "Local" }, Default = "Workspace" })
     Character:Slider({ Name = "Gravity value", Flag = "misc_gravity_value", Min = 0, Max = 300, Default = 196, Decimals = 1 })
+
+    local CatalogNet = MiscSubs.Utility:Section({ Name = "Avatar catalog", Side = 1 })
+    CatalogNet:Input({ Name = "Proxy host", Flag = "avatar_proxy", Default = "", Placeholder = "roproxy.com", Tooltip = "Roblox denies catalog search from inside the game, so searches go through a proxy of the Roblox web API. Put a working proxy domain here if the built-in ones stop answering. Leave empty for the defaults" })
 
     local World = MiscSubs.Utility:Section({ Name = "Xray", Side = 2 })
     World:Toggle({ Name = "Xray", Flag = "misc_xray", Default = false })
@@ -7196,53 +7199,95 @@ do
 
         local refreshChips, refreshFavorites
 
-        local preferOriginal = false
+        local PROXY_HOSTS = { "roproxy.com", "rprxy.xyz" }
+        local workingKey
+        local BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+        local function candidatesFor(url)
+            local list, seen = {}, {}
+            local custom = tostring(readFlag("avatar_proxy", "") or "")
+            custom = string.gsub(custom, "^%s*https?://", "")
+            custom = string.gsub(custom, "[/%s]+$", "")
+            local hosts = {}
+            if custom ~= "" then hosts[#hosts + 1] = custom end
+            for _, host in ipairs(PROXY_HOSTS) do hosts[#hosts + 1] = host end
+            for _, host in ipairs(hosts) do
+                if not seen[host] then
+                    seen[host] = true
+                    list[#list + 1] = { key = host, url = (string.gsub(url, "roblox%.com", host)) }
+                end
+            end
+            list[#list + 1] = { key = "roblox.com (no game headers)", url = url, override = true }
+            list[#list + 1] = { key = "roblox.com", url = url }
+            if workingKey then
+                for index, entry in ipairs(list) do
+                    if entry.key == workingKey then
+                        table.remove(list, index)
+                        table.insert(list, 1, entry)
+                        break
+                    end
+                end
+            end
+            return list
+        end
+
         local function httpJson(url)
             local lastStatus, lastMessage
             local attempts = {}
-            local mirror = (string.gsub(url, "roblox%.com", "roproxy.com"))
-            for _, candidate in ipairs(preferOriginal and { url, mirror } or { mirror, url }) do
-                local body, status
+            for _, candidate in ipairs(candidatesFor(url)) do
+                local body, status, note
                 local send = (syn and syn.request) or http_request or request
                 if send then
-                    local okReq, reply = pcall(send, { Url = candidate, Method = "GET", Headers = { ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", ["Accept"] = "application/json" } })
+                    local headers = { ["User-Agent"] = BROWSER_UA, ["Accept"] = "application/json" }
+                    if candidate.override then
+                        headers["Roblox-Place-Id"] = "0"
+                        headers["Roblox-Game-Id"] = "0"
+                        headers["Roblox-Session-Id"] = ""
+                    end
+                    local okReq, reply = pcall(send, { Url = candidate.url, Method = "GET", Headers = headers })
                     if okReq and type(reply) == "table" then
                         if type(reply.Body) == "string" and reply.Body ~= "" then body = reply.Body end
                         status = tonumber(reply.StatusCode)
                     end
                 end
-                if not body then
-                    local okGet, res = pcall(function() return game:HttpGet(candidate) end)
+                if not body and not candidate.override then
+                    local okGet, res = pcall(function() return game:HttpGet(candidate.url) end)
                     if okGet and type(res) == "string" and res ~= "" then
                         body = res
                     elseif not okGet then
                         status = status or tonumber(string.match(tostring(res), "(%d%d%d)"))
-                        lastMessage = tostring(res)
+                        note = tostring(res)
                     end
                 end
 
-                attempts[#attempts + 1] = (string.match(candidate, "//([^/]+)") or candidate) .. ":" .. tostring(status or (body and "ok") or "no reply")
-                if not body and status and status >= 400 and status < 500 and status ~= 403 and status ~= 401 and candidate == url then
-                    return nil, status, (lastMessage and (lastMessage .. " ") or "") .. "[" .. table.concat(attempts, " ") .. "]"
-                end
-                if not body and status then lastStatus = status end
+                local failed = true
                 if body then
                     local okJson, data = pcall(function() return HttpService:JSONDecode(body) end)
                     if okJson and type(data) == "table" then
-                        if candidate == url and not data.errors then preferOriginal = true end
                         if data.errors then
                             local first = data.errors[1]
-                            lastStatus, lastMessage = status or 400, first and first.message or "error"
-
-                            if lastStatus < 500 then return nil, lastStatus, lastMessage end
+                            local text = first and first.message or "error"
+                            note = text
+                            lastStatus = status or 400
+                            lastMessage = text
+                            local denied = string.find(string.lower(tostring(text)), "denied", 1, true) ~= nil
+                            if lastStatus == 429 then
+                                return nil, 429, text
+                            elseif lastStatus >= 400 and lastStatus < 500 and lastStatus ~= 403 and lastStatus ~= 401 and not denied then
+                                return nil, lastStatus, text
+                            end
                         else
+                            workingKey = candidate.key
                             return data, status
                         end
                     end
                 end
-                lastStatus = status or lastStatus
+                if failed then
+                    attempts[#attempts + 1] = candidate.key .. ":" .. tostring(status or "no reply") .. (note and (" (" .. string.sub(note, 1, 60) .. ")") or "")
+                    lastStatus = status or lastStatus
+                end
             end
-            return nil, lastStatus, (lastMessage and (lastMessage .. " ") or "") .. "[" .. table.concat(attempts, " ") .. "]"
+            return nil, lastStatus, (lastMessage and (lastMessage .. " ") or "") .. "[" .. table.concat(attempts, "; ") .. "]"
         end
 
         local function httpJsonRetry(url, onWait, alive)
@@ -7947,7 +7992,7 @@ do
                 if alt ~= url then
                     local firstMessage = message
                     data, status, message = httpJson(alt)
-                    message = tostring(firstMessage) .. " | " .. tostring(message)
+                    message = tostring(firstMessage) .. " || " .. tostring(message)
                 end
             end
             if not data then error("catalog request failed (" .. tostring(status) .. ") " .. tostring(message or ""), 0) end
@@ -8421,6 +8466,12 @@ do
                 local color, tag = entryStyle(entry)
                 entry.tag = tag
                 if list then
+                    do
+                        local label = string.upper(tag)
+                        local badge = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.new(1, -(#label * 6 + 16), 0, 8), Size = UDim2.fromOffset(#label * 6 + 10, 14), ZIndex = Z + 9, Parent = face })
+                        Library:Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = badge })
+                        lbl({ Text = label, TextSize = 9, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 10, Parent = badge })
+                    end
                     local stripe = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.fromOffset(6, 8), Size = UDim2.new(0, 3, 1, -16), ZIndex = Z + 8, Parent = face })
                     Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = stripe })
                     mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromOffset(40, 40), Position = UDim2.fromOffset(15, 6), ZIndex = Z + 6, Parent = face })
@@ -8429,6 +8480,12 @@ do
                 else
                     mk("ImageLabel", { BackgroundTransparency = 1, Image = thumbAsset(entry.id), ScaleType = Enum.ScaleType.Fit, Size = UDim2.new(1, -8, 1, -28), Position = UDim2.fromOffset(4, 4), ZIndex = Z + 6, Parent = face })
                     lbl({ Text = entry.name, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Size = UDim2.new(1, -6, 0, 14), Position = UDim2.new(0, 3, 1, -22), ZIndex = Z + 6, Parent = face })
+                    do
+                        local label = string.upper(tag)
+                        local badge = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.fromOffset(4, 4), Size = UDim2.fromOffset(#label * 6 + 10, 14), ZIndex = Z + 9, Parent = face })
+                        Library:Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = badge })
+                        lbl({ Text = label, TextSize = 9, Size = UDim2.new(1, 0, 1, 0), ZIndex = Z + 10, Parent = badge })
+                    end
                     local bar = lf("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Position = UDim2.new(0, 4, 1, -5), Size = UDim2.new(1, -8, 0, 3), ZIndex = Z + 8, Parent = face })
                     Library:Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = bar })
                 end
@@ -8648,6 +8705,7 @@ do
                     local items, source
                     local okAll, err = pcall(function()
                         local engineOk, engineErr = pcall(function()
+                            if M.httpOnly and M.pages == nil then error(M.engineErr or "in-game search unavailable", 0) end
                             if not append then
                                 local params = buildParams(F)
                                 local okS, res = pcall(function() return AvatarEditorService:SearchCatalogAsync(params) end)
@@ -8695,7 +8753,10 @@ do
                             if M.pages == nil and M.httpOnly ~= true then M.httpOnly = true end
                             local cursor = append and M.cursor or nil
                             M.engineErr = tostring(engineErr)
-                            warn("Avatar builder: AvatarEditorService failed (" .. M.engineErr .. "), trying the web catalog")
+                            if not M.engineWarned then
+                                M.engineWarned = true
+                                warn("Avatar builder: in-game search failed (" .. M.engineErr .. "), using the web catalog from now on")
+                            end
                             local list, nextCursor = httpSearch(F, cursor)
                             items, M.cursor = list, nextCursor
                             M.finished = nextCursor == nil
@@ -17733,6 +17794,7 @@ do
                     R.status = "in void (" .. why .. ")"
                     return voidPoint(now), 1e9, style
                 end
+                if keyActive("rb_void_key") and not typing() then return inVoid("void key") end
 
                 if now < R.getUntil or (Actions.gettingWeapon and Actions.gettingWeapon()) then
                     R.status = "getting weapon"
@@ -18013,6 +18075,8 @@ do
                 local why
                 if when == "Always" then
                     why = "always on"
+                elseif when == "Keybind" then
+                    if keyActive("vh_key") then why = "void key" end
                 elseif when == "Low health" then
                     if hum and hum.MaxHealth > 0 then
                         local limit = flag("vh_hp", 35) / 100

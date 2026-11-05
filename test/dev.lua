@@ -1908,10 +1908,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-j | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-k | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-j",
+    Title = "Aster  |  perception-1101-k",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -2249,12 +2249,17 @@ do
         RVP:Slider({ Name = "Smart void time", Flag = "rb_smart_void", Min = 1, Max = 30, Default = 5, Suffix = "s", Decimals = 0.5 })
         RVP:Dropdown({ Name = "Pattern", Flag = "rb_pattern", Items = { "Under map", "Map edge", "High", "Far", "Extreme" }, Default = "Under map", Tooltip = "Map edge circles the outer edge of the whole map, so you are hard to target and players can run into kill planes chasing you. Under map hides just above the point where the engine destroys parts, below your real position, the same spot the Void desync uses. High, Far and Extreme are far above or beside the map and can be killed by the game's kill planes" })
         RVP:Slider({ Name = "Under map radius", Flag = "rb_under_radius", Min = 10, Max = 1500, Default = 250, Suffix = " studs", Decimals = 1, Tooltip = "Under map only: every position change teleports you to a random spot this far around you, underneath the map" })
-        RVP:Slider({ Name = "Edge speed", Flag = "rb_edge_speed", Min = 50, Max = 3000, Default = 400, Suffix = " studs/s", Decimals = 10, Tooltip = "Map edge only: how fast you travel around the map" })
+        RVP:Slider({ Name = "Edge jump", Flag = "rb_edge_jump", Min = 0, Max = 3000, Default = 0, Suffix = " studs", Decimals = 10, Tooltip = "Map edge only: every position change teleports you along the edge. 0 jumps to a random spot on the edge, above 0 moves that many studs further around each time" })
         RVP:Slider({ Name = "Edge margin", Flag = "rb_edge_margin", Min = -100, Max = 400, Default = 25, Suffix = " studs", Decimals = 1, Tooltip = "Map edge only: distance outside the outermost map part. Negative goes inside it" })
         RVP:Slider({ Name = "Edge height", Flag = "rb_edge_y", Min = -250, Max = 250, Default = 0, Suffix = " studs", Decimals = 1, Tooltip = "Map edge only: height relative to you. It never goes below the point where parts are destroyed" })
         RVP:Dropdown({ Name = "Direction", Flag = "rb_dir", Items = { "+Y", "+X", "+Z" }, Multi = true, Default = { "+Y" }, Tooltip = "Every position change picks one of the selected directions at random. Does not affect the Under map pattern" })
         RVP:Slider({ Name = "Depth multiplier", Flag = "rb_depth", Min = 0.1, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
         RVP:Slider({ Name = "Position change interval", Flag = "rb_switch", Min = 0.01, Max = 1, Default = 0.05, Suffix = "s", Decimals = 0.01 })
+
+        local VH = RageSubs.Void:Section({ Name = "Void hide", Side = 2 })
+        VH:Toggle({ Name = "Void hide", Flag = "vh_enabled", Default = false, Tooltip = "Hides your server position in the void without the ragebot. Uses the pattern, interval and depth settings of this tab. The status text shows why you are in the void" })
+        VH:Dropdown({ Name = "Hide when", Flag = "vh_when", Items = { "Always", "Low health", "While reloading" }, Default = "Always" })
+        VH:Slider({ Name = "Low health", Flag = "vh_hp", Min = 5, Max = 95, Default = 35, Suffix = "%", Decimals = 1, Tooltip = "Low health only: hide below this health, come back once you healed 25% more" })
 
         local RP = RageSubs.Void:Section({ Name = "Peek spot", Side = 2 })
         RP:Dropdown({ Name = "Position", Flag = "rb_peek_mode", Items = { "Behind", "Above", "Random", "Spiral" }, Default = "Behind", Tooltip = "Where you appear next to the target" })
@@ -2265,8 +2270,13 @@ do
 
         local RR = RageSubs.Aim:Section({ Name = "Prediction and resolver", Side = 1 })
         RR:Toggle({ Name = "Prediction", Flag = "rb_pred", Default = false, Tooltip = "Aims ahead of a moving target" })
-        RR:Slider({ Name = "Base time", Flag = "rb_pred_base", Min = 0, Max = 0.5, Default = 0.07, Suffix = "s", Decimals = 0.01 })
+        RR:Toggle({ Name = "Auto time", Flag = "rb_pred_auto", Default = true, Tooltip = "Lead time comes from your ping plus the extra time below, the target speed comes from its tracked movement" })
+        RR:Slider({ Name = "Extra time", Flag = "rb_pred_extra", Min = 0, Max = 0.2, Default = 0.02, Suffix = "s", Decimals = 0.01, Tooltip = "Added to the ping based lead time (auto)" })
+        RR:Slider({ Name = "Base time", Flag = "rb_pred_base", Min = 0, Max = 0.5, Default = 0.07, Suffix = "s", Decimals = 0.01, Tooltip = "Manual lead time, only used with Auto time off" })
         RR:Slider({ Name = "Multiplier", Flag = "rb_pred_mult", Min = 0, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
+        RR:Slider({ Name = "Max lead", Flag = "rb_pred_cap", Min = 5, Max = 80, Default = 25, Suffix = " studs", Decimals = 1, Tooltip = "The aim point never moves further than this from the target" })
+        RR:Toggle({ Name = "Landing check", Flag = "rb_pred_check", Default = true, Tooltip = "Checks that the predicted point is in range, not inside a wall and reachable. Otherwise the shot aims at the current position" })
+        RR:Slider({ Name = "Erratic limit", Flag = "rb_pred_erratic", Min = 10, Max = 150, Default = 45, Suffix = " studs/s", Decimals = 1, Tooltip = "A target that changes direction or speed by more than this gets a shorter lead" })
         RR:Toggle({ Name = "Resolver", Flag = "rb_res", Default = false, Tooltip = "A target that hides outside the map is aimed at where it was last inside the map. Without it, hidden targets are skipped" })
         RR:Slider({ Name = "Resolver memory", Flag = "rb_res_time", Min = 0.5, Max = 10, Default = 2, Suffix = "s", Decimals = 0.1 })
         RR:Slider({ Name = "Map limit", Flag = "rb_bounds", Min = 1000, Max = 20000, Default = 8000, Suffix = " studs", Decimals = 1, Tooltip = "Further from the center than this counts as outside the map" })
@@ -2315,6 +2325,16 @@ do
     SilentChk:Toggle({ Name = "Hostile only (inmates)", Flag = "silent_hostile", Default = false })
     SilentChk:Toggle({ Name = "Team check", Flag = "silent_team", Default = false })
     SilentChk:Toggle({ Name = "Ignore tased / arrested", Flag = "silent_ignore_down", Default = false })
+
+    local SilentPred = CombatSubs.Silent:Section({ Name = "Silent prediction", Side = 1 })
+    SilentPred:Toggle({ Name = "Prediction", Flag = "silent_pred", Default = false, Tooltip = "Silent shots aim where the target will be when the shot arrives, from its tracked speed and your ping" })
+    SilentPred:Toggle({ Name = "Auto time", Flag = "silent_pred_auto", Default = true })
+    SilentPred:Slider({ Name = "Extra time", Flag = "silent_pred_extra", Min = 0, Max = 0.2, Default = 0.02, Suffix = "s", Decimals = 0.01 })
+    SilentPred:Slider({ Name = "Base time", Flag = "silent_pred_base", Min = 0, Max = 0.5, Default = 0.07, Suffix = "s", Decimals = 0.01, Tooltip = "Manual lead time, only used with Auto time off" })
+    SilentPred:Slider({ Name = "Multiplier", Flag = "silent_pred_mult", Min = 0, Max = 5, Default = 1, Suffix = "x", Decimals = 0.1 })
+    SilentPred:Slider({ Name = "Max lead", Flag = "silent_pred_cap", Min = 5, Max = 80, Default = 25, Suffix = " studs", Decimals = 1 })
+    SilentPred:Toggle({ Name = "Landing check", Flag = "silent_pred_check", Default = true, Tooltip = "Falls back to the current position when the predicted point is out of range, in a wall or not reachable" })
+    SilentPred:Slider({ Name = "Erratic limit", Flag = "silent_pred_erratic", Min = 10, Max = 150, Default = 45, Suffix = " studs/s", Decimals = 1 })
 
     local FovAim = CombatSubs.Aim:Section({ Name = "Aim FOV", Side = 2 })
     local FovSilent = CombatSubs.Silent:Section({ Name = "Silent FOV", Side = 2 })
@@ -7148,7 +7168,7 @@ do
                 local body, status
                 local send = (syn and syn.request) or http_request or request
                 if send then
-                    local okReq, reply = pcall(send, { Url = candidate, Method = "GET" })
+                    local okReq, reply = pcall(send, { Url = candidate, Method = "GET", Headers = { ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", ["Accept"] = "application/json" } })
                     if okReq and type(reply) == "table" then
                         if type(reply.Body) == "string" and reply.Body ~= "" then body = reply.Body end
                         status = tonumber(reply.StatusCode)
@@ -7164,7 +7184,8 @@ do
                     end
                 end
 
-                if not body and status and status >= 400 and status < 500 then return nil, status, lastMessage end
+                if not body and status and status >= 400 and status < 500 and status ~= 403 and status ~= 401 then return nil, status, lastMessage end
+                if not body and status then lastStatus = status end
                 if body then
                     local okJson, data = pcall(function() return HttpService:JSONDecode(body) end)
                     if okJson and type(data) == "table" then
@@ -7881,6 +7902,10 @@ do
             if cursor then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
             if F.kind == "Roblox" or F.kind == "Limited" or onlyRoblox(F) then url = url .. "&CreatorName=Roblox" end
             local data, status, message = httpJson(url)
+            if not data then
+                local alt = string.gsub(url, "^https://catalog%.roblox%.com/v1/", "https://apis.roblox.com/catalog/v1/")
+                if alt ~= url then data, status, message = httpJson(alt) end
+            end
             if not data then error("catalog request failed (" .. tostring(status) .. ") " .. tostring(message or ""), 0) end
             local wanted
             if #F.types > 0 then
@@ -8583,7 +8608,13 @@ do
                                 local params = buildParams(F)
                                 local okS, res = pcall(function() return AvatarEditorService:SearchCatalogAsync(params) end)
                                 if not okS then okS, res = pcall(function() return AvatarEditorService:SearchCatalog(params) end) end
-                                if not okS then error(res, 0) end
+                                if not okS then
+                                    local firstErr = res
+                                    local plain = CatalogSearchParams.new()
+                                    plain.SearchKeyword = F.keyword or ""
+                                    okS, res = pcall(function() return AvatarEditorService:SearchCatalogAsync(plain) end)
+                                    if not okS then error(tostring(firstErr) .. " / " .. tostring(res), 0) end
+                                end
                                 M.pages = res
                             elseif M.pages then
                                 M.pages:AdvanceToNextPageAsync()
@@ -8608,6 +8639,7 @@ do
                             M.finished = nextCursor == nil
                             source = "web"
                             if not append then warn("Avatar builder: AvatarEditorService failed (" .. tostring(engineErr) .. "), used the web catalog instead") end
+                            M.engineErr = tostring(engineErr)
                         end
                     end)
                     if gen ~= M.gen or not spoofUi then
@@ -8616,7 +8648,7 @@ do
                     end
                     M.busy = false
                     if not okAll then
-                        mStatus.Text = "catalog unavailable: " .. tostring(err)
+                        mStatus.Text = "catalog unavailable: " .. tostring(err) .. (M.engineErr and ("  |  engine: " .. M.engineErr) or "")
                         warn("Avatar builder: catalog search failed:", err)
                         return
                     end
@@ -14550,7 +14582,7 @@ do
 
     do
         local SP = Actions.sp
-        local requests, order = {}, { "rage", "assist", "orbit", "desync" }
+        local requests, order = {}, { "rage", "voidhide", "assist", "orbit", "desync" }
         local engine = newBag()
         local running = false
         local applied, realCF, realVel = nil, nil, nil
@@ -16303,6 +16335,119 @@ do
             return "blocked"
         end
 
+        local Predict = {}
+        Actions.predict = Predict
+        do
+            local tracks = {}
+            local MAXAGE = 0.45
+            local conn = RunService.Heartbeat:Connect(function()
+                if not (flag("silent_pred", false) or flag("rb_pred", false)) then
+                    if next(tracks) then table.clear(tracks) end
+                    return
+                end
+                local now = clock()
+                for _, other in ipairs(Players:GetPlayers()) do
+                    if other ~= LocalPlayer then
+                        local root = other.Character and other.Character:FindFirstChild("HumanoidRootPart")
+                        if root then
+                            local list = tracks[other]
+                            if not list then list = {} tracks[other] = list end
+                            list[#list + 1] = { now, root.Position }
+                            while #list > 0 and now - list[1][1] > MAXAGE do table.remove(list, 1) end
+                        else
+                            tracks[other] = nil
+                        end
+                    end
+                end
+            end)
+            onUnload(function() conn:Disconnect() end)
+
+            -- returns velocity, change (how much the velocity changed over the window)
+            function Predict.velocity(player, root)
+                local list = tracks[player]
+                local assembly = root and root.AssemblyLinearVelocity or ZERO
+                if not list or #list < 3 then return assembly, 0 end
+                local first, last = list[1], list[#list]
+                local span = last[1] - first[1]
+                if span < 0.08 then return assembly, 0 end
+                local velocity = (last[2] - first[2]) / span
+                local mid = list[math.ceil(#list / 2)]
+                local change = 0
+                if mid[1] - first[1] > 0.03 and last[1] - mid[1] > 0.03 then
+                    local a = (mid[2] - first[2]) / (mid[1] - first[1])
+                    local b = (last[2] - mid[2]) / (last[1] - mid[1])
+                    change = (b - a).Magnitude
+                end
+                if assembly.Magnitude > velocity.Magnitude * 1.6 and assembly.Magnitude < 400 then velocity = assembly end
+                return velocity, change
+            end
+
+            function Predict.ping()
+                local ms
+                pcall(function()
+                    ms = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
+                end)
+                if type(ms) ~= "number" or ms ~= ms or ms <= 0 then
+                    local ok, one = pcall(function() return LocalPlayer:GetNetworkPing() end)
+                    ms = ok and type(one) == "number" and one * 2000 or 100
+                end
+                return math.clamp(ms, 0, 800) / 1000
+            end
+
+            function Predict.lead(prefix)
+                local lead
+                if flag(prefix .. "_pred_auto", true) then
+                    lead = Predict.ping() * 0.75 + flag(prefix .. "_pred_extra", 0.02)
+                else
+                    lead = flag(prefix .. "_pred_base", 0.07)
+                end
+                return math.clamp(lead * flag(prefix .. "_pred_mult", 1), 0, 1)
+            end
+
+            -- returns aimPosition, note, valid
+            function Predict.point(char, part, origin, prefix)
+                local position = part.Position
+                local player = Players:GetPlayerFromCharacter(char)
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if not player or not root then return position, "no track", false end
+                local velocity, change = Predict.velocity(player, root)
+                if velocity.Magnitude < 1.5 then return position, "standing", true end
+                local humanoid = char:FindFirstChildOfClass("Humanoid")
+                if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air and math.abs(velocity.Y) < 14 then
+                    velocity = v3(velocity.X, 0, velocity.Z)
+                end
+                local check = flag(prefix .. "_pred_check", true)
+                local offset = velocity * Predict.lead(prefix)
+                local note = string.format("%d st/s", math.floor(velocity.Magnitude))
+                if check and change > flag(prefix .. "_pred_erratic", 45) then
+                    offset = offset * 0.4
+                    note = note .. ", erratic"
+                end
+                local cap = flag(prefix .. "_pred_cap", 25)
+                if offset.Magnitude > cap then offset = offset.Unit * cap end
+                local goal = position + offset
+                if not check then return goal, note, true end
+
+                pcall(WB.updateIgnore)
+                local wall = workspace:Raycast(position, offset, WB.ray)
+                if wall then
+                    goal = wall.Position - offset.Unit * 0.6
+                    note = note .. ", wall clamp"
+                end
+                if typeof(origin) == "Vector3" then
+                    local range = Gun.range(Gun.data())
+                    if range and (goal - origin).Magnitude > range then
+                        return position, note .. ", out of range", false
+                    end
+                    local seenNow = not workspace:Raycast(origin, position - origin, WB.ray)
+                    if seenNow and workspace:Raycast(origin, goal - origin, WB.ray) then
+                        return position, note .. ", no line", false
+                    end
+                end
+                return goal, note, true
+            end
+        end
+
         do
             local bag = newBag()
             local hookedCast, original = nil, nil
@@ -16386,11 +16531,19 @@ do
                         return original(...)
                     end
                 end
+                local aimPos = usePart.Position
+                if silentOn and not assisted and flag("silent_pred", false) then
+                    local okP, predicted, note = pcall(Predict.point, entity.Character, usePart, newOrigin or origin, "silent")
+                    if okP and typeof(predicted) == "Vector3" then
+                        aimPos = predicted
+                        Predict.note = note
+                    end
+                end
                 if newOrigin then
                     lastOrigin, lastNew = origin, newOrigin
-                    return usePart, hit or usePart.Position
+                    return usePart, (hit and (hit + (aimPos - usePart.Position))) or aimPos
                 end
-                args[2] = usePart.Position
+                args[2] = aimPos
                 return original(table.unpack(args, 1, args.n))
             end
 
@@ -16912,9 +17065,13 @@ do
                 local x0, x1 = bounds.minX - margin, bounds.maxX + margin
                 local z0, z1 = bounds.minZ - margin, bounds.maxZ + margin
                 local w, h = math.max(x1 - x0, 10), math.max(z1 - z0, 10)
-                local dt = math.min(now - (R.edgeAt or now), 0.5)
-                R.edgeAt = now
-                R.edgeD = ((R.edgeD or math.random() * 2 * (w + h)) + flag("rb_edge_speed", 400) * dt) % (2 * (w + h))
+                local perimeter = 2 * (w + h)
+                local jump = flag("rb_edge_jump", 0)
+                if jump > 0 and R.edgeD then
+                    R.edgeD = (R.edgeD + jump) % perimeter
+                else
+                    R.edgeD = math.random() * perimeter
+                end
                 local d = R.edgeD
                 local px, pz
                 if d < w then px, pz = x0 + d, z0
@@ -17068,6 +17225,7 @@ do
             local function wantVoid(now, empty)
                 if not flag("rb_void", false) then return false end
                 local when = flag("rb_void_when", "While targeting")
+                R.voidWhy = when == "While reloading" and "reloading" or when == "Smart" and "smart timer" or "hiding between peeks"
                 if when == "While reloading" then return empty end
                 if when ~= "Smart" then return true end
                 local S = R.smart
@@ -17156,6 +17314,10 @@ do
                 local settings = flag("rb_settings", {})
                 local style = picked(settings, "Show server position") and Actions.sp.visualStyle("misc_desync_fill", "misc_desync_line") or nil
                 R.randomSpot = picked(settings, "Random peek spot")
+                local function inVoid(why)
+                    R.status = "in void (" .. why .. ")"
+                    return voidPoint(now), 1e9, style
+                end
 
                 if now < R.getUntil or (Actions.gettingWeapon and Actions.gettingWeapon()) then
                     R.status = "getting weapon"
@@ -17173,7 +17335,7 @@ do
 
                 if R.safe then
                     R.status = "safe mode"
-                    if voidOn then return voidPoint(now), 1e9, style end
+                    if voidOn then return inVoid("safe mode, low health") end
                     return nil
                 end
 
@@ -17182,15 +17344,14 @@ do
                     R.status = (flag("rb_tmode", "Target list") == "Target list" and next(listed) == nil) and "no targets selected" or "waiting for target"
                     R.lastPhase = ""
                     if voidOn and flag("rb_wait_void", false) and (flag("rb_tmode", "Target list") ~= "Target list" or next(listed) ~= nil) then
-                        R.status = "waiting in void"
-                        return voidPoint(now), 1e9, style
+                        return inVoid("waiting for target")
                     end
                     if voidOn and when == "Always" then
                         if now >= R.phaseEnd then
                             R.phase = R.phase == "void" and "peek" or "void"
                             R.phaseEnd = now + (R.phase == "void" and flag("rb_in_time", 0.35) or flag("rb_out_time", 0.2))
                         end
-                        if R.phase == "void" then return voidPoint(now), 1e9, style end
+                        if R.phase == "void" then return inVoid("always mode, no target") end
                     end
                     return nil
                 end
@@ -17203,14 +17364,22 @@ do
                 if e.Character:FindFirstChildOfClass("ForceField") then
                     R.status = "target has forcefield"
                     R.lastPhase = ""
-                    if voidOn then return voidPoint(now), 1e9, style end
+                    if voidOn then
+                        local name = e.Player.DisplayName ~= "" and e.Player.DisplayName or e.Player.Name
+                        local criminal = e.Player.Team ~= nil and e.Player.Team.Name == "Criminals"
+                        local area = Actions.area and R.center and Actions.area(R.center) or "outside"
+                        if criminal and area ~= "outside" then
+                            return inVoid(string.format("waiting for criminal %s's forcefield to disappear before going inside prison area", name))
+                        end
+                        return inVoid(string.format("waiting for %s's forcefield to disappear", name))
+                    end
                     return nil
                 end
 
                 if empty then
                     R.status = flag("rb_reload", false) and "reloading" or "gun empty"
                     R.lastPhase = ""
-                    if voidOn then return voidPoint(now), 1e9, style end
+                    if voidOn then return inVoid(flag("rb_reload", false) and "reloading" or "gun empty, no reload") end
                     return nil
                 end
 
@@ -17232,9 +17401,8 @@ do
                 end
 
                 if R.phase == "void" then
-                    R.status = "hiding in void"
                     R.lastPhase = "void"
-                    return voidPoint(now), 1e9, style
+                    return inVoid(R.voidWhy or "hiding between peeks")
                 end
 
                 if R.lastPhase ~= "peek" then
@@ -17242,9 +17410,14 @@ do
                     R.peekAt = now
                 end
 
-                local lead = 0
-                if flag("rb_pred", false) then lead = flag("rb_pred_base", 0.07) * flag("rb_pred_mult", 1) end
-                local base = R.center + R.vel * lead
+                local lead, pvel = 0, R.vel
+                local predOn = flag("rb_pred", false)
+                R.predNote = nil
+                if predOn then
+                    lead = Actions.predict.lead("rb")
+                    pvel = Actions.predict.velocity(e.Player, e.Root)
+                end
+                local base = R.center + pvel * lead
                 local goal
                 if R.goal and R.goalFor == e.Player and now - R.goalAt < 0.05 then
                     goal = R.goal
@@ -17254,7 +17427,7 @@ do
                 end
                 if not goal then
                     R.status = "no clear spot"
-                    if voidOn then return voidPoint(now), 1e9, style end
+                    if voidOn then return inVoid("no clear spot near target") end
                     return nil
                 end
 
@@ -17265,7 +17438,13 @@ do
                     local part = choosePart(e)
                     local aim = part.Position
                     if not (R.live) then aim = R.center + (part.Position - e.Root.Position) end
-                    aim += R.vel * lead
+                    if predOn then
+                        local okP, predicted, note = pcall(Actions.predict.point, e.Character, part, goal, "rb")
+                        if okP and typeof(predicted) == "Vector3" then
+                            aim += predicted - part.Position
+                            R.predNote = note
+                        end
+                    end
                     task.defer(fireNow, part, aim)
                 end
                 return goal, 1e9, style
@@ -17385,6 +17564,63 @@ do
                 return text
             end
 
+            local vhText
+            local function renderStatus(textObject, line)
+                local cam = Camera()
+                if not textObject or not cam then return end
+                textObject.Text = line
+                textObject.Size = 16
+                textObject.Position = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2 + flag("rb_status_y", 40))
+                textObject.Visible = true
+            end
+
+            local function voidHideRequest(root, realPos)
+                R.realPos = realPos
+                local when = flag("vh_when", "Always")
+                local _, hum = localParts()
+                local why
+                if when == "Always" then
+                    why = "always on"
+                elseif when == "Low health" then
+                    if hum and hum.MaxHealth > 0 then
+                        local limit = flag("vh_hp", 35) / 100
+                        local fraction = hum.Health / hum.MaxHealth
+                        if fraction <= limit then R.vhLow = true
+                        elseif fraction >= math.min(limit + 0.25, 1) then R.vhLow = false end
+                        if R.vhLow then why = string.format("low health, %d%%", math.floor(fraction * 100)) end
+                    end
+                else
+                    local _, empty = gunState()
+                    if empty then why = "reloading" end
+                end
+                if not why then
+                    R.vhStatus = "visible (waiting for " .. string.lower(when) .. ")"
+                    return nil
+                end
+                R.vhStatus = "in void (" .. why .. ")"
+                return voidPoint(clock()), 1e9, nil
+            end
+
+            local vhBag = newBag()
+            feature("vh_enabled", function()
+                R.vhLow, R.vhStatus = false, "starting"
+                task.spawn(Gun.find)
+                Actions.sp.enable("voidhide", voidHideRequest)
+                vhBag.add(RunService.RenderStepped:Connect(function()
+                    if R.run or not flag("rb_status", false) then
+                        if vhText then vhText.Visible = false end
+                        return
+                    end
+                    vhText = vhText or newText()
+                    renderStatus(vhText, "void hide: " .. tostring(R.vhStatus))
+                end))
+            end, function()
+                vhBag.clear()
+                Actions.sp.disable("voidhide")
+                R.vhStatus = "off"
+                if vhText then pcall(function() vhText.Visible = false end) end
+            end)
+
             feature("rb_enabled", function()
                 R.run = true
                 R.phase, R.lastPhase, R.phaseEnd, R.voidPos = "peek", "", 0, nil
@@ -17415,6 +17651,7 @@ do
                     if not statusText or not cam then return end
                     local e = R.entity
                     local line = "ragebot: " .. R.status
+                    if R.predNote and flag("rb_pred", false) then line = line .. " | pred " .. R.predNote end
                     if e then line = line .. string.format(" | %s %d hp", e.Player.DisplayName ~= "" and e.Player.DisplayName or e.Player.Name, math.floor(e.Humanoid.Health)) end
                     statusText.Text = line
                     statusText.Size = 16

@@ -1912,10 +1912,10 @@ local function isPeaceful(player)
 end
 
 
-print("[Aster] AsterPerception build perception-1101-q | skin " .. tostring(Skin.Version))
+print("[Aster] AsterPerception build perception-1101-s | skin " .. tostring(Skin.Version))
 Loader.step("Building menu", 0.42)
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Aster  |  perception-1101-q",
+    Title = "Aster  |  perception-1101-s",
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -3850,6 +3850,20 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
         SkyBodies:Slider({ Name = "Sun size", Flag = "sky_sun_size", Min = 0, Max = 60, Default = 21, Decimals = 1 })
         SkyBodies:Slider({ Name = "Moon size", Flag = "sky_moon_size", Min = 0, Max = 60, Default = 11, Decimals = 1 })
 
+        local SkySun = Fx:Section("Sky", "Motion", "Sun pattern", "Right")
+        SkySun:Dropdown({ Name = "Pattern", Flag = "sun_pattern", Items = { "Off", "Sweep", "Bounce", "Circle", "Figure-8", "Wander" }, Default = "Off", Tooltip = "Moves the real sun by animating the hour and the latitude, so lighting and shadows follow it. Sweep: a steady day. Bounce: back and forth. Circle and Figure-8: loops around the center. Wander: drifts randomly" })
+        SkySun:Slider({ Name = "Speed", Flag = "sun_speed", Min = 0.02, Max = 3, Default = 0.2, Decimals = 0.01, Suffix = " rad/s" })
+        SkySun:Slider({ Name = "Center hour", Flag = "sun_hour", Min = 0, Max = 24, Default = 12, Decimals = 0.1, Suffix = " h" })
+        SkySun:Slider({ Name = "Hour span", Flag = "sun_span", Min = 0, Max = 12, Default = 4, Decimals = 0.1, Suffix = " h", Tooltip = "How far the sun moves along its arc from the center hour" })
+        SkySun:Slider({ Name = "Center latitude", Flag = "sun_lat", Min = -80, Max = 80, Default = 20, Decimals = 1, Suffix = "°", Tooltip = "Tilts the path of the sun north or south" })
+        SkySun:Slider({ Name = "Latitude span", Flag = "sun_lat_span", Min = 0, Max = 80, Default = 25, Decimals = 1, Suffix = "°" })
+        SkySun:Toggle({ Name = "Keep above horizon", Flag = "sun_day", Default = true, Tooltip = "Keeps the sun in daytime so the lighting never turns to night" })
+
+        local SkySunColor = Fx:Section("Sky", "Motion", "Sun color", "Right")
+        SkySunColor:Toggle({ Name = "Sun color", Flag = "sun_color_on", Default = false }):Colorpicker({ Name = "Sun color", Flag = "sun_color", Default = Color3.fromRGB(255, 140, 60) })
+        SkySunColor:Dropdown({ Name = "Method", Flag = "sun_color_mode", Items = { "Light tint", "Fake sun", "Both" }, Default = "Both", Tooltip = "Light tint colors the sunlight on everything. Fake sun hides the real sun and draws a sun disc of that color that follows the real sun. Roblox has no direct sun color property" })
+        SkySunColor:Slider({ Name = "Disc size", Flag = "sun_fake_size", Min = 4, Max = 60, Default = 21, Decimals = 1, Suffix = "°" })
+
         local SkyClouds = Fx:Section("Sky", "Clouds", "Clouds")
         SkyClouds:Toggle({ Name = "Clouds", Flag = "sky_clouds", Default = false }):Colorpicker({ Name = "Cloud color", Flag = "sky_cloud_color", Default = Color3.new(1, 1, 1) })
         SkyClouds:Slider({ Name = "Cover", Flag = "sky_cloud_cover", Min = 0, Max = 1, Default = 0.6, Decimals = 0.05 })
@@ -3859,6 +3873,7 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
         SkyClouds:Slider({ Name = "Drift speed", Flag = "sky_wind_speed", Min = 0, Max = 1000, Default = 60, Decimals = 5 })
 
         local sky, createdSky, savedSky, savedClock, savedWind
+        local savedLat, savedShift, fakeSun, fakeHalo, sunPhase = nil, nil, nil, nil, 0
         local clouds, createdClouds, savedClouds
         local angle = Vector3.zero
         local clock, hour, reasserting = 0, Lighting.ClockTime, false
@@ -3886,7 +3901,7 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
             return math.min(d, 24 - d)
         end
         local function assertTime()
-            if getFlag("sky_time_mode", "Off") == "Off" then return end
+            if getFlag("sky_time_mode", "Off") == "Off" and getFlag("sun_pattern", "Off") == "Off" then return end
             if hourDiff(Lighting.ClockTime, hour) > 0.005 then
                 reasserting = true
                 Lighting.ClockTime = hour
@@ -3942,6 +3957,11 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
             sky, createdSky, savedSky = nil, nil, nil
             applyClouds(false)
             if savedWind ~= nil then pcall(function() workspace.GlobalWind = savedWind end) end
+            if savedLat ~= nil then pcall(function() Lighting.GeographicLatitude = savedLat end) savedLat = nil end
+            if savedShift ~= nil then pcall(function() Lighting.ColorShift_Top = savedShift end) savedShift = nil end
+            if savedClock ~= nil then pcall(function() Lighting.ClockTime = savedClock end) savedClock = nil end
+            if fakeSun then pcall(function() fakeSun:Destroy() end) fakeSun = nil end
+            if fakeHalo then pcall(function() fakeHalo:Destroy() end) fakeHalo = nil end
         end
 
         track(Lighting:GetPropertyChangedSignal("ClockTime"):Connect(function()
@@ -3997,6 +4017,90 @@ CamFov:Slider({ Name = "FOV", Flag = "camera_fov_changer_amount", Min = 40, Max 
                     hour = (hour + getFlag("sky_cycle_speed", 0.25) * dt) % 24
                 elseif mode == "Locked" then
                     hour = getFlag("sky_time_locked", 14) % 24
+                end
+
+                local pattern = getFlag("sun_pattern", "Off")
+                if pattern ~= "Off" then
+                    if savedLat == nil then savedLat = Lighting.GeographicLatitude end
+                    if savedClock == nil then savedClock = Lighting.ClockTime end
+                    sunPhase += dt * getFlag("sun_speed", 0.2)
+                    local center, span = getFlag("sun_hour", 12), getFlag("sun_span", 4)
+                    local latCenter, latSpan = getFlag("sun_lat", 20), getFlag("sun_lat_span", 25)
+                    local dayOnly = getFlag("sun_day", true)
+                    local h, l = center, latCenter
+                    if pattern == "Sweep" then
+                        local fraction = (sunPhase / (math.pi * 2)) % 1
+                        h = dayOnly and (6.3 + fraction * 11.4) or fraction * 24
+                    elseif pattern == "Bounce" then
+                        h = center + math.sin(sunPhase) * span
+                    elseif pattern == "Circle" then
+                        h, l = center + math.cos(sunPhase) * span, latCenter + math.sin(sunPhase) * latSpan
+                    elseif pattern == "Figure-8" then
+                        h, l = center + math.sin(sunPhase) * span, latCenter + math.sin(sunPhase * 2) * latSpan
+                    else
+                        h = center + math.noise(sunPhase * 0.35, 1.7) * 2.2 * span
+                        l = latCenter + math.noise(sunPhase * 0.35, 8.1) * 2.2 * latSpan
+                    end
+                    if dayOnly then h = math.clamp(h, 6.3, 17.7) end
+                    hour = h % 24
+                    reasserting = true
+                    Lighting.ClockTime = hour
+                    Lighting.GeographicLatitude = math.clamp(l, -80, 80)
+                    reasserting = false
+                elseif was.pattern then
+                    if savedLat ~= nil then Lighting.GeographicLatitude = savedLat savedLat = nil end
+                    if mode == "Off" and savedClock ~= nil then
+                        reasserting = true
+                        Lighting.ClockTime = savedClock
+                        reasserting = false
+                        savedClock = nil
+                    end
+                end
+                was.pattern = pattern ~= "Off"
+
+                local colorOn = getFlag("sun_color_on", false)
+                local colorMode = getFlag("sun_color_mode", "Both")
+                local sunColor = getFlag("sun_color", Color3.fromRGB(255, 140, 60))
+                if colorOn and colorMode ~= "Fake sun" then
+                    if savedShift == nil then savedShift = Lighting.ColorShift_Top end
+                    Lighting.ColorShift_Top = sunColor
+                elseif savedShift ~= nil then
+                    Lighting.ColorShift_Top = savedShift
+                    savedShift = nil
+                end
+                if colorOn and colorMode ~= "Light tint" then
+                    local target = acquireSky()
+                    target.SunAngularSize = 0
+                    local cam = workspace.CurrentCamera
+                    if cam then
+                        if not (fakeSun and fakeSun.Parent) then
+                            local function ball(name)
+                                local part = Instance.new("Part")
+                                part.Name = name
+                                part.Shape = Enum.PartType.Ball
+                                part.Material = Enum.Material.Neon
+                                part.Anchored, part.CanCollide, part.CanQuery, part.CanTouch, part.CastShadow = true, false, false, false, false
+                                part.Parent = cam
+                                return part
+                            end
+                            fakeSun, fakeHalo = ball("AsterSun"), ball("AsterSunHalo")
+                        end
+                        local direction = Lighting:GetSunDirection()
+                        local distance = math.clamp(Lighting.FogEnd - 50, 150, 900)
+                        local size = 2 * distance * math.tan(math.rad(getFlag("sun_fake_size", 21) * 0.5))
+                        local shown = direction.Y > -0.08
+                        fakeSun.Size, fakeHalo.Size = Vector3.one * size, Vector3.one * size * 1.7
+                        fakeSun.Color, fakeHalo.Color = sunColor, sunColor
+                        fakeSun.Transparency, fakeHalo.Transparency = shown and 0 or 1, shown and 0.86 or 1
+                        local at = cam.CFrame.Position + direction * distance
+                        fakeSun.Position, fakeHalo.Position = at, at
+                    end
+                    was.fake = true
+                elseif was.fake then
+                    was.fake = false
+                    if fakeSun then pcall(function() fakeSun:Destroy() end) fakeSun = nil end
+                    if fakeHalo then pcall(function() fakeHalo:Destroy() end) fakeHalo = nil end
+                    if sky and savedSky and not getFlag("sky_objects", false) then sky.SunAngularSize = savedSky.SunAngularSize end
                 end
 
                 local cloudsOn = getFlag("sky_clouds", false)
@@ -7888,6 +7992,15 @@ do
             { "Newest", "RecentlyCreated", 3 }, { "Price low", "PriceLowToHigh", 4 }, { "Price high", "PriceHighToLow", 5 },
         }
 
+        local function gameIsR6()
+            local character = LocalPlayer.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            return humanoid ~= nil and humanoid.RigType == Enum.HumanoidRigType.R6
+        end
+        local function onlyRoblox(F)
+            return F.robloxOnly == true or (F.bundleType ~= nil and gameIsR6())
+        end
+
         local function buildParams(F)
             local params = CatalogSearchParams.new()
             params.SearchKeyword = F.keyword or ""
@@ -7903,19 +8016,10 @@ do
             if F.bundleType then
                 pcall(function() params.BundleTypes = { Enum.BundleType[F.bundleType] } end)
             end
-            if onlyRoblox(F) then
+            if onlyRoblox(F) or F.kind == "Roblox" or F.kind == "Limited" then
                 pcall(function() params.CreatorName = "Roblox" end)
             end
-            if F.kind == "Limited" then
-                pcall(function() params.CategoryFilter = Enum.CatalogCategoryFilter.Collectibles end)
-                pcall(function() params.CreatorName = "Roblox" end)
-            elseif F.kind == "UGC" then
-                pcall(function() params.CategoryFilter = Enum.CatalogCategoryFilter.CommunityCreations end)
-            elseif F.kind == "Premium" then
-                pcall(function() params.CategoryFilter = Enum.CatalogCategoryFilter.Premium end)
-            elseif F.kind == "Roblox" then
-                pcall(function() params.CreatorName = "Roblox" end)
-            elseif F.kind == "Free" then
+            if F.kind == "Free" then
                 pcall(function() params.MaxPrice = 0 end)
             end
             local low, high = tonumber(F.minPrice), tonumber(F.maxPrice)
@@ -7924,7 +8028,6 @@ do
             return params
         end
 
-        local sampled
         local function normItem(item)
             local id = item.Id or item.id
             if type(id) ~= "number" then return nil end
@@ -7935,47 +8038,40 @@ do
             if type(restrictions) == "table" then
                 for _, restriction in pairs(restrictions) do
                     local text = string.lower(tostring(restriction))
-                    if text == "limited" or text == "limitedunique" or text == "collectible" then limited = true end
+                    if text == "limited" or text == "limitedunique" then limited = true end
                 end
             end
-            if not sampled or sampled < 3 then
-                sampled = (sampled or 0) + 1
-                local list = {}
-                if type(restrictions) == "table" then
-                    for _, restriction in pairs(restrictions) do list[#list + 1] = tostring(restriction) end
-                end
-                print(string.format("[Aster] catalog sample %s | restrictions [%s] | collectible %s | limited %s", tostring(item.Name or item.name), table.concat(list, ","), tostring(item.CollectibleItemId), tostring(limited)))
-            end
+            local creatorRaw = item.CreatorName or item.creatorName or item.Creator or item.creator
+            local creator
+            if type(creatorRaw) == "table" then creator = creatorRaw.Name or creatorRaw.name else creator = creatorRaw end
+            creator = creator ~= nil and tostring(creator) or nil
+            local roblox = creator == "Roblox" or creator == "Roblox Corporation"
+                or item.CreatorTargetId == 1 or item.creatorTargetId == 1
             return {
                 id = id,
                 name = tostring(item.Name or item.name or id),
                 price = item.Price or item.price or item.lowestPrice,
                 assetName = assetTypeName(item.AssetType or item.assetType),
-                creator = item.CreatorName or item.creatorName,
+                creator = creator,
                 limited = limited,
+                roblox = roblox,
+                ugc = not roblox,
                 restrictions = restrictions,
                 isBundle = isBundle,
                 priceStatus = tostring(item.PriceStatus or item.priceStatus or ""),
             }
         end
 
-        local function gameIsR6()
-            local character = LocalPlayer.Character
-            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-            return humanoid ~= nil and humanoid.RigType == Enum.HumanoidRigType.R6
-        end
-        local function onlyRoblox(F)
-            return F.robloxOnly == true or (F.bundleType ~= nil and gameIsR6())
-        end
-
         local function passesKind(F, entry)
-            if onlyRoblox(F) and entry.creator ~= nil and entry.creator ~= "Roblox" then return false end
+            if onlyRoblox(F) and not entry.roblox then return false end
             if F.kind == "Limited" then
-                if entry.creator ~= nil and entry.creator ~= "Roblox" then return false end
+                return entry.limited == true and entry.roblox == true
             elseif F.kind == "Roblox" then
-                if entry.creator ~= nil and entry.creator ~= "Roblox" then return false end
+                return entry.roblox == true
             elseif F.kind == "UGC" then
-                if entry.creator == "Roblox" then return false end
+                return entry.roblox ~= true
+            elseif F.kind == "Free" then
+                return entry.price == 0
             end
             return true
         end
@@ -8007,9 +8103,7 @@ do
                 if entry then
                     local keep = true
                     if wanted and not wanted[entry.assetName or ""] then keep = false end
-                    if F.kind == "Limited" and not entry.limited then keep = false end
                     if not passesKind(F, entry) then keep = false end
-                    if F.kind == "Free" and entry.price ~= 0 then keep = false end
                     if F.onSale and entry.price == nil then keep = false end
                     if keep then out[#out + 1] = entry end
                 end
@@ -8422,11 +8516,11 @@ do
             local function entryStyle(entry)
                 local offSale = string.find(string.lower(entry.priceStatus or ""), "off", 1, true) ~= nil
                     or (entry.price == nil and not entry.limited and not entry.isBundle)
-                if offSale then return Color3.fromRGB(226, 70, 70), "off sale" end
                 if entry.isBundle then return Color3.fromRGB(150, 90, 230), "bundle" end
-                if entry.limited then return Color3.fromRGB(70, 200, 110), "limited" end
-                if entry.creator and entry.creator ~= "Roblox" then return Color3.fromRGB(170, 170, 170), "ugc" end
-                return Color3.fromRGB(70, 110, 235), "roblox"
+                if offSale then return Color3.fromRGB(226, 70, 70), "off sale" end
+                if entry.limited and entry.roblox then return Color3.fromRGB(70, 200, 110), "limited" end
+                if entry.roblox then return Color3.fromRGB(70, 110, 235), "roblox" end
+                return Color3.fromRGB(170, 170, 170), "ugc"
             end
 
             local function activateEntry(entry)
@@ -8705,7 +8799,6 @@ do
                     local items, source
                     local okAll, err = pcall(function()
                         local engineOk, engineErr = pcall(function()
-                            if M.httpOnly and M.pages == nil then error(M.engineErr or "in-game search unavailable", 0) end
                             if not append then
                                 local params = buildParams(F)
                                 local okS, res = pcall(function() return AvatarEditorService:SearchCatalogAsync(params) end)
@@ -8741,23 +8834,29 @@ do
                             items = {}
                             for _, raw in ipairs(M.pages:GetCurrentPage()) do
                                 local entry = normItem(raw)
-                                if entry and passesKind(F, entry) then
-                                    if F.kind == "Limited" then entry.limited = true end
-                                    items[#items + 1] = entry
-                                end
+                                if entry and passesKind(F, entry) then items[#items + 1] = entry end
                             end
                             M.finished = M.pages.IsFinished == true
                             source = "catalog"
                         end)
                         if not engineOk then
-                            if M.pages == nil and M.httpOnly ~= true then M.httpOnly = true end
                             local cursor = append and M.cursor or nil
                             M.engineErr = tostring(engineErr)
                             if not M.engineWarned then
                                 M.engineWarned = true
-                                warn("Avatar builder: in-game search failed (" .. M.engineErr .. "), using the web catalog from now on")
+                                warn("Avatar builder: in-game search failed (" .. M.engineErr .. "), trying the web catalog for this search")
                             end
-                            local list, nextCursor = httpSearch(F, cursor)
+                            if M.webBlockedUntil and clock() < M.webBlockedUntil then
+                                error(M.webBlockedMessage .. "  |  in-game search: " .. M.engineErr, 0)
+                            end
+                            local okWeb, list, nextCursor = pcall(httpSearch, F, cursor)
+                            if not okWeb then
+                                if string.find(string.lower(tostring(list)), "denied", 1, true) then
+                                    M.webBlockedUntil = clock() + 60
+                                    M.webBlockedMessage = "In-experience search is denied for this place or universe"
+                                end
+                                error(tostring(list) .. "  |  in-game search: " .. M.engineErr, 0)
+                            end
                             items, M.cursor = list, nextCursor
                             M.finished = nextCursor == nil
                             source = "web"
@@ -8769,8 +8868,8 @@ do
                     end
                     M.busy = false
                     if not okAll then
-                        mStatus.Text = "catalog unavailable: " .. tostring(err) .. (M.engineErr and ("  |  engine: " .. M.engineErr) or "")
-                        warn("Avatar builder: catalog search failed:", err, "| engine:", tostring(M.engineErr))
+                        mStatus.Text = "catalog unavailable: " .. tostring(err)
+                        warn("Avatar builder: catalog search failed:", err)
                         return
                     end
                     for _, entry in ipairs(items) do

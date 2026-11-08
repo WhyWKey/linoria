@@ -1,4 +1,4 @@
-local BUILD = "phantom-1108-m"
+local BUILD = "phantom-1108-n"
 local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
@@ -881,7 +881,6 @@ local PF_StatusCore, PF_StatusWeapon, PF_StatusTarget, PF_StatusRecoil, PF_Statu
 local LegitPage = Window:Page({ Name = "Legit", Columns = 2, Subtabs = false })
 local LegitSubs = LegitPage:SubTabs({ "Shared", "Pistols", "Rifles", "SMGs", "LMGs", "Shotguns", "Snipers", "DMR", "Other", "Status" })
 local VisualsPage = Window:Page({ Name = "Visuals", Columns = 2, Subtabs = false })
-local VisualsSubs = VisualsPage:SubTabs({ "Enemy", "Friendly", "Chams", "Style" })
 local MiscPage = Window:Page({ Name = "Misc", Columns = 2, Subtabs = false })
 local MiscSubs = MiscPage:SubTabs({ "Camera", "Utility" })
 
@@ -1012,22 +1011,30 @@ do
         pcall(function() Library:Notify("Core " .. Core.summary, 4) end)
     end })
 
-    local TEAM_TABS = { "Enemy", "Friendly" }
     local PERTEAM = {}
-
-    local function addTeamSettings(sub, tabName)
-        local friendly = tabName == "Friendly"
+    local function addTeamRows(box, friendly)
         local suffix = friendly and "@Friendly" or ""
         local function key(flag)
             if not friendly then table.insert(PERTEAM, flag) end
             return flag .. suffix
         end
-        local defaultColor = friendly and Color3.fromRGB(90, 200, 120) or Color3.fromRGB(255, 80, 80)
-
-        local Master = sub:Section({ Name = tabName, Side = 1 })
-        Master:Toggle({ Name = "Enabled", Flag = key("esp_enabled"), Default = false })
+        local main = friendly and Color3.fromRGB(90, 200, 120) or Color3.fromRGB(255, 80, 80)
+        box:Toggle({ Name = "Enabled", Flag = key("esp_enabled"), Default = false })
+        box:Toggle({ Name = "Name", Flag = key("esp_name"), Default = true }):Colorpicker({ Name = "Name color", Flag = key("esp_name_color"), Default = Color3.fromRGB(255, 255, 255) })
+        box:Toggle({ Name = "Box", Flag = key("esp_box_on"), Default = true }):Colorpicker({ Name = "Box color", Flag = key("esp_color"), Default = main })
+        box:Toggle({ Name = "Box fill", Flag = key("esp_fill"), Default = true }):Colorpicker({ Name = "Fill color", Flag = key("esp_fill_color"), Default = Color3.fromRGB(255, 255, 255) })
+        box:Toggle({ Name = "Health bar", Flag = key("esp_health"), Default = true }):Colorpicker({ Name = "Full health", Flag = key("esp_hp_full"), Default = Color3.fromRGB(70, 255, 110) }):Colorpicker({ Name = "Low health", Flag = key("esp_hp_low"), Default = Color3.fromRGB(255, 60, 60) })
+        box:Toggle({ Name = "Health number", Flag = key("esp_hp_text"), Default = false })
+        box:Toggle({ Name = "Held weapon", Flag = key("esp_weapon"), Default = true }):Colorpicker({ Name = "Weapon color", Flag = key("esp_weapon_color"), Default = Color3.fromRGB(255, 200, 120) })
+        box:Toggle({ Name = "Distance", Flag = key("esp_distance"), Default = true }):Colorpicker({ Name = "Distance color", Flag = key("esp_dist_color"), Default = Color3.fromRGB(200, 200, 200) })
+        box:Toggle({ Name = "Skeleton", Flag = key("esp_skeleton"), Default = false }):Colorpicker({ Name = "Skeleton color", Flag = key("esp_skeleton_color"), Default = Color3.fromRGB(255, 255, 255) })
+        box:Toggle({ Name = "Head dot", Flag = key("esp_head"), Default = false })
+        box:Toggle({ Name = "Tracers", Flag = key("esp_tracer"), Default = false })
+        box:Toggle({ Name = "Out of view", Flag = key("esp_arrows"), Default = not friendly, Tooltip = "Arrows at the screen edge that point toward players outside your view" })
+        box:Toggle({ Name = "Chams", Flag = key("cham_enabled"), Default = false, Tooltip = "Colors each body part with objects that live outside the character, so nothing is added to the character itself" }):Colorpicker({ Name = "Visible", Flag = key("cham_vis"), Default = friendly and Color3.fromRGB(90, 200, 120) or Color3.fromRGB(255, 230, 80), Alpha = 0.35 }):Colorpicker({ Name = "Behind walls", Flag = key("cham_hid"), Default = main, Alpha = 0.7 })
+        box:Toggle({ Name = "Outline", Flag = key("cham_line_on"), Default = true, Tooltip = "Outlines the whole player. Only the outline is used, the fill is off" }):Colorpicker({ Name = "Outline color", Flag = key("cham_line"), Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
         if friendly then
-            Master:Button({ Name = "Copy Enemy settings here", Callback = function()
+            box:Button({ Name = "Copy Enemy here", Callback = function()
                 for _, flag in ipairs(PERTEAM) do
                     local value = readFlag(flag, nil)
                     if value ~= nil then
@@ -1038,81 +1045,56 @@ do
                 pcall(function() Library:Notify("Enemy settings copied to Friendly", 3) end)
             end })
         end
-
-        local Box, Text = sub:MultiSection({ Sections = { "Box", "Text" }, Side = 1 })
-        Box:Toggle({ Name = "Color", Flag = key("esp_color_on"), Default = true }):Colorpicker({ Name = "Color", Flag = key("esp_color"), Default = defaultColor })
-        Box:Dropdown({ Name = "Style", Flag = key("esp_box"), Items = { "Off", "Full", "Corners" }, Default = "Corners" })
-        Box:Dropdown({ Name = "Outline", Flag = key("esp_outline"), Items = { "Off", "Single", "Double" }, Default = "Single", Tooltip = "Double puts a dark line on both sides of the colored line, so the box stays readable on bright and dark backgrounds" })
-        Box:Toggle({ Name = "Fit to pose", Flag = key("esp_tight"), Default = true, Tooltip = "The box follows crouching and prone instead of a fixed shape" })
-        Box:Toggle({ Name = "Glow", Flag = key("esp_glow"), Default = false, Tooltip = "A faint wider copy of the box under it" })
-        Box:Toggle({ Name = "Fill", Flag = key("esp_fill"), Default = true }):Colorpicker({ Name = "Fill color", Flag = key("esp_fill_color"), Default = Color3.fromRGB(255, 255, 255) })
-        Box:Slider({ Name = "Fill transparency", Flag = key("esp_fill_t"), Min = 0, Max = 1, Default = 0.88, Decimals = 0.01 })
-        Box:Slider({ Name = "Thickness", Flag = key("esp_thick"), Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
-        Text:Toggle({ Name = "Name", Flag = key("esp_name"), Default = true }):Colorpicker({ Name = "Name color", Flag = key("esp_name_color"), Default = Color3.fromRGB(255, 255, 255) })
-        Text:Toggle({ Name = "Distance", Flag = key("esp_distance"), Default = true }):Colorpicker({ Name = "Distance color", Flag = key("esp_dist_color"), Default = Color3.fromRGB(200, 200, 200) })
-        Text:Toggle({ Name = "Weapon", Flag = key("esp_weapon"), Default = true }):Colorpicker({ Name = "Weapon color", Flag = key("esp_weapon_color"), Default = Color3.fromRGB(255, 200, 120) })
-        Text:Slider({ Name = "Text size", Flag = key("esp_text"), Min = 10, Max = 20, Default = 13, Decimals = 1, Suffix = " px" })
-        Text:Toggle({ Name = "Text outline", Flag = key("esp_text_outline"), Default = true })
-
-        local Health, Skeleton, Extras = sub:MultiSection({ Sections = { "Health", "Skeleton", "Extras" }, Side = 2 })
-        local healthToggle = Health:Toggle({ Name = "Health bar", Flag = key("esp_health"), Default = true })
-        healthToggle:Colorpicker({ Name = "Full health", Flag = key("esp_hp_full"), Default = Color3.fromRGB(70, 255, 110) })
-        healthToggle:Colorpicker({ Name = "Half health", Flag = key("esp_hp_mid"), Default = Color3.fromRGB(255, 220, 60) })
-        healthToggle:Colorpicker({ Name = "Low health", Flag = key("esp_hp_low"), Default = Color3.fromRGB(255, 60, 60) })
-        Health:Dropdown({ Name = "Position", Flag = key("esp_hp_pos"), Items = { "Left", "Right", "Top", "Bottom" }, Default = "Left" })
-        Health:Slider({ Name = "Width", Flag = key("esp_hp_width"), Min = 2, Max = 8, Default = 3, Decimals = 1, Suffix = " px" })
-        Health:Toggle({ Name = "Health number", Flag = key("esp_hp_text"), Default = false })
-        Health:Toggle({ Name = "Damage trail", Flag = key("esp_hp_trail"), Default = true, Tooltip = "A fading bar shows the health that was just lost" })
-        Skeleton:Toggle({ Name = "Skeleton", Flag = key("esp_skeleton"), Default = false }):Colorpicker({ Name = "Skeleton color", Flag = key("esp_skeleton_color"), Default = Color3.fromRGB(255, 255, 255) })
-        Skeleton:Dropdown({ Name = "Color mode", Flag = key("esp_skeleton_mode"), Items = { "Player", "Custom", "Health" }, Default = "Player" })
-        Skeleton:Slider({ Name = "Thickness", Flag = key("esp_skeleton_thick"), Min = 1, Max = 4, Default = 1.5, Decimals = 0.1, Suffix = " px" })
-        Skeleton:Toggle({ Name = "Outline", Flag = key("esp_skeleton_outline"), Default = true })
-        Extras:Toggle({ Name = "Head dot", Flag = key("esp_head"), Default = false })
-        Extras:Toggle({ Name = "Tracers", Flag = key("esp_tracer"), Default = false })
-        Extras:Dropdown({ Name = "Tracer origin", Flag = key("esp_tracer_from"), Items = { "Bottom", "Center", "Top" }, Default = "Bottom" })
-        Extras:Toggle({ Name = "Off-screen arrows", Flag = key("esp_arrows"), Default = not friendly, Tooltip = "Points toward players outside your view" })
-        Extras:Toggle({ Name = "Arrow text", Flag = key("esp_arrow_text"), Default = true, Tooltip = "Shows the name and distance next to each arrow" })
-        Extras:Slider({ Name = "Arrow size", Flag = key("esp_arrow_size"), Min = 8, Max = 32, Default = 14, Decimals = 1, Suffix = " px" })
-        Extras:Slider({ Name = "Arrow distance", Flag = key("esp_arrow_radius"), Min = 60, Max = 400, Default = 160, Decimals = 1, Suffix = " px" })
     end
 
-    for _, tabName in ipairs(TEAM_TABS) do
-        addTeamSettings(VisualsSubs[tabName], tabName)
-    end
+    local TeamEnemy, TeamFriendly = VisualsPage:MultiSection({ Sections = { "Enemy", "Friendly" }, Side = 1 })
+    addTeamRows(TeamEnemy, false)
+    addTeamRows(TeamFriendly, true)
 
-    local General = VisualsSubs.Style:Section({ Name = "General", Side = 1 })
-    General:Slider({ Name = "Max distance", Flag = "esp_dist", Min = 50, Max = 3000, Default = 1500, Decimals = 1, Suffix = " studs" })
+    local General, ColorsBox = VisualsPage:MultiSection({ Sections = { "ESP Settings", "Colors" }, Side = 1 })
+    General:Slider({ Name = "Render distance", Flag = "esp_dist", Min = 50, Max = 3000, Default = 1500, Decimals = 1, Suffix = " studs" })
     General:Toggle({ Name = "Fade with distance", Flag = "esp_fade", Default = true })
-    General:Slider({ Name = "Opacity", Flag = "esp_opacity", Min = 0.2, Max = 1, Default = 1, Decimals = 0.01 })
-    General:Slider({ Name = "Scale", Flag = "esp_scale", Min = 0.7, Max = 1.6, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Scales text, line thickness and arrows together" })
     General:Dropdown({ Name = "Font", Flag = "esp_font", Items = { "Plex", "Monospace", "UI", "System" }, Default = "Plex" })
+    General:Slider({ Name = "Size", Flag = "esp_text", Min = 10, Max = 20, Default = 13, Decimals = 1, Suffix = " px" })
+    General:Slider({ Name = "Scale", Flag = "esp_scale", Min = 0.7, Max = 1.6, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Scales text, line thickness and arrows together" })
+    General:Slider({ Name = "Opacity", Flag = "esp_opacity", Min = 0.2, Max = 1, Default = 1, Decimals = 0.01 })
     General:Toggle({ Name = "Smooth animations", Flag = "esp_smooth", Default = true, Tooltip = "Fade in, smooth health changes and the damage trail" })
     General:Slider({ Name = "Animation speed", Flag = "esp_smooth_speed", Min = 1, Max = 20, Default = 8, Decimals = 0.1 })
+    ColorsBox:Toggle({ Name = "Visibility color", Flag = "esp_vis", Default = true, Tooltip = "Enemies you can see use a second color" }):Colorpicker({ Name = "Visible color", Flag = "esp_vis_color", Default = Color3.fromRGB(255, 230, 80) })
+    ColorsBox:Toggle({ Name = "Mark aimbot target", Flag = "esp_target", Default = true, Tooltip = "Draws the player your aimbot is locked on in its own color" }):Colorpicker({ Name = "Target color", Flag = "esp_target_color", Default = Color3.fromRGB(255, 60, 200) })
 
-    local Colors = VisualsSubs.Style:Section({ Name = "Colors", Side = 1 })
-    Colors:Toggle({ Name = "Visibility color", Flag = "esp_vis", Default = true, Tooltip = "Enemies you can see use a second color" }):Colorpicker({ Name = "Visible color", Flag = "esp_vis_color", Default = Color3.fromRGB(255, 230, 80) })
-    Colors:Toggle({ Name = "Mark aimbot target", Flag = "esp_target", Default = true, Tooltip = "Draws the player your aimbot is locked on in its own color" }):Colorpicker({ Name = "Target color", Flag = "esp_target_color", Default = Color3.fromRGB(255, 60, 200) })
+    local BoxSet, HealthSet, SkeletonSet, ExtraSet = VisualsPage:MultiSection({ Sections = { "Box", "Health", "Skeleton", "Extras" }, Side = 2 })
+    BoxSet:Dropdown({ Name = "Style", Flag = "esp_box", Items = { "Full", "Corners" }, Default = "Corners" })
+    BoxSet:Dropdown({ Name = "Outline", Flag = "esp_outline", Items = { "Off", "Single", "Double" }, Default = "Single", Tooltip = "Single is a dark line outside the colored one. Double adds a second dark line inside" })
+    BoxSet:Toggle({ Name = "Fit to pose", Flag = "esp_tight", Default = true, Tooltip = "The box follows crouching and prone instead of a fixed shape" })
+    BoxSet:Toggle({ Name = "Glow", Flag = "esp_glow", Default = false, Tooltip = "A faint wider copy of the box under it" })
+    BoxSet:Slider({ Name = "Fill transparency", Flag = "esp_fill_t", Min = 0, Max = 1, Default = 0.88, Decimals = 0.01 })
+    BoxSet:Slider({ Name = "Thickness", Flag = "esp_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
+    BoxSet:Toggle({ Name = "Text outline", Flag = "esp_text_outline", Default = true })
+    HealthSet:Dropdown({ Name = "Position", Flag = "esp_hp_pos", Items = { "Left", "Right", "Top", "Bottom" }, Default = "Left" })
+    HealthSet:Slider({ Name = "Width", Flag = "esp_hp_width", Min = 2, Max = 8, Default = 3, Decimals = 1, Suffix = " px" })
+    HealthSet:Toggle({ Name = "Damage trail", Flag = "esp_hp_trail", Default = true, Tooltip = "A fading bar shows the health that was just lost" })
+    SkeletonSet:Dropdown({ Name = "Color mode", Flag = "esp_skeleton_mode", Items = { "Player", "Custom", "Health" }, Default = "Player", Tooltip = "Player uses the box color, Custom uses the skeleton color" })
+    SkeletonSet:Slider({ Name = "Thickness", Flag = "esp_skeleton_thick", Min = 1, Max = 4, Default = 1.5, Decimals = 0.1, Suffix = " px" })
+    SkeletonSet:Toggle({ Name = "Outline", Flag = "esp_skeleton_outline", Default = true })
+    ExtraSet:Dropdown({ Name = "Tracer origin", Flag = "esp_tracer_from", Items = { "Bottom", "Center", "Top" }, Default = "Bottom" })
+    ExtraSet:Toggle({ Name = "Arrow text", Flag = "esp_arrow_text", Default = true, Tooltip = "Shows the name and distance next to each arrow" })
+    ExtraSet:Slider({ Name = "Arrow size", Flag = "esp_arrow_size", Min = 8, Max = 32, Default = 14, Decimals = 1, Suffix = " px" })
+    ExtraSet:Slider({ Name = "Arrow distance", Flag = "esp_arrow_radius", Min = 60, Max = 400, Default = 160, Decimals = 1, Suffix = " px" })
 
-    local Gradient = VisualsSubs.Style:Section({ Name = "Gradient", Side = 2 })
-    Gradient:Toggle({ Name = "Gradient colors", Flag = "grad_on", Default = false, Tooltip = "Colors flow between two colors, top to bottom, and move over time" }):Colorpicker({ Name = "Color A", Flag = "grad_a", Default = Color3.fromRGB(255, 70, 120) }):Colorpicker({ Name = "Color B", Flag = "grad_b", Default = Color3.fromRGB(90, 140, 255) })
-    Gradient:Dropdown({ Name = "Apply to", Flag = "grad_apply", Items = { "Box fill", "Box outline", "Skeleton" }, Multi = true, Default = { "Box fill", "Skeleton" } })
-    Gradient:Slider({ Name = "Speed", Flag = "grad_speed", Min = 0, Max = 2, Default = 0.25, Decimals = 0.01, Tooltip = "0 keeps the gradient still" })
-    Gradient:Slider({ Name = "Stretch", Flag = "grad_stretch", Min = 0.3, Max = 3, Default = 1, Decimals = 0.01, Tooltip = "Higher repeats the colors more often along the body" })
-
-    local Adorn = VisualsSubs.Chams:Section({ Name = "Body chams", Side = 1 })
-    Adorn:Toggle({ Name = "Enabled", Flag = "cham_enabled", Default = false, Tooltip = "Colors each body part with objects that live outside the character, so nothing is added to the character itself" })
-    Adorn:Toggle({ Name = "Teammates", Flag = "cham_team", Default = false })
-    Adorn:Toggle({ Name = "Visible", Flag = "cham_vis_on", Default = true }):Colorpicker({ Name = "Visible", Flag = "cham_vis", Default = Color3.fromRGB(255, 230, 80), Alpha = 0.35 })
-    Adorn:Toggle({ Name = "Behind walls", Flag = "cham_hid_on", Default = true }):Colorpicker({ Name = "Behind walls", Flag = "cham_hid", Default = Color3.fromRGB(255, 70, 70), Alpha = 0.7 })
-    Adorn:Slider({ Name = "Thickness", Flag = "cham_thick", Min = 0, Max = 0.6, Default = 0.1, Decimals = 0.01 })
-    Adorn:Toggle({ Name = "Glow", Flag = "cham_glow", Default = false })
-    Adorn:Slider({ Name = "Glow strength", Flag = "cham_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
-    Adorn:Toggle({ Name = "Round head", Flag = "cham_round", Default = true })
-    Adorn:Slider({ Name = "Head size", Flag = "cham_head", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
-
-    local Outline = VisualsSubs.Chams:Section({ Name = "Outline", Side = 2 })
-    Outline:Toggle({ Name = "Outline", Flag = "cham_line_on", Default = true, Tooltip = "Outlines the whole player. Only the outline is used, the fill is off" }):Colorpicker({ Name = "Outline color", Flag = "cham_line", Default = Color3.fromRGB(255, 255, 255), Alpha = 0 })
-    Outline:Toggle({ Name = "Through walls", Flag = "cham_line_walls", Default = true })
+    local ChamSet, GradientSet = VisualsPage:MultiSection({ Sections = { "Chams", "Gradient" }, Side = 2 })
+    ChamSet:Toggle({ Name = "Show visible", Flag = "cham_vis_on", Default = true })
+    ChamSet:Toggle({ Name = "Show behind walls", Flag = "cham_hid_on", Default = true })
+    ChamSet:Slider({ Name = "Thickness", Flag = "cham_thick", Min = 0, Max = 0.6, Default = 0.1, Decimals = 0.01 })
+    ChamSet:Toggle({ Name = "Glow", Flag = "cham_glow", Default = false })
+    ChamSet:Slider({ Name = "Glow strength", Flag = "cham_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
+    ChamSet:Toggle({ Name = "Round head", Flag = "cham_round", Default = true })
+    ChamSet:Slider({ Name = "Head size", Flag = "cham_head", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
+    ChamSet:Toggle({ Name = "Outline through walls", Flag = "cham_line_walls", Default = true })
+    GradientSet:Toggle({ Name = "Gradient colors", Flag = "grad_on", Default = false, Tooltip = "Colors flow between two colors, top to bottom, and move over time" }):Colorpicker({ Name = "Color A", Flag = "grad_a", Default = Color3.fromRGB(255, 70, 120) }):Colorpicker({ Name = "Color B", Flag = "grad_b", Default = Color3.fromRGB(90, 140, 255) })
+    GradientSet:Dropdown({ Name = "Apply to", Flag = "grad_apply", Items = { "Box fill", "Box outline", "Skeleton" }, Multi = true, Default = { "Box fill", "Skeleton" } })
+    GradientSet:Slider({ Name = "Speed", Flag = "grad_speed", Min = 0, Max = 2, Default = 0.25, Decimals = 0.01, Tooltip = "0 keeps the gradient still" })
+    GradientSet:Slider({ Name = "Stretch", Flag = "grad_stretch", Min = 0.3, Max = 3, Default = 1, Decimals = 0.01, Tooltip = "Higher repeats the colors more often along the body" })
 
     local CameraBox = MiscSubs.Camera:Section({ Name = "Camera", Side = 1 })
     CameraBox:Toggle({ Name = "Field of view", Flag = "cam_fov_on", Default = false, Tooltip = "Applies when you are not aiming down sights" })
@@ -1512,22 +1494,27 @@ local function teamCfg(friendly)
     local c = cfgCache[friendly]
     if not c then c = {} cfgCache[friendly] = c end
     local function r(flag, default) return readFlag(flag .. suffix, default) end
+    local function g(flag, default) return readFlag(flag, default) end
     c.enabled = r("esp_enabled", false)
-    c.colorOn = r("esp_color_on", true)
     c.color = r("esp_color", friendly and Color3.fromRGB(90, 200, 120) or Color3.fromRGB(255, 80, 80))
-    c.box, c.outline, c.tight, c.glow = r("esp_box", "Corners"), r("esp_outline", "Single"), r("esp_tight", true), r("esp_glow", false)
-    c.fillOn, c.fillColor, c.fillT, c.thick = r("esp_fill", true), r("esp_fill_color", WHITE), r("esp_fill_t", 0.88), r("esp_thick", 1)
+    c.box = r("esp_box_on", true) and g("esp_box", "Corners") or "Off"
+    c.outline, c.tight, c.glow = g("esp_outline", "Single"), g("esp_tight", true), g("esp_glow", false)
+    c.fillOn, c.fillColor, c.fillT, c.thick = r("esp_fill", true), r("esp_fill_color", WHITE), g("esp_fill_t", 0.88), g("esp_thick", 1)
     c.name, c.nameColor = r("esp_name", true), r("esp_name_color", WHITE)
     c.distance, c.distColor = r("esp_distance", true), r("esp_dist_color", Color3.fromRGB(200, 200, 200))
     c.weapon, c.weaponColor = r("esp_weapon", true), r("esp_weapon_color", Color3.fromRGB(255, 200, 120))
-    c.text, c.textOutline = r("esp_text", 13), r("esp_text_outline", true)
-    c.health, c.hpPos, c.hpWidth, c.hpText, c.hpTrail = r("esp_health", true), r("esp_hp_pos", "Left"), r("esp_hp_width", 3), r("esp_hp_text", false), r("esp_hp_trail", true)
-    c.hpFull, c.hpMid, c.hpLow = r("esp_hp_full", Color3.fromRGB(70, 255, 110)), r("esp_hp_mid", Color3.fromRGB(255, 220, 60)), r("esp_hp_low", Color3.fromRGB(255, 60, 60))
-    c.skeleton, c.skeletonColor, c.skeletonMode = r("esp_skeleton", false), r("esp_skeleton_color", WHITE), r("esp_skeleton_mode", "Player")
-    c.skeletonThick, c.skeletonOutline = r("esp_skeleton_thick", 1.5), r("esp_skeleton_outline", true)
-    c.head, c.tracer, c.tracerFrom = r("esp_head", false), r("esp_tracer", false), r("esp_tracer_from", "Bottom")
-    c.arrows, c.arrowText = r("esp_arrows", not friendly), r("esp_arrow_text", true)
-    c.arrowSize, c.arrowRadius = r("esp_arrow_size", 14), r("esp_arrow_radius", 160)
+    c.text, c.textOutline = g("esp_text", 13), g("esp_text_outline", true)
+    c.health, c.hpPos, c.hpWidth, c.hpText, c.hpTrail = r("esp_health", true), g("esp_hp_pos", "Left"), g("esp_hp_width", 3), r("esp_hp_text", false), g("esp_hp_trail", true)
+    c.hpFull, c.hpLow = r("esp_hp_full", Color3.fromRGB(70, 255, 110)), r("esp_hp_low", Color3.fromRGB(255, 60, 60))
+    c.skeleton, c.skeletonColor, c.skeletonMode = r("esp_skeleton", false), r("esp_skeleton_color", WHITE), g("esp_skeleton_mode", "Player")
+    c.skeletonThick, c.skeletonOutline = g("esp_skeleton_thick", 1.5), g("esp_skeleton_outline", true)
+    c.head, c.tracer, c.tracerFrom = r("esp_head", false), r("esp_tracer", false), g("esp_tracer_from", "Bottom")
+    c.arrows, c.arrowText = r("esp_arrows", not friendly), g("esp_arrow_text", true)
+    c.arrowSize, c.arrowRadius = g("esp_arrow_size", 14), g("esp_arrow_radius", 160)
+    c.chamOn = r("cham_enabled", false)
+    c.chamVis, c.chamVisT = r("cham_vis", Color3.fromRGB(255, 230, 80)), pickerTransparency("cham_vis" .. suffix, 0.35)
+    c.chamHid, c.chamHidT = r("cham_hid", Color3.fromRGB(255, 70, 70)), pickerTransparency("cham_hid" .. suffix, 0.7)
+    c.lineOn, c.lineColor, c.lineT = r("cham_line_on", true), r("cham_line", WHITE), pickerTransparency("cham_line" .. suffix, 0)
     return c
 end
 
@@ -1759,7 +1746,7 @@ local function updateChams(record, wanted, ctx)
     adornFolder = ensureFolder(adornFolder, "PF_Adorn")
     outlineFolder = ensureFolder(outlineFolder, "PF_Outline")
 
-    if adornFolder and (ctx.chamVisOn or ctx.chamHidOn) then
+    if adornFolder and ctx.adornOn and (ctx.chamVisOn or ctx.chamHidOn) then
         local data = adornData[player]
         if data and data.hash ~= record.hash then
             clearAdornments(player)
@@ -1775,7 +1762,7 @@ local function updateChams(record, wanted, ctx)
                 data.parts[part] = nil
             end
         end
-        local visibleColor = record.enemy and ctx.chamVis or ctx.friendlyColor
+        local visibleColor = ctx.chamVis
         local signature = ctx.chamSignature .. tostring(visibleColor)
         for _, name in ipairs(PART_NAMES) do
             local part = record.hash[name]
@@ -1852,7 +1839,7 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
     local scale = ctx.scale
     local viewport, center = ctx.viewport, ctx.center
 
-    local color = cfg.colorOn and cfg.color or WHITE
+    local color = cfg.color
     if record.enemy and ctx.useVisible and isVisible(record.torso, origin, now) then color = ctx.visibleColor end
     local isTarget = ctx.markTarget and Aim.target == record.player
     if isTarget then color = ctx.targetColor end
@@ -2003,7 +1990,7 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
     -- health
     local ratio = math.clamp(record.health / math.max(record.maxHealth, 1), 0, 1)
     local healthColor
-    if ratio > 0.5 then healthColor = cfg.hpMid:Lerp(cfg.hpFull, (ratio - 0.5) * 2) else healthColor = cfg.hpLow:Lerp(cfg.hpMid, ratio * 2) end
+    healthColor = cfg.hpLow:Lerp(cfg.hpFull, ratio)
     if cfg.health then
         local shown, trail = state.hp, state.trail
         local barWidth = cfg.hpWidth * scale
@@ -2134,21 +2121,12 @@ local function espStep(cam, now, dt, records, origin)
         phase = now * readFlag("grad_speed", 0.25),
         gradFill = apply["Box fill"], gradOutline = apply["Box outline"], gradSkeleton = apply["Skeleton"],
         friendlyColor = readFlag("esp_color@Friendly", Color3.fromRGB(90, 200, 120)),
-        chamOn = readFlag("cham_enabled", false),
-        chamTeam = readFlag("cham_team", false),
         chamVisOn = readFlag("cham_vis_on", true), chamHidOn = readFlag("cham_hid_on", true),
-        chamVis = readFlag("cham_vis", Color3.fromRGB(255, 230, 80)), chamVisT = pickerTransparency("cham_vis", 0.35),
-        chamHid = readFlag("cham_hid", Color3.fromRGB(255, 70, 70)), chamHidT = pickerTransparency("cham_hid", 0.7),
         chamThick = readFlag("cham_thick", 0.1),
         chamGlow = readFlag("cham_glow", false), chamGlowSize = math.max(readFlag("cham_glow_size", 1.75), 1),
         chamRound = readFlag("cham_round", true), chamHead = readFlag("cham_head", 1.15),
-        lineOn = readFlag("cham_line_on", true), lineWalls = readFlag("cham_line_walls", true),
-        lineColor = readFlag("cham_line", WHITE), lineT = pickerTransparency("cham_line", 0),
+        lineWalls = readFlag("cham_line_walls", true),
     }
-    ctx.chamSignature = table.concat({
-        tostring(ctx.chamHid), ctx.chamHidT, ctx.chamVisT, ctx.chamThick, tostring(ctx.chamGlow),
-        ctx.chamGlowSize, tostring(ctx.chamRound), ctx.chamHead,
-    }, "|")
 
     for _, record in ipairs(records) do
         local player = record.player
@@ -2177,7 +2155,14 @@ local function espStep(cam, now, dt, records, origin)
             end
         end
 
-        local chamWanted = ctx.chamOn and record.model and record.model.Parent and (record.enemy or ctx.chamTeam) and distance <= ctx.maxDistance
+        ctx.adornOn, ctx.lineOn = cfg.chamOn, cfg.lineOn
+        ctx.chamVis, ctx.chamVisT, ctx.chamHid, ctx.chamHidT = cfg.chamVis, cfg.chamVisT, cfg.chamHid, cfg.chamHidT
+        ctx.lineColor, ctx.lineT = cfg.lineColor, cfg.lineT
+        ctx.chamSignature = table.concat({
+            tostring(cfg.chamHid), cfg.chamHidT, cfg.chamVisT, ctx.chamThick, tostring(ctx.chamGlow),
+            ctx.chamGlowSize, tostring(ctx.chamRound), ctx.chamHead,
+        }, "|")
+        local chamWanted = (cfg.chamOn or cfg.lineOn) and record.model and record.model.Parent and distance <= ctx.maxDistance
         local ok, problem = pcall(updateChams, record, chamWanted and true or false, ctx)
         if not ok then note("cham:" .. tostring(problem), "chams:", problem) end
     end

@@ -1,4 +1,4 @@
-local BUILD = "phantom-1108-n"
+local BUILD = "phantom-1108-p"
 local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
@@ -807,7 +807,7 @@ local function takeSnapshot()
             player = player,
             entry = entry,
             hash = hash,
-            model = okModel and model or nil,
+            model = (okModel and typeof(model) == "Instance") and model or torso.Parent,
             torso = torso,
             head = head,
             enemy = not (okEnemy and enemy == false),
@@ -1465,20 +1465,53 @@ local espObjects, espState = {}, {}
 local adornData, outlineSets = {}, {}
 local adornFolder, outlineFolder
 
-local function guiParent()
-    local parent
-    pcall(function() if gethui then parent = gethui() end end)
-    if not parent then pcall(function() parent = game:GetService("CoreGui") end) end
-    return parent
+-- parenting into CoreGui needs a high thread identity, and code relaunched inside an actor often runs lower
+local function elevate()
+    for _, name in ipairs({ "setthreadidentity", "set_thread_identity", "setidentity", "setthreadcontext" }) do
+        local fn = getgenv()[name]
+        if type(fn) == "function" and pcall(fn, 7) then return true end
+    end
+    local syn_ = getgenv().syn
+    if type(syn_) == "table" and type(syn_.set_thread_identity) == "function" then return pcall(syn_.set_thread_identity, 7) end
+    return false
+end
+
+local containerNote
+local function guiParents()
+    local list = {}
+    pcall(function() list[#list + 1] = { game:GetService("CoreGui"), "CoreGui" } end)
+    pcall(function() if gethui then list[#list + 1] = { gethui(), "gethui" } end end)
+    local current = camera()
+    if current then list[#list + 1] = { current, "Camera" } end
+    return list
 end
 local function ensureFolder(current, name)
     if current and current.Parent then return current end
-    local parent = guiParent()
-    if not parent then return nil end
-    local folder = Instance.new("Folder")
-    folder.Name = name
-    folder.Parent = parent
-    return folder
+    for _, entry in ipairs(guiParents()) do
+        local folder
+        if entry[2] == "Camera" then
+            folder = Instance.new("Folder")
+        else
+            folder = Instance.new("ScreenGui")
+            pcall(function()
+                folder.ResetOnSpawn = false
+                folder.IgnoreGuiInset = true
+                folder.DisplayOrder = 8
+                folder.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+            end)
+        end
+        folder.Name = name
+        local ok = pcall(function() folder.Parent = entry[1] end)
+        if ok and folder.Parent then
+            if containerNote ~= entry[2] then
+                containerNote = entry[2]
+                print("[Phantom] chams container: " .. entry[2])
+            end
+            return folder
+        end
+        pcall(function() folder:Destroy() end)
+    end
+    return nil
 end
 
 local function pickerTransparency(flag, default)
@@ -1743,6 +1776,7 @@ local function updateChams(record, wanted, ctx)
         clearOutline(player)
         return
     end
+    elevate()
     adornFolder = ensureFolder(adornFolder, "PF_Adorn")
     outlineFolder = ensureFolder(outlineFolder, "PF_Outline")
 
@@ -1770,7 +1804,7 @@ local function updateChams(record, wanted, ctx)
                 local round = ctx.chamRound and name == "Head"
                 local pair = data.parts[part]
                 if not pair then
-                    pair = { round = round, behind = newAdornment(part, true, 1, round), visible = newAdornment(part, false, -1, round) }
+                    pair = { round = round, behind = newAdornment(part, true, 1, round), visible = newAdornment(part, false, 2, round) }
                     data.parts[part] = pair
                 end
                 local size = part.Size

@@ -1,4 +1,4 @@
-local BUILD = "phantom-1108-h"
+local BUILD = "phantom-1108-i"
 local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
@@ -517,8 +517,18 @@ local function keyActive(name)
     return true
 end
 
+local currentClass = nil
+local PERFLAGS = { }
+local function F(name, default)
+    if currentClass and readFlag("ovr@" .. currentClass, false) then
+        local value = readFlag(name .. "@" .. currentClass, nil)
+        if value ~= nil then return value end
+    end
+    return readFlag(name, default)
+end
+
 local function multi(name, fallback)
-    local value = readFlag(name, fallback)
+    local value = F(name, fallback)
     local out = {}
     if type(value) == "table" then
         for key, on in pairs(value) do
@@ -662,7 +672,7 @@ local function localAlive()
     return ok and alive == true
 end
 
-local function activeWeapon()
+local function activeWeaponRaw()
     local interface = Core.mods.CharacterInterface
     if not (interface and localAlive()) then return nil end
     local ok, weapon = pcall(function()
@@ -674,11 +684,60 @@ local function activeWeapon()
     return nil
 end
 
+local weaponFrame, weaponCache = -1, nil
+local function activeWeapon()
+    if weaponFrame == frameId then return weaponCache end
+    weaponFrame = frameId
+    weaponCache = activeWeaponRaw()
+    return weaponCache
+end
+
 local function weaponStat(weapon, name)
     if type(weapon) ~= "table" or type(weapon.getWeaponStat) ~= "function" then return nil end
     local ok, value = pcall(weapon.getWeaponStat, weapon, name)
     if ok then return value end
     return nil
+end
+
+local TYPE_GROUP = { PISTOL = "Pistols", REVOLVER = "Pistols", ASSAULT = "Rifles", CARBINE = "Rifles", DMR = "DMR", SHOTGUN = "Shotguns", SNIPER = "Snipers", LMG = "LMGs" }
+local classByName, classMapBuilt, classCache = {}, false, {}
+
+local function groupOfFolder(name)
+    local upper = tostring(name):upper():gsub("[%s_]+", "_")
+    if upper:find("SNIPER", 1, true) then return "Snipers" end
+    if upper:find("PISTOL", 1, true) or upper:find("REVOLVER", 1, true) then return "Pistols" end
+    if upper:find("ASSAULT", 1, true) or upper:find("CARBINE", 1, true) or upper:find("BATTLE", 1, true) then return "Rifles" end
+    if upper:find("PDW", 1, true) or upper:find("SMG", 1, true) then return "SMGs" end
+    if upper:find("LMG", 1, true) then return "LMGs" end
+    if upper:find("SHOTGUN", 1, true) then return "Shotguns" end
+    if upper:find("DMR", 1, true) then return "DMR" end
+    return "Other"
+end
+
+local function buildClassMap()
+    classMapBuilt = true
+    pcall(function()
+        local root = game:GetService("ReplicatedStorage"):FindFirstChild("WeaponDatabase", true)
+        if not root then return end
+        for _, folder in ipairs(root:GetChildren()) do
+            local group = groupOfFolder(folder.Name)
+            for _, module in ipairs(folder:GetDescendants()) do
+                if module:IsA("ModuleScript") and not classByName[module.Name] then classByName[module.Name] = group end
+            end
+        end
+    end)
+end
+
+local function weaponClass(weapon)
+    if type(weapon) ~= "table" then return nil end
+    local name = weapon.weaponName
+    if type(name) ~= "string" then return nil end
+    if classCache[name] then return classCache[name] end
+    if not classMapBuilt then buildClassMap() end
+    local group = classByName[name]
+    if not group then group = TYPE_GROUP[tostring(weaponStat(weapon, "type"))] or "Other" end
+    classCache[name] = group
+    return group
 end
 
 local function weaponAiming(weapon)
@@ -804,74 +863,134 @@ local BLACK = Color3.new(0, 0, 0)
 local WHITE = Color3.new(1, 1, 1)
 
 -- ============================================================ menu
-local PF_StatusCore, PF_StatusWeapon, PF_StatusTarget, PF_StatusRecoil
+local PF_StatusCore, PF_StatusWeapon, PF_StatusTarget, PF_StatusRecoil, PF_StatusClass
 local LegitPage = Window:Page({ Name = "Legit", Columns = 2, Subtabs = false })
-local LegitSubs = LegitPage:SubTabs({ "Aim", "Trigger", "Recoil", "Status" })
+local LegitSubs = LegitPage:SubTabs({ "Shared", "Pistols", "Rifles", "SMGs", "LMGs", "Shotguns", "Snipers", "DMR", "Other", "Status" })
 local VisualsPage = Window:Page({ Name = "Visuals", Columns = 2, Subtabs = false })
 local VisualsSubs = VisualsPage:SubTabs({ "ESP", "Chams" })
 local MiscPage = Window:Page({ Name = "Misc", Columns = 2, Subtabs = false })
 local MiscSubs = MiscPage:SubTabs({ "Camera", "Utility" })
 
 do
-    local Aimbot = LegitSubs.Aim:Section({ Name = "Aimbot", Side = 1 })
-    Aimbot:Toggle({ Name = "Enabled", Flag = "aim_enabled", Default = false, Tooltip = "Turns your view toward the target through the game's own camera while the key is held" }):Keybind({ Name = "Aim key", Flag = "aim_key", Default = "MB2", Mode = "Hold" })
-    Aimbot:Toggle({ Name = "Only while aiming down sights", Flag = "aim_ads", Default = false })
-    Aimbot:Toggle({ Name = "Only while shooting", Flag = "aim_shoot", Default = false })
-    Aimbot:Toggle({ Name = "Visible only", Flag = "aim_visible", Default = true, Tooltip = "Ignores players behind walls" })
-    Aimbot:Slider({ Name = "Smoothing", Flag = "aim_smooth", Min = 1, Max = 60, Default = 12, Decimals = 1, Tooltip = "Higher is slower and looks more natural" })
-    Aimbot:Slider({ Name = "Max turn speed", Flag = "aim_speed", Min = 30, Max = 1440, Default = 420, Decimals = 1, Suffix = " °/s", Tooltip = "Caps how fast the view can turn, so it never snaps" })
-    Aimbot:Slider({ Name = "Max distance", Flag = "aim_dist", Min = 50, Max = 1500, Default = 600, Decimals = 1, Suffix = " studs" })
+    local CLASS_TABS = { "Pistols", "Rifles", "SMGs", "LMGs", "Shotguns", "Snipers", "DMR", "Other" }
+    local ALL_TABS = { "Shared", "Pistols", "Rifles", "SMGs", "LMGs", "Shotguns", "Snipers", "DMR", "Other" }
 
-    local Targeting = LegitSubs.Aim:Section({ Name = "Targeting", Side = 1 })
-    Targeting:Dropdown({ Name = "Priority", Flag = "aim_priority", Items = { "Crosshair", "Distance", "Lowest health" }, Default = "Crosshair" })
-    Targeting:Toggle({ Name = "Sticky target", Flag = "aim_sticky", Default = true, Tooltip = "Stays on the current target while it is still valid" })
-    Targeting:Slider({ Name = "Switch delay", Flag = "aim_switch", Min = 0, Max = 500, Default = 120, Decimals = 1, Suffix = " ms" })
-    Targeting:Slider({ Name = "Reaction delay", Flag = "aim_react", Min = 0, Max = 400, Default = 60, Decimals = 1, Suffix = " ms", Tooltip = "Waits this long after picking a new target before moving" })
+    local function suffixOf(tabName)
+        return tabName == "Shared" and "" or ("@" .. tabName)
+    end
 
-    local Hits = LegitSubs.Aim:Section({ Name = "Hit parts", Side = 2 })
-    Hits:Dropdown({ Name = "Parts", Flag = "aim_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
-    Hits:Dropdown({ Name = "Part choice", Flag = "aim_choice", Items = { "Closest to crosshair", "Priority order" }, Default = "Closest to crosshair", Tooltip = "Priority order tries Head, Torso, Arms, Legs and takes the first one that qualifies" })
+    local function setFlag(flag, value)
+        local toggle = Toggles[flag]
+        if toggle then toggle:SetValue(value) return true end
+        local option = Options[flag]
+        if option then option:SetValue(value) return true end
+        return false
+    end
 
-    local Fov = LegitSubs.Aim:Section({ Name = "Field of view", Side = 2 })
-    Fov:Toggle({ Name = "Show circle", Flag = "fov_show", Default = true }):Colorpicker({ Name = "Circle color", Flag = "fov_color", Default = Color3.fromRGB(255, 255, 255) })
-    Fov:Slider({ Name = "Radius", Flag = "fov_radius", Min = 10, Max = 800, Default = 120, Decimals = 1, Suffix = " px" })
-    Fov:Toggle({ Name = "Dynamic radius", Flag = "fov_dynamic", Default = false, Tooltip = "The radius depends on how far the target is" })
-    Fov:Slider({ Name = "Radius when close", Flag = "fov_near", Min = 10, Max = 800, Default = 240, Decimals = 1, Suffix = " px" })
-    Fov:Slider({ Name = "Radius at max distance", Flag = "fov_far", Min = 10, Max = 800, Default = 60, Decimals = 1, Suffix = " px" })
+    local function copyTab(from, to)
+        for _, flag in ipairs(PERFLAGS) do
+            local value = readFlag(flag .. suffixOf(from), nil)
+            if value ~= nil then
+                if type(value) == "table" then value = table.clone(value) end
+                pcall(setFlag, flag .. suffixOf(to), value)
+            end
+        end
+    end
 
-    local Human = LegitSubs.Aim:Section({ Name = "Humanize", Side = 2 })
-    Human:Slider({ Name = "Aim wobble", Flag = "aim_noise", Min = 0, Max = 3, Default = 0.25, Decimals = 0.01, Suffix = "°", Tooltip = "Small random drift on the aim point" })
-    Human:Slider({ Name = "Wobble speed", Flag = "aim_noise_speed", Min = 0.2, Max = 6, Default = 1.4, Decimals = 0.1 })
+    local function addSettings(sub, tabName)
+        local suffix = suffixOf(tabName)
+        local shared = tabName == "Shared"
+        local function key(flag)
+            if shared then table.insert(PERFLAGS, flag) end
+            return flag .. suffix
+        end
 
-    local Lead = LegitSubs.Aim:Section({ Name = "Weapon lead", Side = 2 })
-    Lead:Toggle({ Name = "Bullet drop", Flag = "lead_drop", Default = true, Tooltip = "Aims higher by how far the bullet falls on its way, using the weapon's bullet speed and the game's gravity for bullets" })
-    Lead:Toggle({ Name = "Moving targets", Flag = "lead_move", Default = true, Tooltip = "Aims ahead by the target's speed times the bullet's travel time" })
-    Lead:Slider({ Name = "Lead strength", Flag = "lead_strength", Min = 0, Max = 1.5, Default = 1, Decimals = 0.01 })
-    Lead:Slider({ Name = "Max lead", Flag = "lead_max", Min = 0, Max = 40, Default = 14, Decimals = 0.1, Suffix = " studs", Tooltip = "Caps how far ahead of a moving target it aims" })
+        if shared then
+            local Master = sub:Section({ Name = "Master", Side = 1 })
+            Master:Toggle({ Name = "Aimbot", Flag = "aim_enabled", Default = false, Tooltip = "Turns your view toward the target through the game's own camera while the key is held" }):Keybind({ Name = "Aim key", Flag = "aim_key", Default = "MB2", Mode = "Hold" })
+            Master:Toggle({ Name = "Triggerbot", Flag = "trig_enabled", Default = false, Tooltip = "Fires when your crosshair is on an enemy" }):Keybind({ Name = "Trigger key", Flag = "trig_key", Default = "None", Mode = "Always" })
+            Master:Toggle({ Name = "Recoil control", Flag = "rcs_enabled", Default = false, Tooltip = "Cancels the camera kick of each shot by reading the weapon's own recoil springs" }):Keybind({ Name = "Recoil key", Flag = "rcs_key", Default = "None", Mode = "Always" })
+            Master:Toggle({ Name = "Show FOV circle", Flag = "fov_show", Default = true }):Colorpicker({ Name = "Circle color", Flag = "fov_color", Default = Color3.fromRGB(255, 255, 255) })
+        else
+            local Config = sub:Section({ Name = tabName .. " config", Side = 1 })
+            Config:Toggle({ Name = "Override shared settings", Flag = "ovr@" .. tabName, Default = false, Tooltip = "While you hold a " .. tabName:lower() .. " weapon, this tab replaces the Shared tab. Off: Shared is used" })
+            local others = {}
+            for _, name in ipairs(ALL_TABS) do if name ~= tabName then table.insert(others, name) end end
+            Config:Dropdown({ Name = "Copy from", Flag = "copy@" .. tabName, Items = others, Default = "Shared" })
+            Config:Button({ Name = "Paste here", Callback = function()
+                local from = readFlag("copy@" .. tabName, "Shared")
+                copyTab(from, tabName)
+                pcall(function() Library:Notify("Copied " .. from .. " into " .. tabName, 3) end)
+            end })
+            Config:Button({ Name = "Reset to shared", Callback = function()
+                copyTab("Shared", tabName)
+                pcall(function() Library:Notify(tabName .. " reset to Shared", 3) end)
+            end })
+        end
 
-    local Trigger = LegitSubs.Trigger:Section({ Name = "Triggerbot", Side = 1 })
-    Trigger:Toggle({ Name = "Enabled", Flag = "trig_enabled", Default = false, Tooltip = "Fires when your crosshair is on an enemy" }):Keybind({ Name = "Trigger key", Flag = "trig_key", Default = "None", Mode = "Always" })
-    Trigger:Toggle({ Name = "Visible only", Flag = "trig_visible", Default = true })
-    Trigger:Toggle({ Name = "Only while aiming down sights", Flag = "trig_ads", Default = false })
-    Trigger:Dropdown({ Name = "Parts", Flag = "trig_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
-    Trigger:Slider({ Name = "Hitbox size", Flag = "trig_scale", Min = 0.4, Max = 1.6, Default = 0.9, Decimals = 0.01, Suffix = "x" })
-    Trigger:Slider({ Name = "Max distance", Flag = "trig_dist", Min = 50, Max = 1500, Default = 400, Decimals = 1, Suffix = " studs" })
-    local TriggerTiming = LegitSubs.Trigger:Section({ Name = "Timing", Side = 2 })
-    TriggerTiming:Slider({ Name = "Delay", Flag = "trig_delay", Min = 0, Max = 300, Default = 40, Decimals = 1, Suffix = " ms", Tooltip = "Time the crosshair must stay on the target before firing" })
-    TriggerTiming:Slider({ Name = "Hold", Flag = "trig_hold", Min = 20, Max = 500, Default = 70, Decimals = 1, Suffix = " ms", Tooltip = "How long the button stays down. Longer holds fire more shots on automatic guns" })
-    TriggerTiming:Slider({ Name = "Cooldown", Flag = "trig_cool", Min = 0, Max = 500, Default = 90, Decimals = 1, Suffix = " ms" })
+        local Aimbot = sub:Section({ Name = "Aimbot", Side = 1 })
+        Aimbot:Toggle({ Name = "Visible only", Flag = key("aim_visible"), Default = true, Tooltip = "Ignores players behind walls" })
+        Aimbot:Toggle({ Name = "Only while aiming down sights", Flag = key("aim_ads"), Default = false })
+        Aimbot:Toggle({ Name = "Only while shooting", Flag = key("aim_shoot"), Default = false })
+        Aimbot:Slider({ Name = "Smoothing", Flag = key("aim_smooth"), Min = 1, Max = 60, Default = 12, Decimals = 1, Tooltip = "Higher is slower and looks more natural" })
+        Aimbot:Slider({ Name = "Max turn speed", Flag = key("aim_speed"), Min = 30, Max = 1440, Default = 420, Decimals = 1, Suffix = " °/s", Tooltip = "Caps how fast the view can turn, so it never snaps" })
+        Aimbot:Slider({ Name = "Max distance", Flag = key("aim_dist"), Min = 50, Max = 1500, Default = 600, Decimals = 1, Suffix = " studs" })
 
-    local Recoil_ = LegitSubs.Recoil:Section({ Name = "Recoil control", Side = 1 })
-    Recoil_:Toggle({ Name = "Enabled", Flag = "rcs_enabled", Default = false, Tooltip = "Cancels the camera kick of each shot. It reads the weapon's own recoil springs, so it follows every gun and attachment automatically" }):Keybind({ Name = "Recoil key", Flag = "rcs_key", Default = "None", Mode = "Always" })
-    Recoil_:Slider({ Name = "Vertical control", Flag = "rcs_v", Min = 0, Max = 100, Default = 70, Decimals = 1, Suffix = "%", Tooltip = "How much of the upward kick is cancelled" })
-    Recoil_:Slider({ Name = "Horizontal control", Flag = "rcs_h", Min = 0, Max = 100, Default = 40, Decimals = 1, Suffix = "%", Tooltip = "How much of the sideways kick is cancelled" })
-    Recoil_:Toggle({ Name = "Hipfire too", Flag = "rcs_hip", Default = true, Tooltip = "Off: only controls recoil while aiming down sights" })
-    Recoil_:Slider({ Name = "Variation", Flag = "rcs_human", Min = 0, Max = 40, Default = 10, Decimals = 1, Suffix = "%", Tooltip = "Varies the strength a little over time so the spray does not look machine perfect" })
+        local Targeting = sub:Section({ Name = "Targeting", Side = 1 })
+        Targeting:Dropdown({ Name = "Priority", Flag = key("aim_priority"), Items = { "Crosshair", "Distance", "Lowest health" }, Default = "Crosshair" })
+        Targeting:Toggle({ Name = "Sticky target", Flag = key("aim_sticky"), Default = true, Tooltip = "Stays on the current target while it is still valid" })
+        Targeting:Slider({ Name = "Switch delay", Flag = key("aim_switch"), Min = 0, Max = 500, Default = 120, Decimals = 1, Suffix = " ms" })
+        Targeting:Slider({ Name = "Reaction delay", Flag = key("aim_react"), Min = 0, Max = 400, Default = 60, Decimals = 1, Suffix = " ms", Tooltip = "Waits this long after picking a new target before moving" })
+
+        local Lead = sub:Section({ Name = "Precision", Side = 1 })
+        Lead:Toggle({ Name = "Bullet drop", Flag = key("lead_drop"), Default = true, Tooltip = "Aims higher by how far the bullet falls on its way, from the weapon's bullet speed and the game's bullet gravity" })
+        Lead:Toggle({ Name = "Moving targets", Flag = key("lead_move"), Default = true, Tooltip = "Aims ahead by the target's speed times the bullet's travel time" })
+        Lead:Slider({ Name = "Lead strength", Flag = key("lead_strength"), Min = 0, Max = 1.5, Default = 1, Decimals = 0.01 })
+        Lead:Slider({ Name = "Max lead", Flag = key("lead_max"), Min = 0, Max = 40, Default = 14, Decimals = 0.1, Suffix = " studs", Tooltip = "Caps how far ahead of a moving target it aims" })
+
+        local Hits, Fov, Human = sub:MultiSection({ Sections = { "Hit parts", "FOV", "Humanize" }, Side = 2 })
+        Hits:Dropdown({ Name = "Parts", Flag = key("aim_parts"), Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
+        Hits:Dropdown({ Name = "Part choice", Flag = key("aim_choice"), Items = { "Closest to crosshair", "Priority order" }, Default = "Closest to crosshair", Tooltip = "Priority order tries Head, Torso, Arms, Legs and takes the first one that qualifies" })
+        Fov:Slider({ Name = "Radius", Flag = key("fov_radius"), Min = 10, Max = 800, Default = 120, Decimals = 1, Suffix = " px" })
+        Fov:Toggle({ Name = "Dynamic radius", Flag = key("fov_dynamic"), Default = false, Tooltip = "The radius depends on how far the target is" })
+        Fov:Slider({ Name = "Radius when close", Flag = key("fov_near"), Min = 10, Max = 800, Default = 240, Decimals = 1, Suffix = " px" })
+        Fov:Slider({ Name = "Radius at max distance", Flag = key("fov_far"), Min = 10, Max = 800, Default = 60, Decimals = 1, Suffix = " px" })
+        Human:Slider({ Name = "Aim wobble", Flag = key("aim_noise"), Min = 0, Max = 3, Default = 0.25, Decimals = 0.01, Suffix = "°", Tooltip = "Small random drift on the aim point" })
+        Human:Slider({ Name = "Wobble speed", Flag = key("aim_noise_speed"), Min = 0.2, Max = 6, Default = 1.4, Decimals = 0.1 })
+
+        local Trigger, Recoil_ = sub:MultiSection({ Sections = { "Triggerbot", "Recoil" }, Side = 2 })
+        Trigger:Toggle({ Name = "Visible only", Flag = key("trig_visible"), Default = true })
+        Trigger:Toggle({ Name = "Only while aiming down sights", Flag = key("trig_ads"), Default = false })
+        Trigger:Dropdown({ Name = "Parts", Flag = key("trig_parts"), Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
+        Trigger:Slider({ Name = "Hitbox size", Flag = key("trig_scale"), Min = 0.4, Max = 1.6, Default = 0.9, Decimals = 0.01, Suffix = "x" })
+        Trigger:Slider({ Name = "Max distance", Flag = key("trig_dist"), Min = 50, Max = 1500, Default = 400, Decimals = 1, Suffix = " studs" })
+        Trigger:Slider({ Name = "Delay", Flag = key("trig_delay"), Min = 0, Max = 300, Default = 40, Decimals = 1, Suffix = " ms", Tooltip = "Time the crosshair must stay on the target before firing" })
+        Trigger:Slider({ Name = "Hold", Flag = key("trig_hold"), Min = 20, Max = 500, Default = 70, Decimals = 1, Suffix = " ms", Tooltip = "How long the button stays down. Longer holds fire more shots on automatic guns" })
+        Trigger:Slider({ Name = "Cooldown", Flag = key("trig_cool"), Min = 0, Max = 500, Default = 90, Decimals = 1, Suffix = " ms" })
+        Recoil_:Slider({ Name = "Vertical control", Flag = key("rcs_v"), Min = 0, Max = 100, Default = 70, Decimals = 1, Suffix = "%", Tooltip = "How much of the upward kick is cancelled" })
+        Recoil_:Slider({ Name = "Horizontal control", Flag = key("rcs_h"), Min = 0, Max = 100, Default = 40, Decimals = 1, Suffix = "%", Tooltip = "How much of the sideways kick is cancelled" })
+        Recoil_:Toggle({ Name = "Hipfire too", Flag = key("rcs_hip"), Default = true, Tooltip = "Off: only controls recoil while aiming down sights" })
+        Recoil_:Slider({ Name = "Variation", Flag = key("rcs_human"), Min = 0, Max = 40, Default = 10, Decimals = 1, Suffix = "%", Tooltip = "Varies the strength a little over time so the spray does not look machine perfect" })
+    end
+
+    for _, tabName in ipairs(ALL_TABS) do
+        addSettings(LegitSubs[tabName], tabName)
+    end
+
+    local SharedConfig = LegitSubs.Shared:Section({ Name = "Weapon configs", Side = 2 })
+    SharedConfig:Button({ Name = "Copy Shared to all weapon tabs", Callback = function()
+        for _, tabName in ipairs(CLASS_TABS) do copyTab("Shared", tabName) end
+        pcall(function() Library:Notify("Shared copied into every weapon tab", 3) end)
+    end })
+    SharedConfig:Button({ Name = "Turn off all overrides", Callback = function()
+        for _, tabName in ipairs(CLASS_TABS) do pcall(setFlag, "ovr@" .. tabName, false) end
+    end })
 
     local Status = LegitSubs.Status:Section({ Name = "Core", Side = 1 })
     PF_StatusRecoil = Status:Label({ Name = "Recoil: 0.0 / 0.0" })
     PF_StatusCore = Status:Label({ Name = "Core: " .. Core.summary })
     PF_StatusWeapon = Status:Label({ Name = "Weapon: none" })
+    PF_StatusClass = Status:Label({ Name = "Class: none" })
     PF_StatusTarget = Status:Label({ Name = "Target: none" })
     Status:Button({ Name = "Reload core", Callback = function()
         loadCore()
@@ -954,9 +1073,9 @@ local GROUP_ORDER = { "Head", "Torso", "Arms", "Legs" }
 local function lerp(a, b, t) return a + (b - a) * t end
 
 local function dynamicRadius(distance, maxDistance)
-    if not readFlag("fov_dynamic", false) then return readFlag("fov_radius", 120) end
+    if not F("fov_dynamic", false) then return F("fov_radius", 120) end
     local t = math.clamp(distance / math.max(maxDistance, 1), 0, 1)
-    return lerp(readFlag("fov_near", 240), readFlag("fov_far", 60), t)
+    return lerp(F("fov_near", 240), F("fov_far", 60), t)
 end
 
 local function leadPoint(origin, position, velocity, speed, useDrop, useMove, strength, maxLead)
@@ -979,17 +1098,17 @@ local function leadPoint(origin, position, velocity, speed, useDrop, useMove, st
 end
 
 local function chooseTarget(records, cam, origin, center, now, weapon)
-    local maxDistance = readFlag("aim_dist", 600)
-    local wantVisible = readFlag("aim_visible", true)
+    local maxDistance = F("aim_dist", 600)
+    local wantVisible = F("aim_visible", true)
     local groups = multi("aim_parts", { Head = true, Torso = true })
-    local priorityMode = readFlag("aim_choice", "Closest to crosshair") == "Priority order"
-    local priority = readFlag("aim_priority", "Crosshair")
+    local priorityMode = F("aim_choice", "Closest to crosshair") == "Priority order"
+    local priority = F("aim_priority", "Crosshair")
     local speed = weaponStat(weapon, "bulletspeed")
-    local useDrop, useMove = readFlag("lead_drop", true), readFlag("lead_move", true)
-    local strength, maxLead = readFlag("lead_strength", 1), readFlag("lead_max", 14)
+    local useDrop, useMove = F("lead_drop", true), F("lead_move", true)
+    local strength, maxLead = F("lead_strength", 1), F("lead_max", 14)
 
     local best, bestPart, bestAim, bestScore, bestScreen
-    local sticky = readFlag("aim_sticky", true)
+    local sticky = F("aim_sticky", true)
     local current
 
     for _, record in ipairs(records) do
@@ -1048,11 +1167,11 @@ local function turnToward(gameCam, origin, aimPoint, dt, now)
     if direction.Magnitude < 0.01 then return end
     direction = direction.Unit
 
-    local noise = readFlag("aim_noise", 0.25)
+    local noise = F("aim_noise", 0.25)
     local targetPitch = math.atan2(direction.Y, math.sqrt(direction.X * direction.X + direction.Z * direction.Z))
     local targetYaw = math.atan2(-direction.X, -direction.Z)
     if noise > 0 then
-        local rate = readFlag("aim_noise_speed", 1.4)
+        local rate = F("aim_noise_speed", 1.4)
         targetPitch += math.rad(noise) * math.noise(now * rate, 11.3) * 2
         targetYaw += math.rad(noise) * math.noise(now * rate, 47.9) * 2
     end
@@ -1064,9 +1183,9 @@ local function turnToward(gameCam, origin, aimPoint, dt, now)
     local deltaPitch = targetPitch - currentPitch
     local deltaYaw = (targetYaw - currentYaw + math.pi) % (math.pi * 2) - math.pi
 
-    local alpha = 1 - math.exp(-dt * 60 / math.max(readFlag("aim_smooth", 12), 1))
+    local alpha = 1 - math.exp(-dt * 60 / math.max(F("aim_smooth", 12), 1))
     local stepPitch, stepYaw = deltaPitch * alpha, deltaYaw * alpha
-    local cap = math.rad(readFlag("aim_speed", 420)) * dt
+    local cap = math.rad(F("aim_speed", 420)) * dt
     local size = math.sqrt(stepPitch * stepPitch + stepYaw * stepYaw)
     if size > cap and size > 0 then
         stepPitch, stepYaw = stepPitch * cap / size, stepYaw * cap / size
@@ -1088,9 +1207,9 @@ local function legitStep(dt, cam, now, records, center)
         local show = readFlag("fov_show", true) and readFlag("aim_enabled", false)
         fovCircle.Visible = show
         if show then
-            local radius = readFlag("fov_radius", 120)
-            if readFlag("fov_dynamic", false) then
-                radius = Aim.target and Aim.radius or readFlag("fov_near", 240)
+            local radius = F("fov_radius", 120)
+            if F("fov_dynamic", false) then
+                radius = Aim.target and Aim.radius or F("fov_near", 240)
             end
             fovCircle.Position = center
             fovCircle.Radius = radius
@@ -1114,8 +1233,8 @@ local function legitStep(dt, cam, now, records, center)
         Aim.target = nil
         return
     end
-    if readFlag("aim_ads", false) and not weaponAiming(weapon) then Aim.target = nil return end
-    if readFlag("aim_shoot", false) and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then Aim.target = nil return end
+    if F("aim_ads", false) and not weaponAiming(weapon) then Aim.target = nil return end
+    if F("aim_shoot", false) and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then Aim.target = nil return end
 
     local gameCam = gameCamera()
     if not gameCam then return end
@@ -1128,14 +1247,14 @@ local function legitStep(dt, cam, now, records, center)
     end
 
     if Aim.target ~= record.player then
-        local delay = readFlag("aim_switch", 120) / 1000
+        local delay = F("aim_switch", 120) / 1000
         if Aim.target and now - Aim.switchAt < delay then return end
         Aim.target = record.player
         Aim.switchAt = now
-        Aim.reactUntil = now + readFlag("aim_react", 60) / 1000
+        Aim.reactUntil = now + F("aim_react", 60) / 1000
     end
     Aim.part = part
-    Aim.radius = dynamicRadius((record.torso.Position - origin).Magnitude, readFlag("aim_dist", 600))
+    Aim.radius = dynamicRadius((record.torso.Position - origin).Magnitude, F("aim_dist", 600))
     Aim.record = record
 
     if now < Aim.reactUntil then return end
@@ -1169,10 +1288,10 @@ local function recoilStep(gameCam, weapon, now)
     local active = readFlag("rcs_enabled", false) and keyActive("rcs_key") and Library.Toggled ~= true
     if not active or Aim.moved then return end
     if not weapon or type(weaponStat(weapon, "bulletspeed")) ~= "number" then return end
-    if not readFlag("rcs_hip", true) and not weaponAiming(weapon) then return end
+    if not F("rcs_hip", true) and not weaponAiming(weapon) then return end
 
-    local vertical, horizontal = readFlag("rcs_v", 70) / 100, readFlag("rcs_h", 40) / 100
-    local variation = readFlag("rcs_human", 10) / 100
+    local vertical, horizontal = F("rcs_v", 70) / 100, F("rcs_h", 40) / 100
+    local variation = F("rcs_human", 10) / 100
     if variation > 0 then
         local factor = 1 - variation * (math.noise(now * 1.7, 31.4) + 1) * 0.5
         vertical, horizontal = vertical * factor, horizontal * factor
@@ -1206,7 +1325,7 @@ end
 local function triggerStep(cam, now, records)
     if Trigger.down and now >= Trigger.releaseAt then
         releaseTrigger()
-        Trigger.nextAt = now + readFlag("trig_cool", 90) / 1000
+        Trigger.nextAt = now + F("trig_cool", 90) / 1000
     end
     local active = readFlag("trig_enabled", false) and keyActive("trig_key") and Library.Toggled ~= true and not typing()
     if not active or type(mouse1press) ~= "function" then
@@ -1216,13 +1335,13 @@ local function triggerStep(cam, now, records)
     end
     local weapon = activeWeapon()
     if not weapon or type(weaponStat(weapon, "bulletspeed")) ~= "number" then Trigger.onSince = nil return end
-    if readFlag("trig_ads", false) and not weaponAiming(weapon) then Trigger.onSince = nil return end
+    if F("trig_ads", false) and not weaponAiming(weapon) then Trigger.onSince = nil return end
 
     local origin, direction = cam.CFrame.Position, cam.CFrame.LookVector
-    local maxDistance = readFlag("trig_dist", 400)
-    local scale = readFlag("trig_scale", 0.9)
+    local maxDistance = F("trig_dist", 400)
+    local scale = F("trig_scale", 0.9)
     local groups = multi("trig_parts", { Head = true, Torso = true })
-    local wantVisible = readFlag("trig_visible", true)
+    local wantVisible = F("trig_visible", true)
 
     local onTarget = false
     for _, record in ipairs(records) do
@@ -1254,10 +1373,10 @@ local function triggerStep(cam, now, records)
     end
     Trigger.onSince = Trigger.onSince or now
     if Trigger.down or now < Trigger.nextAt then return end
-    if now - Trigger.onSince < readFlag("trig_delay", 40) / 1000 then return end
+    if now - Trigger.onSince < F("trig_delay", 40) / 1000 then return end
     if not weaponCanFire(weapon) then return end
     Trigger.down = true
-    Trigger.releaseAt = now + readFlag("trig_hold", 70) / 1000
+    Trigger.releaseAt = now + F("trig_hold", 70) / 1000
     pcall(mouse1press)
 end
 
@@ -1684,6 +1803,7 @@ track(RunService.RenderStepped:Connect(safe("frame", function()
         return
     end
 
+    currentClass = weaponClass(activeWeapon())
     local records = takeSnapshot()
     local origin = cam.CFrame.Position
     local center = cam.ViewportSize / 2
@@ -1702,6 +1822,14 @@ track(RunService.RenderStepped:Connect(safe("frame", function()
 
     if PF_StatusTarget and now - labelClock > 0.2 then
         labelClock = now
+        if PF_StatusClass then
+            local text = "Class: " .. tostring(currentClass or "none")
+            if currentClass then text ..= readFlag("ovr@" .. currentClass, false) and " (override)" or " (shared)" end
+            if Aim.lastClassText ~= text then
+                Aim.lastClassText = text
+                PF_StatusClass:SetText(text)
+            end
+        end
         if PF_StatusRecoil then
             PF_StatusRecoil:SetText(string.format("Recoil: %.1f / %.1f deg", math.deg(Recoil.shown.X), math.deg(Recoil.shown.Y)))
         end

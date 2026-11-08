@@ -1,5 +1,5 @@
--- Phantom Perception | built on the Perception menu skin
-local BUILD = "phantom-1108-c"
+local BUILD = "phantom-1108-f"
+local SOURCE_URL = "https://raw.githubusercontent.com/WhyWKey/linoria/main/test/phantom.lua"
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -11,6 +11,66 @@ local UI_REPO = "https://raw.githubusercontent.com/WhyWKey/linoria/main/"
 local function noop() end
 
 local __ok, __err = xpcall(function()
+
+-- The game runs inside an actor, so its modules do not exist in the normal Lua state. Relaunch this script there.
+do
+    local function inGameVm()
+        local ok, request = pcall(function() return getrenv().shared.require end)
+        return ok and type(request) == "function"
+    end
+    local inActor = getgenv().PF_INACTOR
+    getgenv().PF_INACTOR = nil
+    if not inActor and not inGameVm() then
+        local source = getgenv().PF_SOURCE
+        if (type(source) ~= "string" or #source < 2000) and SOURCE_URL ~= "" then
+            local okGet, body = pcall(game.HttpGet, game, SOURCE_URL)
+            if okGet and type(body) == "string" then source = body end
+        end
+        local run, list
+        if type(getactorthreads) == "function" and type(run_on_thread) == "function" then
+            run, list = run_on_thread, getactorthreads
+        elseif type(getactors) == "function" and type(run_on_actor) == "function" then
+            run, list = run_on_actor, getactors
+        elseif type(getdeletedactors) == "function" and type(run_on_actor) == "function" then
+            run, list = run_on_actor, getdeletedactors
+        end
+        if type(source) ~= "string" or #source < 2000 then
+            warn("[Phantom] Not inside the game's actor and no source to relaunch with. Start it with the loader (sets getgenv().PF_SOURCE) or fill in SOURCE_URL at the top of the file")
+        elseif not run or type(create_comm_channel) ~= "function" or type(get_comm_channel) ~= "function" then
+            warn("[Phantom] This executor cannot run code inside actors (" .. tostring(identifyexecutor and identifyexecutor() or "unknown") .. ")")
+        else
+            local probe = [=[
+                local Channel = get_comm_channel(...)
+                local ok, request = pcall(function() return getrenv().shared.require end)
+                if ok and type(request) == "function" then Channel:Fire() end
+            ]=]
+            local okList, actors = pcall(list)
+            local found = false
+            if okList and type(actors) == "table" then
+                for _, actor in ipairs(actors) do
+                    if found then break end
+                    local okChannel, index, channel = pcall(create_comm_channel)
+                    if okChannel and channel then
+                        channel.Event:Once(function()
+                            if found then return end
+                            found = true
+                            getgenv().PF_INACTOR = true
+                            pcall(run, actor, source)
+                        end)
+                        pcall(run, actor, probe, index)
+                    end
+                end
+                local started = os.clock()
+                while not found and os.clock() - started < 5 do task.wait(0.1) end
+            end
+            if found then
+                print("[Phantom] relaunched inside the game's actor")
+                return
+            end
+            warn("[Phantom] No actor with the game's modules was found (" .. tostring(okList and type(actors) == "table" and #actors or 0) .. " actors checked)")
+        end
+    end
+end
 
 if type(getgenv().PF_Connections) == "table" then
     for _, connection in ipairs(getgenv().PF_Connections) do pcall(function() connection:Disconnect() end) end
@@ -575,7 +635,7 @@ local function loadCore()
         Core.summary = "loaded (" .. table.concat(list, ", ") .. ")"
     else
         Core.summary = "missing " .. table.concat(Core.missing, ", ")
-        note("core", "Core modules not found:", table.concat(Core.missing, ", "), "- run the script inside the game's actor if it has one")
+        note("core", "Core modules not found:", table.concat(Core.missing, ", "), "| executor:", tostring(identifyexecutor and identifyexecutor() or "unknown"), "| getrenv().shared:", tostring(pcall(function() return getrenv().shared.require end)))
     end
 end
 loadCore()

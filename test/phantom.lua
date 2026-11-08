@@ -1,4 +1,4 @@
-local BUILD = "phantom-1108-p"
+local BUILD = "phantom-1108-q"
 local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
@@ -807,7 +807,7 @@ local function takeSnapshot()
             player = player,
             entry = entry,
             hash = hash,
-            model = (okModel and typeof(model) == "Instance") and model or torso.Parent,
+            model = (typeof(object._characterModel) == "Instance" and object._characterModel) or ((okModel and typeof(model) == "Instance") and model) or torso.Parent,
             torso = torso,
             head = head,
             enemy = not (okEnemy and enemy == false),
@@ -1625,50 +1625,47 @@ local function destroyEsp(object)
 end
 
 -- ---------------------------------------------------------------- skeleton
--- Joints come from the real part geometry: every limb is measured along its longest axis, the end that touches the torso is the root.
+-- The game's third person rig has fixed part sizes, so every joint is a fixed offset inside its part (scaled by the real size)
+local REF_SIZES = {
+    Head = Vector3.new(2, 1, 1), Torso = Vector3.new(2, 2, 1),
+    ["Left Arm"] = Vector3.new(1, 2, 1), ["Right Arm"] = Vector3.new(1, 2, 1),
+    ["Left Leg"] = Vector3.new(1, 2, 1), ["Right Leg"] = Vector3.new(1, 2, 1),
+}
+local JOINTS = {
+    head = { "Head", Vector3.new(0, 0, 0) },
+    neck = { "Torso", Vector3.new(0, 0.8, 0) },
+    pelvis = { "Torso", Vector3.new(0, -0.7, 0) },
+    lShoulder = { "Left Arm", Vector3.new(0, 0.5, 0) },
+    lHand = { "Left Arm", Vector3.new(0, -0.7, 0) },
+    rShoulder = { "Right Arm", Vector3.new(0, 0.5, 0) },
+    rHand = { "Right Arm", Vector3.new(0, -0.7, 0) },
+    lHip = { "Left Leg", Vector3.new(0, 0.7, 0) },
+    lFoot = { "Left Leg", Vector3.new(0, -0.7, 0) },
+    rHip = { "Right Leg", Vector3.new(0, 0.7, 0) },
+    rFoot = { "Right Leg", Vector3.new(0, -0.7, 0) },
+}
 local BONES = {
     { "head", "neck" }, { "neck", "pelvis" },
-    { "chest", "lShoulder" }, { "lShoulder", "lHand" }, { "chest", "rShoulder" }, { "rShoulder", "rHand" },
-    { "pelvis", "lHip" }, { "lHip", "lFoot" }, { "pelvis", "rHip" }, { "rHip", "rFoot" },
+    { "neck", "lShoulder" }, { "neck", "rShoulder" },
+    { "pelvis", "lHip" }, { "pelvis", "rHip" },
+    { "lShoulder", "lHand" }, { "rShoulder", "rHand" },
+    { "lHip", "lFoot" }, { "rHip", "rFoot" },
 }
-
-local function limbEnds(part, torsoPosition)
-    if not (part and part.Parent) or (part.Position - torsoPosition).Magnitude > 10 then return nil end
-    local cframe, size = part.CFrame, part.Size
-    local axis, half
-    if size.X >= size.Y and size.X >= size.Z then
-        axis, half = cframe.RightVector, size.X * 0.5
-    elseif size.Z >= size.Y and size.Z >= size.X then
-        axis, half = cframe.LookVector, size.Z * 0.5
-    else
-        axis, half = cframe.UpVector, size.Y * 0.5
-    end
-    local a, b = cframe.Position + axis * half, cframe.Position - axis * half
-    if (a - torsoPosition).Magnitude <= (b - torsoPosition).Magnitude then return a, b end
-    return b, a
-end
 
 local function bonePoints(hash)
     local head, torso = hash.Head, hash.Torso
     if not (head and torso and head.Parent and torso.Parent) then return nil end
     local center = torso.Position
-    local up = torso.CFrame.UpVector * (torso.Size.Y * 0.5)
-    local points = { head = head.Position, neck = center + up, chest = center + up * 0.5, pelvis = center - up }
-    local function arm(part, shoulderKey, handKey)
-        local root, tip = limbEnds(part, center)
-        if root then
-            points[shoulderKey] = root + (tip - root) * 0.25
-            points[handKey] = tip - (tip - root) * 0.06
+    local points = {}
+    for name, joint in pairs(JOINTS) do
+        local part = hash[joint[1]]
+        if part and part.Parent and (part.Position - center).Magnitude < 10 then
+            local ref = REF_SIZES[joint[1]]
+            local size = part.Size
+            local offset = Vector3.new(joint[2].X * size.X / ref.X, joint[2].Y * size.Y / ref.Y, joint[2].Z * size.Z / ref.Z)
+            points[name] = part.CFrame:PointToWorldSpace(offset)
         end
     end
-    local function leg(part, hipKey, footKey)
-        local root, tip = limbEnds(part, center)
-        if root then points[hipKey], points[footKey] = root, tip end
-    end
-    arm(hash["Left Arm"], "lShoulder", "lHand")
-    arm(hash["Right Arm"], "rShoulder", "rHand")
-    leg(hash["Left Leg"], "lHip", "lFoot")
-    leg(hash["Right Leg"], "rHip", "rFoot")
     return points
 end
 

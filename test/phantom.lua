@@ -1,5 +1,5 @@
 -- Phantom Perception | built on the Perception menu skin
-local BUILD = "phantom-1108-b"
+local BUILD = "phantom-1108-c"
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -1450,6 +1450,14 @@ track(RunService.RenderStepped:Connect(safe("frame", function()
     end
 
     if not Core.ready then
+        if now - (Core.retryAt or 0) > 3 then
+            Core.retryAt = now
+            loadCore()
+            if Core.ready then
+                if PF_StatusCore then PF_StatusCore:SetText("Core: " .. Core.summary) end
+                pcall(function() Library:Notify("Core " .. Core.summary, 4) end)
+            end
+        end
         if fovCircle then fovCircle.Visible = false end
         for _, object in pairs(espObjects) do hideEsp(object) end
         return

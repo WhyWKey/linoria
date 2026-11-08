@@ -1,4 +1,4 @@
-local BUILD = "phantom-1108-i"
+local BUILD = "Aster-1108-i"
 local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
@@ -35,9 +35,9 @@ do
             run, list = run_on_actor, getdeletedactors
         end
         if type(source) ~= "string" or #source < 2000 then
-            warn("[Phantom] Not inside the game's actor and no source to relaunch with. Start it with the loader (sets getgenv().PF_SOURCE) or fill in SOURCE_URL at the top of the file")
+            warn("[Aster] Not inside the game's actor and no source to relaunch with. Start it with the loader (sets getgenv().PF_SOURCE) or fill in SOURCE_URL at the top of the file")
         elseif not run or type(create_comm_channel) ~= "function" or type(get_comm_channel) ~= "function" then
-            warn("[Phantom] This executor cannot run code inside actors (" .. tostring(identifyexecutor and identifyexecutor() or "unknown") .. ")")
+            warn("[Aster] This executor cannot run code inside actors (" .. tostring(identifyexecutor and identifyexecutor() or "unknown") .. ")")
         else
             local probe = [=[
                 local Channel = get_comm_channel(...)
@@ -64,10 +64,10 @@ do
                 while not found and os.clock() - started < 5 do task.wait(0.1) end
             end
             if found then
-                print("[Phantom] relaunched inside the game's actor")
+                print("[Aster] relaunched inside the game's actor")
                 return
             end
-            warn("[Phantom] No actor with the game's modules was found (" .. tostring(okList and type(actors) == "table" and #actors or 0) .. " actors checked)")
+            warn("[Aster] No actor with the game's modules was found (" .. tostring(okList and type(actors) == "table" and #actors or 0) .. " actors checked)")
         end
     end
 end
@@ -222,7 +222,7 @@ end
 
 
 local Library = loadstring(patchLibrarySource(game:HttpGet(UI_REPO .. "Library.lua")))()
-local Skin = loadstring(game:HttpGet(UI_REPO .. "ui-test/PerceptionSkin.lua?t=" .. os.time()))()(Library, { Brand = "Phantom" })
+local Skin = loadstring(game:HttpGet(UI_REPO .. "ui-test/PerceptionSkin.lua?t=" .. os.time()))()(Library, { Brand = "Aster" })
 for _, name in ipairs({ "CreatePanel", "BuildSettings", "CreateTargetInfo" }) do
     if type(Skin[name]) ~= "function" then
         error("PerceptionSkin.lua on GitHub is outdated (" .. tostring(Skin.Version) .. ", missing " .. name .. "). Upload the newest build-1028-b to ui-test/", 0)
@@ -274,7 +274,7 @@ end
 
 
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Phantom  |  " .. BUILD,
+    Title = "Aster  |  " .. BUILD,
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -491,14 +491,14 @@ end
 
 
 
-print("[Phantom] build " .. BUILD .. " | skin " .. tostring(Skin.Version))
+print("[Aster] build " .. BUILD .. " | skin " .. tostring(Skin.Version))
 
 -- ============================================================ helpers
 local warned = {}
 local function note(key, ...)
     if warned[key] then return end
     warned[key] = true
-    warn("[Phantom]", ...)
+    warn("[Aster]", ...)
 end
 
 local function safe(label, fn)
@@ -1859,17 +1859,17 @@ end)
 
 -- ============================================================ settings
 do
-    local SettingsTab, SettingsSubs = Skin.BuildSettings(LinoriaWindow, { ThemeManager = ThemeManager, SaveManager = SaveManager, Folder = "PhantomPerception", Game = "configs", MenuKey = "Delete" })
+    local SettingsTab, SettingsSubs = Skin.BuildSettings(LinoriaWindow, { ThemeManager = ThemeManager, SaveManager = SaveManager, Folder = "AsterPerception", Game = "configs", MenuKey = "Delete" })
     escapeUnbinds("MenuKeybind", "Delete")
-    Library:SetWatermark("Phantom")
+    Library:SetWatermark("Aster")
     Library:SetWatermarkVisibility(true)
 end
 
 pcall(function() SaveManager:LoadAutoloadConfig() end)
 if not Library.Toggled then pcall(function() Library:Toggle() end) end
-Library:Notify("Phantom loaded | core " .. Core.summary, 5)
+Library:Notify("Aster loaded | core " .. Core.summary, 5)
 
 end, debug.traceback)
 if not __ok then
-    warn("[Phantom] FAILED:\n" .. tostring(__err))
+    warn("[Aster] FAILED:\n" .. tostring(__err))
 end

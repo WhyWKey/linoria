@@ -1,5 +1,5 @@
-local BUILD = "phantom-1108-f"
-local SOURCE_URL = "https://raw.githubusercontent.com/WhyWKey/linoria/main/test/phantom.lua"
+local BUILD = "phantom-1108-g"
+local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")

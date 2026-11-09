@@ -1,4 +1,4 @@
-local BUILD = "phantom-1109-c"
+local BUILD = "phantom-1109-d"
 local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
@@ -1073,27 +1073,39 @@ do
     local General, GradientSet = VisualsPage:MultiSection({ Sections = { "General", "Gradient" }, Side = 1 })
     General:Slider({ Name = "Render distance", Flag = "esp_dist", Min = 50, Max = 3000, Default = 1500, Decimals = 1, Suffix = " studs" })
     General:Slider({ Name = "Text size", Flag = "esp_text", Min = 10, Max = 20, Default = 13, Decimals = 1, Suffix = " px" })
+    General:Slider({ Name = "Scale", Flag = "esp_scale", Min = 0.7, Max = 1.6, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Scales text, line thickness and arrows together" })
     General:Dropdown({ Name = "Font", Flag = "esp_font", Items = FONT_ORDER, Default = "Tahoma" })
-    General:Toggle({ Name = "Outlines", Flag = "esp_outline", Tooltip = "One dark outline on the box, text, skeleton and icon" })
+    General:Toggle({ Name = "Outlines", Flag = "esp_outline", Tooltip = "Dark outline on both sides of the box lines, and on the text, skeleton and icon" })
     General:Toggle({ Name = "Fade with distance", Flag = "esp_fade" })
-    General:Toggle({ Name = "Smooth animations", Flag = "esp_smooth", Tooltip = "Fade in, smooth health changes" })
-    General:Toggle({ Name = "Visibility color", Flag = "esp_vis", Tooltip = "Enemies you can see use a second color" }):Colorpicker({ Name = "Visible color", Flag = "esp_vis_color", Default = white })
-    General:Toggle({ Name = "Mark aimbot target", Flag = "esp_target", Tooltip = "Draws the player your aimbot is locked on in its own color" }):Colorpicker({ Name = "Target color", Flag = "esp_target_color", Default = white })
-    GradientSet:Toggle({ Name = "Gradient colors", Flag = "grad_on", Tooltip = "Colors flow between two colors, top to bottom, and move over time" }):Colorpicker({ Name = "Color A", Flag = "grad_a", Default = white }):Colorpicker({ Name = "Color B", Flag = "grad_b", Default = white })
-    GradientSet:Dropdown({ Name = "Apply to", Flag = "grad_apply", Items = { "Box fill", "Box outline", "Skeleton" }, Multi = true, Default = { "Box fill", "Skeleton" } })
-    GradientSet:Dropdown({ Name = "Speed", Flag = "grad_speed", Items = { "Still", "Slow", "Medium", "Fast" }, Default = "Medium" })
+    General:Toggle({ Name = "Smooth animations", Flag = "esp_smooth", Tooltip = "Fade in and smooth health changes" })
+    General:Slider({ Name = "Animation speed", Flag = "esp_smooth_speed", Min = 1, Max = 20, Default = 8, Decimals = 0.1 })
+    General:Toggle({ Name = "Visible color", Flag = "esp_vis", Tooltip = "Enemies you can see get every feature in this color, except the behind-walls chams" }):Colorpicker({ Name = "Visible color", Flag = "esp_vis_color", Default = white })
+    General:Toggle({ Name = "Marked target", Flag = "esp_target", Tooltip = "The player your aimbot is locked on gets every feature in this color, except the behind-walls chams" }):Colorpicker({ Name = "Target color", Flag = "esp_target_color", Default = white })
+    GradientSet:Toggle({ Name = "Gradient colors", Flag = "grad_on", Tooltip = "Colors flow between two colors and move over time" }):Colorpicker({ Name = "Color A", Flag = "grad_a", Default = white }):Colorpicker({ Name = "Color B", Flag = "grad_b", Default = white })
+    GradientSet:Dropdown({ Name = "Apply to", Flag = "grad_apply", Items = { "Box fill", "Box outline", "Health bar", "Skeleton" }, Multi = true, Default = { "Box fill", "Skeleton" } })
+    GradientSet:Slider({ Name = "Speed", Flag = "grad_speed", Min = 0, Max = 2, Default = 0.25, Decimals = 0.01, Tooltip = "0 keeps the gradient still" })
+    GradientSet:Slider({ Name = "Stretch", Flag = "grad_stretch", Min = 0.3, Max = 3, Default = 1, Decimals = 0.01, Tooltip = "Higher repeats the colors more often" })
 
     local BoxSet, HealthSet, ExtraSet, ChamSet = VisualsPage:MultiSection({ Sections = { "Box", "Health", "Extras", "Chams" }, Side = 2 })
     BoxSet:Dropdown({ Name = "Style", Flag = "esp_box", Items = { "Full", "Corners" }, Default = "Corners" })
-    BoxSet:Toggle({ Name = "Fit to pose", Flag = "esp_tight", Tooltip = "The box follows crouching and prone instead of a fixed shape" })
-    BoxSet:Toggle({ Name = "Glow", Flag = "esp_glow", Tooltip = "A faint wider copy of the box under it" })
+    BoxSet:Slider({ Name = "Thickness", Flag = "esp_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
+    BoxSet:Toggle({ Name = "Fit to pose", Flag = "esp_tight", Tooltip = "The box wraps the whole body, including crouching and prone" })
+    BoxSet:Toggle({ Name = "Glow", Flag = "esp_glow", Tooltip = "Soft layers of color spreading out from the box" }):Colorpicker({ Name = "Glow color", Flag = "esp_glow_color", Default = white, Alpha = 0.5 })
+    BoxSet:Slider({ Name = "Glow spread", Flag = "esp_glow_size", Min = 2, Max = 30, Default = 10, Decimals = 1, Suffix = " px" })
     HealthSet:Dropdown({ Name = "Position", Flag = "esp_hp_pos", Items = { "Left", "Right", "Top", "Bottom" }, Default = "Left" })
+    HealthSet:Slider({ Name = "Width", Flag = "esp_hp_width", Min = 2, Max = 8, Default = 3, Decimals = 1, Suffix = " px" })
     HealthSet:Toggle({ Name = "Color by health", Flag = "esp_hp_dynamic", Tooltip = "Green when healthy, red when low, instead of the picked color" })
     HealthSet:Toggle({ Name = "Damage trail", Flag = "esp_hp_trail", Tooltip = "A fading bar shows the health that was just lost" })
+    ExtraSet:Slider({ Name = "Skeleton thickness", Flag = "esp_skeleton_thick", Min = 1, Max = 4, Default = 1.5, Decimals = 0.1, Suffix = " px" })
     ExtraSet:Dropdown({ Name = "Tracer origin", Flag = "esp_tracer_from", Items = { "Bottom", "Center", "Top" }, Default = "Bottom" })
     ExtraSet:Toggle({ Name = "Arrow text", Flag = "esp_arrow_text", Tooltip = "Shows the name and distance next to each arrow" })
+    ExtraSet:Slider({ Name = "Arrow size", Flag = "esp_arrow_size", Min = 8, Max = 32, Default = 14, Decimals = 1, Suffix = " px" })
+    ExtraSet:Slider({ Name = "Arrow distance", Flag = "esp_arrow_radius", Min = 60, Max = 400, Default = 160, Decimals = 1, Suffix = " px" })
+    ChamSet:Slider({ Name = "Thickness", Flag = "cham_thick", Min = 0, Max = 0.6, Default = 0.1, Decimals = 0.01 })
     ChamSet:Toggle({ Name = "Glow", Flag = "cham_glow" })
+    ChamSet:Slider({ Name = "Glow strength", Flag = "cham_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
     ChamSet:Toggle({ Name = "Round head", Flag = "cham_round" })
+    ChamSet:Slider({ Name = "Head size", Flag = "cham_head", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
     ChamSet:Toggle({ Name = "Outline through walls", Flag = "cham_line_walls" })
 
     local CameraBox = MiscSubs.Camera:Section({ Name = "Camera", Side = 1 })
@@ -1520,20 +1532,20 @@ local function teamCfg(friendly)
     c.color = r("esp_color", WHITE)
     c.box = r("esp_box_on", true) and g("esp_box", "Corners") or "Off"
     c.outlineOn, c.tight, c.glow = g("esp_outline", false), g("esp_tight", false), g("esp_glow", false)
-    c.fillOn, c.fillColor, c.fillT, c.thick = r("esp_fill", false), r("esp_fill_color", WHITE), pickerTransparency("esp_fill_color" .. suffix, 0.88), 1
+    c.fillOn, c.fillColor, c.fillT, c.thick = r("esp_fill", false), r("esp_fill_color", WHITE), pickerTransparency("esp_fill_color" .. suffix, 0.88), g("esp_thick", 1)
     c.name, c.nameColor = r("esp_name", false), r("esp_name_color", WHITE)
     c.distance, c.distColor = r("esp_distance", false), r("esp_dist_color", WHITE)
     c.weapon, c.weaponColor = r("esp_weapon", false), r("esp_weapon_color", WHITE)
     c.weaponIcon, c.weaponIconColor = r("esp_weapon_icon", false), r("esp_weapon_icon_color", WHITE)
     c.text, c.textOutline = g("esp_text", 13), c.outlineOn
-    c.health, c.hpPos, c.hpWidth, c.hpText, c.hpTrail = r("esp_health", false), g("esp_hp_pos", "Left"), 3, r("esp_hp_text", false), g("esp_hp_trail", false)
+    c.health, c.hpPos, c.hpWidth, c.hpText, c.hpTrail = r("esp_health", false), g("esp_hp_pos", "Left"), g("esp_hp_width", 3), r("esp_hp_text", false), g("esp_hp_trail", false)
     c.hpColor, c.hpDynamic = r("esp_hp_full", WHITE), g("esp_hp_dynamic", false)
     c.skeleton, c.skeletonColor = r("esp_skeleton", false), r("esp_skeleton_color", WHITE)
-    c.skeletonThick, c.skeletonOutline = 1.5, c.outlineOn
+    c.skeletonThick, c.skeletonOutline = g("esp_skeleton_thick", 1.5), c.outlineOn
     c.head, c.headColor = r("esp_head", false), r("esp_head_color", WHITE)
     c.tracer, c.tracerColor, c.tracerFrom = r("esp_tracer", false), r("esp_tracer_color", WHITE), g("esp_tracer_from", "Bottom")
     c.arrows, c.arrowColor, c.arrowText = r("esp_arrows", false), r("esp_arrow_color", WHITE), g("esp_arrow_text", false)
-    c.arrowSize, c.arrowRadius = 14, 160
+    c.arrowSize, c.arrowRadius = g("esp_arrow_size", 14), g("esp_arrow_radius", 160)
     c.chamOn = r("cham_enabled", false)
     c.chamVis, c.chamVisT = r("cham_vis", WHITE), pickerTransparency("cham_vis" .. suffix, 0.35)
     c.chamHid, c.chamHidT = r("cham_hid", WHITE), pickerTransparency("cham_hid" .. suffix, 0.7)
@@ -2399,15 +2411,14 @@ end
 
 
 -- ---------------------------------------------------------------- drawing pools
-local LIST_KEYS = { iconRects = true, iconShadow = true, strips = true, sides = true, outerCorners = true, innerCorners = true, glowCorners = true, corners = true, bones = true, boneShadow = true }
+local LIST_KEYS = { glowSquares = true, hpStrips = true, innerCorners = true, iconRects = true, iconShadow = true, strips = true, sides = true, outerCorners = true, innerCorners = true, glowCorners = true, corners = true, bones = true, boneShadow = true }
 
 local function makeEsp()
     local function label() return newLabel() end
     return {
         fill = newDrawing("Square", { Filled = true, ZIndex = 1 }),
-        glowA = newDrawing("Square", { Filled = false, ZIndex = 1 }),
-        glowB = newDrawing("Square", { Filled = false, ZIndex = 1 }),
         outer = newDrawing("Square", { Thickness = 1, Filled = false, Color = BLACK, ZIndex = 2 }),
+        inner = newDrawing("Square", { Thickness = 1, Filled = false, Color = BLACK, ZIndex = 2 }),
         box = newDrawing("Square", { Thickness = 1, Filled = false, ZIndex = 3 }),
         name = label(), dist = label(), weapon = label(), hpText = label(), arrowText = label(),
         hpBack = newDrawing("Square", { Filled = true, Color = BLACK, ZIndex = 4 }),
@@ -2515,7 +2526,7 @@ local function screenBounds(cam, record, tight)
         local bottomPoint, bottomOn = project(cam, Vector3.new(record.torso.Position.X, lowest, record.torso.Position.Z))
         if not (topOn and bottomOn) then return nil end
         local height = math.abs(bottomPoint.Y - topPoint.Y)
-        local width = height * 0.55
+        local width = height * 0.8
         return (topPoint.X + bottomPoint.X) * 0.5 - width * 0.5, math.min(topPoint.Y, bottomPoint.Y), width, height
     end
     local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
@@ -2538,7 +2549,7 @@ local function screenBounds(cam, record, tight)
         end
     end
     if minX == math.huge then return nil end
-    return minX - 1, minY - 1, maxX - minX + 2, maxY - minY + 2
+    return minX - 2, minY - 2, maxX - minX + 4, maxY - minY + 4
 end
 
 local function setText(drawing, text, size, color, position, alpha, outline)
@@ -2559,6 +2570,8 @@ local function drawLine(line, from, to, color, thickness, alpha)
 end
 
 -- ---------------------------------------------------------------- chams
+-- Every player gets a private model of clone parts that follow the real body parts. The adornments and the highlight outline
+-- are attached to the clones, so nothing is ever added to the real character.
 local function headDimensions(head)
     local size = head.Size
     local mesh = head:FindFirstChildOfClass("SpecialMesh")
@@ -2566,130 +2579,148 @@ local function headDimensions(head)
     return math.min(size.X, size.Z) / 2, size.Y
 end
 
-local function newAdornment(part, alwaysOnTop, zIndex, round)
+local function newAdornment(clone, alwaysOnTop, zIndex, round)
     local adornment = Instance.new(round and "CylinderHandleAdornment" or "BoxHandleAdornment")
-    adornment.Adornee = part
+    adornment.Adornee = clone
     adornment.AlwaysOnTop = alwaysOnTop
     adornment.ZIndex = zIndex
     adornment.AdornCullingMode = Enum.AdornCullingMode.Never
     if round then adornment.CFrame = CFrame.new(Vector3.new(0, 0, 0), Vector3.new(0, 90, 0)) end
-    adornment.Parent = adornFolder
+    adornment.Parent = clone
     return adornment
 end
 
-local function destroyPair(pair)
-    pcall(function() pair.behind:Destroy() end)
-    pcall(function() pair.visible:Destroy() end)
+local function makeClone(model, name)
+    local clone = Instance.new("Part")
+    clone.Name = randomName()
+    clone.Anchored = true
+    clone.CanCollide = false
+    clone.CanTouch = false
+    clone.CanQuery = false
+    clone.CastShadow = false
+    clone.Massless = true
+    clone.Material = Enum.Material.SmoothPlastic
+    clone.Transparency = 0.99
+    clone.Size = Vector3.new(1, 1, 1)
+    clone.Parent = model
+    return clone
 end
 
-local function clearAdornments(player)
+local function destroyPair(pair)
+    pcall(function() pair.clone:Destroy() end)
+end
+
+local function clearChams(player)
     local data = adornData[player]
     if not data then return end
-    for _, pair in pairs(data.parts) do destroyPair(pair) end
+    if data.highlight then pcall(function() data.highlight:Destroy() end) end
+    pcall(function() data.model:Destroy() end)
     adornData[player] = nil
-end
-
-local function clearOutline(player)
-    local highlight = outlineSets[player]
-    if highlight then pcall(function() highlight:Destroy() end) end
-    outlineSets[player] = nil
 end
 
 local function updateChams(record, wanted, ctx)
     local player = record.player
     if not wanted then
-        clearAdornments(player)
-        clearOutline(player)
+        clearChams(player)
         return
     end
-    elevate()
     adornFolder = ensureFolder(adornFolder)
-    outlineFolder = ensureFolder(outlineFolder)
+    if not adornFolder then return end
 
-    if adornFolder and ctx.adornOn and (ctx.chamVisOn or ctx.chamHidOn) then
-        local data = adornData[player]
-        if data and data.hash ~= record.hash then
-            clearAdornments(player)
-            data = nil
-        end
-        if not data then
-            data = { hash = record.hash, parts = {} }
-            adornData[player] = data
-        end
-        for part, pair in pairs(data.parts) do
-            if not part.Parent or (part.Name == "Head" and pair.round ~= ctx.chamRound) then
-                destroyPair(pair)
-                data.parts[part] = nil
-            end
-        end
-        local visibleColor = ctx.chamVis
-        local signature = ctx.chamSignature .. tostring(visibleColor)
-        for _, name in ipairs(PART_NAMES) do
-            local part = record.hash[name]
-            if part and part.Parent then
-                local round = ctx.chamRound and name == "Head"
-                local pair = data.parts[part]
-                if not pair then
-                    pair = { round = round, behind = newAdornment(part, true, 1, round), visible = newAdornment(part, false, 2, round) }
-                    data.parts[part] = pair
-                end
-                local size = part.Size
-                if pair.signature ~= signature or pair.partSize ~= size then
-                    pair.signature, pair.partSize = signature, size
-                    local thickness = ctx.chamThick
-                    if round then
-                        local radius, height = headDimensions(part)
-                        radius, height = radius * ctx.chamHead, height * ctx.chamHead
-                        pair.behind.Radius, pair.behind.Height = radius, height
-                        pair.visible.Radius, pair.visible.Height = radius + thickness / 2, height + thickness
-                    else
-                        pair.behind.Size = size
-                        pair.visible.Size = size + Vector3.new(thickness, thickness, thickness)
-                    end
-                    pair.behind.Color3, pair.behind.Transparency = ctx.chamHid, ctx.chamHidT
-                    pair.visible.Color3 = visibleColor
-                    pair.visible.AlwaysOnTop = ctx.chamGlow
-                    pair.visible.Transparency = ctx.chamGlow and (ctx.chamVisT / ctx.chamGlowSize) or ctx.chamVisT
-                end
-                pair.behind.Visible = ctx.chamHidOn
-                pair.visible.Visible = ctx.chamVisOn
-            end
-        end
-    else
-        clearAdornments(player)
+    local data = adornData[player]
+    if data and (data.hash ~= record.hash or not data.model.Parent) then
+        clearChams(player)
+        data = nil
+    end
+    if not data then
+        local model = Instance.new("Model")
+        model.Name = randomName()
+        model.Parent = adornFolder
+        data = { hash = record.hash, model = model, parts = {} }
+        adornData[player] = data
     end
 
-    if outlineFolder and ctx.lineOn and record.model and record.model.Parent then
-        local highlight = outlineSets[player]
-        if not highlight or highlight.Parent == nil then
-            highlight = Instance.new("Highlight")
-            highlight.Name = "PF"
-            highlight.FillTransparency = 1
-            highlight.Parent = outlineFolder
-            outlineSets[player] = highlight
+    local visibleColor = record.override or ctx.chamVis
+    local signature = table.concat({
+        tostring(ctx.chamHid), ctx.chamHidT, ctx.chamVisT, ctx.chamThick, tostring(ctx.chamGlow),
+        ctx.chamGlowSize, tostring(ctx.chamRound), ctx.chamHead, tostring(visibleColor),
+        tostring(ctx.adornOn),
+    }, "|")
+
+    for _, name in ipairs(PART_NAMES) do
+        local part = record.hash[name]
+        local pair = data.parts[name]
+        if pair and (pair.source ~= part or not pair.clone.Parent or (name == "Head" and pair.round ~= ctx.chamRound)) then
+            destroyPair(pair)
+            data.parts[name] = nil
+            pair = nil
         end
-        highlight.Adornee = record.model
-        highlight.OutlineColor = ctx.lineColor
+        if part and part.Parent then
+            local round = ctx.chamRound and name == "Head"
+            if not pair then
+                local clone = makeClone(data.model, name)
+                pair = {
+                    source = part, clone = clone, round = round,
+                    behind = newAdornment(clone, true, 1, round),
+                    visible = newAdornment(clone, false, -1, round),
+                }
+                data.parts[name] = pair
+            end
+            pair.clone.CFrame = part.CFrame
+            local size = part.Size
+            if pair.signature ~= signature or pair.partSize ~= size then
+                pair.signature, pair.partSize = signature, size
+                local thickness = ctx.chamThick
+                pair.clone.Size = size + Vector3.new(thickness, thickness, thickness)
+                if round then
+                    local radius, height = headDimensions(part)
+                    radius, height = radius * ctx.chamHead, height * ctx.chamHead
+                    pair.behind.Radius, pair.behind.Height = radius, height
+                    pair.visible.Radius, pair.visible.Height = radius + thickness / 2, height + thickness
+                else
+                    pair.behind.Size = size
+                    pair.visible.Size = size + Vector3.new(thickness, thickness, thickness)
+                end
+                pair.behind.Color3, pair.behind.Transparency = ctx.chamHid, ctx.chamHidT
+                pair.visible.Color3 = visibleColor
+                pair.visible.AlwaysOnTop = ctx.chamGlow
+                pair.visible.Transparency = ctx.chamGlow and (ctx.chamVisT / ctx.chamGlowSize) or ctx.chamVisT
+                pair.behind.Visible = ctx.adornOn and ctx.chamHidOn
+                pair.visible.Visible = ctx.adornOn and ctx.chamVisOn
+            end
+        end
+    end
+
+    if ctx.lineOn then
+        local highlight = data.highlight
+        if not highlight or not highlight.Parent then
+            highlight = Instance.new("Highlight")
+            highlight.Name = randomName()
+            highlight.FillTransparency = 1
+            highlight.Adornee = data.model
+            highlight.Parent = adornFolder
+            data.highlight = highlight
+        end
+        highlight.OutlineColor = record.override or ctx.lineColor
         highlight.OutlineTransparency = ctx.lineT
         highlight.DepthMode = ctx.lineWalls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
         highlight.Enabled = true
-    else
-        clearOutline(player)
+    elseif data.highlight then
+        pcall(function() data.highlight:Destroy() end)
+        data.highlight = nil
     end
 end
 
 onUnload(function()
-    for player in pairs(adornData) do clearAdornments(player) end
-    for player in pairs(outlineSets) do clearOutline(player) end
+    for player in pairs(adornData) do clearChams(player) end
     if adornFolder then pcall(function() adornFolder:Destroy() end) end
-    if outlineFolder then pcall(function() outlineFolder:Destroy() end) end
 end)
 track(Players.PlayerRemoving:Connect(function(player)
-    clearAdornments(player)
-    clearOutline(player)
+    clearChams(player)
 end))
 
 -- ---------------------------------------------------------------- per player drawing
+local GLOW_LAYERS = 4
 local CORNERS = { { 0, 0, 1, 1 }, { 1, 0, -1, 1 }, { 0, 1, 1, -1 }, { 1, 1, -1, -1 } }
 
 local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distance, origin)
@@ -2699,10 +2730,8 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
     local scale = ctx.scale
     local viewport, center = ctx.viewport, ctx.center
 
-    local color = cfg.color
-    if record.enemy and ctx.useVisible and isVisible(record.torso, origin, now) then color = ctx.visibleColor end
-    local isTarget = ctx.markTarget and Aim.target == record.player
-    if isTarget then color = ctx.targetColor end
+    local override = record.override
+    local color = override or cfg.color
 
     local face = fontFace(ctx.fontName)
     if object.face ~= face then
@@ -2730,10 +2759,10 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
                 triangle.PointA, triangle.PointB, triangle.PointC = tip, left, right
                 triangle.Transparency, triangle.Visible = alpha * cfg.arrowA, true
             end
-            object.arrow.Color = cfg.arrowColor
+            object.arrow.Color = override or cfg.arrowColor
             if cfg.arrowText then
                 local text = string.format("%s  %dm", record.name, math.floor(distance * 0.28))
-                setText(object.arrowText, text, (cfg.text - 2) * scale, color, anchor + direction * (size + 12 * scale) - Vector2.new(0, cfg.text * scale * 0.5), alpha * cfg.arrowA, true)
+                setText(object.arrowText, text, (cfg.text - 2) * scale, override or cfg.arrowColor, anchor + direction * (size + 12 * scale) - Vector2.new(0, cfg.text * scale * 0.5), alpha * cfg.arrowA, true)
             end
         end
         return
@@ -2745,9 +2774,11 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
     local right, bottom = left + width, top + height
     local position, size = Vector2.new(left, top), Vector2.new(width, height)
     local thickness = cfg.thick * scale
-    local o = thickness * 0.5 + 1
+    local o = thickness * 0.5 + 0.5
     local boxOn = cfg.box ~= "Off"
-    local gradOn = ctx.gradOn
+    local gradOn = ctx.gradOn and not override
+    local glowColor = override or ctx.glowColor
+    local glowAlpha = 1 - ctx.glowT
 
     -- fill
     if cfg.fillOn and boxOn then
@@ -2765,7 +2796,7 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
                 end
             end
         else
-            object.fill.Position, object.fill.Size, object.fill.Color = position, size, cfg.fillColor
+            object.fill.Position, object.fill.Size, object.fill.Color = position, size, override or cfg.fillColor
             object.fill.Transparency, object.fill.Visible = fillAlpha, true
         end
     end
@@ -2778,14 +2809,23 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
     -- box
     if cfg.box == "Full" then
         if cfg.glow then
-            object.glowA.Position, object.glowA.Size, object.glowA.Color = position, size, color
-            object.glowA.Thickness, object.glowA.Transparency, object.glowA.Visible = thickness + 4, alpha * cfg.boxA * 0.16, true
-            object.glowB.Position, object.glowB.Size, object.glowB.Color = position, size, color
-            object.glowB.Thickness, object.glowB.Transparency, object.glowB.Visible = thickness + 8, alpha * cfg.boxA * 0.07, true
+            local layers = ensureList(object, "glowSquares", GLOW_LAYERS, "Square", { Filled = false, ZIndex = 1 })
+            for index = 1, GLOW_LAYERS do
+                local layer = layers[index]
+                if layer then
+                    layer.Position, layer.Size, layer.Color = position, size, glowColor
+                    layer.Thickness = thickness + ctx.glowSize * 2 * index / GLOW_LAYERS
+                    layer.Transparency, layer.Visible = alpha * glowAlpha * 0.22, true
+                end
+            end
         end
         if cfg.outlineOn then
             object.outer.Position, object.outer.Size = position - Vector2.new(o, o), size + Vector2.new(o * 2, o * 2)
             object.outer.Transparency, object.outer.Visible = alpha * cfg.boxA, true
+            if width > o * 4 and height > o * 4 then
+                object.inner.Position, object.inner.Size = position + Vector2.new(o, o), size - Vector2.new(o * 2, o * 2)
+                object.inner.Transparency, object.inner.Visible = alpha * cfg.boxA, true
+            end
         end
         if gradOn and ctx.gradOutline then
             local sides = ensureList(object, "sides", 4, "Line", { ZIndex = 3 })
@@ -2800,7 +2840,8 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
     elseif cfg.box == "Corners" then
         local length = math.min(width, height) * 0.28
         local outerLines = cfg.outlineOn and ensureList(object, "outerCorners", 8, "Line", { Thickness = 1, Color = BLACK, ZIndex = 2 })
-        local glowLines = cfg.glow and ensureList(object, "glowCorners", 8, "Line", { ZIndex = 1 })
+        local glowLines = cfg.glow and ensureList(object, "glowCorners", 8 * GLOW_LAYERS, "Line", { ZIndex = 1 })
+        local innerLines = cfg.outlineOn and ensureList(object, "innerCorners", 8, "Line", { Thickness = 1, Color = BLACK, ZIndex = 2 })
         local lines = ensureList(object, "corners", 8, "Line", { ZIndex = 3 })
         for index, corner in ipairs(CORNERS) do
             local cx, cy = left + corner[1] * width, top + corner[2] * height
@@ -2810,12 +2851,19 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
             local vFrom, vTo = Vector2.new(cx, cy), Vector2.new(cx, cy + sy * length)
             local h, v = index * 2 - 1, index * 2
             if glowLines then
-                drawLine(glowLines[h], hFrom, hTo, lineColor, thickness + 6, alpha * cfg.boxA * 0.14)
-                drawLine(glowLines[v], vFrom, vTo, lineColor, thickness + 6, alpha * cfg.boxA * 0.14)
+                for layer = 1, GLOW_LAYERS do
+                    local glowThickness = thickness + ctx.glowSize * 2 * layer / GLOW_LAYERS
+                    drawLine(glowLines[(layer - 1) * 8 + h], hFrom, hTo, glowColor, glowThickness, alpha * glowAlpha * 0.22)
+                    drawLine(glowLines[(layer - 1) * 8 + v], vFrom, vTo, glowColor, glowThickness, alpha * glowAlpha * 0.22)
+                end
             end
             if outerLines then
                 drawLine(outerLines[h], Vector2.new(cx - sx * o, cy - sy * o), Vector2.new(cx + sx * length, cy - sy * o), BLACK, 1, alpha * cfg.boxA)
                 drawLine(outerLines[v], Vector2.new(cx - sx * o, cy - sy * o), Vector2.new(cx - sx * o, cy + sy * length), BLACK, 1, alpha * cfg.boxA)
+            end
+            if innerLines then
+                drawLine(innerLines[h], Vector2.new(cx + sx * o, cy + sy * o), Vector2.new(cx + sx * length, cy + sy * o), BLACK, 1, alpha * cfg.boxA)
+                drawLine(innerLines[v], Vector2.new(cx + sx * o, cy + sy * o), Vector2.new(cx + sx * o, cy + sy * length), BLACK, 1, alpha * cfg.boxA)
             end
             drawLine(lines[h], hFrom, hTo, lineColor, thickness, alpha * cfg.boxA)
             drawLine(lines[v], vFrom, vTo, lineColor, thickness, alpha * cfg.boxA)
@@ -2828,15 +2876,15 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
     local topOffset = (cfg.health and cfg.hpPos == "Top") and barGap or 0
     local bottomOffset = (cfg.health and cfg.hpPos == "Bottom") and barGap or 0
     if cfg.name then
-        setText(object.name, record.name, textSize, isTarget and ctx.targetColor or cfg.nameColor, Vector2.new(centerX, top - textSize - 3 - topOffset), alpha * cfg.nameA, cfg.textOutline)
+        setText(object.name, record.name, textSize, override or cfg.nameColor, Vector2.new(centerX, top - textSize - 3 - topOffset), alpha * cfg.nameA, cfg.textOutline)
     end
     local lineY = bottom + 2 + bottomOffset
     if cfg.distance then
-        setText(object.dist, string.format("%dm", math.floor(distance * 0.28)), textSize - 1, cfg.distColor, Vector2.new(centerX, lineY), alpha * cfg.distA, cfg.textOutline)
+        setText(object.dist, string.format("%dm", math.floor(distance * 0.28)), textSize - 1, override or cfg.distColor, Vector2.new(centerX, lineY), alpha * cfg.distA, cfg.textOutline)
         lineY += textSize
     end
     if cfg.weapon and record.weaponName then
-        setText(object.weapon, tostring(record.weaponName), textSize - 1, cfg.weaponColor, Vector2.new(centerX, lineY), alpha * cfg.weaponA, cfg.textOutline)
+        setText(object.weapon, tostring(record.weaponName), textSize - 1, override or cfg.weaponColor, Vector2.new(centerX, lineY), alpha * cfg.weaponA, cfg.textOutline)
         lineY += textSize
     end
     if cfg.weaponIcon and record.weaponName then
@@ -2851,7 +2899,7 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
                 local x, y, w, h = startX + rect[1] * unit, startY + rect[2] * unit, rect[3] * unit, rect[4] * unit
                 local piece = pieces[index]
                 if piece then
-                    piece.Position, piece.Size, piece.Color = Vector2.new(x, y), Vector2.new(w, h), cfg.weaponIconColor
+                    piece.Position, piece.Size, piece.Color = Vector2.new(x, y), Vector2.new(w, h), override or cfg.weaponIconColor
                     piece.Transparency, piece.Visible = alpha * cfg.iconA, true
                 end
                 local shadow = shadows and shadows[index]
@@ -2866,7 +2914,7 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
     -- health
     local ratio = math.clamp(record.health / math.max(record.maxHealth, 1), 0, 1)
     local healthColor
-    healthColor = cfg.hpDynamic and Color3.fromRGB(255, 60, 60):Lerp(Color3.fromRGB(70, 255, 110), ratio) or cfg.hpColor
+    healthColor = override or (cfg.hpDynamic and Color3.fromRGB(255, 60, 60):Lerp(Color3.fromRGB(70, 255, 110), ratio) or cfg.hpColor)
     if cfg.health then
         local shown, trail = state.hp, state.trail
         local barWidth = cfg.hpWidth * scale
@@ -2897,8 +2945,27 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
             object.hpTrail.Color = Color3.fromRGB(255, 255, 255)
             object.hpTrail.Transparency, object.hpTrail.Visible = alpha * cfg.hpA * 0.55, true
         end
-        object.hpFill.Position, object.hpFill.Size, object.hpFill.Color = fillPosition, fillSize, healthColor
-        object.hpFill.Transparency, object.hpFill.Visible = alpha * cfg.hpA, true
+        if gradOn and ctx.gradHealth and fillSize.X > 0 and fillSize.Y > 0 then
+            local strips = ensureList(object, "hpStrips", 8, "Square", { Filled = true, ZIndex = 6 })
+            for index = 1, 8 do
+                local strip = strips[index]
+                if strip then
+                    local from, to = (index - 1) / 8, index / 8
+                    if vertical then
+                        strip.Position = Vector2.new(fillPosition.X, fillPosition.Y + fillSize.Y * (1 - to))
+                        strip.Size = Vector2.new(fillSize.X, fillSize.Y / 8 + 0.5)
+                    else
+                        strip.Position = Vector2.new(fillPosition.X + fillSize.X * from, fillPosition.Y)
+                        strip.Size = Vector2.new(fillSize.X / 8 + 0.5, fillSize.Y)
+                    end
+                    strip.Color = ctx.gradA:Lerp(ctx.gradB, pingPong(ctx.phase + from * ctx.gradStretch))
+                    strip.Transparency, strip.Visible = alpha * cfg.hpA, true
+                end
+            end
+        else
+            object.hpFill.Position, object.hpFill.Size, object.hpFill.Color = fillPosition, fillSize, healthColor
+            object.hpFill.Transparency, object.hpFill.Visible = alpha * cfg.hpA, true
+        end
         if cfg.hpText and ratio < 0.999 then
             local textPosition
             if cfg.hpPos == "Left" then textPosition = Vector2.new(backPosition.X - 9, clampRange(fillPosition.Y - textSize * 0.5, top - 2, bottom - textSize))
@@ -2915,7 +2982,7 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
             local boneThickness = cfg.skeletonThick * scale
             local bones = ensureList(object, "bones", #BONES, "Line", { ZIndex = 4 })
             local shadows = cfg.skeletonOutline and ensureList(object, "boneShadow", #BONES, "Line", { Color = BLACK, ZIndex = 3 })
-            local flat = cfg.skeletonColor
+            local flat = override or cfg.skeletonColor
             for index, pair in ipairs(BONES) do
                 local a, b = points[pair[1]], points[pair[2]]
                 if a and b then
@@ -2937,14 +3004,14 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distanc
     if cfg.head then
         local headPoint, headOn = project(cam, record.head.Position)
         if headOn then
-            object.dot.Position, object.dot.Color, object.dot.Radius = headPoint, cfg.headColor, math.max(height * 0.07, 2)
+            object.dot.Position, object.dot.Color, object.dot.Radius = headPoint, override or cfg.headColor, math.max(height * 0.07, 2)
             object.dot.Transparency, object.dot.Visible = alpha * cfg.headA, true
         end
     end
 
     if cfg.tracer then
         local from = Vector2.new(viewport.X * 0.5, cfg.tracerFrom == "Top" and 0 or cfg.tracerFrom == "Center" and viewport.Y * 0.5 or viewport.Y)
-        object.tracer.From, object.tracer.To, object.tracer.Color = from, Vector2.new(centerX, bottom), cfg.tracerColor
+        object.tracer.From, object.tracer.To, object.tracer.Color = from, Vector2.new(centerX, bottom), override or cfg.tracerColor
         object.tracer.Thickness, object.tracer.Transparency, object.tracer.Visible = math.max(scale, 1), alpha * cfg.tracerA * 0.8, true
     end
 end
@@ -2970,8 +3037,6 @@ local function stepState(state, record, want, dt, now, ctx)
     end
 end
 
-local GRAD_SPEEDS = { Still = 0, Slow = 0.12, Medium = 0.25, Fast = 0.6 }
-
 local function espStep(cam, now, dt, records, origin)
     local seen = {}
     local enemyCfg, friendCfg = teamCfg(false), teamCfg(true)
@@ -2981,10 +3046,10 @@ local function espStep(cam, now, dt, records, origin)
         maxDistance = readFlag("esp_dist", 1500),
         fade = readFlag("esp_fade", false),
         opacity = 1,
-        scale = 1,
+        scale = readFlag("esp_scale", 1),
         fontName = readFlag("esp_font", "Tahoma"),
         smooth = readFlag("esp_smooth", false),
-        speed = 8,
+        speed = readFlag("esp_smooth_speed", 8),
         useVisible = readFlag("esp_vis", false),
         visibleColor = readFlag("esp_vis_color", WHITE),
         markTarget = readFlag("esp_target", false),
@@ -2994,13 +3059,14 @@ local function espStep(cam, now, dt, records, origin)
         gradOn = gradOn,
         gradA = readFlag("grad_a", WHITE),
         gradB = readFlag("grad_b", WHITE),
-        gradStretch = 1,
-        phase = now * (GRAD_SPEEDS[readFlag("grad_speed", "Medium")] or 0.25),
-        gradFill = apply["Box fill"], gradOutline = apply["Box outline"], gradSkeleton = apply["Skeleton"],
+        gradStretch = readFlag("grad_stretch", 1),
+        phase = now * readFlag("grad_speed", 0.25),
+        glowColor = readFlag("esp_glow_color", WHITE), glowT = pickerTransparency("esp_glow_color", 0.5), glowSize = readFlag("esp_glow_size", 10),
+        gradFill = apply["Box fill"], gradOutline = apply["Box outline"], gradSkeleton = apply["Skeleton"], gradHealth = apply["Health bar"],
         chamVisOn = true, chamHidOn = true,
-        chamThick = 0.1,
-        chamGlow = readFlag("cham_glow", false), chamGlowSize = 1.75,
-        chamRound = readFlag("cham_round", false), chamHead = 1.15,
+        chamThick = readFlag("cham_thick", 0.1),
+        chamGlow = readFlag("cham_glow", false), chamGlowSize = math.max(readFlag("cham_glow_size", 1.75), 1),
+        chamRound = readFlag("cham_round", false), chamHead = readFlag("cham_head", 1.15),
         lineWalls = readFlag("cham_line_walls", false),
     }
 
@@ -3011,6 +3077,11 @@ local function espStep(cam, now, dt, records, origin)
         local distance = (record.torso.Position - origin).Magnitude
         local want = cfg.enabled and distance <= ctx.maxDistance
         local object, state = espObjects[player], espState[player]
+        record.override = nil
+        if cfg.enabled then
+            if ctx.markTarget and Aim.target == player then record.override = ctx.targetColor
+            elseif record.enemy and ctx.useVisible and isVisible(record.torso, origin, now) then record.override = ctx.visibleColor end
+        end
 
         if want and not object then
             object = makeEsp()
@@ -3051,10 +3122,7 @@ local function espStep(cam, now, dt, records, origin)
         end
     end
     for player in pairs(adornData) do
-        if not seen[player] then clearAdornments(player) end
-    end
-    for player in pairs(outlineSets) do
-        if not seen[player] then clearOutline(player) end
+        if not seen[player] then clearChams(player) end
     end
 end
 

@@ -1,4 +1,4 @@
-local BUILD = "phantom-1109-b"
+local BUILD = "phantom-1109-c"
 local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
@@ -35,9 +35,9 @@ do
             run, list = run_on_actor, getdeletedactors
         end
         if type(source) ~= "string" or #source < 2000 then
-            warn("[Phantom] Not inside the game's actor and no source to relaunch with. Start it with the loader (sets getgenv().PF_SOURCE) or fill in SOURCE_URL at the top of the file")
+            warn("[Aster] Not inside the game's actor and no source to relaunch with. Start it with the loader (sets getgenv().PF_SOURCE) or fill in SOURCE_URL at the top of the file")
         elseif not run or type(create_comm_channel) ~= "function" or type(get_comm_channel) ~= "function" then
-            warn("[Phantom] This executor cannot run code inside actors (" .. tostring(identifyexecutor and identifyexecutor() or "unknown") .. ")")
+            warn("[Aster] This executor cannot run code inside actors (" .. tostring(identifyexecutor and identifyexecutor() or "unknown") .. ")")
         else
             local probe = [=[
                 local Channel = get_comm_channel(...)
@@ -67,10 +67,10 @@ do
                 while not found and os.clock() - started < 5 do task.wait(0.1) end
             end
             if found then
-                print("[Phantom] relaunched inside the game's actor")
+                print("[Aster] relaunched inside the game's actor")
                 return
             end
-            warn("[Phantom] No actor with the game's modules was found (" .. tostring(okList and type(actors) == "table" and #actors or 0) .. " actors checked)")
+            warn("[Aster] No actor with the game's modules was found (" .. tostring(okList and type(actors) == "table" and #actors or 0) .. " actors checked)")
         end
     end
 end
@@ -225,7 +225,7 @@ end
 
 
 local Library = loadstring(patchLibrarySource(game:HttpGet(UI_REPO .. "Library.lua")))()
-local Skin = loadstring(game:HttpGet(UI_REPO .. "ui-test/PerceptionSkin.lua?t=" .. os.time()))()(Library, { Brand = "Phantom" })
+local Skin = loadstring(game:HttpGet(UI_REPO .. "ui-test/PerceptionSkin.lua?t=" .. os.time()))()(Library, { Brand = "Aster" })
 for _, name in ipairs({ "CreatePanel", "BuildSettings", "CreateTargetInfo" }) do
     if type(Skin[name]) ~= "function" then
         error("PerceptionSkin.lua on GitHub is outdated (" .. tostring(Skin.Version) .. ", missing " .. name .. "). Upload the newest build-1028-b to ui-test/", 0)
@@ -277,7 +277,7 @@ end
 
 
 local LinoriaWindow = Library:CreateWindow({
-    Title = "Phantom  |  " .. BUILD,
+    Title = "Aster  |  Phantom Forces  |  " .. BUILD,
     Center = true,
     AutoShow = false,
     MenuFadeTime = 0.2,
@@ -494,14 +494,14 @@ end
 
 
 
-print("[Phantom] build " .. BUILD .. " | skin " .. tostring(Skin.Version))
+print("[Aster] build " .. BUILD .. " | skin " .. tostring(Skin.Version))
 
 -- ============================================================ helpers
 local warned = {}
 local function note(key, ...)
     if warned[key] then return end
     warned[key] = true
-    warn("[Phantom]", ...)
+    warn("[Aster]", ...)
 end
 
 local function safe(label, fn)
@@ -1493,7 +1493,7 @@ local function ensureFolder(current)
         if pcall(function() folder.Parent = entry[1] end) and folder.Parent then
             if containerNote ~= entry[2] then
                 containerNote = entry[2]
-                print("[Phantom] chams container: " .. entry[2])
+                print("[Aster] chams container: " .. entry[2])
             end
             return folder
         end
@@ -1564,7 +1564,7 @@ end
 -- ---------------------------------------------------------------- text labels and fonts
 local HttpService = game:GetService("HttpService")
 local FONT_URL = "https://raw.githubusercontent.com/sametexe001/luas/main/fonts/"
-local FONT_DIR = "PhantomPerception/fonts"
+local FONT_DIR = "Aster/PhantomForces/fonts"
 local FONT_FILES = {
     ["Tahoma"] = "fs-tahoma-8px.ttf", ["Verdana"] = "verdana.ttf", ["Smallest Pixel"] = "smallest_pixel-7.ttf",
     ["Proggy"] = "proggy-clean.ttf", ["Pixel Operator"] = "PixelOperator.ttf", ["Minecraftia"] = "minecraftia.ttf",
@@ -1591,7 +1591,8 @@ local function loadFont(name)
     task.spawn(function()
         local ok, face = pcall(function()
             if not (writefile and isfile and getcustomasset) then error("file functions missing") end
-            pcall(makefolder, "PhantomPerception")
+            pcall(makefolder, "Aster")
+            pcall(makefolder, "Aster/PhantomForces")
             pcall(makefolder, FONT_DIR)
             local ttf = FONT_DIR .. "/" .. file
             if not isfile(ttf) then writefile(ttf, download(FONT_URL .. file)) end
@@ -1602,7 +1603,7 @@ local function loadFont(name)
             }))
             return Font.new(getcustomasset(json))
         end)
-        if ok and face then fontFaces[name] = face else warn("[Phantom] font " .. name .. " could not load: " .. tostring(face)) end
+        if ok and face then fontFaces[name] = face else warn("[Aster] font " .. name .. " could not load: " .. tostring(face)) end
         fontLoading[name] = nil
     end)
 end
@@ -3148,17 +3149,23 @@ end)
 
 -- ============================================================ settings
 do
-    local SettingsTab, SettingsSubs = Skin.BuildSettings(LinoriaWindow, { ThemeManager = ThemeManager, SaveManager = SaveManager, Folder = "PhantomPerception", Game = "configs", MenuKey = "Delete" })
+    pcall(function()
+        if makefolder and isfolder then
+            if not isfolder("Aster") then makefolder("Aster") end
+            if not isfolder("Aster/PhantomForces") then makefolder("Aster/PhantomForces") end
+        end
+    end)
+    local SettingsTab, SettingsSubs = Skin.BuildSettings(LinoriaWindow, { ThemeManager = ThemeManager, SaveManager = SaveManager, Folder = "Aster/PhantomForces", Game = "configs", MenuKey = "Delete" })
     escapeUnbinds("MenuKeybind", "Delete")
-    Library:SetWatermark("Phantom")
+    Library:SetWatermark("Aster")
     Library:SetWatermarkVisibility(true)
 end
 
 pcall(function() SaveManager:LoadAutoloadConfig() end)
 if not Library.Toggled then pcall(function() Library:Toggle() end) end
-Library:Notify("Phantom loaded | core " .. Core.summary, 5)
+Library:Notify("Aster loaded | core " .. Core.summary, 5)
 
 end, debug.traceback)
 if not __ok then
-    warn("[Phantom] FAILED:\n" .. tostring(__err))
+    warn("[Aster] FAILED:\n" .. tostring(__err))
 end

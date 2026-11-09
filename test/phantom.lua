@@ -1,4 +1,4 @@
-local BUILD = "phantom-1109-d"
+local BUILD = "phantom-1109-e"
 local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
@@ -629,7 +629,7 @@ local function loadCore()
     end
 
     local needed = { "ReplicationInterface", "CharacterInterface", "CameraInterface" }
-    for _, name in ipairs({ "ReplicationInterface", "CharacterInterface", "CameraInterface", "PublicSettings", "network" }) do
+    for _, name in ipairs({ "ReplicationInterface", "CharacterInterface", "CameraInterface", "PublicSettings", "network", "AudioSystem", "WeaponUtils", "ContentUtils" }) do
         Core.mods[name], Core.via[name] = fetch(name)
     end
 
@@ -1027,30 +1027,27 @@ do
         pcall(function() Library:Notify("Core " .. Core.summary, 4) end)
     end })
 
-    local FONT_ORDER = { "Tahoma", "Verdana", "Smallest Pixel", "Proggy", "Pixel Operator", "Minecraftia", "Inter", "Roboto Mono", "Lexend", "Gotham" }
     local PERTEAM = {}
+    local white = Color3.fromRGB(255, 255, 255)
     local function addTeamRows(box, friendly)
         local suffix = friendly and "@Friendly" or ""
         local function key(flag)
             if not friendly then table.insert(PERTEAM, flag) end
             return flag .. suffix
         end
-        local white = Color3.fromRGB(255, 255, 255)
-        box:Toggle({ Name = "Enabled", Flag = key("esp_enabled") })
+        box:Toggle({ Name = "2D", Flag = key("esp_enabled"), Tooltip = "Master switch for everything in this tab" })
         box:Toggle({ Name = "Name", Flag = key("esp_name") }):Colorpicker({ Name = "Name color", Flag = key("esp_name_color"), Default = white, Alpha = 0 })
-        box:Toggle({ Name = "Box", Flag = key("esp_box_on") }):Colorpicker({ Name = "Box color", Flag = key("esp_color"), Default = white, Alpha = 0 })
-        box:Toggle({ Name = "Box fill", Flag = key("esp_fill") }):Colorpicker({ Name = "Fill color", Flag = key("esp_fill_color"), Default = white, Alpha = 0.88 })
-        box:Toggle({ Name = "Health bar", Flag = key("esp_health") }):Colorpicker({ Name = "Health color", Flag = key("esp_hp_full"), Default = white, Alpha = 0 })
-        box:Toggle({ Name = "Health number", Flag = key("esp_hp_text") })
-        box:Toggle({ Name = "Weapon name", Flag = key("esp_weapon") }):Colorpicker({ Name = "Weapon color", Flag = key("esp_weapon_color"), Default = white, Alpha = 0 })
-        box:Toggle({ Name = "Weapon icon", Flag = key("esp_weapon_icon") }):Colorpicker({ Name = "Icon color", Flag = key("esp_weapon_icon_color"), Default = white, Alpha = 0 })
-        box:Toggle({ Name = "Distance", Flag = key("esp_distance") }):Colorpicker({ Name = "Distance color", Flag = key("esp_dist_color"), Default = white, Alpha = 0 })
+        box:Toggle({ Name = "Box", Flag = key("esp_box") }):Colorpicker({ Name = "Box color", Flag = key("esp_box_color"), Default = white, Alpha = 0 }):Colorpicker({ Name = "Box fill", Flag = key("esp_fill_color"), Default = white, Alpha = 0.88 })
+        box:Toggle({ Name = "Health Bar", Flag = key("esp_hp") }):Colorpicker({ Name = "Low health", Flag = key("esp_hp_low"), Default = white, Alpha = 0 }):Colorpicker({ Name = "Full health", Flag = key("esp_hp_full"), Default = white, Alpha = 0 })
+        box:Toggle({ Name = "Health Number", Flag = key("esp_hp_num") }):Colorpicker({ Name = "Number color", Flag = key("esp_hp_num_color"), Default = white, Alpha = 0 })
+        box:Toggle({ Name = "Held Weapon", Flag = key("esp_weapon") }):Colorpicker({ Name = "Weapon color", Flag = key("esp_weapon_color"), Default = white, Alpha = 0 })
+        box:Toggle({ Name = "Held Weapon Icon", Flag = key("esp_icon"), Tooltip = "The weapon's real model, drawn under the box" }):Colorpicker({ Name = "Icon tint", Flag = key("esp_icon_color"), Default = white, Alpha = 0 })
         box:Toggle({ Name = "Skeleton", Flag = key("esp_skeleton") }):Colorpicker({ Name = "Skeleton color", Flag = key("esp_skeleton_color"), Default = white, Alpha = 0 })
-        box:Toggle({ Name = "Head dot", Flag = key("esp_head") }):Colorpicker({ Name = "Head dot color", Flag = key("esp_head_color"), Default = white, Alpha = 0 })
-        box:Toggle({ Name = "Tracers", Flag = key("esp_tracer") }):Colorpicker({ Name = "Tracer color", Flag = key("esp_tracer_color"), Default = white, Alpha = 0 })
-        box:Toggle({ Name = "Out of view", Flag = key("esp_arrows"), Tooltip = "Arrows at the screen edge that point toward players outside your view" }):Colorpicker({ Name = "Arrow color", Flag = key("esp_arrow_color"), Default = white, Alpha = 0 })
-        box:Toggle({ Name = "Chams", Flag = key("cham_enabled"), Tooltip = "Colors each body part. Needs Enabled on" }):Colorpicker({ Name = "Visible", Flag = key("cham_vis"), Default = white, Alpha = 0.35 }):Colorpicker({ Name = "Behind walls", Flag = key("cham_hid"), Default = white, Alpha = 0.7 })
-        box:Toggle({ Name = "Highlight outline", Flag = key("cham_line_on"), Tooltip = "Outlines the whole player. Needs Enabled on" }):Colorpicker({ Name = "Outline color", Flag = key("cham_line"), Default = white, Alpha = 0 })
+        box:Dropdown({ Name = "Flags", Flag = key("esp_flags"), Items = { "Distance", "Visible", "Target" }, Multi = true, Default = {} })
+        box:Slider({ Name = "Render Distance", Flag = key("esp_dist"), Min = 50, Max = 3000, Default = 1500, Decimals = 1, Suffix = " studs" })
+        box:Toggle({ Name = "Chams", Flag = key("esp_chams"), Tooltip = "Adornment chams on every body part. First picker is the visible layer, second is behind walls. Settings in the Chams tab" }):Colorpicker({ Name = "Visible", Flag = key("esp_cham_vis"), Default = white, Alpha = 0.5 }):Colorpicker({ Name = "Behind walls", Flag = key("esp_cham_hid"), Default = white, Alpha = 0.5 })
+        box:Toggle({ Name = "Out of View", Flag = key("esp_oov"), Tooltip = "Arrows at the screen edge pointing at players you cannot see on screen. Settings in the Out of View tab" }):Colorpicker({ Name = "Arrow color", Flag = key("esp_oov_color"), Default = white, Alpha = 0 })
+        box:Toggle({ Name = "Sound Tracker", Flag = key("esp_sound"), Tooltip = "A ring on the ground where a player makes sound. Settings in the Sound Tracker tab" }):Colorpicker({ Name = "Ring color", Flag = key("esp_sound_color"), Default = white, Alpha = 0 })
         if friendly then
             box:Button({ Name = "Copy Enemy here", Callback = function()
                 for _, flag in ipairs(PERTEAM) do
@@ -1069,44 +1066,30 @@ do
     addTeamRows(TeamEnemy, false)
     addTeamRows(TeamFriendly, true)
 
-    local white = Color3.fromRGB(255, 255, 255)
-    local General, GradientSet = VisualsPage:MultiSection({ Sections = { "General", "Gradient" }, Side = 1 })
-    General:Slider({ Name = "Render distance", Flag = "esp_dist", Min = 50, Max = 3000, Default = 1500, Decimals = 1, Suffix = " studs" })
-    General:Slider({ Name = "Text size", Flag = "esp_text", Min = 10, Max = 20, Default = 13, Decimals = 1, Suffix = " px" })
-    General:Slider({ Name = "Scale", Flag = "esp_scale", Min = 0.7, Max = 1.6, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Scales text, line thickness and arrows together" })
-    General:Dropdown({ Name = "Font", Flag = "esp_font", Items = FONT_ORDER, Default = "Tahoma" })
-    General:Toggle({ Name = "Outlines", Flag = "esp_outline", Tooltip = "Dark outline on both sides of the box lines, and on the text, skeleton and icon" })
-    General:Toggle({ Name = "Fade with distance", Flag = "esp_fade" })
-    General:Toggle({ Name = "Smooth animations", Flag = "esp_smooth", Tooltip = "Fade in and smooth health changes" })
-    General:Slider({ Name = "Animation speed", Flag = "esp_smooth_speed", Min = 1, Max = 20, Default = 8, Decimals = 0.1 })
-    General:Toggle({ Name = "Visible color", Flag = "esp_vis", Tooltip = "Enemies you can see get every feature in this color, except the behind-walls chams" }):Colorpicker({ Name = "Visible color", Flag = "esp_vis_color", Default = white })
-    General:Toggle({ Name = "Marked target", Flag = "esp_target", Tooltip = "The player your aimbot is locked on gets every feature in this color, except the behind-walls chams" }):Colorpicker({ Name = "Target color", Flag = "esp_target_color", Default = white })
-    GradientSet:Toggle({ Name = "Gradient colors", Flag = "grad_on", Tooltip = "Colors flow between two colors and move over time" }):Colorpicker({ Name = "Color A", Flag = "grad_a", Default = white }):Colorpicker({ Name = "Color B", Flag = "grad_b", Default = white })
-    GradientSet:Dropdown({ Name = "Apply to", Flag = "grad_apply", Items = { "Box fill", "Box outline", "Health bar", "Skeleton" }, Multi = true, Default = { "Box fill", "Skeleton" } })
-    GradientSet:Slider({ Name = "Speed", Flag = "grad_speed", Min = 0, Max = 2, Default = 0.25, Decimals = 0.01, Tooltip = "0 keeps the gradient still" })
-    GradientSet:Slider({ Name = "Stretch", Flag = "grad_stretch", Min = 0.3, Max = 3, Default = 1, Decimals = 0.01, Tooltip = "Higher repeats the colors more often" })
+    local EspSettings, ColorOverrides = VisualsPage:MultiSection({ Sections = { "ESP Settings", "Color Overrides" }, Side = 1 })
+    EspSettings:Dropdown({ Name = "Font", Flag = "esp_font", Items = { "Plex", "UI", "System", "Monospace" }, Default = "Plex" })
+    EspSettings:Slider({ Name = "Size", Flag = "esp_text", Min = 10, Max = 20, Default = 13, Decimals = 1, Suffix = " px" })
+    EspSettings:Slider({ Name = "Fade Time", Flag = "esp_fade_time", Min = 0, Max = 1, Default = 0.2, Decimals = 0.01, Suffix = " s" })
+    EspSettings:Dropdown({ Name = "Text Case", Flag = "esp_case", Items = { "Normal", "lower", "UPPER" }, Default = "Normal" })
+    EspSettings:Slider({ Name = "Max Text Length", Flag = "esp_max_text", Min = 5, Max = 30, Default = 30, Decimals = 1 })
+    EspSettings:Slider({ Name = "Max HP Visibility Cap", Flag = "esp_hp_cap", Min = 1, Max = 100, Default = 100, Decimals = 1 })
+    EspSettings:Toggle({ Name = "Outlines", Flag = "esp_outline", Tooltip = "Dark outline on both sides of the box, and on text, skeleton and arrows" })
+    ColorOverrides:Toggle({ Name = "Visible Color", Flag = "esp_vis", Tooltip = "Enemies you can see get every feature in this color, except the behind-walls chams" }):Colorpicker({ Name = "Visible color", Flag = "esp_vis_color", Default = white })
+    ColorOverrides:Toggle({ Name = "Highlight Target", Flag = "esp_target", Tooltip = "The player your aimbot is locked on gets every feature in this color, except the behind-walls chams" }):Colorpicker({ Name = "Target color", Flag = "esp_target_color", Default = white })
 
-    local BoxSet, HealthSet, ExtraSet, ChamSet = VisualsPage:MultiSection({ Sections = { "Box", "Health", "Extras", "Chams" }, Side = 2 })
-    BoxSet:Dropdown({ Name = "Style", Flag = "esp_box", Items = { "Full", "Corners" }, Default = "Corners" })
-    BoxSet:Slider({ Name = "Thickness", Flag = "esp_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
-    BoxSet:Toggle({ Name = "Fit to pose", Flag = "esp_tight", Tooltip = "The box wraps the whole body, including crouching and prone" })
-    BoxSet:Toggle({ Name = "Glow", Flag = "esp_glow", Tooltip = "Soft layers of color spreading out from the box" }):Colorpicker({ Name = "Glow color", Flag = "esp_glow_color", Default = white, Alpha = 0.5 })
-    BoxSet:Slider({ Name = "Glow spread", Flag = "esp_glow_size", Min = 2, Max = 30, Default = 10, Decimals = 1, Suffix = " px" })
-    HealthSet:Dropdown({ Name = "Position", Flag = "esp_hp_pos", Items = { "Left", "Right", "Top", "Bottom" }, Default = "Left" })
-    HealthSet:Slider({ Name = "Width", Flag = "esp_hp_width", Min = 2, Max = 8, Default = 3, Decimals = 1, Suffix = " px" })
-    HealthSet:Toggle({ Name = "Color by health", Flag = "esp_hp_dynamic", Tooltip = "Green when healthy, red when low, instead of the picked color" })
-    HealthSet:Toggle({ Name = "Damage trail", Flag = "esp_hp_trail", Tooltip = "A fading bar shows the health that was just lost" })
-    ExtraSet:Slider({ Name = "Skeleton thickness", Flag = "esp_skeleton_thick", Min = 1, Max = 4, Default = 1.5, Decimals = 0.1, Suffix = " px" })
-    ExtraSet:Dropdown({ Name = "Tracer origin", Flag = "esp_tracer_from", Items = { "Bottom", "Center", "Top" }, Default = "Bottom" })
-    ExtraSet:Toggle({ Name = "Arrow text", Flag = "esp_arrow_text", Tooltip = "Shows the name and distance next to each arrow" })
-    ExtraSet:Slider({ Name = "Arrow size", Flag = "esp_arrow_size", Min = 8, Max = 32, Default = 14, Decimals = 1, Suffix = " px" })
-    ExtraSet:Slider({ Name = "Arrow distance", Flag = "esp_arrow_radius", Min = 60, Max = 400, Default = 160, Decimals = 1, Suffix = " px" })
-    ChamSet:Slider({ Name = "Thickness", Flag = "cham_thick", Min = 0, Max = 0.6, Default = 0.1, Decimals = 0.01 })
-    ChamSet:Toggle({ Name = "Glow", Flag = "cham_glow" })
-    ChamSet:Slider({ Name = "Glow strength", Flag = "cham_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
-    ChamSet:Toggle({ Name = "Round head", Flag = "cham_round" })
-    ChamSet:Slider({ Name = "Head size", Flag = "cham_head", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
-    ChamSet:Toggle({ Name = "Outline through walls", Flag = "cham_line_walls" })
+    local ChamSet, OovSet, SoundSet = VisualsPage:MultiSection({ Sections = { "Chams", "Out of View", "Sound Tracker" }, Side = 2 })
+    ChamSet:Slider({ Name = "Layer Size", Flag = "cham_layer", Min = 0, Max = 0.5, Default = 0.05, Decimals = 0.01 })
+    ChamSet:Slider({ Name = "Head Size", Flag = "cham_head", Min = 0.8, Max = 1.6, Default = 1, Decimals = 0.01 })
+    ChamSet:Toggle({ Name = "Glow", Flag = "cham_glow", Tooltip = "A larger, softer layer around every body part" }):Colorpicker({ Name = "Glow color", Flag = "cham_glow_color", Default = white, Alpha = 0.7 })
+    ChamSet:Slider({ Name = "Glow Size", Flag = "cham_glow_size", Min = 0.05, Max = 1, Default = 0.3, Decimals = 0.01 })
+    OovSet:Slider({ Name = "Arrow Size", Flag = "oov_size", Min = 8, Max = 32, Default = 14, Decimals = 1, Suffix = " px" })
+    OovSet:Slider({ Name = "Arrow Distance", Flag = "oov_radius", Min = 5, Max = 100, Default = 40, Decimals = 1, Suffix = " %", Tooltip = "How far from the center the arrows sit. 100 is the screen edge" })
+    OovSet:Toggle({ Name = "Dynamic Size", Flag = "oov_dynamic_size", Tooltip = "Closer players get bigger arrows" })
+    OovSet:Toggle({ Name = "Dynamic Fade", Flag = "oov_fade", Tooltip = "Far players get fainter arrows" })
+    OovSet:Slider({ Name = "Fade Distance", Flag = "oov_fade_distance", Min = 20, Max = 400, Default = 150, Decimals = 1, Suffix = " m" })
+    SoundSet:Slider({ Name = "Duration", Flag = "snd_duration", Min = 0.3, Max = 2, Default = 0.9, Decimals = 0.01, Suffix = " s" })
+    SoundSet:Slider({ Name = "Max Radius", Flag = "snd_radius", Min = 3, Max = 12, Default = 5, Decimals = 0.1, Suffix = " studs" })
+    SoundSet:Toggle({ Name = "Through Walls", Flag = "snd_walls", Tooltip = "Off hides the ring while the player is behind cover" })
 
     local CameraBox = MiscSubs.Camera:Section({ Name = "Camera", Side = 1 })
     CameraBox:Toggle({ Name = "Field of view", Flag = "cam_fov_on", Default = false, Tooltip = "Applies when you are not aiming down sights" })
@@ -1471,89 +1454,26 @@ local function triggerStep(cam, now, records)
 end
 
 -- ============================================================ ESP
-local FONTS = { Plex = 2, Monospace = 3, UI = 0, System = 1 }
-local STRIPS = 8
+-- 2D ESP in the style of BBOT: triple-rect boxes, a thin health bar, outlined text, plain skeleton lines, edge arrows,
+-- adornment chams parented to the real body parts, and footstep rings drawn from the game's own sound calls.
+local FONT_IDS = { Plex = 2, UI = 0, System = 1, Monospace = 3 }
+local FONT_ORDER = { "Plex", "UI", "System", "Monospace" }
 local espObjects, espState = {}, {}
-local adornData, outlineSets = {}, {}
-local adornFolder, outlineFolder
+local adornData = {}
+local sounds = {}
+local lastRecords = {}
+local RING_SEGMENTS = 24
 
--- parenting into CoreGui needs a high thread identity, and code relaunched inside an actor often runs lower
-local function elevate()
-    for _, name in ipairs({ "setthreadidentity", "set_thread_identity", "setidentity", "setthreadcontext" }) do
-        local fn = getgenv()[name]
-        if type(fn) == "function" and pcall(fn, 7) then return true end
-    end
-    local syn_ = getgenv().syn
-    if type(syn_) == "table" and type(syn_.set_thread_identity) == "function" then return pcall(syn_.set_thread_identity, 7) end
-    return false
-end
-
-local containerNote
 local function randomName()
     local letters = {}
     for index = 1, 10 do letters[index] = string.char(math.random(97, 122)) end
     return table.concat(letters)
-end
-local function ensureFolder(current)
-    if current and current.Parent then return current end
-    local parents = { { Workspace, "Workspace" } }
-    local current_ = camera()
-    if current_ then parents[#parents + 1] = { current_, "Camera" } end
-    for _, entry in ipairs(parents) do
-        local folder = Instance.new("Folder")
-        folder.Name = randomName()
-        if pcall(function() folder.Parent = entry[1] end) and folder.Parent then
-            if containerNote ~= entry[2] then
-                containerNote = entry[2]
-                print("[Aster] chams container: " .. entry[2])
-            end
-            return folder
-        end
-        pcall(function() folder:Destroy() end)
-    end
-    return nil
 end
 
 local function pickerTransparency(flag, default)
     local option = Options[flag]
     if option and type(option.Transparency) == "number" then return math.clamp(option.Transparency, 0, 1) end
     return default
-end
-
--- ---------------------------------------------------------------- settings
-local cfgCache = {}
-local function teamCfg(friendly)
-    local suffix = friendly and "@Friendly" or ""
-    local c = cfgCache[friendly]
-    if not c then c = {} cfgCache[friendly] = c end
-    local function r(flag, default) return readFlag(flag .. suffix, default) end
-    local function g(flag, default) return readFlag(flag, default) end
-    c.enabled = r("esp_enabled", false)
-    c.color = r("esp_color", WHITE)
-    c.box = r("esp_box_on", true) and g("esp_box", "Corners") or "Off"
-    c.outlineOn, c.tight, c.glow = g("esp_outline", false), g("esp_tight", false), g("esp_glow", false)
-    c.fillOn, c.fillColor, c.fillT, c.thick = r("esp_fill", false), r("esp_fill_color", WHITE), pickerTransparency("esp_fill_color" .. suffix, 0.88), g("esp_thick", 1)
-    c.name, c.nameColor = r("esp_name", false), r("esp_name_color", WHITE)
-    c.distance, c.distColor = r("esp_distance", false), r("esp_dist_color", WHITE)
-    c.weapon, c.weaponColor = r("esp_weapon", false), r("esp_weapon_color", WHITE)
-    c.weaponIcon, c.weaponIconColor = r("esp_weapon_icon", false), r("esp_weapon_icon_color", WHITE)
-    c.text, c.textOutline = g("esp_text", 13), c.outlineOn
-    c.health, c.hpPos, c.hpWidth, c.hpText, c.hpTrail = r("esp_health", false), g("esp_hp_pos", "Left"), g("esp_hp_width", 3), r("esp_hp_text", false), g("esp_hp_trail", false)
-    c.hpColor, c.hpDynamic = r("esp_hp_full", WHITE), g("esp_hp_dynamic", false)
-    c.skeleton, c.skeletonColor = r("esp_skeleton", false), r("esp_skeleton_color", WHITE)
-    c.skeletonThick, c.skeletonOutline = g("esp_skeleton_thick", 1.5), c.outlineOn
-    c.head, c.headColor = r("esp_head", false), r("esp_head_color", WHITE)
-    c.tracer, c.tracerColor, c.tracerFrom = r("esp_tracer", false), r("esp_tracer_color", WHITE), g("esp_tracer_from", "Bottom")
-    c.arrows, c.arrowColor, c.arrowText = r("esp_arrows", false), r("esp_arrow_color", WHITE), g("esp_arrow_text", false)
-    c.arrowSize, c.arrowRadius = g("esp_arrow_size", 14), g("esp_arrow_radius", 160)
-    c.chamOn = r("cham_enabled", false)
-    c.chamVis, c.chamVisT = r("cham_vis", WHITE), pickerTransparency("cham_vis" .. suffix, 0.35)
-    c.chamHid, c.chamHidT = r("cham_hid", WHITE), pickerTransparency("cham_hid" .. suffix, 0.7)
-    c.lineOn, c.lineColor, c.lineT = r("cham_line_on", false), r("cham_line", WHITE), pickerTransparency("cham_line" .. suffix, 0)
-    local function opacity(flag) return 1 - pickerTransparency(flag .. suffix, 0) end
-    c.boxA, c.nameA, c.distA, c.weaponA, c.iconA = opacity("esp_color"), opacity("esp_name_color"), opacity("esp_dist_color"), opacity("esp_weapon_color"), opacity("esp_weapon_icon_color")
-    c.hpA, c.skelA, c.headA, c.tracerA, c.arrowA = opacity("esp_hp_full"), opacity("esp_skeleton_color"), opacity("esp_head_color"), opacity("esp_tracer_color"), opacity("esp_arrow_color")
-    return c
 end
 
 local function selectedSet(name, fallback)
@@ -1567,68 +1487,49 @@ local function selectedSet(name, fallback)
     return out
 end
 
-local function pingPong(t)
-    t = t % 2
-    if t > 1 then t = 2 - t end
-    return t
+local function lerpColor(a, b, t)
+    return Color3.new(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t)
 end
 
--- ---------------------------------------------------------------- text labels and fonts
-local HttpService = game:GetService("HttpService")
-local FONT_URL = "https://raw.githubusercontent.com/sametexe001/luas/main/fonts/"
-local FONT_DIR = "Aster/PhantomForces/fonts"
-local FONT_FILES = {
-    ["Tahoma"] = "fs-tahoma-8px.ttf", ["Verdana"] = "verdana.ttf", ["Smallest Pixel"] = "smallest_pixel-7.ttf",
-    ["Proggy"] = "proggy-clean.ttf", ["Pixel Operator"] = "PixelOperator.ttf", ["Minecraftia"] = "minecraftia.ttf",
-    ["Inter"] = "InterMedium.ttf", ["Roboto Mono"] = "RobotoMono-Regular.ttf", ["Lexend"] = "Lexend-Medium.ttf",
-}
-local DEFAULT_FACE = Font.fromEnum(Enum.Font.GothamMedium)
-local fontFaces, fontLoading = {}, {}
-
-local function download(url)
-    local ok, body = pcall(function() return game:HttpGet(url) end)
-    if ok and type(body) == "string" and #body > 200 then return body end
-    local requester = (syn and syn.request) or request or http_request
-    if requester then
-        local okRequest, response = pcall(requester, { Url = url, Method = "GET" })
-        if okRequest and response and type(response.Body) == "string" and #response.Body > 200 then return response.Body end
-    end
-    error("download failed")
+-- ---------------------------------------------------------------- settings
+local cfgCache = {}
+local function teamCfg(friendly)
+    local suffix = friendly and "@Friendly" or ""
+    local c = cfgCache[friendly]
+    if not c then c = {} cfgCache[friendly] = c end
+    local function r(flag, default) return readFlag(flag .. suffix, default) end
+    local function opacity(flag) return 1 - pickerTransparency(flag .. suffix, 0) end
+    c.enabled = r("esp_enabled", false)
+    c.distance = r("esp_dist", 1500)
+    c.name, c.nameColor, c.nameA = r("esp_name", false), r("esp_name_color", WHITE), opacity("esp_name_color")
+    c.box, c.boxColor, c.boxA = r("esp_box", false), r("esp_box_color", WHITE), opacity("esp_box_color")
+    c.fillColor, c.fillA = r("esp_fill_color", WHITE), opacity("esp_fill_color")
+    c.hp, c.hpLow, c.hpFull, c.hpA = r("esp_hp", false), r("esp_hp_low", WHITE), r("esp_hp_full", WHITE), opacity("esp_hp_full")
+    c.hpNum, c.hpNumColor, c.hpNumA = r("esp_hp_num", false), r("esp_hp_num_color", WHITE), opacity("esp_hp_num_color")
+    c.weapon, c.weaponColor, c.weaponA = r("esp_weapon", false), r("esp_weapon_color", WHITE), opacity("esp_weapon_color")
+    c.icon, c.iconColor, c.iconA = r("esp_icon", false), r("esp_icon_color", WHITE), opacity("esp_icon_color")
+    c.skeleton, c.skeletonColor, c.skeletonA = r("esp_skeleton", false), r("esp_skeleton_color", WHITE), opacity("esp_skeleton_color")
+    c.flags = selectedSet("esp_flags" .. suffix, {})
+    c.flagColor, c.flagA = r("esp_flags_color", WHITE), opacity("esp_flags_color")
+    c.chams = r("esp_chams", false)
+    c.chamVis, c.chamVisT = r("esp_cham_vis", WHITE), pickerTransparency("esp_cham_vis" .. suffix, 0.5)
+    c.chamHid, c.chamHidT = r("esp_cham_hid", WHITE), pickerTransparency("esp_cham_hid" .. suffix, 0.5)
+    c.oov, c.oovColor, c.oovA = r("esp_oov", false), r("esp_oov_color", WHITE), opacity("esp_oov_color")
+    c.sound, c.soundColor, c.soundA = r("esp_sound", false), r("esp_sound_color", WHITE), opacity("esp_sound_color")
+    return c
 end
 
-local function loadFont(name)
-    local file = FONT_FILES[name]
-    if not file or fontFaces[name] or fontLoading[name] then return end
-    fontLoading[name] = true
-    task.spawn(function()
-        local ok, face = pcall(function()
-            if not (writefile and isfile and getcustomasset) then error("file functions missing") end
-            pcall(makefolder, "Aster")
-            pcall(makefolder, "Aster/PhantomForces")
-            pcall(makefolder, FONT_DIR)
-            local ttf = FONT_DIR .. "/" .. file
-            if not isfile(ttf) then writefile(ttf, download(FONT_URL .. file)) end
-            local json = FONT_DIR .. "/" .. string.gsub(name, "%s", "") .. ".json"
-            writefile(json, HttpService:JSONEncode({
-                name = name,
-                faces = { { name = "Regular", weight = 400, style = "Regular", assetId = getcustomasset(ttf) } },
-            }))
-            return Font.new(getcustomasset(json))
-        end)
-        if ok and face then fontFaces[name] = face else warn("[Aster] font " .. name .. " could not load: " .. tostring(face)) end
-        fontLoading[name] = nil
-    end)
-end
-
-local function fontFace(name)
-    if name == "Gotham" or not FONT_FILES[name] then return DEFAULT_FACE end
-    local face = fontFaces[name]
-    if face then return face end
-    loadFont(name)
-    return DEFAULT_FACE
-end
-
+-- ---------------------------------------------------------------- weapon icons
+-- Icons are the game's own weapon models, built with its own weapon code and shown in a small ViewportFrame.
 local labelGui
+local function elevate()
+    for _, name in ipairs({ "setthreadidentity", "set_thread_identity", "setidentity", "setthreadcontext" }) do
+        local fn = getgenv()[name]
+        if type(fn) == "function" and pcall(fn, 7) then return true end
+    end
+    return false
+end
+
 local function ensureLabelGui()
     if labelGui and labelGui.Parent then return labelGui end
     elevate()
@@ -1637,7 +1538,7 @@ local function ensureLabelGui()
     pcall(function() if gethui then parents[#parents + 1] = gethui() end end)
     for _, parent in ipairs(parents) do
         local gui = Instance.new("ScreenGui")
-        gui.Name = "PF_Text"
+        gui.Name = randomName()
         pcall(function()
             gui.ResetOnSpawn = false
             gui.IgnoreGuiInset = true
@@ -1656,799 +1557,106 @@ onUnload(function()
     labelGui = nil
 end)
 
--- a text object with the same fields as a Drawing Text, rendered by a TextLabel so it can use any font
-local function newLabel()
-    local gui = ensureLabelGui()
-    if not gui then return newDrawing("Text", { Center = true, Outline = true, Size = 13, Font = 2, ZIndex = 8 }) end
-    local label = Instance.new("TextLabel")
-    label.BackgroundTransparency = 1
-    label.BorderSizePixel = 0
-    label.AutomaticSize = Enum.AutomaticSize.XY
-    label.Size = UDim2.fromOffset(0, 0)
-    label.AnchorPoint = Vector2.new(0.5, 0)
-    label.TextWrapped = false
-    label.RichText = false
-    label.TextColor3 = WHITE
-    label.TextSize = 13
-    label.FontFace = DEFAULT_FACE
-    label.Visible = false
-    label.ZIndex = 8
-    local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 1
-    stroke.Color = BLACK
-    stroke.Enabled = false
-    stroke.Parent = label
-    label.Parent = gui
-    local proxy
-    local setters = {
-        Text = function(value) label.Text = value end,
-        Size = function(value) label.TextSize = value end,
-        Color = function(value) label.TextColor3 = value end,
-        Position = function(value) label.Position = UDim2.fromOffset(math.floor(value.X), math.floor(value.Y)) end,
-        Transparency = function(value)
-            label.TextTransparency = 1 - value
-            stroke.Transparency = 1 - value
-        end,
-        Outline = function(value) stroke.Enabled = value and true or false end,
-        Visible = function(value) label.Visible = value and true or false end,
-        FontFace = function(value) label.FontFace = value end,
-    }
-    proxy = setmetatable({}, {
-        __newindex = function(_, key, value)
-            local setter = setters[key]
-            if setter then setter(value) end
-        end,
-        __index = function(_, key)
-            if key == "Remove" then
-                return function() pcall(function() label:Destroy() end) end
+local ICON_W, ICON_H = 66, 22
+local iconTemplates = {}
+local function buildIconTemplate(weaponName)
+    local weaponUtils, contentUtils = Core.mods.WeaponUtils, Core.mods.ContentUtils
+    if not (weaponUtils and contentUtils and weaponUtils.constructWeapon and contentUtils.compileWeaponData) then return false end
+    local ok, model = pcall(function()
+        local data = contentUtils.compileWeaponData({ weaponName = weaponName, weaponAttachments = {} })
+        local built = weaponUtils.constructWeapon(weaponName, data, {}, nil, nil, true)
+        return built
+    end)
+    if not ok or typeof(model) ~= "Instance" then return false end
+    local frame = Instance.new("ViewportFrame")
+    frame.BackgroundTransparency = 1
+    frame.BorderSizePixel = 0
+    frame.Size = UDim2.fromOffset(ICON_W, ICON_H)
+    frame.Ambient = Color3.new(0.9, 0.9, 0.9)
+    frame.LightColor = Color3.new(1, 1, 1)
+    frame.LightDirection = Vector3.new(-1, -1, -1)
+    local cam = Instance.new("Camera")
+    cam.FieldOfView = 20
+    cam.Parent = frame
+    frame.CurrentCamera = cam
+    local okParent = pcall(function()
+        for _, part in ipairs(model:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.Anchored = true
+                part.Transparency = part.Transparency >= 1 and 1 or 0
             end
-            return nil
-        end,
-    })
-    drawings[proxy] = true
-    return proxy
-end
-
--- ---------------------------------------------------------------- weapon icons
--- Every weapon in the game gets a pixel silhouette built from its class, magazine size and barrel length.
-local ICON_SPECS = {
-    ["1858carbine"] = "V01201",
-    ["1858newarmy"] = "V00001",
-    ["93r"] = "S00101",
-    ["aa12"] = "H00032",
-    ["aek919k"] = "S00200",
-    ["aek971"] = "R00022",
-    ["aek973"] = "C00221",
-    ["aek973s"] = "C00221",
-    ["aek999"] = "L00032",
-    ["af2011a1"] = "P12002",
-    ["ag3"] = "B00002",
-    ["ak103"] = "R12220",
-    ["ak105"] = "C11121",
-    ["ak12"] = "R01121",
-    ["ak1276"] = "H01120",
-    ["ak12br"] = "L12220",
-    ["ak12c"] = "C12221",
-    ["ak12m"] = "R00022",
-    ["ak12u"] = "C02122",
-    ["ak15"] = "R12220",
-    ["ak19"] = "R10022",
-    ["ak308"] = "B00021",
-    ["ak47"] = "R11220",
-    ["ak74"] = "R00120",
-    ["ak9"] = "C12221",
-    ["akm"] = "R02220",
-    ["aks74u"] = "S11220",
-    ["aku12"] = "C02122",
-    ["alien"] = "P02202",
-    ["amiii"] = "P10100",
-    ["an94"] = "R02120",
-    ["ar36"] = "R11201",
-    ["ar36c"] = "S10201",
-    ["ar36k"] = "C11000",
-    ["armcannon"] = "K01012",
-    ["armpistol"] = "S01021",
-    ["asmi"] = "S00001",
-    ["aspbaton"] = "K01122",
-    ["asval"] = "R12221",
-    ["auga1"] = "R11220",
-    ["auga2"] = "R10021",
-    ["auga3"] = "C10121",
-    ["auga3m2"] = "D02122",
-    ["auga3para"] = "S02122",
-    ["aughbar"] = "L00121",
-    ["augunbullpup"] = "R11221",
-    ["auto9"] = "S21100",
-    ["automagiii"] = "P10100",
-    ["awm"] = "N01220",
-    ["aws"] = "N01222",
-    ["balisong"] = "K01221",
-    ["ballista"] = "N01222",
-    ["banhammer"] = "T01232",
-    ["banjo"] = "T00200",
-    ["barefists"] = "K00132",
-    ["baseballbat"] = "T00121",
-    ["beowulfecr"] = "B12221",
-    ["beowulftcr"] = "D00221",
-    ["bfg50"] = "N02220",
-    ["blockson"] = "S10100",
-    ["bloxy"] = "K01130",
-    ["boombox"] = "B12022",
-    ["bottle"] = "K00031",
-    ["boxybuster"] = "P00200",
-    ["brassknuckle"] = "K01131",
-    ["bren2"] = "R00110",
-    ["bren2br"] = "B12111",
-    ["bren2pps"] = "D11111",
-    ["bren3"] = "R00210",
-    ["brick"] = "K00101",
-    ["bridalbrandisher"] = "K01102",
-    ["bundlecharge"] = "G02002",
-    ["bwc9"] = "S12002",
-    ["bwc9a"] = "S12002",
-    ["c25"] = "C00220",
-    ["c7a2"] = "R00221",
-    ["c8a2"] = "C02021",
-    ["c8a3"] = "C02021",
-    ["c8nld"] = "C10020",
-    ["cancannon"] = "C10022",
-    ["candycane"] = "K00201",
-    ["car15"] = "C00221",
-    ["chainsaw"] = "L11001",
-    ["chosenone"] = "T02000",
-    ["classicknife"] = "K01232",
-    ["cleaver"] = "K00001",
-    ["clementine"] = "T00021",
-    ["clonker"] = "K02111",
-    ["cobrayterminator"] = "H01102",
-    ["coilgun"] = "P00020",
-    ["colacannon"] = "C10022",
-    ["coltacr"] = "R11221",
-    ["coltlmg"] = "L00022",
-    ["coltmars"] = "S01020",
-    ["coltsmg635"] = "S11122",
-    ["comp1022"] = "N02222",
-    ["cookiecutter"] = "K00000",
-    ["crane"] = "T01221",
-    ["cricketbat"] = "K02202",
-    ["crowbar"] = "K02220",
-    ["cslr3"] = "N01220",
-    ["cslr4a"] = "N02222",
-    ["cursedshinai"] = "T00101",
-    ["cutlass"] = "K02121",
-    ["cutter"] = "K01000",
-    ["darkheart"] = "K00021",
-    ["dbv12"] = "H01120",
-    ["deagle44"] = "V01201",
-    ["deagle50"] = "V02102",
-    ["deaglel5"] = "V01201",
-    ["deaglexix"] = "V02102",
-    ["doombox"] = "B12022",
-    ["dragunovsvds"] = "N02222",
-    ["dragunovsvu"] = "D02120",
-    ["dsr50"] = "N00221",
-    ["dt11"] = "H02022",
-    ["dt11pro"] = "H02022",
-    ["dynamite"] = "G01031",
-    ["dynamite3"] = "G01211",
-    ["ef88"] = "C11121",
-    ["egun"] = "P00020",
-    ["entrencher"] = "K02202",
-    ["eshotgun"] = "H00120",
-    ["executioner"] = "V01102",
-    ["f90mbr"] = "R10021",
-    ["fal5000"] = "B12001",
-    ["fal5000t"] = "B10000",
-    ["fal5063para"] = "B01201",
-    ["falo5041"] = "L10121",
-    ["falparashorty"] = "S02001",
-    ["famas"] = "R02222",
-    ["famascommando"] = "S12221",
-    ["famasf1"] = "R02122",
-    ["famasg2"] = "R02222",
-    ["famasunbullpup"] = "R11021",
-    ["fireaxe"] = "T02020",
-    ["five0"] = "S10120",
-    ["fiveseven"] = "P10102",
-    ["fixer"] = "K01232",
-    ["flameofolympia"] = "K01121",
-    ["frag"] = "G00100",
-    ["fryingpan"] = "K00001",
-    ["ft300"] = "N01222",
-    ["fumelee"] = "K01132",
-    ["g1"] = "P02201",
-    ["g11k2"] = "R21001",
-    ["g17"] = "P02201",
-    ["g18c"] = "S00101",
-    ["g21"] = "P10101",
-    ["g23"] = "P11102",
-    ["g28"] = "D10121",
-    ["g3"] = "B11200",
-    ["g36"] = "R11201",
-    ["g36c"] = "S10201",
-    ["g36k"] = "C11000",
-    ["g38"] = "R11022",
-    ["g40"] = "P10201",
-    ["g50"] = "P00102",
-    ["gau5aa"] = "C00221",
-    ["gb22"] = "P00101",
-    ["gerat90"] = "R21001",
-    ["gim1"] = "P11000",
-    ["glock1"] = "P02201",
-    ["glock17"] = "P02201",
-    ["glock18"] = "S00101",
-    ["glock21"] = "P10101",
-    ["glock23"] = "P11102",
-    ["glock40"] = "P10201",
-    ["glock50"] = "P00102",
-    ["goldendeagle2"] = "V00101",
-    ["goldendeagle50"] = "V02001",
-    ["goldengun"] = "P00002",
-    ["goldenhk51b"] = "L10102",
-    ["goldenpan"] = "K02201",
-    ["goldenredhawk45"] = "V00201",
-    ["goldenshorty"] = "H01202",
-    ["goldentommygun"] = "S22000",
-    ["goldenzip22"] = "H01200",
-    ["goldhawk"] = "V00201",
-    ["gospellblade"] = "K02120",
-    ["grizzly"] = "V00201",
-    ["groza1"] = "C01021",
-    ["groza4"] = "C11120",
-    ["gsh18"] = "P01101",
-    ["gsp"] = "P10001",
-    ["gustav66"] = "B00002",
-    ["gyrojetcarbine"] = "C00201",
-    ["gyrojetmarki"] = "P12000",
-    ["hamriar"] = "L22022",
-    ["hardballer"] = "P10000",
-    ["harvester"] = "T00010",
-    ["hattori"] = "T02130",
-    ["havocblade"] = "K00100",
-    ["hcar"] = "B11211",
-    ["hecateii"] = "N00220",
-    ["henry4570"] = "B02131",
-    ["hk21"] = "L12102",
-    ["hk337"] = "C01122",
-    ["hk416"] = "R02221",
-    ["hk416a5"] = "C12122",
-    ["hk416c"] = "S01122",
-    ["hk417"] = "B12021",
-    ["hk51b"] = "D12100",
-    ["hockeystick"] = "T02000",
-    ["holidaytea"] = "K00031",
-    ["honeybadger"] = "S01020",
-    ["hornet"] = "L00000",
-    ["howatype20"] = "R00221",
-    ["hrunting"] = "K02122",
-    ["huntingknife"] = "K02211",
-    ["ia2ar"] = "R02220",
-    ["ia2br"] = "B11021",
-    ["ia2smg"] = "S11021",
-    ["iar36"] = "L21001",
-    ["icemourne"] = "T02210",
-    ["icepick"] = "K00211",
-    ["icicle"] = "K02132",
-    ["imp9"] = "S11122",
-    ["intervention"] = "N00222",
-    ["ithaca37"] = "H02021",
-    ["izhevskpb"] = "P01200",
-    ["jason"] = "K00011",
-    ["jg90"] = "D01100",
-    ["jkey"] = "K02221",
-    ["juan"] = "V02001",
-    ["juancarbine"] = "V00101",
-    ["judge"] = "H00001",
-    ["juggun"] = "L02000",
-    ["jury"] = "V01201",
-    ["k14"] = "N02221",
-    ["k1a"] = "C02121",
-    ["k2"] = "R10021",
-    ["k7"] = "S11022",
-    ["kacsrr"] = "V02002",
-    ["kama"] = "K00022",
-    ["kanabo"] = "T00130",
-    ["karambit"] = "K00220",
-    ["karambitr"] = "K00220",
-    ["kek50"] = "N00200",
-    ["key"] = "K00021",
-    ["keyboard"] = "K02120",
-    ["kg99"] = "P12002",
-    ["knife"] = "K01221",
-    ["kommando"] = "K02002",
-    ["kordr"] = "L22222",
-    ["korpionvz61"] = "S11202",
-    ["krampuskukri"] = "K02230",
-    ["krinkov"] = "S11220",
-    ["krissvector"] = "S11201",
-    ["ks23m"] = "H01200",
-    ["ksg12"] = "H00201",
-    ["kunai"] = "K00121",
-    ["l115a3"] = "N01220",
-    ["l22"] = "C01020",
-    ["l22a2"] = "C01020",
-    ["l2a3"] = "S12102",
-    ["l85a2"] = "R12121",
-    ["l85a2unbullpup"] = "R01220",
-    ["l85a3"] = "R02222",
-    ["l86a2lsw"] = "L11220",
-    ["l86lsw"] = "L11220",
-    ["larata"] = "H01200",
-    ["linkedsword"] = "K01212",
-    ["lmgbling"] = "L10102",
-    ["longsword"] = "T00001",
-    ["lsvm04"] = "L00022",
-    ["luty"] = "S00102",
-    ["m107"] = "N02221",
-    ["m110a1"] = "N02221",
-    ["m110a1csass"] = "N02221",
-    ["m14"] = "B12001",
-    ["m14br"] = "B12001",
-    ["m14dmr"] = "D10101",
-    ["m16a1"] = "R02020",
-    ["m16a2e2acr"] = "R11221",
-    ["m16a3"] = "R01220",
-    ["m16a4"] = "R10021",
-    ["m17"] = "P00102",
-    ["m1903"] = "N02221",
-    ["m1911"] = "P12001",
-    ["m1911a1"] = "P12001",
-    ["m1918a2"] = "L10211",
-    ["m2011"] = "P01001",
-    ["m21"] = "D10101",
-    ["m231"] = "R02220",
-    ["m249saw"] = "L10232",
-    ["m24stick"] = "G01021",
-    ["m26frag"] = "G01222",
-    ["m27iar"] = "L01022",
-    ["m28gdmr"] = "D10121",
-    ["m337"] = "C01122",
-    ["m3712g"] = "H02021",
-    ["m3822"] = "P12002",
-    ["m38a7"] = "R11022",
-    ["m3a1"] = "S00002",
-    ["m4"] = "C12221",
-    ["m416"] = "R02221",
-    ["m416a5"] = "C12122",
-    ["m416c"] = "S01122",
-    ["m417a2"] = "B12021",
-    ["m41a"] = "R01000",
-    ["m45a1"] = "P12100",
-    ["m4a1"] = "C01122",
-    ["m560mini"] = "G01122",
-    ["m60"] = "L01231",
-    ["m60e6"] = "L01231",
-    ["m67frag"] = "G00100",
-    ["m7644"] = "P10101",
-    ["m79thumper"] = "H00202",
-    ["m7ngsw"] = "B12100",
-    ["m82a1"] = "N02221",
-    ["m9"] = "P10200",
-    ["m93r"] = "S00101",
-    ["mac10"] = "S02101",
-    ["mac11"] = "S11202",
-    ["mac15"] = "R01002",
-    ["mac31"] = "S21002",
-    ["machete"] = "K00101",
-    ["magliteclub"] = "K01011",
-    ["makarovpm"] = "P01001",
-    ["mars"] = "S01020",
-    ["mateba6"] = "V01001",
-    ["max1115"] = "R01002",
-    ["max31"] = "S21002",
-    ["mc51sd"] = "D11202",
-    ["mcxrattler"] = "S12202",
-    ["mcxspear"] = "B12100",
-    ["mcxvirtus"] = "C01101",
-    ["mekleth"] = "K02002",
-    ["mg36"] = "L21001",
-    ["mg3kws"] = "L00232",
-    ["mg42"] = "L11030",
-    ["mg80"] = "L12102",
-    ["mg89b"] = "D12100",
-    ["mgv176"] = "L00002",
-    ["microuzi"] = "S10101",
-    ["minifix"] = "C10221",
-    ["mjlnir"] = "K02101",
-    ["mjolnir"] = "K02101",
-    ["mk11"] = "D02222",
-    ["mk11mod2"] = "D02222",
-    ["mk12spr"] = "D11221",
-    ["mk16socom"] = "R12120",
-    ["mk16socomcqb"] = "S12022",
-    ["mk16socomsc"] = "C02120",
-    ["mk17socom"] = "B10221",
-    ["mk17ultralight"] = "B12022",
-    ["mk20ssr"] = "D00122",
-    ["mk2frag"] = "G00200",
-    ["model700"] = "N00220",
-    ["model870"] = "H01100",
-    ["morningstar"] = "T02210",
-    ["mosinnagant"] = "N02220",
-    ["mp10"] = "S01100",
-    ["mp1911"] = "S10002",
-    ["mp40"] = "S10101",
-    ["mp412rex"] = "V01101",
-    ["mp5"] = "S02200",
-    ["mp510"] = "S12101",
-    ["mp5k"] = "S02002",
-    ["mp5sd"] = "S02000",
-    ["mp7"] = "S02100",
-    ["mp9"] = "S11122",
-    ["msg90"] = "D01100",
-    ["mts569"] = "D01101",
-    ["naginata"] = "T02022",
-    ["natahatchet"] = "K01022",
-    ["neowulfecr"] = "B12221",
-    ["neowulftcr"] = "D00221",
-    ["nightstick"] = "K00221",
-    ["noobslayer"] = "T02202",
-    ["nordicwaraxe"] = "T01120",
-    ["ntw20"] = "N00221",
-    ["obrez"] = "N00221",
-    ["origin12"] = "H01230",
-    ["ots126"] = "P10002",
-    ["p90"] = "S22202",
-    ["pacificfm"] = "K01122",
-    ["paddle"] = "T00032",
-    ["pbgrenade"] = "G01230",
-    ["pdc45"] = "P01200",
-    ["pdx45"] = "S02100",
-    ["pkm"] = "L12030",
-    ["pkp"] = "L11231",
-    ["pkpb"] = "D02132",
-    ["pkpbychok"] = "D02132",
-    ["pkppecheneg"] = "L11231",
-    ["pl8"] = "D02102",
-    ["pocketknife"] = "K02212",
-    ["pp19bizon"] = "S22022",
-    ["pp2000"] = "S11102",
-    ["ppsh41"] = "S21201",
-    ["present"] = "T02200",
-    ["qbu88"] = "D02120",
-    ["qbz95"] = "R02120",
-    ["qbz97a"] = "R11022",
-    ["qjb95lsw"] = "L22121",
-    ["r1022"] = "D02221",
-    ["railgun"] = "N00222",
-    ["rama1130"] = "S20202",
-    ["rattler"] = "S12202",
-    ["rcs1022"] = "N02222",
-    ["reaper"] = "T00111",
-    ["reapr"] = "L20130",
-    ["reapr338"] = "L20130",
-    ["redhawk44"] = "V00200",
-    ["regulator"] = "D10202",
-    ["remington700"] = "N00220",
-    ["remington870"] = "H01100",
-    ["rgd5he"] = "G00212",
-    ["rgnudzs"] = "G01002",
-    ["rgoudzs"] = "G02102",
-    ["rh44"] = "V00200",
-    ["ritualsickle"] = "K01201",
-    ["rm277"] = "B12122",
-    ["rolyhg"] = "G02232",
-    ["ropodshotty"] = "H00222",
-    ["rpk"] = "L21221",
-    ["rpk12"] = "L10120",
-    ["rpk16"] = "L02122",
-    ["rpk74"] = "L02220",
-    ["rsh12"] = "D12200",
-    ["rsquared"] = "V02002",
-    ["ruger1022"] = "D02221",
-    ["sa58osw"] = "D00102",
-    ["sa58spr"] = "D10100",
-    ["saiga12"] = "H01132",
-    ["saiga12u"] = "H01030",
-    ["saigasar"] = "D02131",
-    ["saltyweasel"] = "C10020",
-    ["sass308"] = "D11101",
-    ["sawedoff"] = "H01101",
-    ["scarh"] = "B10221",
-    ["scarhamr"] = "L22022",
-    ["scarl"] = "R12120",
-    ["scarpdw"] = "S12022",
-    ["scarsc"] = "C02120",
-    ["scarssr"] = "D00122",
-    ["scarul"] = "B12022",
-    ["scls1gang"] = "T02211",
-    ["scls2id"] = "K00120",
-    ["scls3drastic"] = "T02122",
-    ["scls4maliciousintent"] = "T00131",
-    ["scoutrifle"] = "N01220",
-    ["scx12"] = "H02221",
-    ["semtex"] = "G00200",
-    ["serbushotgun"] = "H02101",
-    ["sfg50"] = "N01220",
-    ["shak12"] = "B11121",
-    ["skorpion"] = "S11202",
-    ["sks"] = "D00222",
-    ["sl8"] = "D02102",
-    ["slaybells"] = "K01030",
-    ["sledgehammer"] = "T00122",
-    ["sleighbells"] = "K01232",
-    ["smx10"] = "S01100",
-    ["smx9"] = "S02200",
-    ["smx910"] = "S12101",
-    ["smx9k"] = "S02002",
-    ["smx9sd"] = "S02000",
-    ["sparkler"] = "K00101",
-    ["spas12"] = "H00102",
-    ["spearlt"] = "R01001",
-    ["sr3m"] = "C10120",
-    ["stakeout"] = "H01000",
-    ["starlisfunpost"] = "K00032",
-    ["stevensdb"] = "H01221",
-    ["steyrscout"] = "N01220",
-    ["stg44"] = "R00220",
-    ["stg59h"] = "B11200",
-    ["stg89c"] = "D11202",
-    ["stickgrenade"] = "K00120",
-    ["stoner96"] = "L12100",
-    ["stopper"] = "T02122",
-    ["streiter"] = "K00000",
-    ["stungun"] = "K02011",
-    ["stylisbrush"] = "T01211",
-    ["sugarweasel"] = "C10020",
-    ["supershorty"] = "H02101",
-    ["svk12"] = "D01121",
-    ["svk12e"] = "D01121",
-    ["sweeper"] = "T00212",
-    ["t13impact"] = "G00230",
-    ["tacticalspatula"] = "K00020",
-    ["tanto"] = "K02001",
-    ["tanzaniteblade"] = "K01110",
-    ["tanzanitepick"] = "K01202",
-    ["tar21"] = "R02022",
-    ["taser"] = "K02011",
-    ["tec9"] = "S00200",
-    ["terminator12g"] = "H01102",
-    ["theaxe"] = "T00021",
-    ["thecountdown"] = "K01211",
-    ["thefix"] = "N00220",
-    ["thunder"] = "N01222",
-    ["timberwolf"] = "N02220",
-    ["titaniumfal"] = "B10000",
-    ["tomahawk"] = "K01221",
-    ["tommygun"] = "S12002",
-    ["toonblade"] = "K02101",
-    ["toygun"] = "K02202",
-    ["toym1911"] = "P02001",
-    ["trainingbayonet"] = "T02211",
-    ["trenchknife"] = "K01130",
-    ["trenchmace"] = "K02130",
-    ["trg42"] = "N02221",
-    ["type20"] = "R00221",
-    ["type771frag"] = "G01232",
-    ["type88"] = "R22221",
-    ["typewriter"] = "S22000",
-    ["u41622"] = "P10022",
-    ["uar"] = "R11221",
-    ["uara1"] = "R11220",
-    ["uara3"] = "C10121",
-    ["uara3m2"] = "D02122",
-    ["uara3para"] = "S02122",
-    ["uarhbar"] = "L00121",
-    ["uchiwa"] = "K00220",
-    ["ukulele"] = "T02202",
-    ["ump45"] = "S02100",
-    ["usas12"] = "H00031",
-    ["usc"] = "P01200",
-    ["utilityknife"] = "K02212",
-    ["uzi"] = "S02200",
-    ["v40mini"] = "G02120",
-    ["vector45"] = "S11201",
-    ["vhsd2"] = "R10120",
-    ["virtus"] = "C01101",
-    ["vks"] = "N00220",
-    ["voidstaff"] = "T01021",
-    ["vssvintorez"] = "D12220",
-    ["vz806"] = "R00110",
-    ["vz806br"] = "B12111",
-    ["vz806pps"] = "D11111",
-    ["vz808"] = "R00210",
-    ["wa2000"] = "N02222",
-    ["warfan"] = "K00030",
-    ["warhammer"] = "T01201",
-    ["worldbuster"] = "T02011",
-    ["x46a2"] = "S02100",
-    ["x95r"] = "C12121",
-    ["x95smg"] = "S11120",
-    ["xm633doe"] = "S11122",
-    ["zerocutter"] = "T02230",
-    ["zip22"] = "P01202",
-    ["zirconslamsickle"] = "T02000",
-    ["zircontrident"] = "T00232",
-    ["zweihander"] = "T02022",
-}
-
-local ICON_WIDTH, ICON_HEIGHT = 34, 14
-local iconCache = {}
-
-local function buildIcon(spec)
-    local cls = string.sub(spec, 1, 1)
-    local m = tonumber(string.sub(spec, 2, 2)) or 0
-    local st = tonumber(string.sub(spec, 3, 3)) or 0
-    local op = tonumber(string.sub(spec, 4, 4)) or 0
-    local ln = tonumber(string.sub(spec, 5, 5)) or 0
-    local fx = tonumber(string.sub(spec, 6, 6)) or 0
-    local r = {}
-    local function R(x, y, w, h) r[#r + 1] = { x, y, w, h } end
-    local y0 = 4
-
-    if cls == "R" or cls == "C" or cls == "B" or cls == "D" then
-        local stock = st == 0 and 0 or (cls == "C" and 4 or 6)
-        local hand = math.min(8, 5 + ln + (cls == "D" and 2 or 0) + (cls == "B" and 1 or 0) - (cls == "C" and 1 or 0))
-        local barrel = 4 + ln + (cls == "D" and 1 or 0)
-        local recv = 9
-        if st == 1 then R(0, y0, stock, 1) R(0, y0 + 2, stock, 1) R(0, y0, 1, 3)
-        elseif st == 2 then R(0, y0, stock, 3) R(0, y0, 1, 4) end
-        local x = stock
-        R(x, y0, recv, 3)
-        R(x + recv, y0 + 1, hand, 2)
-        R(x + recv + hand, y0 + 1, barrel, 1)
-        R(x + recv + hand + barrel - 1, y0, 1, 3)
-        R(x + recv + hand + barrel - 3, y0 - 1, 1, 1)
-        R(x + 1, y0 - 1, 1, 1)
-        R(x + 2, y0 + 3, 2, 3)
-        R(x + 4, y0 + 3, 2, 1)
-        if m == 0 then R(x + 6, y0 + 3, 2, 5)
-        elseif m == 1 then R(x + 6, y0 + 3, 2, 3) R(x + 7, y0 + 6, 2, 3)
-        elseif m == 2 then R(x + 5, y0 + 3, 5, 5) end
-        if op == 1 then R(x + 3, y0 - 2, 4, 2)
-        elseif op == 2 then R(x + 1, y0 - 3, 9, 2) R(x + 1, y0 - 1, 1, 1) R(x + 9, y0 - 1, 1, 1) end
-        if fx == 1 then R(x + recv + 2, y0 + 3, 1, 2) end
-    elseif cls == "S" then
-        local stock = st == 0 and 0 or 4
-        if st == 1 then R(0, y0 + 1, stock, 1) R(0, y0, 1, 3) elseif st == 2 then R(0, y0, stock, 3) end
-        local x = stock
-        R(x, y0, 11, 3)
-        if fx == 2 then R(x + 11, y0, 6 + ln, 3) else R(x + 11, y0 + 1, 4 + ln, 1) end
-        R(x + 1, y0 - 1, 1, 1)
-        R(x + 2, y0 + 3, 2, 3)
-        R(x + 4, y0 + 3, 2, 1)
-        if m == 0 then R(x + 7, y0 + 3, 2, 6)
-        elseif m == 1 then R(x + 7, y0 + 3, 2, 4) R(x + 8, y0 + 7, 2, 3)
-        elseif m == 2 then R(x + 5, y0 + 3, 5, 5) end
-        if op ~= 0 then R(x + 3, y0 - 2, 4, 2) end
-    elseif cls == "L" then
-        R(0, y0, 6, 3) R(0, y0, 1, 4)
-        R(6, y0, 10, 4)
-        R(16, y0 + 1, 8, 2)
-        R(24, y0 + 1, 4 + ln, 1)
-        R(27 + ln, y0, 1, 3)
-        R(21, y0 + 3, 1, 5) R(25, y0 + 3, 1, 5)
-        if m == 0 then R(9, y0 + 4, 6, 5) elseif m == 1 then R(9, y0 + 4, 6, 3) R(10, y0 + 7, 5, 3) else R(8, y0 + 4, 6, 6) end
-        R(11, y0 - 2, 6, 1) R(11, y0 - 2, 1, 2) R(16, y0 - 2, 1, 2)
-        R(7, y0 + 4, 2, 3)
-    elseif cls == "H" then
-        if st == 2 then R(0, y0 + 1, 7, 3) R(0, y0 + 1, 1, 4)
-        elseif st == 1 then R(0, y0 + 1, 7, 1) R(0, y0 + 3, 7, 1) R(0, y0 + 1, 1, 3) end
-        R(7, y0, 9, 3)
-        local len = 10 + ln
-        R(16, y0, len, 1)
-        R(16, y0 + 2, len - 3, 1)
-        R(17, y0 + 1, 5, 3)
-        R(9, y0 + 3, 2, 3)
-        R(15 + len, y0 - 1, 1, 1)
-        if op == 1 then R(10, y0 - 1, 3, 1) end
-    elseif cls == "N" then
-        R(0, y0 + 1, 9, 3) R(2, y0, 5, 1)
-        R(9, y0 + 1, 8, 3)
-        R(17, y0 + 2, 13 + ln, 1)
-        R(29 + ln, y0 + 1, 2, 3)
-        R(10, y0 - 2, 11, 2) R(9, y0 - 3, 2, 4) R(19, y0 - 3, 2, 4)
-        R(23, y0 + 3, 1, 5)
-        R(12, y0 + 4, 2, 3)
-    elseif cls == "P" then
-        local len = 12 + ln
-        R(6, 3, len, 3)
-        R(6 + len, 4, 1, 1)
-        R(7, 6, len - 3, 1)
-        R(7, 7, 4, 3) R(6, 10, 4, 3)
-        R(11, 7, 3, 1) R(13, 7, 1, 2)
-        R(6, 2, 1, 1) R(5 + len, 2, 1, 1)
-        if op == 1 then R(9, 1, 4, 2) end
-        if fx == 1 then R(7 + len, 3, 2, 2) end
-    elseif cls == "V" then
-        local len = 8 + ln * 2
-        R(8, 3, 9, 4)
-        R(12, 2, 5, 6)
-        R(17, 3, len, 2)
-        R(17, 2, len, 1)
-        R(16 + len, 2, 1, 4)
-        R(15 + len, 1, 1, 1)
-        R(7, 2, 2, 2)
-        R(7, 7, 3, 3) R(6, 10, 4, 3)
-        R(11, 7, 1, 2)
-    elseif cls == "K" then
-        local blade = 7 + ln * 2
-        R(0, 5, 8, 3) R(0, 4, 1, 5)
-        R(8, 3, 1, 7)
-        R(9, 4, blade, 3)
-        R(9 + blade, 5, 2, 2)
-        R(11 + blade, 6, 2, 1)
-        if fx == 1 then R(10, 3, math.max(blade - 2, 2), 1) end
-    elseif cls == "T" then
-        if fx == 1 then
-            R(0, 6, 28, 1) R(28, 4, 4, 5) R(32, 6, 2, 1)
-        elseif fx == 2 then
-            R(0, 6, 26, 1) R(24, 2, 5, 9) R(29, 3, 2, 7) R(31, 4, 1, 5)
-        else
-            R(0, 5, 9, 3) R(0, 4, 1, 5)
-            R(9, 2, 2, 10)
-            R(11, 4, 20, 4) R(31, 5, 2, 2)
         end
-    elseif cls == "G" then
-        if fx == 1 then
-            R(13, 3, 8, 10) R(13, 2, 8, 1) R(15, 1, 4, 1)
-            R(22, 2, 5, 1)
-        else
-            R(12, 5, 10, 8) R(11, 6, 12, 6)
-            R(15, 3, 4, 2)
-            R(19, 2, 7, 1) R(23, 3, 1, 7)
-            R(11, 2, 3, 1) R(11, 2, 1, 3)
-        end
-    end
-    return r
+        model.Parent = frame
+    end)
+    if not okParent then pcall(function() model:Destroy() end) return false end
+    local okBox, cframe, size = pcall(function() return model:GetBoundingBox() end)
+    if not okBox then frame:Destroy() return false end
+    local axes = { { "X", size.X, cframe.RightVector }, { "Y", size.Y, cframe.UpVector }, { "Z", size.Z, cframe.LookVector } }
+    table.sort(axes, function(a, b) return a[2] > b[2] end)
+    local long, second, short = axes[1], axes[2], axes[3]
+    local right, up, view = long[3], second[3], short[3]
+    if math.abs(up:Dot(Vector3.yAxis)) < math.abs(right:Dot(Vector3.yAxis)) then right, up = up, right end
+    local aspect = ICON_W / ICON_H
+    local tanV = math.tan(math.rad(cam.FieldOfView / 2))
+    local distance = math.max((long[2] / 2) / (tanV * aspect), (second[2] / 2) / tanV) * 1.15 + short[2] / 2
+    cam.CFrame = CFrame.lookAt(cframe.Position + view * distance, cframe.Position, up)
+    return frame
 end
 
 local function iconFor(weaponName)
     if not weaponName then return nil end
-    local key = string.lower(tostring(weaponName))
-    key = string.gsub(key, "[^%w]", "")
-    local cached = iconCache[key]
-    if cached ~= nil then return cached or nil end
-    local spec = ICON_SPECS[key]
-    if not spec then
-        iconCache[key] = false
-        return nil
+    local template = iconTemplates[weaponName]
+    if template == nil then
+        iconTemplates[weaponName] = false
+        local gui = ensureLabelGui()
+        if gui then
+            local ok, frame = pcall(buildIconTemplate, weaponName)
+            if ok and frame then
+                frame.Visible = false
+                frame.Parent = gui
+                iconTemplates[weaponName] = frame
+            end
+        end
+        template = iconTemplates[weaponName]
     end
-    local rects = buildIcon(spec)
-    iconCache[key] = rects
-    return rects
+    return template or nil
 end
+onUnload(function()
+    for _, frame in pairs(iconTemplates) do if frame then pcall(function() frame:Destroy() end) end end
+    iconTemplates = {}
+end)
 
-
--- ---------------------------------------------------------------- drawing pools
-local LIST_KEYS = { glowSquares = true, hpStrips = true, innerCorners = true, iconRects = true, iconShadow = true, strips = true, sides = true, outerCorners = true, innerCorners = true, glowCorners = true, corners = true, bones = true, boneShadow = true }
-
+-- ---------------------------------------------------------------- drawing objects
 local function makeEsp()
-    local function label() return newLabel() end
-    return {
+    local function text() return newDrawing("Text", { Size = 13, Font = 2, Center = true, Outline = true, OutlineColor = BLACK, ZIndex = 8 }) end
+    local object = {
         fill = newDrawing("Square", { Filled = true, ZIndex = 1 }),
-        outer = newDrawing("Square", { Thickness = 1, Filled = false, Color = BLACK, ZIndex = 2 }),
-        inner = newDrawing("Square", { Thickness = 1, Filled = false, Color = BLACK, ZIndex = 2 }),
+        outer = newDrawing("Square", { Thickness = 1, Filled = false, Color = Color3.fromRGB(20, 20, 20), ZIndex = 2 }),
         box = newDrawing("Square", { Thickness = 1, Filled = false, ZIndex = 3 }),
-        name = label(), dist = label(), weapon = label(), hpText = label(), arrowText = label(),
-        hpBack = newDrawing("Square", { Filled = true, Color = BLACK, ZIndex = 4 }),
-        hpTrail = newDrawing("Square", { Filled = true, Color = WHITE, ZIndex = 5 }),
-        hpFill = newDrawing("Square", { Filled = true, ZIndex = 6 }),
-        tracer = newDrawing("Line", { Thickness = 1, ZIndex = 2 }),
-        dot = newDrawing("Circle", { Thickness = 1, NumSides = 20, Filled = false, ZIndex = 5 }),
+        inner = newDrawing("Square", { Thickness = 1, Filled = false, Color = Color3.fromRGB(20, 20, 20), ZIndex = 2 }),
+        hpBack = newDrawing("Square", { Filled = true, Color = Color3.fromRGB(10, 10, 10), ZIndex = 4 }),
+        hpFill = newDrawing("Square", { Filled = true, ZIndex = 5 }),
+        hpText = text(), name = text(), weapon = text(),
         arrow = newDrawing("Triangle", { Filled = true, ZIndex = 6 }),
         arrowEdge = newDrawing("Triangle", { Filled = false, Thickness = 1, Color = BLACK, ZIndex = 5 }),
-        face = false,
+        bones = {}, boneEdges = {}, flagTexts = {}, ring = {},
+        icon = false, iconName = false,
     }
+    for index = 1, 10 do
+        object.boneEdges[index] = newDrawing("Line", { Thickness = 3, Color = BLACK, ZIndex = 2 })
+        object.bones[index] = newDrawing("Line", { Thickness = 1, ZIndex = 3 })
+    end
+    for index = 1, 3 do object.flagTexts[index] = text() end
+    for index = 1, RING_SEGMENTS do object.ring[index] = newDrawing("Line", { Thickness = 1, ZIndex = 3 }) end
+    return object
 end
 
-local function ensureList(object, key, count, kind, props)
-    local list = object[key]
-    if not list then
-        list = {}
-        object[key] = list
-    end
-    for index = #list + 1, count do
-        list[index] = newDrawing(kind, props)
-    end
-    return list
-end
-
+local LIST_KEYS = { bones = true, boneEdges = true, flagTexts = true, ring = true }
 local function eachDrawing(object, fn)
     for key, value in pairs(object) do
         if LIST_KEYS[key] then
-            for _, inner in ipairs(value) do fn(inner) end
-        elseif key ~= "face" and type(value) ~= "number" then
+            for _, inner in ipairs(value) do if inner then fn(inner) end end
+        elseif type(value) == "table" or type(value) == "userdata" then
             fn(value)
         end
     end
@@ -2456,16 +1664,17 @@ end
 
 local function hideEsp(object)
     if not object then return end
-    eachDrawing(object, function(drawing) if drawing then drawing.Visible = false end end)
+    eachDrawing(object, function(drawing) pcall(function() drawing.Visible = false end) end)
+    if object.icon then pcall(function() object.icon.Visible = false end) end
 end
 
 local function destroyEsp(object)
     if not object then return end
     eachDrawing(object, removeDrawing)
+    if object.icon then pcall(function() object.icon:Destroy() end) end
 end
 
 -- ---------------------------------------------------------------- skeleton
--- The game's third person rig has fixed part sizes, so every joint is a fixed offset inside its part (scaled by the real size)
 local REF_SIZES = {
     Head = Vector3.new(2, 1, 1), Torso = Vector3.new(2, 2, 1),
     ["Left Arm"] = Vector3.new(1, 2, 1), ["Right Arm"] = Vector3.new(1, 2, 1),
@@ -2509,53 +1718,47 @@ local function bonePoints(hash)
     return points
 end
 
+-- ---------------------------------------------------------------- geometry
 local function project(cam, position)
     local point = cam:WorldToViewportPoint(position)
     return Vector2.new(point.X, point.Y), point.Z > 0, point.Z
 end
 
--- screen rectangle of the whole character
-local function screenBounds(cam, record, tight)
-    if not tight then
-        local topPoint, topOn = project(cam, record.head.Position + Vector3.new(0, 0.9, 0))
-        local lowest = record.torso.Position.Y
-        for _, legName in ipairs({ "Left Leg", "Right Leg" }) do
-            local leg = record.hash[legName]
-            if leg and leg.Parent and leg.Position.Y - leg.Size.Y * 0.5 < lowest then lowest = leg.Position.Y - leg.Size.Y * 0.5 end
-        end
-        local bottomPoint, bottomOn = project(cam, Vector3.new(record.torso.Position.X, lowest, record.torso.Position.Z))
-        if not (topOn and bottomOn) then return nil end
-        local height = math.abs(bottomPoint.Y - topPoint.Y)
-        local width = height * 0.8
-        return (topPoint.X + bottomPoint.X) * 0.5 - width * 0.5, math.min(topPoint.Y, bottomPoint.Y), width, height
-    end
+local BOX_PARTS = { "Head", "Torso", "Left Leg", "Right Leg" }
+-- the rectangle that wraps the whole character; arms are represented by a fixed reach so it does not jump while aiming
+local function playerBounds(cam, record)
     local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
-    for _, name in ipairs(PART_NAMES) do
+    local function add(world)
+        local point, front = project(cam, world)
+        if not front then return false end
+        if point.X < minX then minX = point.X end
+        if point.X > maxX then maxX = point.X end
+        if point.Y < minY then minY = point.Y end
+        if point.Y > maxY then maxY = point.Y end
+        return true
+    end
+    local center = record.torso.Position
+    for _, name in ipairs(BOX_PARTS) do
         local part = record.hash[name]
-        if part and part.Parent and (part.Position - record.torso.Position).Magnitude < 10 then
+        if part and part.Parent and (part.Position - center).Magnitude < 10 then
             local cframe, half = part.CFrame, part.Size * 0.5
             for _, sx in ipairs({ -1, 1 }) do
                 for _, sy in ipairs({ -1, 1 }) do
                     for _, sz in ipairs({ -1, 1 }) do
-                        local point, front = project(cam, cframe:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)))
-                        if not front then return nil end
-                        if point.X < minX then minX = point.X end
-                        if point.X > maxX then maxX = point.X end
-                        if point.Y < minY then minY = point.Y end
-                        if point.Y > maxY then maxY = point.Y end
+                        if not add(cframe:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz))) then return nil end
                     end
                 end
             end
         end
     end
+    local right = record.torso.CFrame.RightVector
+    for _, side in ipairs({ -1, 1 }) do
+        for _, lift in ipairs({ -1, 1 }) do
+            if not add(center + right * (2 * side) + Vector3.new(0, lift, 0)) then return nil end
+        end
+    end
     if minX == math.huge then return nil end
-    return minX - 2, minY - 2, maxX - minX + 4, maxY - minY + 4
-end
-
-local function setText(drawing, text, size, color, position, alpha, outline)
-    if not drawing then return end
-    drawing.Text, drawing.Size, drawing.Color, drawing.Position = text, size, color, position
-    drawing.Transparency, drawing.Outline, drawing.Visible = alpha, outline, true
+    return math.floor(minX), math.floor(minY), math.floor(maxX - minX), math.floor(maxY - minY)
 end
 
 local function clampRange(value, low, high)
@@ -2563,519 +1766,384 @@ local function clampRange(value, low, high)
     return math.clamp(value, low, high)
 end
 
-local function drawLine(line, from, to, color, thickness, alpha)
-    if not line then return end
-    line.From, line.To, line.Color = from, to, color
-    line.Thickness, line.Transparency, line.Visible = thickness, alpha, true
+local function rotate(vector, angle)
+    local c, s = math.cos(angle), math.sin(angle)
+    return Vector2.new(vector.X * c - vector.Y * s, vector.X * s + vector.Y * c)
 end
 
 -- ---------------------------------------------------------------- chams
--- Every player gets a private model of clone parts that follow the real body parts. The adornments and the highlight outline
--- are attached to the clones, so nothing is ever added to the real character.
-local function headDimensions(head)
+-- BBOT style: two box adornments per body part, parented to the real part. The inner one draws through walls,
+-- the outer one only where the part can be seen. A third larger layer is the glow.
+local function headSize(head)
     local size = head.Size
     local mesh = head:FindFirstChildOfClass("SpecialMesh")
     if mesh then size = Vector3.new(size.X * mesh.Scale.X, size.Y * mesh.Scale.Y, size.Z * mesh.Scale.Z) end
-    return math.min(size.X, size.Z) / 2, size.Y
+    return size
 end
 
-local function newAdornment(clone, alwaysOnTop, zIndex, round)
-    local adornment = Instance.new(round and "CylinderHandleAdornment" or "BoxHandleAdornment")
-    adornment.Adornee = clone
-    adornment.AlwaysOnTop = alwaysOnTop
-    adornment.ZIndex = zIndex
-    adornment.AdornCullingMode = Enum.AdornCullingMode.Never
-    if round then adornment.CFrame = CFrame.new(Vector3.new(0, 0, 0), Vector3.new(0, 90, 0)) end
-    adornment.Parent = clone
-    return adornment
+local function newAdorn(part, isHead, alwaysOnTop)
+    local adorn = Instance.new(isHead and "CylinderHandleAdornment" or "BoxHandleAdornment")
+    adorn.Name = randomName()
+    adorn.Adornee = part
+    adorn.ZIndex = 1
+    adorn.AlwaysOnTop = alwaysOnTop
+    adorn.AdornCullingMode = Enum.AdornCullingMode.Never
+    if isHead then adorn.CFrame = CFrame.new(Vector3.zero, Vector3.new(0, 1, 0)) end
+    adorn.Visible = false
+    adorn.Parent = part
+    return adorn
 end
 
-local function makeClone(model, name)
-    local clone = Instance.new("Part")
-    clone.Name = randomName()
-    clone.Anchored = true
-    clone.CanCollide = false
-    clone.CanTouch = false
-    clone.CanQuery = false
-    clone.CastShadow = false
-    clone.Massless = true
-    clone.Material = Enum.Material.SmoothPlastic
-    clone.Transparency = 0.99
-    clone.Size = Vector3.new(1, 1, 1)
-    clone.Parent = model
-    return clone
-end
-
-local function destroyPair(pair)
-    pcall(function() pair.clone:Destroy() end)
-end
-
-local function clearChams(player)
+local function destroyChams(player)
     local data = adornData[player]
     if not data then return end
-    if data.highlight then pcall(function() data.highlight:Destroy() end) end
-    pcall(function() data.model:Destroy() end)
+    for _, set in pairs(data.parts) do
+        for _, adorn in pairs({ set.hidden, set.visible, set.glow }) do pcall(function() adorn:Destroy() end) end
+    end
     adornData[player] = nil
 end
 
-local function updateChams(record, wanted, ctx)
+local function updateChams(record, wanted, cfg, ctx)
     local player = record.player
     if not wanted then
-        clearChams(player)
+        destroyChams(player)
         return
     end
-    adornFolder = ensureFolder(adornFolder)
-    if not adornFolder then return end
-
     local data = adornData[player]
-    if data and (data.hash ~= record.hash or not data.model.Parent) then
-        clearChams(player)
+    if data and data.hash ~= record.hash then
+        destroyChams(player)
         data = nil
     end
     if not data then
-        local model = Instance.new("Model")
-        model.Name = randomName()
-        model.Parent = adornFolder
-        data = { hash = record.hash, model = model, parts = {} }
+        data = { hash = record.hash, parts = {} }
         adornData[player] = data
     end
-
-    local visibleColor = record.override or ctx.chamVis
-    local signature = table.concat({
-        tostring(ctx.chamHid), ctx.chamHidT, ctx.chamVisT, ctx.chamThick, tostring(ctx.chamGlow),
-        ctx.chamGlowSize, tostring(ctx.chamRound), ctx.chamHead, tostring(visibleColor),
-        tostring(ctx.adornOn),
-    }, "|")
-
+    local visibleColor = record.override or cfg.chamVis
     for _, name in ipairs(PART_NAMES) do
         local part = record.hash[name]
-        local pair = data.parts[name]
-        if pair and (pair.source ~= part or not pair.clone.Parent or (name == "Head" and pair.round ~= ctx.chamRound)) then
-            destroyPair(pair)
+        local set = data.parts[name]
+        if set and (set.source ~= part or not set.hidden.Parent) then
+            for _, adorn in pairs({ set.hidden, set.visible, set.glow }) do pcall(function() adorn:Destroy() end) end
             data.parts[name] = nil
-            pair = nil
+            set = nil
         end
         if part and part.Parent then
-            local round = ctx.chamRound and name == "Head"
-            if not pair then
-                local clone = makeClone(data.model, name)
-                pair = {
-                    source = part, clone = clone, round = round,
-                    behind = newAdornment(clone, true, 1, round),
-                    visible = newAdornment(clone, false, -1, round),
+            local isHead = name == "Head"
+            if not set then
+                set = {
+                    source = part,
+                    hidden = newAdorn(part, isHead, true),
+                    visible = newAdorn(part, isHead, false),
+                    glow = newAdorn(part, isHead, true),
                 }
-                data.parts[name] = pair
+                data.parts[name] = set
             end
-            pair.clone.CFrame = part.CFrame
+            local layer, glow = ctx.chamLayer, ctx.chamGlowOn and ctx.chamGlowSize or 0
             local size = part.Size
-            if pair.signature ~= signature or pair.partSize ~= size then
-                pair.signature, pair.partSize = signature, size
-                local thickness = ctx.chamThick
-                pair.clone.Size = size + Vector3.new(thickness, thickness, thickness)
-                if round then
-                    local radius, height = headDimensions(part)
-                    radius, height = radius * ctx.chamHead, height * ctx.chamHead
-                    pair.behind.Radius, pair.behind.Height = radius, height
-                    pair.visible.Radius, pair.visible.Height = radius + thickness / 2, height + thickness
+            local signature = table.concat({ tostring(size), layer, glow, ctx.chamHead, tostring(cfg.chamHid), cfg.chamHidT, tostring(visibleColor), cfg.chamVisT, tostring(ctx.chamGlowColor), ctx.chamGlowT }, "|")
+            if set.signature ~= signature then
+                set.signature = signature
+                if isHead then
+                    local dims = headSize(part)
+                    local radius, height = math.min(dims.X, dims.Z) * 0.5 * ctx.chamHead, dims.Y * ctx.chamHead
+                    set.hidden.Radius, set.hidden.Height = radius - layer, height - layer
+                    set.visible.Radius, set.visible.Height = radius + layer, height + layer
+                    set.glow.Radius, set.glow.Height = radius + layer + glow, height + layer + glow
                 else
-                    pair.behind.Size = size
-                    pair.visible.Size = size + Vector3.new(thickness, thickness, thickness)
+                    set.hidden.Size = size + Vector3.new(0.1, 0.1, 0.1) - Vector3.new(0.25, 0.25, 0.25) * (layer > 0 and 1 or 0)
+                    set.visible.Size = size + Vector3.new(0.1, 0.1, 0.1) + Vector3.new(layer, layer, layer)
+                    set.glow.Size = size + Vector3.new(layer + glow, layer + glow, layer + glow)
                 end
-                pair.behind.Color3, pair.behind.Transparency = ctx.chamHid, ctx.chamHidT
-                pair.visible.Color3 = visibleColor
-                pair.visible.AlwaysOnTop = ctx.chamGlow
-                pair.visible.Transparency = ctx.chamGlow and (ctx.chamVisT / ctx.chamGlowSize) or ctx.chamVisT
-                pair.behind.Visible = ctx.adornOn and ctx.chamHidOn
-                pair.visible.Visible = ctx.adornOn and ctx.chamVisOn
+                set.hidden.Color3, set.hidden.Transparency = cfg.chamHid, cfg.chamHidT
+                set.visible.Color3, set.visible.Transparency = visibleColor, cfg.chamVisT
+                set.glow.Color3, set.glow.Transparency = ctx.chamGlowColor, ctx.chamGlowT
             end
+            set.hidden.Visible = true
+            set.visible.Visible = true
+            set.glow.Visible = ctx.chamGlowOn
         end
-    end
-
-    if ctx.lineOn then
-        local highlight = data.highlight
-        if not highlight or not highlight.Parent then
-            highlight = Instance.new("Highlight")
-            highlight.Name = randomName()
-            highlight.FillTransparency = 1
-            highlight.Adornee = data.model
-            highlight.Parent = adornFolder
-            data.highlight = highlight
-        end
-        highlight.OutlineColor = record.override or ctx.lineColor
-        highlight.OutlineTransparency = ctx.lineT
-        highlight.DepthMode = ctx.lineWalls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
-        highlight.Enabled = true
-    elseif data.highlight then
-        pcall(function() data.highlight:Destroy() end)
-        data.highlight = nil
     end
 end
 
 onUnload(function()
-    for player in pairs(adornData) do clearChams(player) end
-    if adornFolder then pcall(function() adornFolder:Destroy() end) end
+    for player in pairs(adornData) do destroyChams(player) end
 end)
 track(Players.PlayerRemoving:Connect(function(player)
-    clearChams(player)
+    destroyChams(player)
+    sounds[player] = nil
 end))
 
--- ---------------------------------------------------------------- per player drawing
-local GLOW_LAYERS = 4
-local CORNERS = { { 0, 0, 1, 1 }, { 1, 0, -1, 1 }, { 0, 1, 1, -1 }, { 1, 1, -1, -1 } }
-
-local function drawPlayer(cam, object, state, record, cfg, ctx, now, dt, distance, origin)
-    local alpha = state.alpha * ctx.opacity
-    if ctx.fade then alpha *= math.clamp(1 - (distance / ctx.maxDistance) ^ 2 * 0.7, 0.3, 1) end
-    if alpha <= 0.01 then return end
-    local scale = ctx.scale
-    local viewport, center = ctx.viewport, ctx.center
-
-    local override = record.override
-    local color = override or cfg.color
-
-    local face = fontFace(ctx.fontName)
-    if object.face ~= face then
-        object.face = face
-        for _, key in ipairs({ "name", "dist", "weapon", "hpText", "arrowText" }) do
-            local text = object[key]
-            if text then pcall(function() text.FontFace = face end) end
+-- ---------------------------------------------------------------- sound tracker
+local soundHooked
+local function hookSounds()
+    if soundHooked then return end
+    local audio = Core.mods.AudioSystem
+    if type(audio) ~= "table" or type(audio.playSound) ~= "function" then return end
+    local original = audio.playSound
+    audio.playSound = function(...)
+        local packed = table.pack(...)
+        local root = packed[8]
+        if typeof(root) == "Instance" and (readFlag("esp_sound", false) or readFlag("esp_sound@Friendly", false)) then
+            pcall(function()
+                for _, record in ipairs(lastRecords) do
+                    local match = root == record.torso or (record.model and root:IsDescendantOf(record.model))
+                    if match then
+                        local current = sounds[record.player]
+                        if not current or os.clock() - current.t0 > current.duration then
+                            sounds[record.player] = { t0 = os.clock(), duration = readFlag("snd_duration", 0.9) }
+                        end
+                        break
+                    end
+                end
+            end)
         end
+        return original(...)
     end
+    soundHooked = true
+    onUnload(function()
+        pcall(function() audio.playSound = original end)
+        soundHooked = nil
+    end)
+end
 
-    local torsoPoint, torsoOn = project(cam, record.torso.Position)
-    if not torsoOn then
-        if cfg.arrows and object.arrow then
-            local relative = cam.CFrame:PointToObjectSpace(record.torso.Position)
-            local angle = math.atan2(relative.X, -relative.Z)
-            local direction = Vector2.new(math.sin(angle), -math.cos(angle))
-            local side = Vector2.new(-direction.Y, direction.X)
-            local size = cfg.arrowSize * scale
-            local pulse = 1 + math.sin(now * 5) * 0.06
-            local anchor = center + direction * cfg.arrowRadius * scale
-            local tip = anchor + direction * size * pulse
-            local left = anchor - direction * size * 0.5 + side * size * 0.6
-            local right = anchor - direction * size * 0.5 - side * size * 0.6
-            for _, triangle in ipairs({ object.arrow, object.arrowEdge }) do
-                triangle.PointA, triangle.PointB, triangle.PointC = tip, left, right
-                triangle.Transparency, triangle.Visible = alpha * cfg.arrowA, true
-            end
-            object.arrow.Color = override or cfg.arrowColor
-            if cfg.arrowText then
-                local text = string.format("%s  %dm", record.name, math.floor(distance * 0.28))
-                setText(object.arrowText, text, (cfg.text - 2) * scale, override or cfg.arrowColor, anchor + direction * (size + 12 * scale) - Vector2.new(0, cfg.text * scale * 0.5), alpha * cfg.arrowA, true)
-            end
+-- ---------------------------------------------------------------- per player drawing
+local function setText(drawing, text, size, font, color, x, y, alpha, center, outline)
+    drawing.Text, drawing.Size, drawing.Font, drawing.Color = text, size, font, color
+    drawing.Center, drawing.Outline = center, outline
+    drawing.Position = Vector2.new(math.floor(x), math.floor(y))
+    drawing.Transparency, drawing.Visible = alpha, true
+end
+
+local function casedText(text, mode, maxLength)
+    if mode == "lower" then text = string.lower(text) elseif mode == "UPPER" then text = string.upper(text) end
+    if #text > maxLength then text = string.sub(text, 1, maxLength) end
+    return text
+end
+
+local function drawArrow(object, cam, record, cfg, ctx, alpha, color, meters)
+    local relative = cam.CFrame:PointToObjectSpace(record.torso.Position)
+    local direction
+    if math.abs(relative.X) < 0.001 and math.abs(relative.Y) < 0.001 then
+        direction = Vector2.new(0, 1)
+    else
+        local angle = math.atan2(-relative.Y, relative.X)
+        direction = Vector2.new(math.cos(angle), math.sin(angle))
+    end
+    local size = ctx.arrowSize
+    if ctx.arrowDynamic then size = math.clamp(size * (1.6 - meters / 150), size * 0.6, size * 1.6) end
+    local viewport, center = ctx.viewport, ctx.center
+    local radius = ctx.arrowRadius / 100 * viewport.X * 0.5
+    local limit = math.huge
+    if math.abs(direction.X) > 0.001 then limit = math.min(limit, (viewport.X * 0.5 - 10) / math.abs(direction.X)) end
+    if math.abs(direction.Y) > 0.001 then limit = math.min(limit, (viewport.Y * 0.5 - 10) / math.abs(direction.Y)) end
+    radius = math.min(radius, limit)
+    local tip = center + direction * radius
+    local pointB = tip - rotate(direction, 0.5) * size
+    local pointC = tip - rotate(direction, -0.5) * size
+    local fade = alpha
+    if ctx.arrowFade then fade *= math.clamp(1 - meters / ctx.arrowFadeDistance, 0.15, 1) end
+    object.arrow.PointA, object.arrow.PointB, object.arrow.PointC = tip, pointB, pointC
+    object.arrow.Color, object.arrow.Transparency, object.arrow.Visible = color, fade, true
+    if ctx.outline then
+        object.arrowEdge.PointA, object.arrowEdge.PointB, object.arrowEdge.PointC = tip, pointB, pointC
+        object.arrowEdge.Transparency, object.arrowEdge.Visible = fade, true
+    end
+end
+
+local function drawRing(object, cam, record, cfg, ctx, now, alpha, visible)
+    local sound = sounds[record.player]
+    if not sound then return end
+    local age = now - sound.t0
+    if age > sound.duration then
+        sounds[record.player] = nil
+        return
+    end
+    if not ctx.soundWalls and not visible then return end
+    local progress = age / sound.duration
+    local radius = 2 + (ctx.soundRadius - 2) * progress
+    local fadeOut = math.clamp((sound.duration - age) / 0.2, 0, 1)
+    local feet = record.torso.Position - Vector3.new(0, 3, 0)
+    local previous, previousFront
+    local first, firstFront
+    for index = 0, RING_SEGMENTS do
+        local angle = (index % RING_SEGMENTS) / RING_SEGMENTS * math.pi * 2
+        local point, front = project(cam, feet + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius))
+        if index > 0 and front and previousFront then
+            local line = object.ring[index]
+            line.From, line.To = previous, point
+            line.Color = cfg.soundColor
+            line.Transparency = cfg.soundA * alpha * fadeOut
+            line.Visible = true
         end
+        previous, previousFront = point, front
+    end
+end
+
+local function drawPlayer(cam, object, state, record, cfg, ctx, now, distance, origin)
+    local alpha = state.alpha
+    local meters = math.floor(distance * 0.28)
+    local visible = isVisible(record.torso, origin, now)
+    local outline = ctx.outline
+    local size, font = ctx.textSize, ctx.font
+    local override = record.override
+
+    local screen = project(cam, record.torso.Position)
+    local _, front = project(cam, record.torso.Position)
+    local onScreen = front and screen.X >= 0 and screen.X <= ctx.viewport.X and screen.Y >= 0 and screen.Y <= ctx.viewport.Y
+
+    if not onScreen then
+        if cfg.oov then drawArrow(object, cam, record, cfg, ctx, alpha * cfg.oovA, override or cfg.oovColor, meters) end
+        if cfg.sound then drawRing(object, cam, record, cfg, ctx, now, alpha, visible) end
         return
     end
 
-    local left, top, width, height = screenBounds(cam, record, cfg.tight)
-    if not left then return end
-    local centerX = left + width * 0.5
-    local right, bottom = left + width, top + height
-    local position, size = Vector2.new(left, top), Vector2.new(width, height)
-    local thickness = cfg.thick * scale
-    local o = thickness * 0.5 + 0.5
-    local boxOn = cfg.box ~= "Off"
-    local gradOn = ctx.gradOn and not override
-    local glowColor = override or ctx.glowColor
-    local glowAlpha = 1 - ctx.glowT
+    local x, y, w, h = playerBounds(cam, record)
+    if cfg.sound then drawRing(object, cam, record, cfg, ctx, now, alpha, visible) end
+    if not x or w < 2 or h < 2 then return end
 
-    -- fill
-    if cfg.fillOn and boxOn then
-        local fillAlpha = (1 - cfg.fillT) * alpha
-        if gradOn and ctx.gradFill then
-            local strips = ensureList(object, "strips", STRIPS, "Square", { Filled = true, ZIndex = 1 })
-            local stripHeight = height / STRIPS
-            for index = 1, STRIPS do
-                local strip = strips[index]
-                if strip then
-                    strip.Position = Vector2.new(left, top + (index - 1) * stripHeight)
-                    strip.Size = Vector2.new(width, stripHeight + 0.5)
-                    strip.Color = ctx.gradA:Lerp(ctx.gradB, pingPong(ctx.phase + (index - 1) / (STRIPS - 1) * ctx.gradStretch))
-                    strip.Transparency, strip.Visible = fillAlpha, true
-                end
-            end
-        else
-            object.fill.Position, object.fill.Size, object.fill.Color = position, size, override or cfg.fillColor
-            object.fill.Transparency, object.fill.Visible = fillAlpha, true
-        end
-    end
-
-    local function outlineColor(x)
-        if gradOn and ctx.gradOutline then return ctx.gradA:Lerp(ctx.gradB, pingPong(ctx.phase + x * ctx.gradStretch)) end
-        return color
-    end
-
-    -- box
-    if cfg.box == "Full" then
-        if cfg.glow then
-            local layers = ensureList(object, "glowSquares", GLOW_LAYERS, "Square", { Filled = false, ZIndex = 1 })
-            for index = 1, GLOW_LAYERS do
-                local layer = layers[index]
-                if layer then
-                    layer.Position, layer.Size, layer.Color = position, size, glowColor
-                    layer.Thickness = thickness + ctx.glowSize * 2 * index / GLOW_LAYERS
-                    layer.Transparency, layer.Visible = alpha * glowAlpha * 0.22, true
-                end
-            end
-        end
-        if cfg.outlineOn then
-            object.outer.Position, object.outer.Size = position - Vector2.new(o, o), size + Vector2.new(o * 2, o * 2)
+    local boxColor = override or cfg.boxColor
+    if cfg.box then
+        if outline then
+            object.outer.Position, object.outer.Size = Vector2.new(x - 1, y - 1), Vector2.new(w + 2, h + 2)
             object.outer.Transparency, object.outer.Visible = alpha * cfg.boxA, true
-            if width > o * 4 and height > o * 4 then
-                object.inner.Position, object.inner.Size = position + Vector2.new(o, o), size - Vector2.new(o * 2, o * 2)
-                object.inner.Transparency, object.inner.Visible = alpha * cfg.boxA, true
-            end
+            object.inner.Position, object.inner.Size = Vector2.new(x + 1, y + 1), Vector2.new(w - 2, h - 2)
+            object.inner.Transparency, object.inner.Visible = alpha * cfg.boxA, true
         end
-        if gradOn and ctx.gradOutline then
-            local sides = ensureList(object, "sides", 4, "Line", { ZIndex = 3 })
-            local corners = { Vector2.new(left, top), Vector2.new(right, top), Vector2.new(right, bottom), Vector2.new(left, bottom) }
-            for index = 1, 4 do
-                drawLine(sides[index], corners[index], corners[index % 4 + 1], outlineColor((index - 1) / 4), thickness, alpha * cfg.boxA)
-            end
-        else
-            object.box.Position, object.box.Size, object.box.Color = position, size, color
-            object.box.Thickness, object.box.Transparency, object.box.Visible = thickness, alpha * cfg.boxA, true
-        end
-    elseif cfg.box == "Corners" then
-        local length = math.min(width, height) * 0.28
-        local outerLines = cfg.outlineOn and ensureList(object, "outerCorners", 8, "Line", { Thickness = 1, Color = BLACK, ZIndex = 2 })
-        local glowLines = cfg.glow and ensureList(object, "glowCorners", 8 * GLOW_LAYERS, "Line", { ZIndex = 1 })
-        local innerLines = cfg.outlineOn and ensureList(object, "innerCorners", 8, "Line", { Thickness = 1, Color = BLACK, ZIndex = 2 })
-        local lines = ensureList(object, "corners", 8, "Line", { ZIndex = 3 })
-        for index, corner in ipairs(CORNERS) do
-            local cx, cy = left + corner[1] * width, top + corner[2] * height
-            local sx, sy = corner[3], corner[4]
-            local lineColor = outlineColor((index - 1) / 4)
-            local hFrom, hTo = Vector2.new(cx, cy), Vector2.new(cx + sx * length, cy)
-            local vFrom, vTo = Vector2.new(cx, cy), Vector2.new(cx, cy + sy * length)
-            local h, v = index * 2 - 1, index * 2
-            if glowLines then
-                for layer = 1, GLOW_LAYERS do
-                    local glowThickness = thickness + ctx.glowSize * 2 * layer / GLOW_LAYERS
-                    drawLine(glowLines[(layer - 1) * 8 + h], hFrom, hTo, glowColor, glowThickness, alpha * glowAlpha * 0.22)
-                    drawLine(glowLines[(layer - 1) * 8 + v], vFrom, vTo, glowColor, glowThickness, alpha * glowAlpha * 0.22)
-                end
-            end
-            if outerLines then
-                drawLine(outerLines[h], Vector2.new(cx - sx * o, cy - sy * o), Vector2.new(cx + sx * length, cy - sy * o), BLACK, 1, alpha * cfg.boxA)
-                drawLine(outerLines[v], Vector2.new(cx - sx * o, cy - sy * o), Vector2.new(cx - sx * o, cy + sy * length), BLACK, 1, alpha * cfg.boxA)
-            end
-            if innerLines then
-                drawLine(innerLines[h], Vector2.new(cx + sx * o, cy + sy * o), Vector2.new(cx + sx * length, cy + sy * o), BLACK, 1, alpha * cfg.boxA)
-                drawLine(innerLines[v], Vector2.new(cx + sx * o, cy + sy * o), Vector2.new(cx + sx * o, cy + sy * length), BLACK, 1, alpha * cfg.boxA)
-            end
-            drawLine(lines[h], hFrom, hTo, lineColor, thickness, alpha * cfg.boxA)
-            drawLine(lines[v], vFrom, vTo, lineColor, thickness, alpha * cfg.boxA)
+        object.box.Position, object.box.Size = Vector2.new(x, y), Vector2.new(w, h)
+        object.box.Color, object.box.Transparency, object.box.Visible = boxColor, alpha * cfg.boxA, true
+        if cfg.fillA > 0.01 then
+            object.fill.Position, object.fill.Size = Vector2.new(x, y), Vector2.new(w, h)
+            object.fill.Color, object.fill.Transparency, object.fill.Visible = cfg.fillColor, alpha * cfg.fillA, true
         end
     end
 
-    -- text
-    local textSize = cfg.text * scale
-    local barGap = cfg.hpWidth * scale + 4
-    local topOffset = (cfg.health and cfg.hpPos == "Top") and barGap or 0
-    local bottomOffset = (cfg.health and cfg.hpPos == "Bottom") and barGap or 0
+    local health = math.clamp(state.hp * 100, 0, 100)
+    if cfg.hp then
+        local fillHeight = math.floor(h * health / 100)
+        object.hpBack.Position, object.hpBack.Size = Vector2.new(x - 6, y - 1), Vector2.new(4, h + 2)
+        object.hpBack.Transparency, object.hpBack.Visible = alpha * cfg.hpA, true
+        object.hpFill.Position, object.hpFill.Size = Vector2.new(x - 5, y + h - fillHeight), Vector2.new(2, fillHeight)
+        object.hpFill.Color = lerpColor(cfg.hpLow, cfg.hpFull, health / 100)
+        object.hpFill.Transparency, object.hpFill.Visible = alpha * cfg.hpA, true
+    end
+    if cfg.hpNum and health <= ctx.hpCap and health > 0 then
+        local label = object.hpText
+        setText(label, tostring(math.floor(health + 0.5)), size, font, cfg.hpNumColor, x - 7, y, alpha * cfg.hpNumA, false, outline)
+        local bounds = label.TextBounds
+        local fillTop = cfg.hp and (y + h - math.floor(h * health / 100)) or y
+        local labelY = clampRange(fillTop - bounds.Y * 0.5, y - 4, y + h - 10)
+        label.Position = Vector2.new(math.floor(x - bounds.X - (cfg.hp and 7 or 3)), math.floor(labelY))
+    end
+
     if cfg.name then
-        setText(object.name, record.name, textSize, override or cfg.nameColor, Vector2.new(centerX, top - textSize - 3 - topOffset), alpha * cfg.nameA, cfg.textOutline)
+        setText(object.name, casedText(record.name, ctx.textCase, ctx.maxText), size, font, override or cfg.nameColor, x + w * 0.5, y - size - 2, alpha * cfg.nameA, true, outline)
     end
-    local lineY = bottom + 2 + bottomOffset
-    if cfg.distance then
-        setText(object.dist, string.format("%dm", math.floor(distance * 0.28)), textSize - 1, override or cfg.distColor, Vector2.new(centerX, lineY), alpha * cfg.distA, cfg.textOutline)
-        lineY += textSize
+
+    local below = 0
+    if cfg.weapon then
+        setText(object.weapon, casedText(record.weaponName or "???", ctx.textCase, ctx.maxText), size, font, override or cfg.weaponColor, x + w * 0.5, y + h, alpha * cfg.weaponA, true, outline)
+        below += size - 1
     end
-    if cfg.weapon and record.weaponName then
-        setText(object.weapon, tostring(record.weaponName), textSize - 1, override or cfg.weaponColor, Vector2.new(centerX, lineY), alpha * cfg.weaponA, cfg.textOutline)
-        lineY += textSize
-    end
-    if cfg.weaponIcon and record.weaponName then
-        local rects = iconFor(record.weaponName)
-        if rects then
-            local unit = math.max(1, math.floor(textSize / 6))
-            local startX = math.floor(centerX - ICON_WIDTH * unit * 0.5)
-            local startY = math.floor(lineY + 1)
-            local pieces = ensureList(object, "iconRects", 18, "Square", { Filled = true, ZIndex = 7 })
-            local shadows = cfg.outlineOn and ensureList(object, "iconShadow", 18, "Square", { Filled = true, Color = BLACK, ZIndex = 6 })
-            for index, rect in ipairs(rects) do
-                local x, y, w, h = startX + rect[1] * unit, startY + rect[2] * unit, rect[3] * unit, rect[4] * unit
-                local piece = pieces[index]
-                if piece then
-                    piece.Position, piece.Size, piece.Color = Vector2.new(x, y), Vector2.new(w, h), override or cfg.weaponIconColor
-                    piece.Transparency, piece.Visible = alpha * cfg.iconA, true
-                end
-                local shadow = shadows and shadows[index]
-                if shadow then
-                    shadow.Position, shadow.Size = Vector2.new(x - 1, y - 1), Vector2.new(w + 2, h + 2)
-                    shadow.Transparency, shadow.Visible = alpha * cfg.iconA, true
-                end
+    if cfg.icon then
+        local template = iconFor(record.weaponName)
+        if template then
+            if object.iconName ~= record.weaponName or not object.icon or not object.icon.Parent then
+                if object.icon then pcall(function() object.icon:Destroy() end) end
+                object.icon = template:Clone()
+                object.icon.Parent = template.Parent
+                object.iconName = record.weaponName
             end
+            local icon = object.icon
+            icon.Position = UDim2.fromOffset(math.floor(x + w * 0.5 - ICON_W * 0.5), math.floor(y + h + below + 2))
+            icon.ImageColor3 = cfg.iconColor
+            icon.ImageTransparency = 1 - alpha * cfg.iconA
+            icon.Visible = true
+        elseif not cfg.weapon then
+            setText(object.weapon, casedText(record.weaponName or "???", ctx.textCase, ctx.maxText), size, font, override or cfg.iconColor, x + w * 0.5, y + h, alpha * cfg.iconA, true, outline)
         end
     end
 
-    -- health
-    local ratio = math.clamp(record.health / math.max(record.maxHealth, 1), 0, 1)
-    local healthColor
-    healthColor = override or (cfg.hpDynamic and Color3.fromRGB(255, 60, 60):Lerp(Color3.fromRGB(70, 255, 110), ratio) or cfg.hpColor)
-    if cfg.health then
-        local shown, trail = state.hp, state.trail
-        local barWidth = cfg.hpWidth * scale
-        local backPosition, backSize, fillPosition, fillSize, trailPosition, trailSize
-        local vertical = cfg.hpPos == "Left" or cfg.hpPos == "Right"
-        local function span(amount)
-            if vertical then return Vector2.new(0, height * (1 - amount)), Vector2.new(barWidth, height * amount) end
-            return Vector2.new(0, 0), Vector2.new(width * amount, barWidth)
-        end
-        local baseX, baseY
-        if vertical then
-            baseX = cfg.hpPos == "Left" and left - barGap or right + 3
-            baseY = top
-            backPosition, backSize = Vector2.new(baseX, top - 1), Vector2.new(barWidth + 2, height + 2)
-        else
-            baseX = left
-            baseY = cfg.hpPos == "Top" and top - barGap or bottom + 3
-            backPosition, backSize = Vector2.new(left - 1, baseY), Vector2.new(width + 2, barWidth + 2)
-        end
-        local inset = Vector2.new(1, 1)
-        local offset, extent = span(shown)
-        fillPosition, fillSize = Vector2.new(baseX, baseY) + offset + inset, extent
-        local trailOffset, trailExtent = span(math.max(trail, shown))
-        trailPosition, trailSize = Vector2.new(baseX, baseY) + trailOffset + inset, trailExtent
-        object.hpBack.Position, object.hpBack.Size, object.hpBack.Transparency, object.hpBack.Visible = backPosition, backSize, alpha * cfg.hpA * 0.8, true
-        if cfg.hpTrail and trail > shown + 0.004 then
-            object.hpTrail.Position, object.hpTrail.Size = trailPosition, trailSize
-            object.hpTrail.Color = Color3.fromRGB(255, 255, 255)
-            object.hpTrail.Transparency, object.hpTrail.Visible = alpha * cfg.hpA * 0.55, true
-        end
-        if gradOn and ctx.gradHealth and fillSize.X > 0 and fillSize.Y > 0 then
-            local strips = ensureList(object, "hpStrips", 8, "Square", { Filled = true, ZIndex = 6 })
-            for index = 1, 8 do
-                local strip = strips[index]
-                if strip then
-                    local from, to = (index - 1) / 8, index / 8
-                    if vertical then
-                        strip.Position = Vector2.new(fillPosition.X, fillPosition.Y + fillSize.Y * (1 - to))
-                        strip.Size = Vector2.new(fillSize.X, fillSize.Y / 8 + 0.5)
-                    else
-                        strip.Position = Vector2.new(fillPosition.X + fillSize.X * from, fillPosition.Y)
-                        strip.Size = Vector2.new(fillSize.X / 8 + 0.5, fillSize.Y)
-                    end
-                    strip.Color = ctx.gradA:Lerp(ctx.gradB, pingPong(ctx.phase + from * ctx.gradStretch))
-                    strip.Transparency, strip.Visible = alpha * cfg.hpA, true
-                end
-            end
-        else
-            object.hpFill.Position, object.hpFill.Size, object.hpFill.Color = fillPosition, fillSize, healthColor
-            object.hpFill.Transparency, object.hpFill.Visible = alpha * cfg.hpA, true
-        end
-        if cfg.hpText and ratio < 0.999 then
-            local textPosition
-            if cfg.hpPos == "Left" then textPosition = Vector2.new(backPosition.X - 9, clampRange(fillPosition.Y - textSize * 0.5, top - 2, bottom - textSize))
-            elseif cfg.hpPos == "Right" then textPosition = Vector2.new(backPosition.X + barWidth + 12, clampRange(fillPosition.Y - textSize * 0.5, top - 2, bottom - textSize))
-            else textPosition = Vector2.new(left + width * shown, backPosition.Y + barWidth + 2) end
-            setText(object.hpText, tostring(math.floor(record.health)), textSize - 3, WHITE, textPosition, alpha * cfg.hpA, cfg.textOutline)
-        end
+    local flagY = y - 4
+    local flagIndex = 0
+    local function flag(text)
+        flagIndex += 1
+        local label = object.flagTexts[flagIndex]
+        if not label then return end
+        setText(label, text, size, font, override or cfg.flagColor, x + w + 3, flagY, alpha * cfg.flagA, false, outline)
+        flagY += size
     end
+    if cfg.flags.Distance then flag(meters .. "m") end
+    if cfg.flags.Visible and visible then flag("Visible") end
+    if cfg.flags.Target and Aim.target == record.player then flag("Target") end
 
-    -- skeleton
     if cfg.skeleton then
         local points = bonePoints(record.hash)
         if points then
-            local boneThickness = cfg.skeletonThick * scale
-            local bones = ensureList(object, "bones", #BONES, "Line", { ZIndex = 4 })
-            local shadows = cfg.skeletonOutline and ensureList(object, "boneShadow", #BONES, "Line", { Color = BLACK, ZIndex = 3 })
-            local flat = override or cfg.skeletonColor
-            for index, pair in ipairs(BONES) do
-                local a, b = points[pair[1]], points[pair[2]]
+            local skeletonColor = override or cfg.skeletonColor
+            for index, bone in ipairs(BONES) do
+                local a, b = points[bone[1]], points[bone[2]]
                 if a and b then
-                    local pa, onA = project(cam, a)
-                    local pb, onB = project(cam, b)
-                    if onA and onB then
-                        local boneColor = flat
-                        if gradOn and ctx.gradSkeleton then
-                            boneColor = ctx.gradA:Lerp(ctx.gradB, pingPong(ctx.phase + (index - 1) / #BONES * ctx.gradStretch))
+                    local from, fromFront = project(cam, a)
+                    local to, toFront = project(cam, b)
+                    if fromFront and toFront then
+                        if outline then
+                            local edge = object.boneEdges[index]
+                            edge.From, edge.To = from, to
+                            edge.Transparency, edge.Visible = alpha * cfg.skeletonA, true
                         end
-                        if shadows then drawLine(shadows[index], pa, pb, BLACK, boneThickness + 2, alpha * cfg.skelA) end
-                        drawLine(bones[index], pa, pb, boneColor, boneThickness, alpha * cfg.skelA)
+                        local line = object.bones[index]
+                        line.From, line.To, line.Color = from, to, skeletonColor
+                        line.Transparency, line.Visible = alpha * cfg.skeletonA, true
                     end
                 end
             end
         end
     end
-
-    if cfg.head then
-        local headPoint, headOn = project(cam, record.head.Position)
-        if headOn then
-            object.dot.Position, object.dot.Color, object.dot.Radius = headPoint, override or cfg.headColor, math.max(height * 0.07, 2)
-            object.dot.Transparency, object.dot.Visible = alpha * cfg.headA, true
-        end
-    end
-
-    if cfg.tracer then
-        local from = Vector2.new(viewport.X * 0.5, cfg.tracerFrom == "Top" and 0 or cfg.tracerFrom == "Center" and viewport.Y * 0.5 or viewport.Y)
-        object.tracer.From, object.tracer.To, object.tracer.Color = from, Vector2.new(centerX, bottom), override or cfg.tracerColor
-        object.tracer.Thickness, object.tracer.Transparency, object.tracer.Visible = math.max(scale, 1), alpha * cfg.tracerA * 0.8, true
-    end
 end
 
-local function stepState(state, record, want, dt, now, ctx)
+local function stepState(state, record, want, dt, ctx)
     local ratio = math.clamp(record.health / math.max(record.maxHealth, 1), 0, 1)
-    if not ctx.smooth then
+    state.hp = ratio
+    if ctx.fadeTime <= 0.001 then
         state.alpha = want and 1 or 0
-        state.hp, state.trail = ratio, ratio
-        state.lastRatio = ratio
         return
     end
-    local blend = 1 - math.exp(-ctx.speed * dt)
-    state.alpha += ((want and 1 or 0) - state.alpha) * blend
-    if state.alpha < 0.005 then state.alpha = 0 end
-    if ratio < state.lastRatio - 0.001 then state.holdUntil = now + 0.35 end
-    state.lastRatio = ratio
-    state.hp += (ratio - state.hp) * blend
-    if ratio > state.trail then
-        state.trail = ratio
-    elseif now >= (state.holdUntil or 0) then
-        state.trail += (ratio - state.trail) * (1 - math.exp(-3 * dt))
-    end
+    local step = dt / ctx.fadeTime
+    state.alpha = math.clamp(state.alpha + (want and step or -step), 0, 1)
 end
 
 local function espStep(cam, now, dt, records, origin)
+    lastRecords = records
     local seen = {}
     local enemyCfg, friendCfg = teamCfg(false), teamCfg(true)
-    local apply = selectedSet("grad_apply", { "Box fill", "Skeleton" })
-    local gradOn = readFlag("grad_on", false)
     local ctx = {
-        maxDistance = readFlag("esp_dist", 1500),
-        fade = readFlag("esp_fade", false),
-        opacity = 1,
-        scale = readFlag("esp_scale", 1),
-        fontName = readFlag("esp_font", "Tahoma"),
-        smooth = readFlag("esp_smooth", false),
-        speed = readFlag("esp_smooth_speed", 8),
-        useVisible = readFlag("esp_vis", false),
-        visibleColor = readFlag("esp_vis_color", WHITE),
-        markTarget = readFlag("esp_target", false),
-        targetColor = readFlag("esp_target_color", WHITE),
         viewport = cam.ViewportSize,
         center = cam.ViewportSize / 2,
-        gradOn = gradOn,
-        gradA = readFlag("grad_a", WHITE),
-        gradB = readFlag("grad_b", WHITE),
-        gradStretch = readFlag("grad_stretch", 1),
-        phase = now * readFlag("grad_speed", 0.25),
-        glowColor = readFlag("esp_glow_color", WHITE), glowT = pickerTransparency("esp_glow_color", 0.5), glowSize = readFlag("esp_glow_size", 10),
-        gradFill = apply["Box fill"], gradOutline = apply["Box outline"], gradSkeleton = apply["Skeleton"], gradHealth = apply["Health bar"],
-        chamVisOn = true, chamHidOn = true,
-        chamThick = readFlag("cham_thick", 0.1),
-        chamGlow = readFlag("cham_glow", false), chamGlowSize = math.max(readFlag("cham_glow_size", 1.75), 1),
-        chamRound = readFlag("cham_round", false), chamHead = readFlag("cham_head", 1.15),
-        lineWalls = readFlag("cham_line_walls", false),
+        outline = readFlag("esp_outline", false),
+        textSize = readFlag("esp_text", 13),
+        font = FONT_IDS[readFlag("esp_font", "Plex")] or 2,
+        fadeTime = readFlag("esp_fade_time", 0.2),
+        textCase = readFlag("esp_case", "Normal"),
+        maxText = readFlag("esp_max_text", 30),
+        hpCap = readFlag("esp_hp_cap", 100),
+        useVisible = readFlag("esp_vis", false), visibleColor = readFlag("esp_vis_color", WHITE),
+        markTarget = readFlag("esp_target", false), targetColor = readFlag("esp_target_color", WHITE),
+        chamLayer = readFlag("cham_layer", 0.05), chamHead = readFlag("cham_head", 1),
+        chamGlowOn = readFlag("cham_glow", false), chamGlowSize = readFlag("cham_glow_size", 0.3),
+        chamGlowColor = readFlag("cham_glow_color", WHITE), chamGlowT = pickerTransparency("cham_glow_color", 0.7),
+        arrowSize = readFlag("oov_size", 14), arrowDynamic = readFlag("oov_dynamic_size", false),
+        arrowRadius = readFlag("oov_radius", 40), arrowFade = readFlag("oov_fade", false),
+        arrowFadeDistance = readFlag("oov_fade_distance", 150),
+        soundRadius = readFlag("snd_radius", 5), soundWalls = readFlag("snd_walls", true),
     }
+    pcall(hookSounds)
 
     for _, record in ipairs(records) do
         local player = record.player
         seen[player] = true
         local cfg = record.enemy and enemyCfg or friendCfg
         local distance = (record.torso.Position - origin).Magnitude
-        local want = cfg.enabled and distance <= ctx.maxDistance
+        local want = cfg.enabled and distance <= cfg.distance
         local object, state = espObjects[player], espState[player]
         record.override = nil
         if cfg.enabled then
@@ -3086,31 +2154,23 @@ local function espStep(cam, now, dt, records, origin)
         if want and not object then
             object = makeEsp()
             espObjects[player] = object
-            local ratio = math.clamp(record.health / math.max(record.maxHealth, 1), 0, 1)
-            state = { alpha = ctx.smooth and 0 or 1, hp = ratio, trail = ratio, lastRatio = ratio }
+            state = { alpha = ctx.fadeTime <= 0.001 and 1 or 0, hp = 1 }
             espState[player] = state
         end
         if object and state then
-            stepState(state, record, want, dt, now, ctx)
+            stepState(state, record, want, dt, ctx)
             hideEsp(object)
             if state.alpha > 0.01 then
-                local ok, problem = pcall(drawPlayer, cam, object, state, record, cfg, ctx, now, dt, distance, origin)
+                local ok, problem = pcall(drawPlayer, cam, object, state, record, cfg, ctx, now, distance, origin)
                 if not ok then
                     hideEsp(object)
-                    note("esp:" .. tostring(player.Name) .. tostring(problem), "esp (" .. tostring(player.Name) .. "):", problem)
+                    note("esp:" .. tostring(problem), "esp (" .. tostring(player.Name) .. "):", problem)
                 end
             end
         end
 
-        ctx.adornOn, ctx.lineOn = cfg.chamOn, cfg.lineOn
-        ctx.chamVis, ctx.chamVisT, ctx.chamHid, ctx.chamHidT = cfg.chamVis, cfg.chamVisT, cfg.chamHid, cfg.chamHidT
-        ctx.lineColor, ctx.lineT = cfg.lineColor, cfg.lineT
-        ctx.chamSignature = table.concat({
-            tostring(cfg.chamHid), cfg.chamHidT, cfg.chamVisT, ctx.chamThick, tostring(ctx.chamGlow),
-            ctx.chamGlowSize, tostring(ctx.chamRound), ctx.chamHead,
-        }, "|")
-        local chamWanted = cfg.enabled and (cfg.chamOn or cfg.lineOn) and record.model and record.model.Parent and distance <= ctx.maxDistance
-        local ok, problem = pcall(updateChams, record, chamWanted and true or false, ctx)
+        local chamsWanted = want and cfg.chams and record.model and record.model.Parent
+        local ok, problem = pcall(updateChams, record, chamsWanted and true or false, cfg, ctx)
         if not ok then note("cham:" .. tostring(problem), "chams:", problem) end
     end
 
@@ -3122,7 +2182,7 @@ local function espStep(cam, now, dt, records, origin)
         end
     end
     for player in pairs(adornData) do
-        if not seen[player] then clearChams(player) end
+        if not seen[player] then destroyChams(player) end
     end
 end
 

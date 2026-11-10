@@ -1,4 +1,4 @@
-local BUILD = "phantom-1109-j"
+local BUILD = "phantom-1109-k"
 local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
@@ -1731,15 +1731,6 @@ local function bonePoints(hash)
         local part = hash[joint[1]]
         if part and part.Parent and (part.Position - center).Magnitude < 10 then
             points[name] = part.CFrame:PointToWorldSpace(joint[2])
-        end
-    end
-    -- legs sit close together in the rig, so the hips and feet are pushed outward to make the legs hang straight down
-    local right = torso.CFrame.RightVector
-    for _, name in ipairs({ "lHip", "lFoot", "rHip", "rFoot" }) do
-        local point = points[name]
-        if point then
-            local side = (point - center):Dot(right) >= 0 and 1 or -1
-            points[name] = point + right * (0.5 * side)
         end
     end
     if points.lShoulder and points.rShoulder then points.shoulderMid = (points.lShoulder + points.rShoulder) * 0.5 end

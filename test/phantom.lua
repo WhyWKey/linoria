@@ -1,4 +1,4 @@
-local BUILD = "phantom-1109-e"
+local BUILD = "phantom-1109-j"
 local SOURCE_URL = ""
 
 local Players = game:GetService("Players")
@@ -780,6 +780,13 @@ end
 
 -- ============================================================ core: players
 local PART_NAMES = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }
+-- the game keeps every third person body part at size 0 and only uses welds for position, so real sizes are fixed values
+local PART_SIZES = {
+    Head = Vector3.new(2, 1, 1), Torso = Vector3.new(2, 2, 1),
+    ["Left Arm"] = Vector3.new(1, 2, 1), ["Right Arm"] = Vector3.new(1, 2, 1),
+    ["Left Leg"] = Vector3.new(1, 2, 1), ["Right Leg"] = Vector3.new(1, 2, 1),
+}
+local snapshotAll = {}
 local snapshot, snapshotFrame = {}, -1
 
 local function entryVelocity(entry)
@@ -793,6 +800,7 @@ local function takeSnapshot()
     if snapshotFrame == frameId then return snapshot end
     snapshotFrame = frameId
     snapshot = {}
+    snapshotAll = {}
     local interface = Core.mods.ReplicationInterface
     if not interface then return snapshot end
     pcall(interface.operateOnAllEntries, function(player, entry)
@@ -804,11 +812,20 @@ local function takeSnapshot()
         local okHash, hash = pcall(object.getCharacterHash, object)
         if not (okHash and type(hash) == "table") then return end
         local torso, head = hash.Torso, hash.Head
-        if not (torso and head and torso.Parent and head.Parent) then return end
-        if not torso:IsDescendantOf(Workspace) then return end
-        local torsoPosition, headPosition = torso.Position, head.Position
-        if torsoPosition ~= torsoPosition or headPosition ~= headPosition then return end
-        if (headPosition - torsoPosition).Magnitude > 8 then return end
+        if not (torso and head) then return end
+        -- the game only builds the body in the world for players on screen; the others have a stale model with no parent
+        local rendered = torso:IsDescendantOf(Workspace)
+        local position
+        if rendered then
+            local torsoPosition, headPosition = torso.Position, head.Position
+            if torsoPosition ~= torsoPosition or headPosition ~= headPosition then return end
+            if (headPosition - torsoPosition).Magnitude > 8 then return end
+            position = torsoPosition
+        else
+            local okPosition, value = pcall(entry.getPosition, entry)
+            if not (okPosition and typeof(value) == "Vector3" and value == value) then return end
+            position = value
+        end
         local okEnemy, enemy = pcall(entry.isEnemy, entry)
         local health, maxHealth = 100, 100
         local okHealth, currentHealth, currentMax = pcall(entry.getHealth, entry)
@@ -819,7 +836,9 @@ local function takeSnapshot()
             weaponName = registry and registry.weaponName
         end)
         local okModel, model = pcall(object.getCharacterModel, object)
-        snapshot[#snapshot + 1] = {
+        local record = {
+            rendered = rendered,
+            pos = position,
             player = player,
             entry = entry,
             hash = hash,
@@ -833,6 +852,8 @@ local function takeSnapshot()
             weaponName = weaponName,
             name = player.Name,
         }
+        snapshotAll[#snapshotAll + 1] = record
+        if rendered then snapshot[#snapshot + 1] = record end
     end)
     return snapshot
 end
@@ -1068,16 +1089,20 @@ do
 
     local EspSettings, ColorOverrides = VisualsPage:MultiSection({ Sections = { "ESP Settings", "Color Overrides" }, Side = 1 })
     EspSettings:Dropdown({ Name = "Font", Flag = "esp_font", Items = { "Plex", "UI", "System", "Monospace" }, Default = "Plex" })
+    EspSettings:Dropdown({ Name = "Box Mode", Flag = "esp_box_mode", Items = { "Static", "Dynamic" }, Default = "Static" })
     EspSettings:Slider({ Name = "Size", Flag = "esp_text", Min = 10, Max = 20, Default = 13, Decimals = 1, Suffix = " px" })
     EspSettings:Slider({ Name = "Fade Time", Flag = "esp_fade_time", Min = 0, Max = 1, Default = 0.2, Decimals = 0.01, Suffix = " s" })
     EspSettings:Dropdown({ Name = "Text Case", Flag = "esp_case", Items = { "Normal", "lower", "UPPER" }, Default = "Normal" })
     EspSettings:Slider({ Name = "Max Text Length", Flag = "esp_max_text", Min = 5, Max = 30, Default = 30, Decimals = 1 })
     EspSettings:Slider({ Name = "Max HP Visibility Cap", Flag = "esp_hp_cap", Min = 1, Max = 100, Default = 100, Decimals = 1 })
+    EspSettings:Slider({ Name = "Skeleton Thickness", Flag = "esp_skel_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
+    EspSettings:Toggle({ Name = "Debug Print", Flag = "esp_debug", Tooltip = "Prints what the ESP is doing to the console every 3 seconds" })
     EspSettings:Toggle({ Name = "Outlines", Flag = "esp_outline", Tooltip = "Dark outline on both sides of the box, and on text, skeleton and arrows" })
     ColorOverrides:Toggle({ Name = "Visible Color", Flag = "esp_vis", Tooltip = "Enemies you can see get every feature in this color, except the behind-walls chams" }):Colorpicker({ Name = "Visible color", Flag = "esp_vis_color", Default = white })
     ColorOverrides:Toggle({ Name = "Highlight Target", Flag = "esp_target", Tooltip = "The player your aimbot is locked on gets every feature in this color, except the behind-walls chams" }):Colorpicker({ Name = "Target color", Flag = "esp_target_color", Default = white })
 
     local ChamSet, OovSet, SoundSet = VisualsPage:MultiSection({ Sections = { "Chams", "Out of View", "Sound Tracker" }, Side = 2 })
+    ChamSet:Dropdown({ Name = "Parent", Flag = "cham_parent", Items = { "Workspace", "Part", "CoreGui" }, Default = "Workspace", Tooltip = "Where the adornments live: a folder in Workspace, inside each body part (BBOT), or CoreGui (Constant). Try another if one shows nothing" })
     ChamSet:Slider({ Name = "Layer Size", Flag = "cham_layer", Min = 0, Max = 0.5, Default = 0.05, Decimals = 0.01 })
     ChamSet:Slider({ Name = "Head Size", Flag = "cham_head", Min = 0.8, Max = 1.6, Default = 1, Decimals = 0.01 })
     ChamSet:Toggle({ Name = "Glow", Flag = "cham_glow", Tooltip = "A larger, softer layer around every body part" }):Colorpicker({ Name = "Glow color", Flag = "cham_glow_color", Default = white, Alpha = 0.7 })
@@ -1425,7 +1450,7 @@ local function triggerStep(cam, now, records)
                     if part and part.Parent then
                         local miss, along = rayPointDistance(origin, direction, part.Position)
                         if along <= maxDistance then
-                            local size = part.Size
+                            local size = PART_SIZES[partName] or Vector3.new(1, 1, 1)
                             local radius = math.max(size.X, size.Y, size.Z) * 0.5 * scale
                             if miss <= radius and (not wantVisible or isVisible(part, origin, now)) then
                                 onTarget = true
@@ -1463,6 +1488,7 @@ local adornData = {}
 local sounds = {}
 local lastRecords = {}
 local RING_SEGMENTS = 24
+local dbg = { arrows = 0, rings = 0, soundEvents = 0, soundMatched = 0, soundArgs = "none", chamsMade = 0, chamsInfo = "none", drawn = 0, errors = 0 }
 
 local function randomName()
     local letters = {}
@@ -1560,11 +1586,12 @@ end)
 local ICON_W, ICON_H = 66, 22
 local iconTemplates = {}
 local function buildIconTemplate(weaponName)
+    elevate()
     local weaponUtils, contentUtils = Core.mods.WeaponUtils, Core.mods.ContentUtils
     if not (weaponUtils and contentUtils and weaponUtils.constructWeapon and contentUtils.compileWeaponData) then return false end
     local ok, model = pcall(function()
-        local data = contentUtils.compileWeaponData({ weaponName = weaponName, weaponAttachments = {} })
-        local built = weaponUtils.constructWeapon(weaponName, data, {}, nil, nil, true)
+        local data = contentUtils.compileWeaponData({ weaponName = weaponName })
+        local built = weaponUtils.constructWeapon(weaponName, data, nil, nil, nil, true)
         return built
     end)
     if not ok or typeof(model) ~= "Instance" then return false end
@@ -1675,11 +1702,6 @@ local function destroyEsp(object)
 end
 
 -- ---------------------------------------------------------------- skeleton
-local REF_SIZES = {
-    Head = Vector3.new(2, 1, 1), Torso = Vector3.new(2, 2, 1),
-    ["Left Arm"] = Vector3.new(1, 2, 1), ["Right Arm"] = Vector3.new(1, 2, 1),
-    ["Left Leg"] = Vector3.new(1, 2, 1), ["Right Leg"] = Vector3.new(1, 2, 1),
-}
 local JOINTS = {
     head = { "Head", Vector3.new(0, 0, 0) },
     neck = { "Torso", Vector3.new(0, 0.8, 0) },
@@ -1693,12 +1715,11 @@ local JOINTS = {
     rHip = { "Right Leg", Vector3.new(0, 0.7, 0) },
     rFoot = { "Right Leg", Vector3.new(0, -0.7, 0) },
 }
+-- stick figure: head over a shoulder bar, a spine down to a hip bar, arms and legs hanging straight down from the bar ends
 local BONES = {
-    { "head", "neck" }, { "neck", "pelvis" },
-    { "neck", "lShoulder" }, { "neck", "rShoulder" },
-    { "pelvis", "lHip" }, { "pelvis", "rHip" },
-    { "lShoulder", "lHand" }, { "rShoulder", "rHand" },
-    { "lHip", "lFoot" }, { "rHip", "rFoot" },
+    { "head", "shoulderMid" }, { "shoulderMid", "hipMid" },
+    { "lShoulder", "rShoulder" }, { "lShoulder", "lHand" }, { "rShoulder", "rHand" },
+    { "lHip", "rHip" }, { "lHip", "lFoot" }, { "rHip", "rFoot" },
 }
 
 local function bonePoints(hash)
@@ -1709,12 +1730,20 @@ local function bonePoints(hash)
     for name, joint in pairs(JOINTS) do
         local part = hash[joint[1]]
         if part and part.Parent and (part.Position - center).Magnitude < 10 then
-            local ref = REF_SIZES[joint[1]]
-            local size = part.Size
-            local offset = Vector3.new(joint[2].X * size.X / ref.X, joint[2].Y * size.Y / ref.Y, joint[2].Z * size.Z / ref.Z)
-            points[name] = part.CFrame:PointToWorldSpace(offset)
+            points[name] = part.CFrame:PointToWorldSpace(joint[2])
         end
     end
+    -- legs sit close together in the rig, so the hips and feet are pushed outward to make the legs hang straight down
+    local right = torso.CFrame.RightVector
+    for _, name in ipairs({ "lHip", "lFoot", "rHip", "rFoot" }) do
+        local point = points[name]
+        if point then
+            local side = (point - center):Dot(right) >= 0 and 1 or -1
+            points[name] = point + right * (0.5 * side)
+        end
+    end
+    if points.lShoulder and points.rShoulder then points.shoulderMid = (points.lShoulder + points.rShoulder) * 0.5 end
+    if points.lHip and points.rHip then points.hipMid = (points.lHip + points.rHip) * 0.5 end
     return points
 end
 
@@ -1726,11 +1755,11 @@ end
 
 local BOX_PARTS = { "Head", "Torso", "Left Leg", "Right Leg" }
 -- the rectangle that wraps the whole character; arms are represented by a fixed reach so it does not jump while aiming
-local function playerBounds(cam, record)
+local function playerBounds(cam, record, static)
     local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
     local function add(world)
         local point, front = project(cam, world)
-        if not front then return false end
+        if not front then return true end
         if point.X < minX then minX = point.X end
         if point.X > maxX then maxX = point.X end
         if point.Y < minY then minY = point.Y end
@@ -1738,10 +1767,24 @@ local function playerBounds(cam, record)
         return true
     end
     local center = record.torso.Position
+    if static then
+        -- a fixed-size upright box around the standing character, turned with the torso's heading only
+        local look = record.torso.CFrame.LookVector
+        local yaw = math.atan2(-look.X, -look.Z)
+        local frame = CFrame.new(center + Vector3.new(0, -0.5, 0)) * CFrame.Angles(0, yaw, 0)
+        for _, sx in ipairs({ -1, 1 }) do
+            for _, sy in ipairs({ -1, 1 }) do
+                for _, sz in ipairs({ -1, 1 }) do
+                    if not add(frame:PointToWorldSpace(Vector3.new(2 * sx, 2.5 * sy, 1.25 * sz))) then return nil end
+                end
+            end
+        end
+        return math.floor(minX), math.floor(minY), math.floor(maxX - minX), math.floor(maxY - minY)
+    end
     for _, name in ipairs(BOX_PARTS) do
         local part = record.hash[name]
         if part and part.Parent and (part.Position - center).Magnitude < 10 then
-            local cframe, half = part.CFrame, part.Size * 0.5
+            local cframe, half = part.CFrame, PART_SIZES[name] * 0.5
             for _, sx in ipairs({ -1, 1 }) do
                 for _, sy in ipairs({ -1, 1 }) do
                     for _, sz in ipairs({ -1, 1 }) do
@@ -1774,26 +1817,21 @@ end
 -- ---------------------------------------------------------------- chams
 -- BBOT style: two box adornments per body part, parented to the real part. The inner one draws through walls,
 -- the outer one only where the part can be seen. A third larger layer is the glow.
-local function headSize(head)
-    local size = head.Size
-    local mesh = head:FindFirstChildOfClass("SpecialMesh")
-    if mesh then size = Vector3.new(size.X * mesh.Scale.X, size.Y * mesh.Scale.Y, size.Z * mesh.Scale.Z) end
-    return size
-end
 
-local function newAdorn(part, isHead, alwaysOnTop)
+local function newAdorn(part, isHead, alwaysOnTop, zIndex, parent)
     local adorn = Instance.new(isHead and "CylinderHandleAdornment" or "BoxHandleAdornment")
     adorn.Name = randomName()
     adorn.Adornee = part
-    adorn.ZIndex = 1
+    adorn.ZIndex = zIndex
     adorn.AlwaysOnTop = alwaysOnTop
     adorn.AdornCullingMode = Enum.AdornCullingMode.Never
     if isHead then adorn.CFrame = CFrame.new(Vector3.zero, Vector3.new(0, 1, 0)) end
     adorn.Visible = false
-    adorn.Parent = part
+    adorn.Parent = parent or part
     return adorn
 end
 
+local chamFolder
 local function destroyChams(player)
     local data = adornData[player]
     if not data then return end
@@ -1819,10 +1857,12 @@ local function updateChams(record, wanted, cfg, ctx)
         adornData[player] = data
     end
     local visibleColor = record.override or cfg.chamVis
+    local mode = ctx.chamParent
+    elevate()
     for _, name in ipairs(PART_NAMES) do
         local part = record.hash[name]
         local set = data.parts[name]
-        if set and (set.source ~= part or not set.hidden.Parent) then
+        if set and (set.source ~= part or not set.hidden.Parent or set.mode ~= mode) then
             for _, adorn in pairs({ set.hidden, set.visible, set.glow }) do pcall(function() adorn:Destroy() end) end
             data.parts[name] = nil
             set = nil
@@ -1830,28 +1870,48 @@ local function updateChams(record, wanted, cfg, ctx)
         if part and part.Parent then
             local isHead = name == "Head"
             if not set then
-                set = {
-                    source = part,
-                    hidden = newAdorn(part, isHead, true),
-                    visible = newAdorn(part, isHead, false),
-                    glow = newAdorn(part, isHead, true),
-                }
+                local parent = part
+                if mode == "CoreGui" then
+                    parent = ensureLabelGui() or part
+                elseif mode == "Workspace" then
+                    if not (chamFolder and chamFolder.Parent) then
+                        chamFolder = Instance.new("Folder")
+                        chamFolder.Name = randomName()
+                        chamFolder.Parent = Workspace
+                    end
+                    parent = chamFolder
+                end
+                local okMake, made = pcall(function()
+                    return {
+                        source = part, mode = mode,
+                        hidden = newAdorn(part, isHead, true, 1, parent),
+                        visible = newAdorn(part, isHead, false, -1, parent),
+                        glow = newAdorn(part, isHead, true, 0, parent),
+                    }
+                end)
+                if not okMake then
+                    dbg.chamsInfo = "create failed: " .. tostring(made)
+                    note("chammake" .. tostring(made), "chams could not be created:", made)
+                    return
+                end
+                set = made
                 data.parts[name] = set
+                dbg.chamsMade += 1
+                dbg.chamsInfo = string.format("%s parent=%s mode=%s", name, tostring(set.hidden.Parent and set.hidden.Parent.ClassName), mode)
             end
             local layer, glow = ctx.chamLayer, ctx.chamGlowOn and ctx.chamGlowSize or 0
-            local size = part.Size
-            local signature = table.concat({ tostring(size), layer, glow, ctx.chamHead, tostring(cfg.chamHid), cfg.chamHidT, tostring(visibleColor), cfg.chamVisT, tostring(ctx.chamGlowColor), ctx.chamGlowT }, "|")
+            local size = PART_SIZES[name]
+            local signature = table.concat({ tostring(size), mode, layer, glow, ctx.chamHead, tostring(cfg.chamHid), cfg.chamHidT, tostring(visibleColor), cfg.chamVisT, tostring(ctx.chamGlowColor), ctx.chamGlowT }, "|")
             if set.signature ~= signature then
                 set.signature = signature
                 if isHead then
-                    local dims = headSize(part)
-                    local radius, height = math.min(dims.X, dims.Z) * 0.5 * ctx.chamHead, dims.Y * ctx.chamHead
-                    set.hidden.Radius, set.hidden.Height = radius - layer, height - layer
+                    local radius, height = 0.65 * ctx.chamHead, 1.05 * ctx.chamHead
+                    set.hidden.Radius, set.hidden.Height = math.max(radius - 0.1, 0.1), math.max(height - 0.1, 0.1)
                     set.visible.Radius, set.visible.Height = radius + layer, height + layer
                     set.glow.Radius, set.glow.Height = radius + layer + glow, height + layer + glow
                 else
-                    set.hidden.Size = size + Vector3.new(0.1, 0.1, 0.1) - Vector3.new(0.25, 0.25, 0.25) * (layer > 0 and 1 or 0)
-                    set.visible.Size = size + Vector3.new(0.1, 0.1, 0.1) + Vector3.new(layer, layer, layer)
+                    set.hidden.Size = size - Vector3.new(0.1, 0.1, 0.1)
+                    set.visible.Size = size + Vector3.new(layer, layer, layer)
                     set.glow.Size = size + Vector3.new(layer + glow, layer + glow, layer + glow)
                 end
                 set.hidden.Color3, set.hidden.Transparency = cfg.chamHid, cfg.chamHidT
@@ -1867,6 +1927,7 @@ end
 
 onUnload(function()
     for player in pairs(adornData) do destroyChams(player) end
+    if chamFolder then pcall(function() chamFolder:Destroy() end) end
 end)
 track(Players.PlayerRemoving:Connect(function(player)
     destroyChams(player)
@@ -1883,11 +1944,14 @@ local function hookSounds()
     audio.playSound = function(...)
         local packed = table.pack(...)
         local root = packed[8]
+        dbg.soundArgs = typeof(root) == "Instance" and (root.ClassName .. ":" .. root.Name) or typeof(root)
+        if typeof(root) == "Instance" then dbg.soundEvents += 1 end
         if typeof(root) == "Instance" and (readFlag("esp_sound", false) or readFlag("esp_sound@Friendly", false)) then
             pcall(function()
                 for _, record in ipairs(lastRecords) do
                     local match = root == record.torso or (record.model and root:IsDescendantOf(record.model))
                     if match then
+                        dbg.soundMatched += 1
                         local current = sounds[record.player]
                         if not current or os.clock() - current.t0 > current.duration then
                             sounds[record.player] = { t0 = os.clock(), duration = readFlag("snd_duration", 0.9) }
@@ -1921,7 +1985,7 @@ local function casedText(text, mode, maxLength)
 end
 
 local function drawArrow(object, cam, record, cfg, ctx, alpha, color, meters)
-    local relative = cam.CFrame:PointToObjectSpace(record.torso.Position)
+    local relative = cam.CFrame:PointToObjectSpace(record.pos)
     local direction
     if math.abs(relative.X) < 0.001 and math.abs(relative.Y) < 0.001 then
         direction = Vector2.new(0, 1)
@@ -1942,6 +2006,7 @@ local function drawArrow(object, cam, record, cfg, ctx, alpha, color, meters)
     local pointC = tip - rotate(direction, -0.5) * size
     local fade = alpha
     if ctx.arrowFade then fade *= math.clamp(1 - meters / ctx.arrowFadeDistance, 0.15, 1) end
+    dbg.arrows += 1
     object.arrow.PointA, object.arrow.PointB, object.arrow.PointC = tip, pointB, pointC
     object.arrow.Color, object.arrow.Transparency, object.arrow.Visible = color, fade, true
     if ctx.outline then
@@ -1959,10 +2024,11 @@ local function drawRing(object, cam, record, cfg, ctx, now, alpha, visible)
         return
     end
     if not ctx.soundWalls and not visible then return end
+    dbg.rings += 1
     local progress = age / sound.duration
     local radius = 2 + (ctx.soundRadius - 2) * progress
     local fadeOut = math.clamp((sound.duration - age) / 0.2, 0, 1)
-    local feet = record.torso.Position - Vector3.new(0, 3, 0)
+    local feet = record.pos - Vector3.new(0, 3, 0)
     local previous, previousFront
     local first, firstFront
     for index = 0, RING_SEGMENTS do
@@ -1980,24 +2046,26 @@ local function drawRing(object, cam, record, cfg, ctx, now, alpha, visible)
 end
 
 local function drawPlayer(cam, object, state, record, cfg, ctx, now, distance, origin)
+    dbg.drawn += 1
     local alpha = state.alpha
     local meters = math.floor(distance * 0.28)
-    local visible = isVisible(record.torso, origin, now)
+    local visible = record.rendered and isVisible(record.torso, origin, now) or false
     local outline = ctx.outline
     local size, font = ctx.textSize, ctx.font
     local override = record.override
 
-    local screen = project(cam, record.torso.Position)
-    local _, front = project(cam, record.torso.Position)
+    local screen = project(cam, record.pos)
+    local _, front = project(cam, record.pos)
     local onScreen = front and screen.X >= 0 and screen.X <= ctx.viewport.X and screen.Y >= 0 and screen.Y <= ctx.viewport.Y
 
     if not onScreen then
         if cfg.oov then drawArrow(object, cam, record, cfg, ctx, alpha * cfg.oovA, override or cfg.oovColor, meters) end
-        if cfg.sound then drawRing(object, cam, record, cfg, ctx, now, alpha, visible) end
+        if cfg.sound and record.rendered then drawRing(object, cam, record, cfg, ctx, now, alpha, visible) end
         return
     end
+    if not record.rendered then return end
 
-    local x, y, w, h = playerBounds(cam, record)
+    local x, y, w, h = playerBounds(cam, record, ctx.boxStatic)
     if cfg.sound then drawRing(object, cam, record, cfg, ctx, now, alpha, visible) end
     if not x or w < 2 or h < 2 then return end
 
@@ -2045,8 +2113,14 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, distance, o
         below += size - 1
     end
     if cfg.icon then
-        local template = iconFor(record.weaponName)
-        if template then
+        local okIcon, template = pcall(iconFor, record.weaponName)
+        if not okIcon then
+            note("icon" .. tostring(template), "icons unavailable:", template)
+            template = nil
+            ctx.iconsBroken = true
+        end
+        if template and not ctx.iconsBroken then
+            local okShow, problem = pcall(function()
             if object.iconName ~= record.weaponName or not object.icon or not object.icon.Parent then
                 if object.icon then pcall(function() object.icon:Destroy() end) end
                 object.icon = template:Clone()
@@ -2058,6 +2132,13 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, distance, o
             icon.ImageColor3 = cfg.iconColor
             icon.ImageTransparency = 1 - alpha * cfg.iconA
             icon.Visible = true
+            end)
+            if not okShow then
+                note("iconshow" .. tostring(problem), "icon draw failed:", problem)
+                if object.icon then pcall(function() object.icon:Destroy() end) end
+                object.icon, object.iconName = false, false
+                iconTemplates[record.weaponName] = false
+            end
         elseif not cfg.weapon then
             setText(object.weapon, casedText(record.weaponName or "???", ctx.textCase, ctx.maxText), size, font, override or cfg.iconColor, x + w * 0.5, y + h, alpha * cfg.iconA, true, outline)
         end
@@ -2089,10 +2170,12 @@ local function drawPlayer(cam, object, state, record, cfg, ctx, now, distance, o
                         if outline then
                             local edge = object.boneEdges[index]
                             edge.From, edge.To = from, to
+                            edge.Thickness = ctx.skeletonThick + 2
                             edge.Transparency, edge.Visible = alpha * cfg.skeletonA, true
                         end
                         local line = object.bones[index]
                         line.From, line.To, line.Color = from, to, skeletonColor
+                        line.Thickness = ctx.skeletonThick
                         line.Transparency, line.Visible = alpha * cfg.skeletonA, true
                     end
                 end
@@ -2117,9 +2200,12 @@ local function espStep(cam, now, dt, records, origin)
     local seen = {}
     local enemyCfg, friendCfg = teamCfg(false), teamCfg(true)
     local ctx = {
+        debug = readFlag("esp_debug", false),
         viewport = cam.ViewportSize,
         center = cam.ViewportSize / 2,
         outline = readFlag("esp_outline", false),
+        skeletonThick = readFlag("esp_skel_thick", 1),
+        boxStatic = readFlag("esp_box_mode", "Static") == "Static",
         textSize = readFlag("esp_text", 13),
         font = FONT_IDS[readFlag("esp_font", "Plex")] or 2,
         fadeTime = readFlag("esp_fade_time", 0.2),
@@ -2128,7 +2214,7 @@ local function espStep(cam, now, dt, records, origin)
         hpCap = readFlag("esp_hp_cap", 100),
         useVisible = readFlag("esp_vis", false), visibleColor = readFlag("esp_vis_color", WHITE),
         markTarget = readFlag("esp_target", false), targetColor = readFlag("esp_target_color", WHITE),
-        chamLayer = readFlag("cham_layer", 0.05), chamHead = readFlag("cham_head", 1),
+        chamParent = readFlag("cham_parent", "Workspace"), chamLayer = readFlag("cham_layer", 0.05), chamHead = readFlag("cham_head", 1),
         chamGlowOn = readFlag("cham_glow", false), chamGlowSize = readFlag("cham_glow_size", 0.3),
         chamGlowColor = readFlag("cham_glow_color", WHITE), chamGlowT = pickerTransparency("cham_glow_color", 0.7),
         arrowSize = readFlag("oov_size", 14), arrowDynamic = readFlag("oov_dynamic_size", false),
@@ -2141,20 +2227,21 @@ local function espStep(cam, now, dt, records, origin)
     for _, record in ipairs(records) do
         local player = record.player
         seen[player] = true
+        if espState[player] then espState[player].lastSeen = now end
         local cfg = record.enemy and enemyCfg or friendCfg
-        local distance = (record.torso.Position - origin).Magnitude
+        local distance = (record.pos - origin).Magnitude
         local want = cfg.enabled and distance <= cfg.distance
         local object, state = espObjects[player], espState[player]
         record.override = nil
         if cfg.enabled then
             if ctx.markTarget and Aim.target == player then record.override = ctx.targetColor
-            elseif record.enemy and ctx.useVisible and isVisible(record.torso, origin, now) then record.override = ctx.visibleColor end
+            elseif record.rendered and record.enemy and ctx.useVisible and isVisible(record.torso, origin, now) then record.override = ctx.visibleColor end
         end
 
         if want and not object then
             object = makeEsp()
             espObjects[player] = object
-            state = { alpha = ctx.fadeTime <= 0.001 and 1 or 0, hp = 1 }
+            state = { alpha = ctx.fadeTime <= 0.001 and 1 or 0, hp = 1, lastSeen = now }
             espState[player] = state
         end
         if object and state then
@@ -2163,26 +2250,49 @@ local function espStep(cam, now, dt, records, origin)
             if state.alpha > 0.01 then
                 local ok, problem = pcall(drawPlayer, cam, object, state, record, cfg, ctx, now, distance, origin)
                 if not ok then
+                    dbg.errors += 1
                     hideEsp(object)
                     note("esp:" .. tostring(problem), "esp (" .. tostring(player.Name) .. "):", problem)
                 end
             end
         end
 
-        local chamsWanted = want and cfg.chams and record.model and record.model.Parent
+        local chamsWanted = want and record.rendered and cfg.chams and record.model and record.model.Parent
         local ok, problem = pcall(updateChams, record, chamsWanted and true or false, cfg, ctx)
         if not ok then note("cham:" .. tostring(problem), "chams:", problem) end
     end
 
     for player, object in pairs(espObjects) do
         if not seen[player] then
-            destroyEsp(object)
-            espObjects[player] = nil
-            espState[player] = nil
+            hideEsp(object)
+            local state = espState[player]
+            if not state or now - (state.lastSeen or 0) > 1.5 then
+                destroyEsp(object)
+                espObjects[player] = nil
+                espState[player] = nil
+            end
         end
     end
-    for player in pairs(adornData) do
-        if not seen[player] then destroyChams(player) end
+    for player, data in pairs(adornData) do
+        if not seen[player] then
+            data.missing = (data.missing or now)
+            if now - data.missing > 1.5 then destroyChams(player) end
+        else
+            data.missing = nil
+        end
+    end
+    if ctx.debug and now - (dbg.printedAt or 0) > 3 then
+        dbg.printedAt = now
+        local list = {}
+        for _, record in ipairs(records) do
+            local cfg = record.enemy and enemyCfg or friendCfg
+            list[#list + 1] = string.format("%s[%s en=%s 2D=%s oov=%s ch=%s snd=%s]", record.name, math.floor((record.pos - origin).Magnitude * 0.28) .. "m", tostring(record.enemy), tostring(cfg.enabled), tostring(cfg.oov), tostring(cfg.chams), tostring(cfg.sound))
+        end
+        print(string.format("[Aster debug %s] records=%d arrows=%d rings=%d drawn=%d errors=%d", BUILD, #records, dbg.arrows, dbg.rings, dbg.drawn, dbg.errors))
+        print("  chams: made=" .. dbg.chamsMade .. " | " .. dbg.chamsInfo)
+        print(string.format("  sound: hooked=%s audioModule=%s events=%d matched=%d lastArg8=%s", tostring(soundHooked), tostring(Core.mods.AudioSystem ~= nil), dbg.soundEvents, dbg.soundMatched, dbg.soundArgs))
+        print("  players: " .. table.concat(list, ", "))
+        dbg.arrows, dbg.rings, dbg.drawn = 0, 0, 0
     end
 end
 
@@ -2232,7 +2342,7 @@ track(RunService.RenderStepped:Connect(safe("frame", function()
     if not ok then note("recoil" .. tostring(problem), "recoil:", problem) end
     ok, problem = pcall(triggerStep, cam, now, records)
     if not ok then note("trigger" .. tostring(problem), "trigger:", problem) end
-    ok, problem = pcall(espStep, cam, now, dt, records, origin)
+    ok, problem = pcall(espStep, cam, now, dt, snapshotAll, origin)
     if not ok then
         for _, object in pairs(espObjects) do hideEsp(object) end
         note("esp" .. tostring(problem), "esp:", problem)

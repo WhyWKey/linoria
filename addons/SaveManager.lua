@@ -1,7 +1,27 @@
 local httpService = game:GetService('HttpService')
 
+local function SafeIsFile(Path)
+	local Ok, Result = pcall(function()
+		return type(isfile) == 'function' and isfile(Path)
+	end)
+	return Ok and Result or false
+end
+
+local function SafeRead(Path)
+	local Ok, Result = pcall(function()
+		return readfile(Path)
+	end)
+	return Ok and Result or nil
+end
+
+local function SafeWrite(Path, Content)
+	return pcall(function()
+		writefile(Path, Content)
+	end)
+end
+
 local SaveManager = {} do
-	SaveManager.Folder = 'LinoriaLibSettings'
+	SaveManager.Folder = 'Aster'
 	SaveManager.Ignore = {}
 	SaveManager.Parser = {
 		Toggle = {
@@ -9,6 +29,7 @@ local SaveManager = {} do
 				return { type = 'Toggle', idx = idx, value = object.Value } 
 			end,
 			Load = function(idx, data)
+				local Toggles = SaveManager:GetToggles()
 				if Toggles[idx] then 
 					Toggles[idx]:SetValue(data.value)
 				end
@@ -19,6 +40,7 @@ local SaveManager = {} do
 				return { type = 'Slider', idx = idx, value = tostring(object.Value) }
 			end,
 			Load = function(idx, data)
+				local Options = SaveManager:GetOptions()
 				if Options[idx] then 
 					Options[idx]:SetValue(data.value)
 				end
@@ -29,6 +51,7 @@ local SaveManager = {} do
 				return { type = 'Dropdown', idx = idx, value = object.Value, mutli = object.Multi }
 			end,
 			Load = function(idx, data)
+				local Options = SaveManager:GetOptions()
 				if Options[idx] then 
 					Options[idx]:SetValue(data.value)
 				end
@@ -39,8 +62,9 @@ local SaveManager = {} do
 				return { type = 'ColorPicker', idx = idx, value = object.Value:ToHex(), transparency = object.Transparency }
 			end,
 			Load = function(idx, data)
+				local Options = SaveManager:GetOptions()
 				if Options[idx] then 
-					Options[idx]:SetValueRGB(Color3.fromHex(data.value), Options[idx].HasTransparency and data.transparency or 0)
+					Options[idx]:SetValueRGB(Color3.fromHex(data.value), tonumber(data.transparency) or 0)
 				end
 			end,
 		},
@@ -49,6 +73,7 @@ local SaveManager = {} do
 				return { type = 'KeyPicker', idx = idx, mode = object.Mode, key = object.Value }
 			end,
 			Load = function(idx, data)
+				local Options = SaveManager:GetOptions()
 				if Options[idx] then 
 					Options[idx]:SetValue({ data.key, data.mode })
 				end
@@ -60,12 +85,21 @@ local SaveManager = {} do
 				return { type = 'Input', idx = idx, text = object.Value }
 			end,
 			Load = function(idx, data)
+				local Options = SaveManager:GetOptions()
 				if Options[idx] and type(data.text) == 'string' then
 					Options[idx]:SetValue(data.text)
 				end
 			end,
 		},
 	}
+
+	function SaveManager:GetOptions()
+		return (self.Library and self.Library.Options) or Options
+	end
+
+	function SaveManager:GetToggles()
+		return (self.Library and self.Library.Toggles) or Toggles
+	end
 
 	function SaveManager:SetIgnoreIndexes(list)
 		for _, key in next, list do
@@ -89,17 +123,16 @@ local SaveManager = {} do
 			objects = {}
 		}
 
-		for idx, toggle in next, Toggles do
-			if self.Ignore[idx] then continue end
-
-			table.insert(data.objects, self.Parser[toggle.Type].Save(idx, toggle))
+		for idx, toggle in next, self:GetToggles() do
+			if not self.Ignore[idx] and self.Parser[toggle.Type] then
+				table.insert(data.objects, self.Parser[toggle.Type].Save(idx, toggle))
+			end
 		end
 
-		for idx, option in next, Options do
-			if not self.Parser[option.Type] then continue end
-			if self.Ignore[idx] then continue end
-
-			table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
+		for idx, option in next, self:GetOptions() do
+			if self.Parser[option.Type] and not self.Ignore[idx] then
+				table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
+			end
 		end	
 
 		local success, encoded = pcall(httpService.JSONEncode, httpService, data)
@@ -107,7 +140,10 @@ local SaveManager = {} do
 			return false, 'failed to encode data'
 		end
 
-		writefile(fullPath, encoded)
+		local written = SafeWrite(fullPath, encoded)
+		if not written then
+			return false, 'could not write file'
+		end
 		return true
 	end
 
@@ -117,10 +153,13 @@ local SaveManager = {} do
 		end
 		
 		local file = self.Folder .. '/settings/' .. name .. '.json'
-		if not isfile(file) then return false, 'invalid file' end
+		if not SafeIsFile(file) then return false, 'invalid file' end
 
-		local success, decoded = pcall(httpService.JSONDecode, httpService, readfile(file))
-		if not success then return false, 'decode error' end
+		local content = SafeRead(file)
+		if not content then return false, 'could not read file' end
+
+		local success, decoded = pcall(httpService.JSONDecode, httpService, content)
+		if not success or type(decoded) ~= 'table' or type(decoded.objects) ~= 'table' then return false, 'decode error' end
 
 		for _, option in next, decoded.objects do
 			if self.Parser[option.type] then
@@ -133,7 +172,7 @@ local SaveManager = {} do
 
 	function SaveManager:IgnoreThemeSettings()
 		self:SetIgnoreIndexes({ 
-			"BackgroundColor", "MainColor", "AccentColor", "OutlineColor", "FontColor", -- themes
+			"BackgroundColor", "MainColor", "AccentColor", "AccentColor2", "OutlineColor", "FontColor", -- themes
 			"ThemeManager_ThemeList", 'ThemeManager_CustomThemeList', 'ThemeManager_CustomThemeName', -- themes
 		})
 	end
@@ -147,14 +186,21 @@ local SaveManager = {} do
 
 		for i = 1, #paths do
 			local str = paths[i]
-			if not isfolder(str) then
-				makefolder(str)
-			end
+			pcall(function()
+				if not isfolder(str) then
+					makefolder(str)
+				end
+			end)
 		end
 	end
 
 	function SaveManager:RefreshConfigList()
-		local list = listfiles(self.Folder .. '/settings')
+		local ok, list = pcall(function()
+			return listfiles(self.Folder .. '/settings')
+		end)
+		if not ok or type(list) ~= 'table' then
+			return {}
+		end
 
 		local out = {}
 		for i = 1, #list do
@@ -185,8 +231,10 @@ local SaveManager = {} do
 	end
 
 	function SaveManager:LoadAutoloadConfig()
-		if isfile(self.Folder .. '/settings/autoload.txt') then
-			local name = readfile(self.Folder .. '/settings/autoload.txt')
+		local path = self.Folder .. '/settings/autoload.txt'
+		if SafeIsFile(path) then
+			local name = SafeRead(path)
+			if not name then return end
 
 			local success, err = self:Load(name)
 			if not success and not SILENT then
@@ -202,6 +250,7 @@ local SaveManager = {} do
 	function SaveManager:BuildConfigSection(tab)
 		assert(self.Library, 'Must set SaveManager.Library')
 
+		local Options = self:GetOptions()
 		local section = tab:AddRightGroupbox('Configuration')
 
 		section:AddInput('SaveManager_ConfigName',    { Text = 'Config name' })
@@ -257,23 +306,26 @@ local SaveManager = {} do
 			if (not name) then
 				return;
 			end;
-			writefile(self.Folder .. '/settings/autoload.txt', name)
+			SafeWrite(self.Folder .. '/settings/autoload.txt', name)
 			SaveManager.AutoloadLabel:SetText('Current autoload config: ' .. name)
 			self.Library:Notify(string.format('Set %q to auto load', name))
 		end):AddButton('Remove autoload', function()
-			local name = Options.SaveManager_ConfigList.Value
-			if (isfile(self.Folder .. '/settings/autoload.txt')) then
-				delfile(self.Folder .. '/settings/autoload.txt');
-			end;
+			pcall(function()
+				if (isfile(self.Folder .. '/settings/autoload.txt')) then
+					delfile(self.Folder .. '/settings/autoload.txt');
+				end;
+			end)
 			SaveManager.AutoloadLabel:SetText('Current autoload config: none')
 			self.Library:Notify("removed autoload");
 		end)
 
 		SaveManager.AutoloadLabel = section:AddLabel('Current autoload config: none', true)
 
-		if isfile(self.Folder .. '/settings/autoload.txt') then
-			local name = readfile(self.Folder .. '/settings/autoload.txt')
-			SaveManager.AutoloadLabel:SetText('Current autoload config: ' .. name)
+		if SafeIsFile(self.Folder .. '/settings/autoload.txt') then
+			local name = SafeRead(self.Folder .. '/settings/autoload.txt')
+			if name then
+				SaveManager.AutoloadLabel:SetText('Current autoload config: ' .. name)
+			end
 		end
 
 		SaveManager:SetIgnoreIndexes({ 'SaveManager_ConfigList', 'SaveManager_ConfigName' })
@@ -281,5 +333,9 @@ local SaveManager = {} do
 
 	SaveManager:BuildFolderTree()
 end
-getgenv().SaveManager = SaveManager;
+
+pcall(function()
+	local Env = (type(getgenv) == 'function' and getgenv()) or _G
+	Env.SaveManager = SaveManager
+end)
 return SaveManager

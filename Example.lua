@@ -777,6 +777,14 @@ do
             OnlyBound = V == 'Only bound' or V == 'Enabled and bound',
         })
     end)
+    Menu:AddToggle('MenuWidgetAccent', { Text = 'Widget accent bar', Default = true })
+    Menu:AddDropdown('MenuWidgetAccentStyle', {
+        Text = 'Widget accent style',
+        Values = { 'Solid', 'Gradient' },
+        Default = 2,
+    })
+    Toggles.MenuWidgetAccent:OnChanged(function() Library:SetWidgetAccent(Toggles.MenuWidgetAccent.Value) end)
+    Options.MenuWidgetAccentStyle:OnChanged(function() Library:SetWidgetAccentStyle(Options.MenuWidgetAccentStyle.Value) end)
     Toggles.MenuWatermark:OnChanged(function() Library:SetWatermarkVisibility(Toggles.MenuWatermark.Value) end)
     Toggles.MenuKeybindList:OnChanged(function() Library:SetKeybindListVisibility(Toggles.MenuKeybindList.Value) end)
     Menu:AddDropdown('MenuNotifyCorner', {

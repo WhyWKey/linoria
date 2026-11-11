@@ -4312,6 +4312,14 @@ function Library:GetPopupGui()
     return Gui;
 end;
 
+-- The host script may raise ScreenGui.DisplayOrder, so popups must follow it
+function Library:SyncPopupOrder()
+    local Gui = Library.PopupGui;
+    if Gui and Gui.Parent then
+        pcall(function() Gui.DisplayOrder = math.max(5, ScreenGui.DisplayOrder + 1) end);
+    end;
+end;
+
 function Library:CloseAllPopups(Except)
     for _, Popup in ipairs(Library.Popups) do
         if Popup ~= Except and Popup.Open then
@@ -4329,6 +4337,7 @@ BaseAddons.__index.AddSettings = function(self, Name, Info)
     local Popup = { Type = 'Settings'; Open = false; Name = Name; Root = { NoSearch = true } };
     local Width = Info.Width or 230;
     local Gui = Library:GetPopupGui();
+    Library:SyncPopupOrder();
 
     local Gear = Library:Create('Frame', {
         BackgroundTransparency = 1;
@@ -4415,6 +4424,7 @@ BaseAddons.__index.AddSettings = function(self, Name, Info)
     end;
     function Popup:Show()
         Library:CloseAllPopups(Popup);
+        Library:SyncPopupOrder();
         Popup.Open = true;
         Scale.Scale = Library.UIScale;
         Popup:Resize();

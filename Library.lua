@@ -1351,89 +1351,78 @@ function Library:CreateTabIcon(Parent, Icon, Name, ZIndex)
 end;
 
 -- Logo ----------------------------------------------------------------------
-Library.LogoImage = nil;
+-- Geometric 'A': two slanted strokes, an offset crossbar and a diamond spark in the negative space.
+-- Built from Frames only; the strokes carry an AccentColor -> AccentColor2 gradient so it recolours with the theme.
+-- Returns the holder Frame plus a handle { SetSize, Draw, Destroy }. Hidden starts collapsed for Draw to animate in.
+local LOGO_TILT = 22.2;
+local LOGO_PIECES = {
+    { Name = 'Left';  Pos = Vector2.new(0.32, 0.52); Len = 0.95; Rot = LOGO_TILT; Grad = true };
+    { Name = 'Right'; Pos = Vector2.new(0.68, 0.52); Len = 0.95; Rot = -LOGO_TILT; Grad = true };
+    { Name = 'Bar';   Pos = Vector2.new(0.44, 0.7); Wide = 0.3; Rot = 0; Grad = true };
+    { Name = 'Spark'; Pos = Vector2.new(0.5, 0.42); Dia = 0.15; Rot = 45 };
+};
 
-local function B64Decode(Data)
-    local Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    local Map = {};
-    for Idx = 1, 64 do
-        Map[string.byte(Chars, Idx)] = Idx - 1;
-    end;
-    local Out, Count, Bits, BitCount = {}, 0, 0, 0;
-    for Idx = 1, #Data do
-        local V = Map[string.byte(Data, Idx)];
-        if V then
-            Bits = Bits * 64 + V;
-            BitCount = BitCount + 6;
-            if BitCount >= 8 then
-                BitCount = BitCount - 8;
-                local Div = 2 ^ BitCount;
-                local Byte = math.floor(Bits / Div);
-                Bits = Bits - Byte * Div;
-                Count = Count + 1;
-                Out[Count] = string.char(Byte);
-            end;
-        end;
-    end;
-    return table.concat(Out);
-end;
-
-pcall(function()
-    if type(writefile) ~= 'function' or type(getcustomasset) ~= 'function' then
-        return;
-    end;
-    pcall(function()
-        if type(makefolder) == 'function' and not (type(isfolder) == 'function' and isfolder('Aster')) then
-            makefolder('Aster');
-        end;
-    end);
-    local Path = 'Aster/aster_logo.png';
-    local Bytes = B64Decode('iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAQAAABpN6lAAAAN20lEQVR42u2df2wd1ZXHP/fO2GkdhzqJ7SSOYzuhEiQbWkD8AWKhW5VuoWqjXaGt+KeiWkUbqi5SUf9oK61EpO0f+0+VSqhSu9quQKxQf4jVKkVIFa2ISFshoVKiAKlYqH/EPxI7hJA4gdgz8+0fc9945r1nv5l5z3kp9lhIL49775zzveece+45595nRJsfQ1tJsO3mnzbPgG3r3EMX3e7TGgXgZm5vLxXtBmCEve2VAL/NAOxmR3ttgN/e1zPErrVrBAEGGQSitQlABAywHYjaZwVsGy1AhKGPLWxauyrQwxa66G/nOtBOCYB+bsCwc+0CsBMPGFq7AAy5pXDN2oBhgPZ6Avaaznn120YSGJSh6RoqhH+NYLaIMMNmlAj/TiBMxQUiwMMQXQsHya76+D4QERDSzZ5kbmMvYCcA2+nOyMkeugkJiAB/tSm0qyjwHpaIANjPo/yCt/guSslcD/2A2EJfsg74iO/yFr/gUfYDAREWbxWVQqvxZ+S5T7fosF5VqPj5upAvhKzQTYokhZLuFq6HL/R11zrUqzqsW9xInsxq0OqviqkLCdnAP3CQz+IBEBDSyXxmEdzl9NyyK+MJzCMW8PC5jdv4N17kv/g/rgIeUatDaK0GwCMk5Ab+mX9hr2PdYvABk/L6jVsDotRyWHk2YfDwESLC5z7u4xT/yX9z0b3hOrUBBo8Qn0O8xhH2EhIi/NSy9jd1vICl5ZCqVgaLjwgJ2csRXuMQPmGLLULLtCnW4c/pFUnSYqL3FX2+qlBvqUNGxun605IWFUh63vU3MurQW651tv+iJOkVfS71thb8tYp9X6hXP5EkBRniIy0qcp8v6g5nAK3QsaTtCWc6rdAdulinZwxCIEn6iXoTY3pdABATfr/GJIUZ5iskS6d0RA9omzpcD2T1/5JCRZKm1eW+RR3apgd0RKdcz6BqxFDSmO4Xsq1YF1ol+o87wa9lflY/0meq5ssI9ep9SZEiSQsadlKRlqnP6EearQNC/JbHW6MKrWB/s45WzX3kiHxT31RfwtDSSm6F9rmW8X93ppgx8hLA+vRNvenYjqrk4Kg2Nw9B8+zv0UlJC6kZimd+VIfU6VpVOzGe0N87Jyhu/081Wm3kOeY6dUijqZHjZ0HSSe1pFoJmDd8+TVeJ/qKkK/qeelwbs0zPg0m/RUnfWsasGfdtj76nK3XeNK19zRnE5mZ/n2YyRMWieUyfauC8+kL/ngHgiRXYqDjWn9KxKlVblDSjfc1IQfPsB1Wif3iFmU8D8HQCQCDpaAMmKpJwuEoVgmYhKMe+FRrRdIaURUln3PJkc/Q/lvQOJb3q3KCVe8XL7ZmM1AWSpjVSs4qsIgBWVj16I0PGoqQT2pNLH9NeQGUlSHsCjezOHp2oefcb6skBfEsAiIXxuRoSXtQNOc1R2guoALCgoZxz6AvdoBdr3v9cQ8VrEQC+c3sWqtjvyq2HWS+g4gzdkVuIPaGuKggWnGvkrzYAntB9GbckSNi3BcZY8gIqY/xjAfJtAkGQcb3uK24MbcHNs+jhKZRscUM8XufLXMHmDmFWMgJRaktaLDsQYbnCl3k9iQ4YLOIpeoryZAvu+COOMEDo+kVY5jjAPF7BCO5wzTcjBTPLHvMcYC4B3hIywJHCmeaC4n9vXbHzC1uRZ2qM2P8WFl+/rjreW2ycYpteXydSAAQlDY8R+m2NO/NKDk9gOYOcpuiE/CIb5WLzf7DqZb8vsfTE8aA/Z4xgJOm0NuTyBGqX5N9XUXWwiAzkf5XRRk0pSpyXUB9obwkX1Aj161KyCFYA+FCDhQGI375XH7jAShxgmdLG/LJkc0d7xUEGiFyPEMv3OYVfOEZranJBsSnawPYSafIQn1N8H+vosEQMcBC5cHyLjKCRUafeTuY/xnlTqaCUJ/RA1d6+uCeQtU2bUrIZKtLb6swrAzb3/B/gxmT+heFxLpUqdDZ18sHxv4ZLhrUNl3g8ocUScSMH8sqAzbnqwjdS2VvLOzxZwPVp7AVUssTlqs0sT/JOih7xDXIW39lcbSJu5p6ktTA8QYAtnaYaWRYWlZIBS8ATKRmAe7g5kdcWAAAP4RFiAOHxHk9hSqaoQlcTYmoUYxdlSyZDDE/xHh4CDCEeD+XjzubQ2RB4MGkbAj/nQsn5NwifgboA7KADlUp7CcsFfu6oiyl90AHTAgDEXvYmpFng6aayc+l6gDQAffQ2lZl8OuGnmuamALDA5xMFiLC8zcuopLDW9wLiWewq5QlUDKF4mbedIYyV4PN5+LM5xAvuISAkICBAPEeIX9IAmlRNUPU+EwZLAyB8Qp5DjsqQgHvyGFWbwwJ080V8NuDj04nhV5Q/6WOWtfYVT6Cscgn4FYZOfEftF+lubAX8HBagj//hJJfpZh9/x27+SHMF7sMl/k8+X+WPXGWUY7zJPBu5hT7mGzlrfo5hRzmUav9pzhWWAOP+4iKXkRUAsM5/SzZrhSTgHHdzgqCGg6ZLZJZaBfyhEMMQEaVYCZbV9NgTiLhaU2GYH5CQP1RR25hUUXguoxUZVh0H6RP0McAuRhhmiHv5+DKjf8BLTDDOGKeZZo736+xKzIqA2IJyUxiAfAxvoo8d7GKYEXazk21syb09XZrN85xlilHGGOc0M8xxqTAgLQKgCMNDDLKNLXTUWJMoKaVaiW1lRH/pWeQ8Z5lkorWA1AegEcMb6WUHg9y4AsNyNX2VkYoub0rYiIPeZgVA3mGSGc5xuTggFQCWWFadYsSY4V0MM8wwg2xjKxtazHCzgFzlXc4yyTjjTkJqAan0S8FRXwI+Ri+DbWa41YBMco4P60uA4WPsYDcjDDHETrazlR66rjOGmwXkChd4lzNMMcEEY4wyw4fId5rSxVYGGGGYfvroqfEPqhXjemM/ew+BiGog6KKTTnw6sQRc4mxsjOupQAdb2cGgU4Bd7KCXjcva67TBvNZzvmTY6q0tlznHDKedEkwyw7ssLmcE7QomcANb6WWQIUYcIH11DjsuLXOrbwTrLZNwiTnH8BgTTHKOd6v8yqwZjJaTAJNiox4gHWxhG4PsZJgRdjFAH59oOSCNGX6fOaY5zRjjTDHJWc7XzHDW7tfZw+RxhBoB4rGFfgYZYpgRdrKdfjbXMNysIyTeY5YzTDHGOBNMMsv5Gh+lIcOtcIXTgFDnaJNhM/0MOECGGKCfnsKF+REXmGXaeX4TTDPLezUMZTdLJeIUrdgM5QGkl+0FN0NnOFeC4VXaDBXaYDYE5Dh/S1ijCCEeL3NXC2a4ELX54gFBJiDyWoOMQDWhaUA8FplcNiR2GksHYYrhYmcHPW6tCYg0CYAlYjffyYTEhjlbKCuYBSRibNmW40SExRjIOEK9/C4TEvsPRhsm8HJk87t1OZPJvb+J2lxf6JGqouelMpl/baLw2RO6PzPiZXU3rjiwDWfPY57nCbhKQMAC4gtNxm7Hlw2JjTcZb/4CYoHAUfs88y5Z1lRewADH8fHw8fExfAmPoHT8HqaghrB4KiZLA2AI8PgSxlHp4XM8z0Q1BiACXiB0JFsiPsmddU6C5wfgTOoAZZqFK5wpDYDFcCefdBlh4RHyQp7wfZ7MkOEUpxKzFwFfber85nnmqFcgMce5pvYKX00Yrqa5SQA84NlkcA/4Cj0lr74RhoDpugDMsFjycj1DRA9fcdTFlD5bR9FKARAP99NECQwhm3m4QBlS9VoNp+sCcJqyJ1k9xMNsTlUwhPyUXPmrfABY/sTxZECDeBS/ieuPxpbxAsqtLoYIn0eTZHgEHOdP+Up4bE4TAz9MiIvLkL6WrwRlWVZrn6mSo1kivpYq4QLDD3Pztl4mlw8lj4VMGVLIAN8mKmEH6nkCMR2nKZN19oj4dqqCPS7hWshjAPNLwEe4VHa9WHq9XH6NH5gospCFeLzEk3huxx6f03mG3QSFjeE7TXsBHgG7eSZ1finA40leKnbLiC1owS2PMZ2cELJE9HGU7sQGl/cExgqu/SHdHKUvWf0jPKZ5rGgBZzGyIwwXeBiTBMc9QvbzS7oKuEUCJjLvNu6bIq5PF79kfxJbFBGGh7lQt4KlBcvg+sHJ9aOz64en14/Pr1+gsH6FxvolKuvX6KxfpLR+ldb6ZWrr1+l9pC5UbN2VmiEGj99wF48wiu+uVlWq0sPyAoupYOVYTb5YeCzygmtd2a2FhFh8RnmEu/gNXulDm01vhxttLEM8An7MrTzGKTw8DEGqruyNZWIC2VjAG6l6zwCDh8cpHuNWfkyAV3VD9XUEwJIcXOQH3MZD/JrQXaoaEKJUfb8c27ZOeOQSIiRwl6qG/JqHuI0fcLG1c1+kRqioHBgsV/kZP+MWHuQAn8bHh9SByTgXWFHBbK6wG8MGIOIER3mWk0n8P2w5tat0uXoFBHGSkxxmP5/lXu7m9gwAs1xgc51s8e3M8Dte4kVeT3L/q8J82ULJYipmk6KnbvoZTYqb4xz+TcAsN6bO9xl2M5uUUPirfcf8al+vH5MfX68/n6oMEZaIKW6qqRgRf2bpev1glem7Rr8vELkjzemApSVygdApshdm27rnlP6qAViKv9YLhVdnBK7p70619zdGxpM1oG1P+wBQkguYWLsATBE6ALQ2AZjlImKqnQC09/cGL3CeTmbXJgCxJzBHZ50TwGtEAiwR03ju05pUAZjErG0AJmqPMq4dAASM1q0cX0MAjJW4kuWvaju84rsRXdjGV918VAG4Lp72//p8mw/i/wXWC7y6RFgToAAAAABJRU5ErkJggg==');
-    local Exists = false;
-    pcall(function()
-        Exists = type(isfile) == 'function' and isfile(Path) and type(readfile) == 'function' and #readfile(Path) == #Bytes;
-    end);
-    if not Exists then
-        writefile(Path, Bytes);
-    end;
-    Library.LogoImage = getcustomasset(Path);
-end);
-
--- Logo mark: gradient-tinted image, or a text 'A' glyph when the asset is unavailable
-function Library:CreateLogo(Parent, Size, ZIndex, Always)
+function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
     local Holder = Library:Create('Frame', {
         BackgroundTransparency = 1;
         Size = UDim2.fromOffset(Size, Size);
         ZIndex = ZIndex;
         Parent = Parent;
     });
-    local Mark, ColorProp;
-    if Library.LogoImage and Library.LogoImage ~= '' then
-        ColorProp = 'ImageColor3';
-        Mark = Library:Create('ImageLabel', {
-            BackgroundTransparency = 1;
-            Image = Library.LogoImage;
-            ImageColor3 = Library.AccentColor;
-            ScaleType = Enum.ScaleType.Fit;
-            Size = UDim2.new(1, 0, 1, 0);
+    local Thick = Size <= 20 and 0.19 or 0.15;
+    local Pieces = {};
+
+    for _, Def in ipairs(LOGO_PIECES) do
+        local Full, Collapsed;
+        if Def.Len then
+            Full, Collapsed = UDim2.fromScale(Thick, Def.Len), UDim2.fromScale(Thick, 0);
+        elseif Def.Wide then
+            Full, Collapsed = UDim2.fromScale(Def.Wide, Thick * 0.8), UDim2.fromScale(0, Thick * 0.8);
+        else
+            Full, Collapsed = UDim2.fromScale(Def.Dia, Def.Dia), UDim2.fromScale(0, 0);
+        end;
+        local Piece = Library:Create('Frame', {
+            AnchorPoint = Vector2.new(0.5, 0.5);
+            BackgroundColor3 = Def.Grad and Color3.new(1, 1, 1) or Library.AccentColor2;
+            BorderSizePixel = 0;
+            Position = UDim2.fromScale(Def.Pos.X, Def.Pos.Y);
+            Rotation = Def.Rot;
+            Size = Hidden and Collapsed or Full;
             ZIndex = ZIndex;
             Parent = Holder;
         });
-    else
-        ColorProp = 'TextColor3';
-        Mark = Library:Create('TextLabel', {
-            BackgroundTransparency = 1;
-            Font = Enum.Font.GothamBold;
-            Size = UDim2.new(1, 0, 1, 0);
-            Text = 'A';
-            TextColor3 = Library.AccentColor;
-            TextSize = math.floor(Size * 0.9);
-            ZIndex = ZIndex;
-            Parent = Holder;
-        });
+        if Def.Grad then
+            local Gradient = Library:Create('UIGradient', { Rotation = 90 - Def.Rot; Parent = Piece });
+            Library:AddGradient(Gradient, 'slide', Always, 'Y');
+        else
+            Library:AddToRegistry(Piece, { BackgroundColor3 = 'AccentColor2' }, true);
+        end;
+        table.insert(Pieces, { Frame = Piece; Full = Full; Collapsed = Collapsed });
     end;
-    Library:AddToRegistry(Mark, { [ColorProp] = 'AccentColor' });
-    return Holder;
+
+    local Logo = {};
+    function Logo.SetSize(NewSize)
+        Holder.Size = UDim2.fromOffset(NewSize, NewSize);
+    end;
+    -- strokes grow out from their centres, then the bar and spark follow
+    function Logo.Draw(Duration, Delay)
+        Duration = Duration or 0.6;
+        for Idx, Piece in ipairs(Pieces) do
+            Piece.Frame.Size = Piece.Collapsed;
+            pcall(function()
+                local Style = Idx == #Pieces and Enum.EasingStyle.Back or Enum.EasingStyle.Quint;
+                local Part = Idx <= 2 and 0 or (Idx - 2) * 0.18;
+                TweenService:Create(Piece.Frame, TweenInfo.new(Duration * 0.6, Style, Enum.EasingDirection.Out, 0, false, (Delay or 0) + Duration * Part), { Size = Piece.Full }):Play();
+            end);
+        end;
+    end;
+    function Logo.Destroy()
+        for _, Piece in ipairs(Pieces) do
+            Library:RemoveFromRegistry(Piece.Frame);
+        end;
+        Holder:Destroy();
+    end;
+    return Holder, Logo;
 end;
 
 -- Search --------------------------------------------------------------------
@@ -5005,13 +4994,12 @@ function Library:PlayIntro(Config)
     end;
 
     local Logo;
-    pcall(function() Logo = Library:CreateLogo(Center, 84, 3, false) end);
-    local LogoScale;
+    local LogoApi;
+    pcall(function() Logo, LogoApi = Library:CreateLogo(Center, 84, 3, false, true) end);
     if Logo then
         Logo.AnchorPoint = Vector2.new(0.5, 0.5);
         Logo.Position = UDim2.new(0.5, 0, 0, 62 + Y0);
-        LogoScale = Library:Create('UIScale', { Scale = 0; Parent = Logo });
-        TweenDelayed(LogoScale, { Scale = 1 }, 0.7, 0.05, Enum.EasingStyle.Back);
+        LogoApi.Draw(0.9, 0.05);
     end;
 
     local Sweep = Library:Create('Frame', {

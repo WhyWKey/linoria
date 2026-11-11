@@ -22,13 +22,20 @@ end
 
 local ThemeManager = {} do
 	ThemeManager.Folder = 'Aster'
-	ThemeManager.DefaultTheme = 'Aster Violet'
+	ThemeManager.DefaultTheme = 'Spoof'
 	ThemeManager.HudToggles = true -- watermark / keybind list visibility toggles in Appearance
 	ThemeManager.Applying = false
 
 	ThemeManager.Library = nil
 	-- { order, { colours as hex, derived keys optional }, { appearance settings, optional } }
 	ThemeManager.BuiltInThemes = {
+		['Spoof']        = { 0, { FontColor = 'e8e8ea', MainColor = '151516', AccentColor = '4066b2', AccentColor2 = '8b8b93', BackgroundColor = '0c0c0d', OutlineColor = '2a2a2d', RiskColor = 'f87171' },
+			{ StrokeThickness = 1, OutlineMode = 'Gradient', NotifyCorner = 'Top Left', Scale = 100, GradientAngle = 45, Font = 'Gotham', Corner = 100, OutlineThickness = 1, GradientSpeed = 0.35, Animated = true, FontSize = 13, Transparency = 0 } },
+		['Perception']   = { 30, { FontColor = 'b6b6b6', MainColor = '141414', AccentColor = '668994', AccentColor2 = '668994', BackgroundColor = '171717', OutlineColor = '181818', RiskColor = 'e50000' } },
+		['Serotonin']    = { 31, { FontColor = 'bababc', MainColor = '1d1d1d', AccentColor = '0ea48b', AccentColor2 = '0ea48b', BackgroundColor = '1f1f1f', OutlineColor = '2f2f2f', RiskColor = 'e50000' } },
+		['CS2 Fatality'] = { 32, { FontColor = 'b6b6b6', MainColor = '151515', AccentColor = 'f25060', AccentColor2 = 'f25060', BackgroundColor = '151515', OutlineColor = '1c1c1c', RiskColor = 'a0723e' } },
+		['Eve']          = { 33, { FontColor = 'b8bfc9', MainColor = '0c0d0e', AccentColor = 'c7e6f3', AccentColor2 = 'c7e6f3', BackgroundColor = '121315', OutlineColor = '2e3034', RiskColor = 'a03e3e' } },
+		['Melatonin']    = { 34, { FontColor = 'd4d8dc', MainColor = '1d1e24', AccentColor = '9c99cd', AccentColor2 = '9c99cd', BackgroundColor = '1f2027', OutlineColor = '292b31', RiskColor = 'e50000' } },
 		['Aster Violet'] = { 1, { FontColor = 'e9e8f5', MainColor = '14141c', AccentColor = '8b5cf6', AccentColor2 = '4aa8ff', BackgroundColor = '0b0b10', OutlineColor = '262633', RiskColor = 'f43f5e' } },
 		['Aurora']       = { 2, { FontColor = 'e4f2f0', MainColor = '101a1d', AccentColor = '22d3ee', AccentColor2 = '34d399', BackgroundColor = '090f11', OutlineColor = '1f3036', RiskColor = 'fb7185' } },
 		['Sakura']       = { 3, { FontColor = 'f5e8ef', MainColor = '1c141a', AccentColor = 'f472b6', AccentColor2 = 'fb923c', BackgroundColor = '110c10', OutlineColor = '33242e', RiskColor = 'ef4444' } },
@@ -271,6 +278,10 @@ local ThemeManager = {} do
 
 	function ThemeManager:ResolveDefault()
 		local theme = self.DefaultTheme
+		if type(getgenv) == 'function' then
+			local Ok, Name = pcall(function() return getgenv().AsterDefaultTheme end)
+			if Ok and type(Name) == 'string' and self.BuiltInThemes[Name] then theme = Name end
+		end
 		local path = self.Folder .. '/themes/default.txt'
 		local content = SafeIsFile(path) and SafeRead(path)
 
@@ -285,7 +296,7 @@ local ThemeManager = {} do
 		end
 
 		if not self.BuiltInThemes[theme] and isDefault then
-			theme = 'Aster Violet'
+			theme = 'Spoof'
 		end
 		return theme, isDefault
 	end

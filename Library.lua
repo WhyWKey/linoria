@@ -1354,7 +1354,52 @@ function Library:CreateTabIcon(Parent, Icon, Name, ZIndex)
 end;
 
 -- Logo ----------------------------------------------------------------------
--- Rounded badge with an accent gradient fill and a bold white 'A'; no rotated pieces, so it cannot misrender.
+-- aster_logo.png is fetched from the repo in the background; until then (or without
+-- writefile/getcustomasset) logos use the Frame-built aster below.
+Library.LogoImage = nil;
+Library.LogoListeners = {};
+
+task.spawn(function()
+    pcall(function()
+        if type(writefile) ~= 'function' or type(getcustomasset) ~= 'function' then
+            return;
+        end;
+        local Path = 'Aster/aster_logo.png';
+        pcall(function()
+            if type(makefolder) == 'function' and not (type(isfolder) == 'function' and isfolder('Aster')) then
+                makefolder('Aster');
+            end;
+        end);
+        local Base = Env.AsterRepo or 'https://raw.githubusercontent.com/WhyWKey/linoria/main/';
+        local Ok, Data = pcall(function() return game:HttpGet(Base .. 'aster_logo.png'); end);
+        local FromCache = false;
+        if not (Ok and type(Data) == 'string' and #Data > 64 and string.sub(Data, 2, 4) == 'PNG') then
+            Data = nil;
+            pcall(function()
+                if type(isfile) == 'function' and isfile(Path) then
+                    Data = readfile(Path);
+                    FromCache = Data ~= nil;
+                end;
+            end);
+        end;
+        if not Data then
+            return;
+        end;
+        if not FromCache then
+            writefile(Path, Data);
+        end;
+        local Asset = getcustomasset(Path);
+        if type(Asset) ~= 'string' or Asset == '' then
+            return;
+        end;
+        Library.LogoImage = Asset;
+        for _, Listener in ipairs(Library.LogoListeners) do
+            pcall(Listener, Asset);
+        end;
+    end);
+end);
+
+-- Accent-tinted aster: image when available, otherwise a disc with 8 rotated petal Frames.
 -- Returns the holder Frame plus a handle { SetSize, Draw, Destroy }. Hidden starts invisible for Draw to fade in.
 function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
     local Holder = Library:Create('Frame', {
@@ -1363,54 +1408,99 @@ function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
         ZIndex = ZIndex;
         Parent = Parent;
     });
-    local Badge = Library:Create('Frame', {
+    local Content = Library:Create('Frame', {
         AnchorPoint = Vector2.new(0.5, 0.5);
-        BackgroundColor3 = Color3.new(1, 1, 1);
-        BackgroundTransparency = Hidden and 1 or 0;
-        BorderSizePixel = 0;
+        BackgroundTransparency = 1;
         Position = UDim2.fromScale(0.5, 0.5);
         Size = UDim2.fromScale(1, 1);
         ZIndex = ZIndex;
         Parent = Holder;
     });
-    Library:Create('UICorner', { CornerRadius = UDim.new(0.28, 0); Parent = Badge });
-    local Scale = Library:Create('UIScale', { Scale = Hidden and 0.6 or 1; Parent = Badge });
-    local Gradient = Library:Create('UIGradient', { Rotation = 45; Parent = Badge });
-    Library:AddGradient(Gradient, 'slide', Always);
+    local Scale = Library:Create('UIScale', { Scale = Hidden and 0.6 or 1; Parent = Content });
+    local StartAlpha = Hidden and 1 or 0;
 
-    local Letter = Library:Create('TextLabel', {
+    local Pieces = {};
+    local function AddPiece(Class, Props, Prop)
+        Props.Parent = Content;
+        Props.ZIndex = ZIndex + 1;
+        Props[Prop] = StartAlpha;
+        local Piece = Library:Create(Class, Props);
+        Pieces[#Pieces + 1] = { Instance = Piece; Prop = Prop };
+        return Piece;
+    end;
+
+    local Fallback = {};
+    local Disc = AddPiece('Frame', {
         AnchorPoint = Vector2.new(0.5, 0.5);
-        BackgroundTransparency = 1;
-        Font = Enum.Font.GothamBold;
+        BackgroundColor3 = Library.AccentColor;
         Position = UDim2.fromScale(0.5, 0.5);
-        Size = UDim2.fromScale(1, 1);
-        Text = 'A';
-        TextColor3 = Color3.new(1, 1, 1);
-        TextSize = math.max(8, math.floor(Size * 0.62));
-        TextTransparency = Hidden and 1 or 0;
-        ZIndex = ZIndex + 1;
-        Parent = Badge;
-    });
+        Size = UDim2.fromScale(0.26, 0.26);
+    }, 'BackgroundTransparency');
+    Library:Create('UICorner', { CornerRadius = UDim.new(1, 0); Parent = Disc });
+    Library:AddToRegistry(Disc, { BackgroundColor3 = 'AccentColor' });
+    Fallback[1] = Disc;
+    for Idx = 0, 7 do
+        local Angle = math.rad(Idx * 45);
+        local Petal = AddPiece('Frame', {
+            AnchorPoint = Vector2.new(0.5, 0.5);
+            BackgroundColor3 = Library.AccentColor;
+            Position = UDim2.fromScale(0.5 + math.sin(Angle) * 0.29, 0.5 - math.cos(Angle) * 0.29);
+            Rotation = Idx * 45;
+            Size = UDim2.fromScale(0.1, 0.3);
+        }, 'BackgroundTransparency');
+        Library:Create('UICorner', { CornerRadius = UDim.new(0.5, 0); Parent = Petal });
+        Library:AddToRegistry(Petal, { BackgroundColor3 = 'AccentColor' });
+        Fallback[#Fallback + 1] = Petal;
+    end;
+
+    local Img;
+    local function UseImage(Asset)
+        if Img or not Holder.Parent then
+            return;
+        end;
+        Img = AddPiece('ImageLabel', {
+            AnchorPoint = Vector2.new(0.5, 0.5);
+            BackgroundTransparency = 1;
+            Image = Asset;
+            ImageColor3 = Library.AccentColor;
+            Position = UDim2.fromScale(0.5, 0.5);
+            Size = UDim2.fromScale(1, 1);
+        }, 'ImageTransparency');
+        Img.ImageTransparency = Disc.BackgroundTransparency;
+        Library:AddToRegistry(Img, { ImageColor3 = 'AccentColor' });
+        for _, Piece in ipairs(Fallback) do
+            Piece.Visible = false;
+        end;
+    end;
+    if Library.LogoImage then
+        UseImage(Library.LogoImage);
+    else
+        table.insert(Library.LogoListeners, UseImage);
+    end;
 
     local Logo = {};
     function Logo.SetSize(NewSize)
         Holder.Size = UDim2.fromOffset(NewSize, NewSize);
-        Letter.TextSize = math.max(8, math.floor(NewSize * 0.62));
     end;
     function Logo.Draw(Duration, Delay)
         Duration = Duration or 0.6;
-        Badge.BackgroundTransparency = 1;
-        Letter.TextTransparency = 1;
+        for _, Piece in ipairs(Pieces) do
+            Piece.Instance[Piece.Prop] = 1;
+        end;
         Scale.Scale = 0.6;
         pcall(function()
             local Fade = TweenInfo.new(Duration * 0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, Delay or 0);
-            TweenService:Create(Badge, Fade, { BackgroundTransparency = 0 }):Play();
-            TweenService:Create(Letter, Fade, { TextTransparency = 0 }):Play();
+            for _, Piece in ipairs(Pieces) do
+                TweenService:Create(Piece.Instance, Fade, { [Piece.Prop] = 0 }):Play();
+            end;
             TweenService:Create(Scale, TweenInfo.new(Duration, Enum.EasingStyle.Back, Enum.EasingDirection.Out, 0, false, Delay or 0), { Scale = 1 }):Play();
         end);
     end;
     function Logo.Destroy()
-        Library:RemoveGradient(Gradient);
+        local Pos = table.find(Library.LogoListeners, UseImage);
+        if Pos then
+            table.remove(Library.LogoListeners, Pos);
+        end;
         Holder:Destroy();
     end;
     return Holder, Logo;

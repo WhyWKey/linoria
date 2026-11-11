@@ -33,7 +33,7 @@ local function Log(...) print('[Example]', ...) end
 -- Default theme goes on the library before any UI or the intro paints
 ThemeManager:SetLibrary(Library)
 ThemeManager:SetFolder('AsterShowcase')
-ThemeManager:SetDefaultTheme(Env.AsterDefaultTheme or 'Aster Violet')
+ThemeManager:SetDefaultTheme(Env.AsterDefaultTheme or 'Spoof')
 ThemeManager:PreApply()
 
 local Window = Library:CreateWindow({

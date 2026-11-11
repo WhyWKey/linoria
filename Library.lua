@@ -514,24 +514,22 @@ function Library:AddToolTip(InfoStr, HoverInstance)
     Library:AddToRegistry(Tooltip, {
         BackgroundColor3 = 'MainColor';
     });
-    local IsHovering = false
+    local Follow
 
     Library:Hover(HoverInstance, function()
         if Library:MouseIsOverOpenedFrame() then
             return
         end
 
-        IsHovering = true
-
         Tooltip.Position = UDim2.fromOffset(Mouse.X + 15, Mouse.Y + 12)
         Tooltip.Visible = true
 
-        while IsHovering do
-            RunService.Heartbeat:Wait()
+        if Follow then Follow:Disconnect() end
+        Follow = RunService.Heartbeat:Connect(function()
             Tooltip.Position = UDim2.fromOffset(Mouse.X + 15, Mouse.Y + 12)
-        end
+        end)
     end, function()
-        IsHovering = false
+        if Follow then Follow:Disconnect(); Follow = nil end
         Tooltip.Visible = false
     end)
 end
@@ -739,52 +737,103 @@ Library.GradientMap = {};
 Library.GradientTime = 0;
 Library.SearchEntries = {};
 
+-- One live tween per instance: a new tween or a direct Snap cancels the old one so it cannot finish later and overwrite the state.
+Library.LiveTweens = setmetatable({}, { __mode = 'k' });
+function Library:Snap(Obj, Props)
+    local Old = Library.LiveTweens[Obj];
+    if Old then Library.LiveTweens[Obj] = nil; pcall(function() Old:Cancel() end) end;
+    if Props then
+        for K, V in next, Props do pcall(function() Obj[K] = V end) end;
+    end;
+end;
+
 function Library:Tween(Obj, Props, Time, Style, Dir)
+    if Library.SnapTweens then
+        Library:Snap(Obj, Props);
+        return;
+    end;
+    local Prev = Library.LiveTweens[Obj];
+    if Prev then pcall(function() Prev:Cancel() end) end;
     local Ok, Tw = pcall(function()
         local T = TweenService:Create(Obj, TweenInfo.new(Time or 0.15, Style or Enum.EasingStyle.Quad, Dir or Enum.EasingDirection.Out), Props);
         T:Play();
         return T;
     end);
-    if Ok then return Tw end;
+    if Ok then Library.LiveTweens[Obj] = Tw; return Tw end;
 end;
 
--- Hover with guaranteed exit: MouseLeave never fires when the element hides, so active hovers are swept by the render loop.
-Library.ActiveHovers = {};
+-- Hover is purely state-derived: no MouseEnter/MouseLeave. Every frame the menu is open, Library:UpdateHovers
+-- finds the topmost GuiObject under the mouse; an entry is hovered only if that object is its Hit or a descendant.
+Library.Hovers = setmetatable({}, { __mode = 'k' });
 function Library:Hover(Hit, OnEnter, OnLeave)
-    local Entry = { Hit = Hit; Leave = OnLeave };
-    local function Exit()
-        if Library.ActiveHovers[Entry] then
-            Library.ActiveHovers[Entry] = nil;
-            OnLeave();
-        end;
+    local Entry = { Hit = Hit; On = false; Enter = OnEnter; Leave = OnLeave };
+    function Entry.Exit(Instant)
+        if not Entry.On then return end;
+        Entry.On = false;
+        if Instant then Library.SnapTweens = true end;
+        pcall(OnLeave);
+        Library.SnapTweens = false;
     end;
-    Entry.Exit = Exit;
-    Hit.MouseEnter:Connect(function()
-        Library.ActiveHovers[Entry] = true;
-        OnEnter();
-    end);
-    Hit.MouseLeave:Connect(Exit);
+    Library.Hovers[Entry] = true;
     return Entry;
 end;
 
-function Library:SweepHovers(Force)
-    for Entry in next, Library.ActiveHovers do
+local function Clipped(Hit, X, Y)
+    local Cur = Hit.Parent;
+    while Cur and Cur:IsA('GuiObject') do
+        if Cur.ClipsDescendants then
+            local P, S = Cur.AbsolutePosition, Cur.AbsoluteSize;
+            if X < P.X or X > P.X + S.X or Y < P.Y or Y > P.Y + S.Y then return true end;
+        end;
+        Cur = Cur.Parent;
+    end;
+    return false;
+end;
+
+function Library:TopObjectAt(X, Y)
+    local Root = ScreenGui.Parent;
+    if Root and Root:IsA('BasePlayerGui') then
+        local Ok, List = pcall(Root.GetGuiObjectsAtPosition, Root, X, Y);
+        if Ok and type(List) == 'table' then
+            for _, Obj in ipairs(List) do
+                if Obj:IsDescendantOf(ScreenGui) then return Obj end;
+            end;
+            return false;
+        end;
+    end;
+    return nil;
+end;
+
+function Library:UpdateHovers(Force)
+    local X, Y = Mouse.X, Mouse.Y;
+    local Top = (not Force) and Library:TopObjectAt(X, Y) or nil;
+    for Entry in next, Library.Hovers do
         local Hit = Entry.Hit;
-        local Gone = Force or not Hit.Parent;
-        if not Gone then
+        local Want = false;
+        if not Force and Hit.Parent then
+            Want = true;
             local Cur = Hit;
             while Cur and Cur:IsA('GuiObject') do
-                if not Cur.Visible then Gone = true; break end;
+                if not Cur.Visible then Want = false; break end;
                 Cur = Cur.Parent;
             end;
+            if Want then
+                local P, S = Hit.AbsolutePosition, Hit.AbsoluteSize;
+                Want = X >= P.X and X <= P.X + S.X and Y >= P.Y and Y <= P.Y + S.Y and not Clipped(Hit, X, Y);
+            end;
+            if Want and Top ~= nil then
+                Want = Top ~= false and (Top == Hit or Top:IsDescendantOf(Hit));
+            end;
         end;
-        if not Gone then
-            local P, S = Hit.AbsolutePosition, Hit.AbsoluteSize;
-            Gone = Mouse.X < P.X or Mouse.X > P.X + S.X or Mouse.Y < P.Y or Mouse.Y > P.Y + S.Y;
+        if Want and not Entry.On then
+            Entry.On = true;
+            task.spawn(Entry.Enter);
+        elseif not Want and Entry.On then
+            Entry.Exit(true);
         end;
-        if Gone then Entry.Exit() end;
     end;
 end;
+Library.SweepHovers = Library.UpdateHovers;
 
 Library.Corners = setmetatable({}, { __mode = 'k' });
 Library.Strokes = setmetatable({}, { __mode = 'k' });
@@ -1396,14 +1445,15 @@ do
             StatAccum, Frames = 0, 0;
         end;
 
+        if Library.Toggled or Library.HoverDirty then
+            Library.HoverDirty = not Library.Toggled;
+            Library:UpdateHovers(not Library.Toggled);
+        end;
+
         if Accum < 1 / 30 then
             return;
         end;
         Accum = 0;
-
-        if next(Library.ActiveHovers) then
-            Library:SweepHovers(not Library.Toggled);
-        end;
 
         if not Library.AnimatedGradient then
             if not AtRest or Library.GradientDirty then
@@ -2245,7 +2295,7 @@ do
             local State = KeyPicker:GetState();
 
             local displayKey = (KeyPicker.Value == 'None') and '...' or KeyPicker.Value
-            ContainerLabel.Text = string.format('[%s] %s (%s)', displayKey, Info.Text, KeyPicker.Mode);
+            ContainerLabel.Text = string.format('[%s] %s (%s) %s', displayKey, Info.Text, KeyPicker.Mode, State and 'ON' or 'OFF');
             local kbMode = Library.KeybindMode or 'All'
             if kbMode == 'Active' then
                 KeybindEntry.Visible = State == true
@@ -2262,6 +2312,16 @@ do
             else
                 KeybindEntry.Visible = true
             end
+
+            local Filter = Library.KeybindFilter;
+            if Filter.OnlyBound and KeyPicker.Value == 'None' then
+                KeybindEntry.Visible = false;
+            end;
+            if Filter.OnlyEnabled then
+                local On = State;
+                if ParentObj and ParentObj.Type == 'Toggle' then On = ParentObj.Value == true end;
+                if not On then KeybindEntry.Visible = false end;
+            end;
 
             ContainerLabel.TextColor3 = State and Library.AccentColor or Library.FontColor;
             Library.RegistryMap[ContainerLabel].Properties.TextColor3 = State and 'AccentColor' or 'FontColor';
@@ -3983,10 +4043,6 @@ do
         return Section;
     end;
 
-    function Funcs:AddPreview(Config)
-        return Library:CreatePreview(self, Config);
-    end;
-
     function Funcs:AddPlayerList(Config)
         return Library:CreatePlayerList(self, Config);
     end;
@@ -4024,7 +4080,6 @@ do
     WrapSearch('AddLabel', function(Text) return type(Text) == 'string' and Text or '' end);
     WrapSearch('AddButton', function(A) return type(A) == 'table' and A.Text or (type(A) == 'string' and A or '') end);
     WrapSearch('AddDivider', function() return '' end);
-    WrapSearch('AddPreview', function() return 'preview' end);
     WrapSearch('AddPlayerList', function() return 'players' end);
 
     BaseGroupbox.__index = Funcs;
@@ -4235,694 +4290,6 @@ BaseAddons.__index.AddSettings = function(self, Name, Info)
     table.insert(self.SettingsPopups, Popup);
     Popup:Resize();
     return Popup;
-end;
-
--- ESP preview -----------------------------------------------------------------
-Library.PreviewDefaults = {
-    UserId = 6135348224; RigType = 'R6'; AutoRotate = false;
-    Box = true; BoxColor = Color3.fromRGB(255, 255, 255); BoxStyle = 'Full';
-    BoxFill = false; BoxFillColor = Color3.fromRGB(255, 255, 255); BoxFillTransparency = 0.88;
-    Name = true; NameColor = Color3.fromRGB(255, 255, 255); NameText = 'Aster';
-    Health = true; HealthColor = Color3.fromRGB(80, 220, 120); HealthLowColor = Color3.fromRGB(255, 70, 90);
-    HealthGradient = true; HealthNumber = false; HealthValue = 0.78;
-    Weapon = true; WeaponColor = Color3.fromRGB(205, 205, 215); WeaponText = 'AK-47';
-    Distance = true; DistanceColor = Color3.fromRGB(150, 150, 165); DistanceText = '42m';
-    Flags = false; FlagsColor = Color3.fromRGB(255, 200, 80); FlagsText = { 'ARMED', 'VISIBLE' };
-    Skeleton = false; SkeletonColor = Color3.fromRGB(255, 255, 255);
-    Chams = false; ChamsColor = Color3.fromRGB(139, 92, 246); ChamsTransparency = 0.35;
-    ChamsOutline = true; ChamsOutlineColor = Color3.fromRGB(255, 255, 255);
-    Tracer = false; TracerColor = Color3.fromRGB(255, 255, 255);
-};
-
-local SkeletonBones = {
-    { 'head', 'neck' }; { 'neck', 'pelvis' }; { 'neck', 'shL' }; { 'neck', 'shR' };
-    { 'shL', 'elbL' }; { 'elbL', 'handL' }; { 'shR', 'elbR' }; { 'elbR', 'handR' };
-    { 'pelvis', 'hipL' }; { 'pelvis', 'hipR' }; { 'hipL', 'kneeL' }; { 'kneeL', 'footL' };
-    { 'hipR', 'kneeR' }; { 'kneeR', 'footR' };
-};
-local SkeletonJoints = {
-    head = { 0.5, 0.085 }; neck = { 0.5, 0.19 }; pelvis = { 0.5, 0.54 };
-    shL = { 0.22, 0.21 }; shR = { 0.78, 0.21 }; elbL = { 0.09, 0.37 }; elbR = { 0.91, 0.37 };
-    handL = { 0.09, 0.52 }; handR = { 0.91, 0.52 }; hipL = { 0.36, 0.54 }; hipR = { 0.64, 0.54 };
-    kneeL = { 0.35, 0.76 }; kneeR = { 0.65, 0.76 }; footL = { 0.35, 0.98 }; footR = { 0.65, 0.98 };
-};
--- x, y, w, h as fractions of the figure
-local BodyParts = {
-    { 0.2, 0.18, 0.6, 0.36, 4 }; { 0.02, 0.19, 0.15, 0.34, 4 }; { 0.83, 0.19, 0.15, 0.34, 4 };
-    { 0.22, 0.55, 0.26, 0.44, 4 }; { 0.52, 0.55, 0.26, 0.44, 4 };
-};
-
--- Parent: a groupbox (anything with .Container) or a GuiObject. Config: { Height, Type = 'ESP', Settings }
-function Library:CreatePreview(Parent, Config)
-    Config = type(Config) == 'table' and Config or {};
-    local Host = Parent and (Parent.Container or Parent);
-    assert(Host, 'CreatePreview: Missing parent.');
-
-    local Height = math.max(160, Config.Height or 250);
-    local Preview = { Type = 'Preview'; Settings = {}; Links = {} };
-    local S = Preview.Settings;
-    for Key, Value in next, Library.PreviewDefaults do S[Key] = Value end;
-    for Key, Value in next, (Config.Settings or {}) do S[Key] = Value end;
-
-    local Stage = Library:Create('Frame', {
-        BackgroundColor3 = Library.InputColor;
-        ClipsDescendants = true;
-        Size = UDim2.new(1, 0, 0, Height);
-        ZIndex = 5;
-        Parent = Host;
-    });
-    Library:Round(Stage, 6);
-    Library:Stroke(Stage, 'OutlineColor');
-    Library:AddToRegistry(Stage, { BackgroundColor3 = 'InputColor' });
-    Library:CreateLabel({
-        Dim = true;
-        Position = UDim2.fromOffset(8, 5);
-        Size = UDim2.new(1, -16, 0, 12);
-        Text = Config.Title or 'Preview';
-        TextSize = Library.FontSize - 2;
-        TextXAlignment = Enum.TextXAlignment.Left;
-        ZIndex = 6;
-        Parent = Stage;
-    });
-
-    local Pad = 6;
-    local Ch = math.max(90, Height - 76);
-    local Cw = math.floor(Ch * 0.44);
-    local Top = 30;
-
-    local Floor = Library:Create('Frame', {
-        AnchorPoint = Vector2.new(0.5, 0.5);
-        BackgroundColor3 = Color3.new(0, 0, 0);
-        BackgroundTransparency = 0.65;
-        Position = UDim2.new(0.5, 0, 0, Top + Ch + 2);
-        Size = UDim2.fromOffset(Cw + 36, 8);
-        ZIndex = 6;
-        Parent = Stage;
-    });
-    Library:Round(Floor, 8);
-
-    local Tracer = Library:Create('Frame', {
-        AnchorPoint = Vector2.new(0.5, 0);
-        BorderSizePixel = 0;
-        Position = UDim2.new(0.5, 0, 0, Top + Ch + Pad);
-        Size = UDim2.fromOffset(1, math.max(1, Height - (Top + Ch + Pad)));
-        Visible = false;
-        ZIndex = 7;
-        Parent = Stage;
-    });
-
-    local Char = Library:Create('Frame', {
-        AnchorPoint = Vector2.new(0.5, 0);
-        BackgroundTransparency = 1;
-        Position = UDim2.new(0.5, 0, 0, Top);
-        Size = UDim2.fromOffset(Cw, Ch);
-        ZIndex = 7;
-        Parent = Stage;
-    });
-
-    local Parts, PartStrokes = {}, {};
-    local function MakePart(X, Y, W, H, Radius)
-        local Part = Library:Create('Frame', {
-            Position = UDim2.fromOffset(math.floor(X), math.floor(Y));
-            Size = UDim2.fromOffset(math.floor(W), math.floor(H));
-            ZIndex = 7;
-            Parent = Char;
-        });
-        Library:Round(Part, Radius);
-        local Stroke = Library:Create('UIStroke', { Thickness = 1; ApplyStrokeMode = Enum.ApplyStrokeMode.Border; Parent = Part });
-        table.insert(Parts, Part);
-        table.insert(PartStrokes, Stroke);
-        Library:AddToRegistry(Part, { BackgroundColor3 = function() return Preview:PartColor() end });
-        return Part;
-    end;
-    local HeadSize = math.floor(Ch * 0.15);
-    local Head = MakePart(Cw / 2 - HeadSize / 2, Ch * 0.01, HeadSize, HeadSize, 100);
-    for _, P in ipairs(BodyParts) do
-        MakePart(P[1] * Cw, P[2] * Ch, P[3] * Cw, P[4] * Ch, P[5]);
-    end;
-
-    local Bones = {};
-    for _, Pair in ipairs(SkeletonBones) do
-        local A, B = SkeletonJoints[Pair[1]], SkeletonJoints[Pair[2]];
-        local Ax, Ay, Bx, By = A[1] * Cw, A[2] * Ch, B[1] * Cw, B[2] * Ch;
-        local Dx, Dy = Bx - Ax, By - Ay;
-        table.insert(Bones, Library:Create('Frame', {
-            AnchorPoint = Vector2.new(0.5, 0.5);
-            Position = UDim2.fromOffset((Ax + Bx) / 2, (Ay + By) / 2);
-            Rotation = math.deg(math.atan2(Dy, Dx));
-            Size = UDim2.fromOffset(math.max(1, math.sqrt(Dx * Dx + Dy * Dy)), 1);
-            Visible = false;
-            ZIndex = 9;
-            Parent = Char;
-        }));
-    end;
-
-    local BoxW, BoxH = Cw + Pad * 2, Ch + Pad * 2;
-    local View = { On = false; Yaw = 0; Dirty = true; Entries = {}; Core = {} };
-    local Box = Library:Create('Frame', {
-        BackgroundTransparency = 1;
-        Position = UDim2.fromOffset(-Pad, -Pad);
-        Size = UDim2.new(1, Pad * 2, 1, Pad * 2);
-        ZIndex = 8;
-        Parent = Char;
-    });
-    local BoxFill = Library:Create('Frame', { Size = UDim2.fromScale(1, 1); ZIndex = 8; Parent = Box });
-    local BoxFull = Library:Create('Frame', { BackgroundTransparency = 1; Size = UDim2.fromScale(1, 1); ZIndex = 9; Parent = Box });
-    local BoxStroke = Library:Create('UIStroke', { Thickness = 1; ApplyStrokeMode = Enum.ApplyStrokeMode.Border; Parent = BoxFull });
-    local Corners = {};
-    local CornerLen = math.floor(math.min(BoxW, BoxH) * 0.22);
-    for Cx = 0, 1 do
-        for Cy = 0, 1 do
-            for Axis = 1, 2 do
-                table.insert(Corners, Library:Create('Frame', {
-                    AnchorPoint = Vector2.new(Cx, Cy);
-                    Position = UDim2.new(Cx, 0, Cy, 0);
-                    Size = Axis == 1 and UDim2.fromOffset(CornerLen, 1) or UDim2.fromOffset(1, CornerLen);
-                    ZIndex = 9;
-                    Parent = Box;
-                }));
-            end;
-        end;
-    end;
-
-    local function Text(Anchor, Pos, Align)
-        return Library:Create('TextLabel', {
-            AnchorPoint = Anchor;
-            BackgroundTransparency = 1;
-            Font = Library.Font;
-            Position = Pos;
-            Size = UDim2.fromOffset(120, 12);
-            TextSize = Library.FontSize - 2;
-            TextStrokeTransparency = 0.6;
-            TextXAlignment = Align or Enum.TextXAlignment.Center;
-            ZIndex = 10;
-            Parent = Char;
-        });
-    end;
-    local NameLabel = Text(Vector2.new(0.5, 1), UDim2.new(0.5, 0, 0, -Pad - 2));
-    local WeaponLabel = Text(Vector2.new(0.5, 0), UDim2.new(0.5, 0, 1, Pad + 2));
-    local DistanceLabel = Text(Vector2.new(0.5, 0), UDim2.new(0.5, 0, 1, Pad + 14));
-    local HealthTrack = Library:Create('Frame', {
-        AnchorPoint = Vector2.new(1, 0);
-        BackgroundColor3 = Color3.new(0, 0, 0);
-        BackgroundTransparency = 0.35;
-        Position = UDim2.fromOffset(-Pad - 3, -Pad);
-        Size = UDim2.new(0, 3, 1, Pad * 2);
-        ZIndex = 9;
-        Parent = Char;
-    });
-    local HealthFill = Library:Create('Frame', {
-        AnchorPoint = Vector2.new(0, 1);
-        Position = UDim2.fromScale(0, 1);
-        Size = UDim2.fromScale(1, 0.78);
-        ZIndex = 10;
-        Parent = HealthTrack;
-    });
-    local HealthText = Text(Vector2.new(1, 0.5), UDim2.new(0, -Pad - 8, 0, 0), Enum.TextXAlignment.Right);
-    HealthText.Size = UDim2.fromOffset(30, 10);
-    local FlagLabels = {};
-    for Idx = 1, 4 do
-        FlagLabels[Idx] = Text(Vector2.new(0, 0), UDim2.new(1, Pad + 4, 0, -Pad + (Idx - 1) * 11), Enum.TextXAlignment.Left);
-        FlagLabels[Idx].Size = UDim2.fromOffset(70, 10);
-        FlagLabels[Idx].TextSize = Library.FontSize - 3;
-    end;
-
-    function Preview:PartColor()
-        if S.Chams then return S.ChamsColor end;
-        return Library.OutlineColor:Lerp(Library.FontColor, 0.14);
-    end;
-
-    function Preview:Refresh()
-        if Preview.Destroyed then return end;
-        local Chams = S.Chams == true;
-        for Idx, Part in ipairs(Parts) do
-            Part.BackgroundColor3 = Preview:PartColor();
-            Part.BackgroundTransparency = Chams and (S.ChamsTransparency or 0.35) or 0;
-            PartStrokes[Idx].Color = Chams and S.ChamsOutlineColor or Library.OutlineColor;
-            PartStrokes[Idx].Transparency = (Chams and S.ChamsOutline == false) and 1 or 0;
-        end;
-
-        local Style = tostring(S.BoxStyle or 'Full'):lower();
-        Box.Visible = S.Box == true;
-        BoxFull.Visible = Style ~= 'corner';
-        BoxStroke.Color = S.BoxColor;
-        for _, Corner in ipairs(Corners) do
-            Corner.Visible = Style == 'corner';
-            Corner.BackgroundColor3 = S.BoxColor;
-        end;
-        BoxFill.Visible = S.BoxFill == true;
-        BoxFill.BackgroundColor3 = S.BoxFillColor;
-        BoxFill.BackgroundTransparency = S.BoxFillTransparency or 0.88;
-
-        for _, Bone in ipairs(Bones) do
-            Bone.Visible = S.Skeleton == true;
-            Bone.BackgroundColor3 = S.SkeletonColor;
-        end;
-
-        Tracer.Visible = S.Tracer == true;
-        Tracer.BackgroundColor3 = S.TracerColor;
-
-        NameLabel.Visible = S.Name == true;
-        NameLabel.Text = tostring(S.NameText or '');
-        NameLabel.TextColor3 = S.NameColor;
-
-        local Health = math.clamp((S.HealthValue or 1) > 1 and S.HealthValue / 100 or (S.HealthValue or 1), 0, 1);
-        HealthTrack.Visible = S.Health == true;
-        HealthFill.Size = UDim2.fromScale(1, Health);
-        HealthFill.BackgroundColor3 = S.HealthGradient and S.HealthLowColor:Lerp(S.HealthColor, Health) or S.HealthColor;
-        HealthText.Visible = S.Health == true and S.HealthNumber == true;
-        HealthText.Text = tostring(math.floor(Health * 100 + 0.5));
-        HealthText.TextColor3 = HealthFill.BackgroundColor3;
-        HealthText.Position = UDim2.new(0, -Pad - 8, 1 - Health, (1 - Health) * Pad * 2 - Pad);
-
-        local Row = 0;
-        WeaponLabel.Visible = S.Weapon == true;
-        WeaponLabel.Text = tostring(S.WeaponText or '');
-        WeaponLabel.TextColor3 = S.WeaponColor;
-        if S.Weapon then Row = Row + 1 end;
-        DistanceLabel.Visible = S.Distance == true;
-        DistanceLabel.Text = tostring(S.DistanceText or '');
-        DistanceLabel.TextColor3 = S.DistanceColor;
-        DistanceLabel.Position = UDim2.new(0.5, 0, 1, Pad + 2 + Row * 12);
-
-        local Flags = type(S.FlagsText) == 'table' and S.FlagsText or {};
-        for Idx, Label in ipairs(FlagLabels) do
-            Label.Visible = S.Flags == true and Flags[Idx] ~= nil;
-            Label.Text = tostring(Flags[Idx] or '');
-            Label.TextColor3 = S.FlagsColor;
-        end;
-
-        View.Dirty = true;
-        if View.Apply then View.Apply() end;
-    end;
-
-    function Preview:SetSettings(Settings)
-        for Key, Value in next, Settings or {} do S[Key] = Value end;
-        Preview:Refresh();
-        return Preview;
-    end;
-    function Preview:Set(Key, Value)
-        S[Key] = Value;
-        Preview:Refresh();
-        return Preview;
-    end;
-    function Preview:Get(Key)
-        return S[Key];
-    end;
-    function Preview:SetHealth(Value)
-        return Preview:Set('HealthValue', Value);
-    end;
-    function Preview:SetVisible(Bool)
-        Stage.Visible = not not Bool;
-    end;
-
-    local function LinkQuiet(Key, Element, Transform)
-        if type(Element) == 'string' then
-            Element = Toggles[Element] or Options[Element];
-        end;
-        if type(Element) ~= 'table' then return end;
-        local function Apply(Value)
-            if Transform then Value = Transform(Value) end;
-            S[Key] = Value;
-            Preview:Refresh();
-        end;
-        Library:AddChangedHook(Element, Apply);
-        if Element.Value ~= nil then
-            S[Key] = Transform and Transform(Element.Value) or Element.Value;
-        end;
-        Preview.Links[Key] = Element;
-    end;
-    -- Preview:Link('Box', Toggles.Box) or Preview:Link('Box', 'Box') by Idx
-    function Preview:Link(Key, Element, Transform)
-        LinkQuiet(Key, Element, Transform);
-        Preview:Refresh();
-        return Preview;
-    end;
-    -- Preview:Bind({ Box = Toggles.Box, BoxColor = Options.BoxColor, ... })
-    function Preview:Bind(Map)
-        for Key, Element in next, Map or {} do
-            LinkQuiet(Key, Element);
-        end;
-        Preview:Refresh();
-        return Preview;
-    end;
-    function Preview:Destroy()
-        Preview.Destroyed = true;
-        for _, Conn in ipairs(View.Conns or {}) do pcall(function() Conn:Disconnect() end) end;
-        Stage:Destroy();
-    end;
-
-    function Preview:ResetView()
-        View.Yaw = 0;
-        View.Dirty = true;
-        return Preview;
-    end;
-
-    -- Real R6 model in a ViewportFrame; the 2D silhouette stays as the fallback
-    local FOV = 35;
-    local VpTop = 22;
-    local SixNames = { 'Head', 'Torso', 'Left Arm', 'Right Arm', 'Left Leg', 'Right Leg' };
-    local VP, Cam, World, Catcher, Hint;
-    local Fit = { W = 0; H = 0; Dist = 10; Cy = 0 };
-    local CamCF;
-    local Loaded, Loading = nil, false;
-
-    local function Corners(Rot, Entry)
-        local Out = {};
-        local H = Entry.Size / 2;
-        for _, Sx in ipairs({ -1, 1 }) do
-            for _, Sy in ipairs({ -1, 1 }) do
-                for _, Sz in ipairs({ -1, 1 }) do
-                    table.insert(Out, Rot * Entry.Base * Vector3.new(H.X * Sx, H.Y * Sy, H.Z * Sz));
-                end;
-            end;
-        end;
-        return Out;
-    end;
-
-    local function Project(World3)
-        local P = CamCF:PointToObjectSpace(World3);
-        local Depth = math.max(0.05, -P.Z);
-        local Tan = math.tan(math.rad(FOV / 2));
-        local Nx = P.X / (Depth * Tan * (Fit.W / math.max(Fit.H, 1)));
-        local Ny = P.Y / (Depth * Tan);
-        return (Nx * 0.5 + 0.5) * Fit.W, (0.5 - Ny * 0.5) * Fit.H;
-    end;
-
-    local function Relayout()
-        local Size = VP.AbsoluteSize;
-        if Size.X == Fit.W and Size.Y == Fit.H and not Fit.Stale then return end;
-        Fit.W, Fit.H, Fit.Stale = Size.X, Size.Y, false;
-        if Fit.H < 10 then return end;
-        local Tan = math.tan(math.rad(FOV / 2));
-        local ByH = ((Fit.YMax - Fit.YMin) + 1.4) / 2 / Tan;
-        local ByW = (Fit.HalfW * 2 + 1) / 2 / (Tan * (Fit.W / Fit.H));
-        Fit.Dist = math.max(ByH, ByW) + 1;
-        Fit.Cy = (Fit.YMin + Fit.YMax) / 2;
-        CamCF = CFrame.lookAt(Vector3.new(0, Fit.Cy, -Fit.Dist), Vector3.new(0, Fit.Cy, 0));
-        Cam.CFrame = CamCF;
-    end;
-
-    local function SetMode(On)
-        View.On = On;
-        for _, Part in ipairs(Parts) do Part.Visible = not On end;
-        Floor.Visible = not On;
-        if VP then VP.Visible = On end;
-        if Catcher then Catcher.Visible = On end;
-        if Hint then Hint.Visible = On end;
-        Char.AnchorPoint = On and Vector2.new(0, 0) or Vector2.new(0.5, 0);
-        if not On then
-            Char.Position = UDim2.new(0.5, 0, 0, Top);
-            Char.Size = UDim2.fromOffset(Cw, Ch);
-            for Idx, Pair in ipairs(SkeletonBones) do
-                local A, B = SkeletonJoints[Pair[1]], SkeletonJoints[Pair[2]];
-                local Ax, Ay, Bx, By = A[1] * Cw, A[2] * Ch, B[1] * Cw, B[2] * Ch;
-                Bones[Idx].Position = UDim2.fromOffset((Ax + Bx) / 2, (Ay + By) / 2);
-                Bones[Idx].Rotation = math.deg(math.atan2(By - Ay, Bx - Ax));
-                Bones[Idx].Size = UDim2.fromOffset(math.max(1, math.sqrt((Bx - Ax) ^ 2 + (By - Ay) ^ 2)), 1);
-            end;
-        end;
-    end;
-
-    local function Fail()
-        pcall(SetMode, false);
-    end;
-
-    local function ApplyLook()
-        local Chams = S.Chams == true;
-        for _, E in ipairs(View.Entries) do
-            if E.Orig.Transparency < 1 then
-                E.Part.Color = Chams and S.ChamsColor or E.Orig.Color;
-                E.Part.Transparency = Chams and (S.ChamsTransparency or 0.35) or E.Orig.Transparency;
-            end;
-        end;
-    end;
-
-    local function SetModel(Model)
-        if View.Model then pcall(function() View.Model:Destroy() end) end;
-        View.Model, View.Entries, View.Core = Model, {}, {};
-        for _, Obj in ipairs(Model:GetDescendants()) do
-            if Obj:IsA('BasePart') then
-                Obj.Anchored = true;
-                Obj.CanCollide = false;
-                local Entry = { Part = Obj; Base = Obj.CFrame; Size = Obj.Size; Orig = { Color = Obj.Color; Transparency = Obj.Transparency } };
-                table.insert(View.Entries, Entry);
-                if Obj.Parent == Model then View.Core[Obj.Name] = Entry end;
-            end;
-        end;
-        Model.Parent = World;
-        local YMin, YMax, HalfW = math.huge, -math.huge, 0;
-        for _, Name in ipairs(SixNames) do
-            for _, P in ipairs(Corners(CFrame.new(), View.Core[Name])) do
-                YMin, YMax, HalfW = math.min(YMin, P.Y), math.max(YMax, P.Y), math.max(HalfW, math.abs(P.X));
-            end;
-        end;
-        Fit.YMin, Fit.YMax, Fit.HalfW, Fit.Stale = YMin, YMax, HalfW, true;
-        ApplyLook();
-        View.Dirty = true;
-    end;
-
-    local function Complete(Model)
-        for _, Name in ipairs(SixNames) do
-            if not (Model:FindFirstChild(Name) and Model[Name]:IsA('BasePart')) then return false end;
-        end;
-        return true;
-    end;
-
-    local function Strip(Model)
-        for _, Obj in ipairs(Model:GetDescendants()) do
-            if Obj:IsA('Humanoid') or Obj:IsA('LuaSourceContainer') or Obj:IsA('Animator') then
-                pcall(function() Obj:Destroy() end);
-            end;
-        end;
-        pcall(function() Model:PivotTo(CFrame.new()) end);
-    end;
-
-    local function BuildBlockRig()
-        local Model = Instance.new('Model');
-        Model.Name = 'AsterPreviewRig';
-        local Skin, Shirt, Pants = Color3.fromRGB(245, 205, 48), Color3.fromRGB(13, 105, 172), Color3.fromRGB(40, 127, 71);
-        local Defs = {
-            { 'Head', Vector3.new(1, 1, 1), Vector3.new(0, 1.5, 0), Skin };
-            { 'Torso', Vector3.new(2, 2, 1), Vector3.new(0, 0, 0), Shirt };
-            { 'Left Arm', Vector3.new(1, 2, 1), Vector3.new(-1.5, 0, 0), Skin };
-            { 'Right Arm', Vector3.new(1, 2, 1), Vector3.new(1.5, 0, 0), Skin };
-            { 'Left Leg', Vector3.new(1, 2, 1), Vector3.new(-0.5, -2, 0), Pants };
-            { 'Right Leg', Vector3.new(1, 2, 1), Vector3.new(0.5, -2, 0), Pants };
-        };
-        for _, D in ipairs(Defs) do
-            local Part = Instance.new('Part');
-            Part.Name = D[1];
-            Part.Size = D[2];
-            Part.Color = D[4];
-            Part.Material = Enum.Material.SmoothPlastic;
-            Part.Anchored = true;
-            Part.CanCollide = false;
-            Part.CFrame = CFrame.new(D[3]);
-            Part.Parent = Model;
-            if D[1] == 'Head' then
-                pcall(function()
-                    local Mesh = Instance.new('SpecialMesh');
-                    Mesh.MeshType = Enum.MeshType.Head;
-                    Mesh.Scale = Vector3.new(1.25, 1.25, 1.25);
-                    Mesh.Parent = Part;
-                    local Face = Instance.new('Decal');
-                    Face.Texture = 'rbxasset://textures/face.png';
-                    Face.Parent = Part;
-                end);
-            end;
-        end;
-        Model.PrimaryPart = Model:FindFirstChild('Torso');
-        return Model;
-    end;
-
-    local function FetchAvatar(Id)
-        local Model;
-        pcall(function()
-            local Desc = Players:GetHumanoidDescriptionFromUserId(Id);
-            Model = Players:CreateHumanoidModelFromDescription(Desc, Enum.HumanoidRigType.R6);
-        end);
-        if not Model then
-            pcall(function() Model = Players:CreateHumanoidModelFromUserId(Id) end);
-        end;
-        if Model and not Complete(Model) then
-            Model:Destroy();
-            Model = nil;
-        end;
-        return Model;
-    end;
-
-    local function Load()
-        if Loading or Preview.Destroyed or Library.Unloaded or not View.Ready then return end;
-        local Id = tonumber(S.UserId);
-        Loaded = S.UserId;
-        if not Id or Id <= 0 or tostring(S.RigType or 'R6'):upper() ~= 'R6' then return end;
-        Loading = true;
-        task.spawn(function()
-            local Model = FetchAvatar(Id);
-            Loading = false;
-            if Model and not Preview.Destroyed and not Library.Unloaded then
-                local Ok = pcall(function() Strip(Model); SetModel(Model) end);
-                if not Ok then
-                    pcall(function() Model:Destroy() end);
-                    Fail();
-                end;
-            elseif Model then
-                Model:Destroy();
-            end;
-            if Loaded ~= S.UserId and not Preview.Destroyed and not Library.Unloaded then Load() end;
-        end);
-    end;
-
-    function View.Apply()
-        if not View.On then return end;
-        pcall(ApplyLook);
-        if Loaded ~= S.UserId then Load() end;
-    end;
-
-    local function Draw()
-        Relayout();
-        if Fit.H < 10 then View.Dirty = true; return end;
-        local Rot = CFrame.Angles(0, View.Yaw, 0);
-        if not pcall(function() View.Model:PivotTo(Rot) end) then
-            for _, E in ipairs(View.Entries) do E.Part.CFrame = Rot * E.Base end;
-        end;
-
-        local MinX, MinY, MaxX, MaxY = math.huge, math.huge, -math.huge, -math.huge;
-        for _, Name in ipairs(SixNames) do
-            for _, P in ipairs(Corners(Rot, View.Core[Name])) do
-                local X, Y = Project(P);
-                MinX, MinY, MaxX, MaxY = math.min(MinX, X), math.min(MinY, Y), math.max(MaxX, X), math.max(MaxY, Y);
-            end;
-        end;
-        Char.Position = UDim2.fromOffset(MinX, VpTop + MinY);
-        Char.Size = UDim2.fromOffset(MaxX - MinX, MaxY - MinY);
-
-        if S.Skeleton ~= true then return end;
-        local Core = View.Core;
-        local function At(Name, Y)
-            local E = Core[Name];
-            local X, Py = Project(Rot * E.Base * Vector3.new(0, Y * E.Size.Y / 2, 0));
-            return X - MinX, Py - MinY;
-        end;
-        local Joints = {
-            head = { At('Head', 0) }; neck = { At('Torso', 1) }; pelvis = { At('Torso', -1) };
-            shL = { At('Left Arm', 0.85) }; shR = { At('Right Arm', 0.85) };
-            elbL = { At('Left Arm', 0) }; elbR = { At('Right Arm', 0) };
-            handL = { At('Left Arm', -1) }; handR = { At('Right Arm', -1) };
-            hipL = { At('Left Leg', 1) }; hipR = { At('Right Leg', 1) };
-            kneeL = { At('Left Leg', 0) }; kneeR = { At('Right Leg', 0) };
-            footL = { At('Left Leg', -1) }; footR = { At('Right Leg', -1) };
-        };
-        for Idx, Pair in ipairs(SkeletonBones) do
-            local A, B = Joints[Pair[1]], Joints[Pair[2]];
-            local Dx, Dy = B[1] - A[1], B[2] - A[2];
-            Bones[Idx].Position = UDim2.fromOffset((A[1] + B[1]) / 2, (A[2] + B[2]) / 2);
-            Bones[Idx].Rotation = math.deg(math.atan2(Dy, Dx));
-            Bones[Idx].Size = UDim2.fromOffset(math.max(1, math.sqrt(Dx * Dx + Dy * Dy)), 1);
-        end;
-    end;
-
-    local function Build()
-        VP = Library:Create('ViewportFrame', {
-            BackgroundTransparency = 1;
-            Position = UDim2.fromOffset(0, VpTop);
-            Size = UDim2.new(1, 0, 1, -VpTop - 2);
-            Ambient = Color3.fromRGB(170, 170, 180);
-            LightColor = Color3.fromRGB(255, 255, 255);
-            LightDirection = Vector3.new(-0.4, -0.6, 0.7);
-            ZIndex = 6;
-            Parent = Stage;
-        });
-        World = Instance.new('WorldModel');
-        World.Parent = VP;
-        Cam = Instance.new('Camera');
-        Cam.FieldOfView = FOV;
-        Cam.Parent = VP;
-        VP.CurrentCamera = Cam;
-        local Model = BuildBlockRig();
-        SetModel(Model);
-
-        Catcher = Library:Create('TextButton', {
-            BackgroundTransparency = 1;
-            Size = UDim2.new(1, 0, 1, -VpTop);
-            Position = UDim2.fromOffset(0, VpTop);
-            Text = '';
-            AutoButtonColor = false;
-            ZIndex = 12;
-            Parent = Stage;
-        });
-        Hint = Library:CreateLabel({
-            Dim = true;
-            Position = UDim2.fromOffset(8, 5);
-            Size = UDim2.new(1, -16, 0, 12);
-            Text = 'drag to rotate, double-click to reset';
-            TextSize = Library.FontSize - 3;
-            TextXAlignment = Enum.TextXAlignment.Right;
-            ZIndex = 6;
-            Parent = Stage;
-        });
-    end;
-
-    if pcall(Build) then
-        SetMode(true);
-        View.Ready = true;
-        View.Conns = {};
-        local Dragging, LastClick, Shown, Check = false, 0, true, 0;
-        table.insert(View.Conns, Catcher.InputBegan:Connect(function(Input)
-            if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-                Dragging = true;
-                if os.clock() - LastClick < 0.3 then Preview:ResetView() end;
-                LastClick = os.clock();
-            end;
-        end));
-        table.insert(View.Conns, InputService.InputChanged:Connect(function(Input)
-            if Dragging and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
-                View.Yaw = View.Yaw + Input.Delta.X * 0.012;
-                View.Dirty = true;
-            end;
-        end));
-        table.insert(View.Conns, InputService.InputEnded:Connect(function(Input)
-            if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-                Dragging = false;
-            end;
-        end));
-        table.insert(View.Conns, RunService.RenderStepped:Connect(function(Dt)
-            if Preview.Destroyed or not View.On then return end;
-            if not Library.Toggled then Dragging = false; View.Dirty = true; return end;
-            Check = Check - Dt;
-            if Check <= 0 then
-                Check = 0.15;
-                Shown = true;
-                local Cur = VP;
-                while Cur and Cur:IsA('GuiObject') do
-                    if not Cur.Visible then Shown = false; break end;
-                    Cur = Cur.Parent;
-                end;
-            end;
-            if not Shown then Dragging = false; return end;
-            if (S.AutoRotate or Preview.AutoRotate) and not Dragging then
-                View.Yaw = View.Yaw + Dt * 0.6;
-                View.Dirty = true;
-            end;
-            if View.Dirty or Fit.Stale then
-                View.Dirty = false;
-                if not pcall(Draw) then Fail() end;
-            end;
-        end));
-        for _, Conn in ipairs(View.Conns) do Library:GiveSignal(Conn) end;
-        Load();
-    else
-        if VP then pcall(function() VP:Destroy() end) end;
-    end;
-
-    Preview.Frame = Stage;
-    if type(Parent) == 'table' and Parent.AddBlank then
-        Parent:AddBlank(4);
-        Parent:Resize();
-    end;
-    Preview:Refresh();
-    return Preview;
 end;
 
 -- Player priorities + player list ---------------------------------------------
@@ -5225,7 +4592,7 @@ function Library:CreatePlayerList(Parent, Config)
         local Row = PL.Rows[Id];
         if not Row then return end;
         local Selected = PL.Selected and PL.Selected.UserId == Id;
-        Row.Frame.BackgroundTransparency = Selected and 0.78 or 1;
+        Library:Snap(Row.Frame, { BackgroundTransparency = Selected and 0.78 or 1 });
     end;
 
     function PL:UpdateInfo()
@@ -5984,6 +5351,16 @@ function Library:SetKeybindMode(Mode)
     Library.KeybindMode = Mode
     Library:RefreshKeybinds()
 end
+
+-- Filter = { OnlyEnabled = list only features currently on, OnlyBound = list only features with a key set }
+Library.KeybindFilter = Library.KeybindFilter or { OnlyEnabled = false; OnlyBound = false };
+function Library:SetKeybindListFilter(Filter)
+    Filter = Filter or {};
+    for _, Key in ipairs({ 'OnlyEnabled', 'OnlyBound' }) do
+        if Filter[Key] ~= nil then Library.KeybindFilter[Key] = not not Filter[Key] end;
+    end;
+    Library:RefreshKeybinds();
+end;
 
 function Library:RefreshKeybinds()
     for _, kp in ipairs(Library.KeyPickerList) do
@@ -7390,7 +6767,7 @@ function Library:CreateWindow(...)
                 Library.OpenedFrames[Frame] = nil;
             end;
             Library:CloseAllPopups();
-            Library:SweepHovers(true);
+            Library:UpdateHovers(true);
             task.delay(Fade, function()
                 if Token == Library.ToggleToken then
                     Outer.Visible = false;

@@ -14,6 +14,7 @@ if Env.AsterExampleUnload then
     Env.AsterExampleUnload = nil
 end
 
+Env.AsterRepo = repo
 local Library = loadstring(game:HttpGet(repo .. 'Library.lua'))()
 local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
 local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()

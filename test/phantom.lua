@@ -651,17 +651,6 @@ function Game.isFirearm(weapon)
     return type(Game.stat(weapon, "bulletspeed")) == "number"
 end
 
-Game.classes = {
-    { id = "pistol", name = "Pistol", icon = "pistol" },
-    { id = "smg", name = "SMG", icon = "smg" },
-    { id = "rifle", name = "Rifle", icon = "rifle" },
-    { id = "lmg", name = "LMG", icon = "lmg" },
-    { id = "sniper", name = "Sniper", icon = "sniper" },
-    { id = "shotgun", name = "Shotgun", icon = "shotgun" },
-}
-Game.classNames = {}
-for _, entry in ipairs(Game.classes) do Game.classNames[entry.id] = entry.name end
-
 local CLASS_BY_TYPE = {
     PISTOL = "pistol", PISTOLS = "pistol", REVOLVER = "pistol", REVOLVERS = "pistol",
     SMG = "smg", PDW = "smg", ["MACHINE PISTOL"] = "smg", ["MACHINE PISTOLS"] = "smg",
@@ -701,34 +690,6 @@ function Game.weaponClass(weapon)
     return class
 end
 
-local PW_KEYS = {
-    legit_aim = "aim", legit_fov = "fov", legit_smooth = "smooth", legit_dist = "dist", legit_priority = "priority", legit_parts = "parts",
-    legit_drop = "drop", legit_move = "move",
-    rcs_on = "rcs_on", rcs_v = "rcs_v", rcs_h = "rcs_h",
-    trig_on = "trig_on", trig_delay = "trig_delay", trig_parts = "trig_parts",
-}
-Game.pw = { active = false, class = nil, weapon = nil }
-
-function Game.pwUpdate()
-    local pw = Game.pw
-    local weapon = Game.weapon()
-    local class = weapon and Game.weaponClass(weapon) or nil
-    pw.weapon, pw.class = weapon, class
-    pw.active = class ~= nil and flag("pw_enabled", false) == true and flag("pw_" .. class .. "_override", false) == true
-    return pw
-end
-
-function Game.eff(name, default)
-    local pw = Game.pw
-    local key = pw.active and PW_KEYS[name]
-    if key then return flag("pw_" .. pw.class .. "_" .. key, default) end
-    return flag(name, default)
-end
-
-function Game.effSet(name, fallback)
-    return Util.toSet(Game.eff(name, fallback))
-end
-
 function Game.time()
     local network = Game.mods.NetworkClient
     if type(network) == "table" and type(network.getTime) == "function" then
@@ -758,6 +719,10 @@ function Game.hookNetwork()
     Game.hooked.network = Util.hook(network, "send", function(original)
         return function(self, method, ...)
             if method == "debug" or method == "flaguser" then return nil end
+            if method == "newbullets" and Game.onNewBullets then
+                local _, packet = ...
+                pcall(Game.onNewBullets, packet)
+            end
             return original(self, method, ...)
         end
     end)
@@ -779,6 +744,41 @@ local PART_SIZES = {
     ["Left Arm"] = Vector3.new(1, 2, 1), ["Right Arm"] = Vector3.new(1, 2, 1),
     ["Left Leg"] = Vector3.new(1, 2, 1), ["Right Leg"] = Vector3.new(1, 2, 1),
 }
+
+local Visible
+
+local HIST_WINDOW, HIST_STEP, MAX_TRACK_SPEED = 0.3, 0.03, 60
+
+function Entities.track(record, position, now)
+    local hist = record.hist
+    if not hist then
+        hist = { head = 1, tail = 0 }
+        record.hist = hist
+    end
+    local last = hist[hist.tail]
+    if last and (now < last.t or (position - last.p).Magnitude > 20) then
+        record.hist = nil
+        record.vel = nil
+        return Entities.track(record, position, now)
+    end
+    if not last or now - last.t >= HIST_STEP then
+        hist.tail = hist.tail + 1
+        hist[hist.tail] = { t = now, p = position }
+    end
+    while hist.tail - hist.head > 1 and now - hist[hist.head].t > HIST_WINDOW do
+        hist[hist.head] = nil
+        hist.head = hist.head + 1
+    end
+    local first, newest = hist[hist.head], hist[hist.tail]
+    local span = newest.t - first.t
+    if span >= 0.08 and span <= HIST_WINDOW * 1.5 then
+        local velocity = (newest.p - first.p) / span
+        if velocity.Magnitude > MAX_TRACK_SPEED then velocity = velocity.Unit * MAX_TRACK_SPEED end
+        record.vel = velocity
+    else
+        record.vel = nil
+    end
+end
 
 function Entities.update()
     if Entities.frame == Game.frame then return Entities.list end
@@ -831,6 +831,7 @@ function Entities.update()
         local spring = entry._velspring
         local velocity = spring and spring.p
         record.velocity = typeof(velocity) == "Vector3" and velocity or Vector3.zero
+        Entities.track(record, position, os.clock())
 
         record.weaponName, record.weaponObject = nil, nil
         if rendered then
@@ -842,6 +843,7 @@ function Entities.update()
         end
         local okModel, model = pcall(object.getCharacterModel, object)
         record.model = (typeof(object._characterModel) == "Instance" and object._characterModel) or (okModel and typeof(model) == "Instance" and model) or torso.Parent
+        if record.model then Visible.bodies[record.model] = true end
 
         list[#list + 1] = record
     end)
@@ -857,32 +859,101 @@ function Entities.update()
     return list
 end
 
-local Visible = { cache = setmetatable({}, { __mode = "k" }), nextFilter = 0 }
+Visible = { cache = setmetatable({}, { __mode = "k" }), bodies = setmetatable({}, { __mode = "k" }), nextFilter = 0, budget = 0 }
 Visible.params = RaycastParams.new()
 Visible.params.FilterType = Enum.RaycastFilterType.Exclude
 pcall(function() Visible.params.RespectCanCollide = true end)
 pcall(function() Visible.params.IgnoreWater = true end)
+Visible.exitParams = RaycastParams.new()
+Visible.exitParams.FilterType = Enum.RaycastFilterType.Include
+pcall(function() Visible.exitParams.IgnoreWater = true end)
 
 function Visible.refresh(now)
+    Visible.budget = 48
     if now < Visible.nextFilter then return end
     Visible.nextFilter = now + 1
     local list = {}
-    local current = Game.camera()
-    if current then list[#list + 1] = current end
-    for _, name in ipairs({ "Ignore", "Players", "Roots" }) do
-        local folder = Workspace:FindFirstChild(name)
-        if folder then list[#list + 1] = folder end
+    local function add(instance)
+        if typeof(instance) == "Instance" then list[#list + 1] = instance end
     end
+    add(Game.camera())
+    add(Workspace.Terrain)
+    for _, name in ipairs({ "Ignore", "Players", "Roots" }) do add(Workspace:FindFirstChild(name)) end
+    local root = Game.rootPart()
+    if root then add(root.Parent) end
+    pcall(function() add(LocalPlayer.Character) end)
     Visible.params.FilterDescendantsInstances = list
+end
+
+function Visible.skip(part)
+    return Game.skipHit(part) or Visible.bodies[part.Parent] ~= nil
 end
 
 function Visible.check(part, origin, now)
     local cached = Visible.cache[part]
     if cached and now - cached[1] < 0.06 then return cached[2] end
-    local hit = Game.cast(origin, (part.Position - origin) * 0.998, Visible.params)
+    local hit = Game.cast(origin, (part.Position - origin) * 0.998, Visible.params, Visible.skip)
     local result = hit == nil
     Visible.cache[part] = { now, result }
     return result
+end
+
+function Visible.exit(position, unit, instance)
+    local ok, size = pcall(function() return instance.Size.Magnitude end)
+    if not ok or type(size) ~= "number" then return nil end
+    Visible.exitParams.FilterDescendantsInstances = { instance }
+    return Workspace:Raycast(position + unit * size, -unit * size, Visible.exitParams)
+end
+
+function Visible.trace(origin, point, depth)
+    local vector = (point - origin) * 0.998
+    local length = vector.Magnitude
+    if length < 0.05 then return 0, 0 end
+    local unit = vector / length
+    local from, remaining = origin, vector
+    local left, total, walls, seen = depth or 0, 0, 0, {}
+    for _ = 1, 12 do
+        local hit = Workspace:Raycast(from, remaining, Visible.params)
+        if not hit then return total, walls end
+        local instance = hit.Instance
+        if instance == nil or (not seen[instance] and not Visible.skip(instance)) then
+            if instance ~= nil then seen[instance] = true end
+            walls = walls + 1
+            if not depth then return nil end
+            local exit = instance ~= nil and Visible.exit(hit.Position, unit, instance)
+            if exit then
+                local thickness = unit:Dot(exit.Position - hit.Position)
+                total = total + thickness
+                left = left - thickness
+                if left < 0 then return nil end
+            end
+        end
+        local rest = remaining - (hit.Position - from)
+        local restLength = rest.Magnitude
+        if restLength < 0.05 then return total, walls end
+        from = hit.Position + rest * (0.02 / restLength)
+        remaining = rest - rest * (0.02 / restLength)
+    end
+    return nil
+end
+
+local VIS_ORDER = { "Head", "Torso", "Right Leg", "Left Arm", "Left Leg", "Right Arm" }
+
+function Visible.entity(record, origin, now, interval)
+    local cached = record.visCache
+    if cached and (cached.frame == Game.frame or now - cached.at < interval) then return cached.value end
+    local value = false
+    if record.rendered then
+        for index = 1, math.clamp(math.floor(flag("vis_rays", 3)), 1, #VIS_ORDER) do
+            local part = record.hash[VIS_ORDER[index]]
+            if part and part.Parent and Visible.trace(origin, part.Position) then
+                value = true
+                break
+            end
+        end
+    end
+    record.visCache = { at = now, frame = Game.frame, value = value }
+    return value
 end
 
 local Draw = { all = {}, hasApi = (type(Drawing) == "table" or type(Drawing) == "userdata") }
@@ -1937,7 +2008,7 @@ function ESP.processRecord(cam, rec, now, origin, viewport, center)
     end
     local visible = false
     if rec.rendered and S.visOverride then
-        visible = Visible.check(rec.head, origin, now) or Visible.check(rec.torso, origin, now)
+        visible = Visible.entity(rec, origin, now, flag("vis_interval", 100) / 1000)
     end
     ESP.chams(rec, cfg, S)
     ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, center)
@@ -3733,32 +3804,266 @@ Legit.circle = Draw.new("Circle", { Thickness = 1, NumSides = 64, Filled = false
 Legit.circleFill = Draw.new("Circle", { NumSides = 64, Filled = true, Visible = false, ZIndex = 4 })
 Legit.snapline = Draw.new("Line", { Thickness = 1, Visible = false, ZIndex = 6 })
 
+local INSET = 0.8
+local POINT_OFFSETS = {
+    Head = { { 0, 0, 0 }, { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } },
+    Torso = { { 0, 0, 0 }, { 1, 1, 0 }, { -1, 1, 0 }, { 1, -1, 0 }, { -1, -1, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 1, 0, 0 }, { -1, 0, 0 } },
+    Limb = { { 0, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 } },
+}
+local PURPLE = Color3.fromRGB(170, 80, 255)
+
+local Aim = { opts = {} }
+local Silent = { tickets = {}, rollAt = -1, pass = true, opts = {} }
+
+function Aim.depth(weapon, safety)
+    local depth = Game.stat(weapon, "penetrationdepth")
+    if type(depth) == "number" and depth > 0 then return depth * safety end
+    return nil
+end
+
+function Aim.velocity(record)
+    return record.vel or record.velocity
+end
+
+function Aim.intercept(origin, position, velocity, speed, weapon)
+    local bulletAccel = Game.stat(weapon, "bulletaccel")
+    if type(bulletAccel) ~= "number" then bulletAccel = 0 end
+    local time = (position - origin).Magnitude / speed
+    local hit, aim, direction = position, position, nil
+    for _ = 1, 8 do
+        hit = position + velocity * time
+        local accel = Game.accel
+        if direction and bulletAccel ~= 0 then accel = accel + direction * bulletAccel end
+        aim = hit - accel * (0.5 * time * time)
+        local vector = aim - origin
+        local length = vector.Magnitude
+        if length < 1e-3 then break end
+        direction = vector / length
+        time = length / speed
+    end
+    return hit, aim, time
+end
+
+function Aim.rotate(vector, from, to)
+    local axis = from:Cross(to)
+    local sin, cos = axis.Magnitude, from:Dot(to)
+    if sin < 1e-6 then return cos > 0 and vector or to end
+    local k = axis / sin
+    return (vector * cos + k:Cross(vector) * sin + k * (k:Dot(vector) * (1 - cos))).Unit
+end
+
+function Aim.offsets(name)
+    if name == "Head" or name == "Torso" then return POINT_OFFSETS[name] end
+    return POINT_OFFSETS.Limb
+end
+
+function Aim.gather(record, cam, center, radius, opts)
+    if radius then
+        local point, front, depth = Draw.project(cam, record.torso.Position)
+        if not front then return nil end
+        local pixels = (cam.ViewportSize.Y / 2) / math.tan(math.rad(cam.FieldOfView) / 2)
+        if (point - center).Magnitude > radius + 4 * pixels / math.max(depth, 1) then return nil end
+    end
+    local list = {}
+    local count = opts.multi and opts.max or 1
+    for _, group in ipairs(GROUP_ORDER) do
+        if opts.parts[group] then
+            local penalty = (opts.choice ~= "Closest" and group ~= opts.choice) and 1e5 or 0
+            for _, name in ipairs(GROUPS[group]) do
+                local part = record.hash[name]
+                if part and part.Parent then
+                    local offsets = Aim.offsets(name)
+                    local half = PART_SIZES[name] * (0.5 * (opts.scale or 1) * INSET)
+                    for index = 1, math.min(count, #offsets) do
+                        local offset = offsets[index]
+                        local position = part.Position
+                        if index > 1 then
+                            position = part.CFrame:PointToWorldSpace(Vector3.new(offset[1] * half.X, offset[2] * half.Y, offset[3] * half.Z))
+                        end
+                        local point, front = Draw.project(cam, position)
+                        local screen = front and (point - center).Magnitude or 1e5
+                        if (radius == nil and front) or screen <= (radius or 0) then
+                            list[#list + 1] = { pos = position, screen = screen, group = group, part = part, key = screen + penalty + index * 0.001 }
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return list
+end
+
+local function byKey(a, b) return a.key < b.key end
+
+function Aim.select(record, cam, origin, center, radius, opts)
+    local list = Aim.gather(record, cam, center, radius, opts)
+    if not list or #list == 0 then return nil end
+    table.sort(list, byKey)
+    local fallback
+    for _, cand in ipairs(list) do
+        if not opts.visible then
+            cand.mode = "open"
+            return cand
+        end
+        if Visible.budget <= 0 then break end
+        Visible.budget = Visible.budget - 1
+        local thickness, walls = Visible.trace(origin, cand.pos, opts.depth)
+        if thickness then
+            cand.thickness = thickness
+            if walls == 0 then
+                cand.mode = "visible"
+                return cand
+            end
+            if not fallback then
+                cand.mode = "pen"
+                fallback = cand
+            end
+        end
+    end
+    return fallback
+end
+
+function Silent.acquire(origin, weapon)
+    local L = Legit.L
+    local cam = Game.camera()
+    if not cam then return nil end
+    Visible.budget = 48
+    local opts = Silent.opts
+    opts.visible, opts.parts, opts.choice = L.silentVisible, L.parts, L.choice
+    opts.multi, opts.scale, opts.max = L.multi, L.multiScale, L.multiMax
+    opts.depth = L.wallbang and Aim.depth(weapon, L.safety) or nil
+    local center = cam.ViewportSize / 2
+    local bestRecord, bestCand
+    for _, record in ipairs(Entities.list) do
+        if record.rendered and (record.enemy or not L.teamCheck) and (record.torso.Position - origin).Magnitude <= L.maxdist then
+            local cand = Aim.select(record, cam, origin, center, L.silentFov, opts)
+            if cand and (not bestCand or cand.screen < bestCand.screen) then bestRecord, bestCand = record, cand end
+        end
+    end
+    return bestRecord, bestCand
+end
+
+function Silent.rewrite(info)
+    local L = Legit.L
+    local extra = type(info) == "table" and info.extra
+    if type(extra) ~= "table" or extra.firearmObject == nil or extra.bulletTicket == nil then return end
+    if not (L.silent and Game.ready) or Util.menuOpen() then return end
+    local velocity, origin = info.velocity, info.position
+    if typeof(velocity) ~= "Vector3" or typeof(origin) ~= "Vector3" then return end
+    local now = os.clock()
+    if now - Silent.rollAt > 0.05 then
+        Silent.rollAt = now
+        Silent.pass = math.random() * 100 < L.silentChance
+    end
+    if not Silent.pass then return end
+    local speed = velocity.Magnitude
+    if speed < 1 then return end
+    local weapon = extra.firearmObject
+    local record, cand = Silent.acquire(origin, weapon)
+    if not record then return end
+    local _, aim, time = Aim.intercept(origin, cand.pos, Aim.velocity(record), speed, weapon)
+    local settings = Game.mods.PublicSettings
+    if time > (settings and settings.bulletLifeTime or 2) then return end
+    local vector = aim - origin
+    if vector.Magnitude < 0.01 then return end
+    local direction, old = vector.Unit, velocity / speed
+    local reference
+    local okFrame, frame = pcall(weapon.getBarrelCFrame, weapon)
+    if okFrame and typeof(frame) == "CFrame" then reference = frame.LookVector end
+    if reference and (old - reference).Magnitude < 0.6 then direction = Aim.rotate(old, reference, direction) end
+    info.velocity = direction * speed
+    local bulletAccel = Game.stat(weapon, "bulletaccel")
+    if type(bulletAccel) == "number" and bulletAccel ~= 0 and typeof(info.acceleration) == "Vector3" then
+        info.acceleration = info.acceleration + (direction - old) * bulletAccel
+    end
+    Silent.tickets[extra.bulletTicket] = { dir = direction, at = now }
+end
+
+function Silent.patch(packet)
+    local tickets = Silent.tickets
+    if next(tickets) == nil or type(packet) ~= "table" or type(packet.bullets) ~= "table" then return end
+    for _, bullet in ipairs(packet.bullets) do
+        local entry = tickets[bullet[2]]
+        if entry then
+            bullet[1] = entry.dir
+            tickets[bullet[2]] = nil
+        end
+    end
+    local now = os.clock()
+    for ticket, entry in pairs(tickets) do
+        if now - entry.at > 5 then tickets[ticket] = nil end
+    end
+end
+Game.onNewBullets = Silent.patch
+
+function Silent.hook()
+    if Silent.hooked or not Game.mods.BulletInterface then return end
+    Silent.hooked = Util.hook(Game.mods.BulletInterface, "newBullet", function(original)
+        return function(info, ...)
+            if Legit.L.silent then pcall(Silent.rewrite, info) end
+            return original(info, ...)
+        end
+    end)
+end
+
+Silent.circle = Draw.new("Circle", { Thickness = 1, NumSides = 48, Filled = false, Visible = false, ZIndex = 5 })
+
+function Silent.step(cam)
+    local L = Legit.L
+    if L.silent then Silent.hook() end
+    local show = L.silent and L.silentDraw
+    Silent.circle.Visible = show
+    if show then
+        Silent.circle.Position, Silent.circle.Radius, Silent.circle.Color = cam.ViewportSize / 2, L.silentFov, L.silentColor
+    end
+end
+
 function Legit.read()
     local L = Legit.L
-    L.aim = Game.eff("legit_aim", false)
+    L.aim = flag("legit_aim", false)
     L.visible, L.ads, L.shooting = flag("legit_visible", true), flag("legit_ads", false), flag("legit_shooting", false)
-    L.smooth, L.speed = Game.eff("legit_smooth", 12), flag("legit_speed", 420)
-    L.maxdist, L.deadzone = Game.eff("legit_dist", 600), flag("legit_deadzone", 2)
-    L.parts = Game.effSet("legit_parts", { Head = true, Torso = true })
-    L.choice, L.targetBy = Game.eff("legit_priority", "Closest"), flag("legit_target_by", "Crosshair")
+    L.smooth, L.speed = flag("legit_smooth", 12), flag("legit_speed", 420)
+    L.maxdist, L.deadzone = flag("legit_dist", 600), flag("legit_deadzone", 2)
+    L.parts = Util.set("legit_parts", { Head = true, Torso = true })
+    L.choice, L.targetBy = flag("legit_priority", "Closest"), flag("legit_target_by", "Crosshair")
     L.sticky, L.switch, L.react = flag("legit_sticky", true), flag("legit_switch", 120), flag("legit_react", 60)
-    L.drop, L.move = Game.eff("legit_drop", true), Game.eff("legit_move", true)
+    L.drop, L.move = flag("legit_drop", true), flag("legit_move", true)
     L.strength, L.maxLead = flag("legit_strength", 1), flag("legit_maxlead", 14)
     L.noise, L.noiseSpeed = flag("legit_noise", 0.25), flag("legit_noise_speed", 1.4)
-    L.fovRadius, L.fovDynamic = Game.eff("legit_fov", 120), flag("legit_fov_dynamic", false)
-    L.fovZoom, L.fovMin, L.fovSpeed = flag("legit_fov_zoom", 1), flag("legit_fov_min", 30), flag("legit_fov_speed", 10)
+    L.fovRadius, L.fovDynamic = flag("legit_fov", 120), flag("legit_fov_dynamic", false)
+    L.fovZoom, L.fovSpeed = flag("legit_fov_zoom", 1), flag("legit_fov_speed", 10)
     L.teamCheck = flag("legit_team_check", true)
     L.barrel = flag("legit_barrel", true)
     L.fovBarrel, L.fovAttach = flag("legit_fov_barrel", false), flag("legit_fov_attach", "Aim hit")
+    L.multi, L.multiScale, L.multiMax = flag("legit_multi", false), flag("legit_multi_scale", 60) / 100, math.floor(flag("legit_multi_max", 5))
+    L.showPoints, L.pointColor = flag("legit_multi_show", false), flag("legit_multi_color", Color3.fromRGB(120, 255, 170))
+    L.wallbang, L.safety = flag("legit_wallbang", false), flag("legit_pen_safety", 90) / 100
+    L.pred, L.predShow, L.predAim, L.predAll = flag("legit_pred", false), flag("legit_pred_show", true), flag("legit_pred_aim", false), flag("legit_pred_all", false)
+    L.predColor, L.predOutline = flag("legit_pred_color", Color3.fromRGB(255, 40, 40)), flag("legit_pred_outline", true)
+    L.silent, L.silentFov, L.silentChance = flag("legit_silent", false), flag("legit_silent_fov", 90), flag("legit_silent_chance", 100)
+    L.silentVisible, L.silentDraw, L.silentColor = flag("legit_silent_visible", true), flag("legit_silent_draw", true), flag("legit_silent_color", Color3.fromRGB(255, 200, 80))
+    local opts = Aim.opts
+    opts.visible, opts.parts, opts.choice = L.visible, L.parts, L.choice
+    opts.multi, opts.scale, opts.max = L.multi, L.multiScale, L.multiMax
 end
 
-function Legit.stepRadius(dt, weapon)
+function Legit.stepRadius(dt, weapon, cam)
     local L = Legit.L
-    local zoom = 1
-    if L.fovDynamic and weapon then zoom = Game.zoom(weapon) or Game.cameraZoom() end
-    Legit.zoom = Legit.zoom + (zoom - Legit.zoom) * (1 - math.exp(-dt * L.fovSpeed))
+    local ratio = 1
+    if L.fovDynamic and weapon then
+        ratio = Game.zoom(weapon) or Game.cameraZoom()
+        if ratio <= 1.001 and Game.aiming(weapon) then
+            local gameCam = Game.gameCamera()
+            local base = gameCam and gameCam._baseFov
+            if type(base) == "number" and cam.FieldOfView > 1 then ratio = math.max(base / cam.FieldOfView, 1) end
+        end
+    end
+    Legit.zoom = Legit.zoom + (ratio - Legit.zoom) * (1 - math.exp(-dt * L.fovSpeed))
     local radius = L.fovRadius
-    if L.fovDynamic then radius = math.clamp(radius / Legit.zoom ^ L.fovZoom, math.min(L.fovMin, radius), radius) end
+    if L.fovDynamic then
+        local limit = math.max(radius, cam.ViewportSize.Y * 0.5)
+        radius = math.min(radius * math.min(Legit.zoom ^ L.fovZoom, 4), limit)
+    end
     Legit.radius = radius
 end
 
@@ -3782,46 +4087,24 @@ function Legit.lead(origin, position, velocity, weapon)
     return aim
 end
 
-function Legit.pickPart(record, cam, origin, center, now, radius)
-    local L = Legit.L
-    local best, bestScore, preferred, preferredScore
-    for _, group in ipairs(GROUP_ORDER) do
-        if L.parts[group] then
-            for _, partName in ipairs(GROUPS[group]) do
-                local part = record.hash[partName]
-                if part and part.Parent then
-                    local point, front = Draw.project(cam, part.Position)
-                    local screen = front and (point - center).Magnitude or 1e5
-                    if (radius == nil and front or screen <= (radius or 0)) and (not L.visible or Visible.check(part, origin, now)) then
-                        if not bestScore or screen < bestScore then best, bestScore = part, screen end
-                        if group == L.choice and (not preferredScore or screen < preferredScore) then preferred, preferredScore = part, screen end
-                    end
-                end
-            end
-        end
-    end
-    if preferred then return preferred, preferredScore end
-    return best, bestScore
-end
-
 function Legit.choose(records, cam, origin, center, now)
     local L = Legit.L
-    local bestRecord, bestPart, bestScore
+    local bestRecord, bestCand, bestScore
     for _, record in ipairs(records) do
         if record.rendered and (record.enemy or not L.teamCheck) then
             local distance = (record.torso.Position - origin).Magnitude
             if distance <= L.maxdist then
-                local part, screen = Legit.pickPart(record, cam, origin, center, now, Legit.radius)
-                if part then
-                    local score = screen
+                local cand = Aim.select(record, cam, origin, center, Legit.radius, Aim.opts)
+                if cand then
+                    local score = cand.screen
                     if L.targetBy == "Distance" then score = distance
-                    elseif L.targetBy == "Lowest health" then score = record.health * 1000 + screen end
-                    if not bestScore or score < bestScore then bestRecord, bestPart, bestScore = record, part, score end
+                    elseif L.targetBy == "Lowest health" then score = record.health * 1000 + cand.screen end
+                    if not bestScore or score < bestScore then bestRecord, bestCand, bestScore = record, cand, score end
                 end
             end
         end
     end
-    return bestRecord, bestPart
+    return bestRecord, bestCand
 end
 
 function Legit.turn(gameCam, origin, aimPoint, dt, now, cam, barrelLook)
@@ -3885,15 +4168,120 @@ function Legit.drawFov(center)
     end
 end
 
-function Legit.stepAim(dt, cam, now, records, screen)
-    local L = Legit.L
-    Legit.moved = false
-    local center = L.fovBarrel and Barrel.point(L.fovAttach, screen) or screen
-    Legit.stepRadius(dt, Game.weapon())
-    Legit.drawFov(center)
-    Legit.snapline.Visible = false
+Legit.slots, Legit.dots = {}, {}
 
+function Legit.slot(index)
+    local slot = Legit.slots[index]
+    if slot then return slot end
+    slot = {
+        outline = Draw.new("Circle", { NumSides = 24, Filled = true, Color = BLACK, ZIndex = 20, Visible = false }),
+        dot = Draw.new("Circle", { NumSides = 24, Filled = true, ZIndex = 21, Visible = false }),
+        aim = Draw.new("Circle", { NumSides = 16, Filled = true, Color = PURPLE, ZIndex = 22, Visible = false }),
+        label = Draw.text(13, 22),
+        brackets = {},
+    }
+    for corner = 1, 8 do
+        slot.brackets[corner] = Draw.new("Line", { Thickness = 1.5, Color = PURPLE, ZIndex = 22, Visible = false })
+    end
+    Legit.slots[index] = slot
+    return slot
+end
+
+function Legit.hideSlot(slot)
+    slot.outline.Visible, slot.dot.Visible, slot.aim.Visible, slot.label.Visible = false, false, false, false
+    for _, line in ipairs(slot.brackets) do line.Visible = false end
+end
+
+function Legit.drawSlot(slot, cam, record, cand, speed, weapon)
+    local L = Legit.L
+    local hit = Aim.intercept(Legit.origin, cand.pos, Aim.velocity(record), speed, weapon)
+    local point, front = Draw.project(cam, hit)
+    if not front then
+        Legit.hideSlot(slot)
+        return
+    end
+    slot.outline.Position, slot.outline.Radius, slot.outline.Visible = point, 7.5, L.predOutline
+    slot.dot.Position, slot.dot.Radius, slot.dot.Color, slot.dot.Visible = point, 6, L.predColor, true
+    local aimPoint, aimFront = Draw.project(cam, cand.pos)
+    slot.aim.Position, slot.aim.Radius, slot.aim.Visible = aimPoint, 2.5, aimFront
+
+    local head = record.hash.Head
+    local headPoint, headFront = nil, false
+    if head and head.Parent then headPoint, headFront = Draw.project(cam, head.Position) end
+    for _, line in ipairs(slot.brackets) do line.Visible = headFront end
+    slot.label.Visible = headFront
+    if not headFront then return end
+    local top = Draw.project(cam, head.Position + cam.CFrame.UpVector * 0.9)
+    local half = math.max((top - headPoint).Magnitude, 8)
+    local arm = half * 0.45
+    local index = 0
+    for _, sx in ipairs({ -1, 1 }) do
+        for _, sy in ipairs({ -1, 1 }) do
+            local corner = headPoint + Vector2.new(sx * half, sy * half)
+            local horizontal, vertical = slot.brackets[index * 2 + 1], slot.brackets[index * 2 + 2]
+            horizontal.From, horizontal.To = corner, corner - Vector2.new(sx * arm, 0)
+            vertical.From, vertical.To = corner, corner - Vector2.new(0, sy * arm)
+            index = index + 1
+        end
+    end
+    slot.label.Text, slot.label.Color = record.name, WHITE
+    slot.label.Position = Vector2.new(headPoint.X, headPoint.Y - half - 16)
+end
+
+function Legit.stepPredict(cam, center, records)
+    local L = Legit.L
+    local used = 0
     local weapon = Game.weapon()
+    local speed = weapon and Game.stat(weapon, "bulletspeed")
+    if L.pred and L.predShow and type(speed) == "number" and speed > 1 and Legit.origin then
+        local origin = Legit.origin
+        if L.predAll then
+            Visible.budget = math.max(Visible.budget, 16)
+            for _, record in ipairs(records) do
+                if used >= 8 then break end
+                if record.rendered and (record.enemy or not L.teamCheck) and (record.torso.Position - origin).Magnitude <= L.maxdist then
+                    local cand = Aim.select(record, cam, origin, center, Legit.radius, Aim.opts)
+                    if cand then
+                        used = used + 1
+                        Legit.drawSlot(Legit.slot(used), cam, record, cand, speed, weapon)
+                    end
+                end
+            end
+        else
+            local record, cand = Legit.record, Legit.cand
+            if not cand then record, cand = Legit.choose(records, cam, origin, center, os.clock()) end
+            if record and cand then
+                used = 1
+                Legit.drawSlot(Legit.slot(1), cam, record, cand, speed, weapon)
+            end
+        end
+    end
+    for index = used + 1, #Legit.slots do Legit.hideSlot(Legit.slots[index]) end
+end
+
+function Legit.stepPoints(cam, center)
+    local L = Legit.L
+    local shown = 0
+    if L.showPoints and Legit.cand and Legit.record then
+        local list = Aim.gather(Legit.record, cam, center, nil, Aim.opts) or {}
+        for _, cand in ipairs(list) do
+            if shown >= 27 then break end
+            shown = shown + 1
+            local dot = Legit.dots[shown]
+            if not dot then
+                dot = Draw.new("Circle", { NumSides = 10, Radius = 2, Filled = true, ZIndex = 23, Visible = false })
+                Legit.dots[shown] = dot
+            end
+            dot.Position = Draw.project(cam, cand.pos)
+            dot.Color = cand.pos == Legit.cand.pos and L.pointColor or WHITE
+            dot.Visible = true
+        end
+    end
+    for index = shown + 1, #Legit.dots do Legit.dots[index].Visible = false end
+end
+
+function Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
+    local L = Legit.L
     local active = L.aim and Util.keyActive("legit_aim_key") and not Util.menuOpen() and not Util.typing()
     if not (active and weapon and Game.isFirearm(weapon)) then Legit.target = nil return end
     if L.ads and not Game.aiming(weapon) then Legit.target = nil return end
@@ -3901,23 +4289,21 @@ function Legit.stepAim(dt, cam, now, records, screen)
 
     local gameCam = Game.gameCamera()
     if not gameCam then return end
-    local useBarrel = L.barrel and Barrel.valid
-    local origin = useBarrel and Barrel.fire or Game.eye(cam).Position
 
-    local record, part
+    local record, cand
     if Legit.target and L.sticky then
         local held = Entities.byPlayer[Legit.target]
         if held and held.seen and held.rendered and (held.enemy or not L.teamCheck) then
             record = held
-            part = Legit.pickPart(held, cam, origin, center, now, nil)
+            cand = Aim.select(held, cam, origin, center, nil, Aim.opts)
             Legit.record = held
-            if not part then return end
+            if not cand then return end
         else
             Legit.target = nil
         end
     end
     if not record then
-        record, part = Legit.choose(records, cam, origin, center, now)
+        record, cand = Legit.choose(records, cam, origin, center, now)
         if not record then Legit.target = nil return end
     end
 
@@ -3927,10 +4313,10 @@ function Legit.stepAim(dt, cam, now, records, screen)
         Legit.switchAt = now
         Legit.reactUntil = now + L.react / 1000
     end
-    Legit.part, Legit.record = part, record
+    Legit.part, Legit.record, Legit.cand = cand.part, record, cand
 
     if flag("legit_snapline", false) then
-        local point, front = Draw.project(cam, part.Position)
+        local point, front = Draw.project(cam, cand.pos)
         if front then
             Legit.snapline.From, Legit.snapline.To = center, point
             Legit.snapline.Color = flag("legit_snapline_color", WHITE)
@@ -3938,8 +4324,32 @@ function Legit.stepAim(dt, cam, now, records, screen)
         end
     end
     if now < Legit.reactUntil then return end
-    local aimPoint = Legit.lead(origin, part.Position, record.velocity, weapon)
+    local aimPoint
+    local speed = Game.stat(weapon, "bulletspeed")
+    if L.pred and L.predAim and type(speed) == "number" and speed > 1 then
+        local _, compensated = Aim.intercept(origin, cand.pos, Aim.velocity(record), speed, weapon)
+        aimPoint = compensated
+    end
+    aimPoint = aimPoint or Legit.lead(origin, cand.pos, Aim.velocity(record), weapon)
     Legit.moved = Legit.turn(gameCam, origin, aimPoint, dt, now, cam, useBarrel and Barrel.look or nil)
+end
+
+function Legit.stepAim(dt, cam, now, records, screen)
+    local L = Legit.L
+    Legit.moved, Legit.cand = false, nil
+    local center = L.fovBarrel and Barrel.point(L.fovAttach, screen) or screen
+    local weapon = Game.weapon()
+    Legit.stepRadius(dt, weapon, cam)
+    Legit.drawFov(center)
+    Legit.snapline.Visible = false
+    Silent.step(cam)
+    Aim.opts.depth = L.wallbang and weapon and Aim.depth(weapon, L.safety) or nil
+    local useBarrel = L.barrel and Barrel.valid
+    local origin = useBarrel and Barrel.fire or Game.eye(cam).Position
+    Legit.origin = origin
+    Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
+    Legit.stepPredict(cam, center, records)
+    Legit.stepPoints(cam, center)
 end
 
 local Recoil = { key = nil, last = Vector3.zero, shown = Vector3.zero }
@@ -3967,12 +4377,12 @@ function Legit.stepRecoil(now)
     Recoil.barrel, Recoil.key1, Recoil.key2 = useBarrel, key1, key2
     if reset then return end
 
-    if not (Game.eff("rcs_on", false) and Util.keyActive("rcs_key")) or Util.menuOpen() or Legit.moved then return end
+    if not (flag("rcs_on", false) and Util.keyActive("rcs_key")) or Util.menuOpen() or Legit.moved then return end
     local weapon = Game.weapon()
     if not (weapon and Game.isFirearm(weapon)) then return end
     if not flag("rcs_hip", true) and not Game.aiming(weapon) then return end
 
-    local vertical, horizontal = Game.eff("rcs_v", 70) / 100, Game.eff("rcs_h", 40) / 100
+    local vertical, horizontal = flag("rcs_v", 70) / 100, flag("rcs_h", 40) / 100
     local variation = flag("rcs_human", 10) / 100
     if variation > 0 then
         local factor = 1 - variation * (math.noise(now * 1.7, 31.4) + 1) * 0.5
@@ -4018,7 +4428,7 @@ function Legit.stepTrigger(cam, now, records)
         Trigger.release()
         Trigger.nextAt = now + flag("trig_cool", 90) / 1000
     end
-    local active = Game.eff("trig_on", false) and Util.keyActive("trig_key") and not Util.menuOpen() and not Util.typing()
+    local active = flag("trig_on", false) and Util.keyActive("trig_key") and not Util.menuOpen() and not Util.typing()
     if not active or type(mouse1press) ~= "function" then
         Trigger.onSince = nil
         if not active then Trigger.release() end
@@ -4032,7 +4442,7 @@ function Legit.stepTrigger(cam, now, records)
     local origin, direction = eye.Position, eye.LookVector
     if flag("legit_barrel", true) and Barrel.valid then origin, direction = Barrel.fire, Barrel.look end
     local maxDistance, scale = flag("trig_dist", 400), flag("trig_scale", 1)
-    local groups, wantVisible = Game.effSet("trig_parts", { Head = true, Torso = true }), flag("trig_visible", true)
+    local groups, wantVisible = Util.set("trig_parts", { Head = true, Torso = true }), flag("trig_visible", true)
     local teamCheck = flag("legit_team_check", true)
 
     local onTarget = false
@@ -4055,7 +4465,7 @@ function Legit.stepTrigger(cam, now, records)
     if not onTarget then Trigger.onSince = nil return end
     Trigger.onSince = Trigger.onSince or now
     if Trigger.down or now < Trigger.nextAt then return end
-    if now - Trigger.onSince < Game.eff("trig_delay", 40) / 1000 then return end
+    if now - Trigger.onSince < flag("trig_delay", 40) / 1000 then return end
     if not Game.canFire(weapon) then return end
     Trigger.down = true
     Trigger.releaseAt = now + flag("trig_hold", 70) / 1000
@@ -4064,7 +4474,6 @@ end
 
 local Pages = {
     Legit = UI.page("Legit", "crosshair"),
-    Weapons = UI.page("Weapons", "layers"),
     Rage = UI.page("Rage", "swords"),
     ESP = UI.page("ESP", "eye"),
     World = UI.page("World", "globe"),
@@ -4076,10 +4485,34 @@ do
     local Subs = Pages.Legit:SubTabs({ { "Aim Assist", "crosshair" }, { "Trigger Bot", "zap" }, { "Recoil", "target" } })
 
     local Aim = Subs["Aim Assist"]
+    local function pickColor(popup, label, flagName, default, alpha)
+        popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
+    end
     local Master = Aim:Section({ Name = "Aim assist", Side = 1, Icon = "crosshair" })
     Master:Toggle({ Name = "Enabled", Flag = "legit_aim", Tooltip = "Turns your view toward the target through the game's camera while the key is held" }):Keybind({ Name = "Aim key", Flag = "legit_aim_key", Default = "MB2", Mode = "Hold" })
     Master:Toggle({ Name = "Team check", Flag = "legit_team_check", Default = true, Tooltip = "Only enemies are targeted (shared with the triggerbot)" })
-    Master:Toggle({ Name = "Visible only", Flag = "legit_visible", Default = true })
+    local VisibleCheck = Master:Toggle({ Name = "Visible check", Flag = "legit_visible", Default = true, Tooltip = "Only aims at points with a clear line from the barrel, multi-ray, ignoring glass, non-solid parts and other players" }):Settings("Visible check", 230)
+    VisibleCheck:Slider({ Name = "ESP rays per player", Flag = "vis_rays", Min = 1, Max = 6, Default = 3, Decimals = 1, Tooltip = "Body parts traced for ESP visible/hidden colours; stops at the first clear one" })
+    VisibleCheck:Slider({ Name = "ESP check interval", Flag = "vis_interval", Min = 20, Max = 400, Default = 100, Decimals = 1, Suffix = " ms", Tooltip = "How long an ESP visibility result is reused" })
+    local Multi = Master:Toggle({ Name = "Multipoint", Flag = "legit_multi", Tooltip = "Tests several points per hitbox and aims at the best visible one nearest the crosshair" }):Settings("Multipoint", 230)
+    Multi:Slider({ Name = "Multipoint scale", Flag = "legit_multi_scale", Min = 10, Max = 100, Default = 60, Decimals = 1, Suffix = "%", Tooltip = "How far from the hitbox centre the extra points sit" })
+    Multi:Slider({ Name = "Max points", Flag = "legit_multi_max", Min = 1, Max = 9, Default = 5, Decimals = 1, Tooltip = "Points tested per body part (head up to 7, torso up to 9, limbs up to 3)" })
+    Multi:Toggle({ Name = "Show points", Flag = "legit_multi_show", Tooltip = "Small dots on the target's tested points" })
+    pickColor(Multi, "Chosen point", "legit_multi_color", Color3.fromRGB(120, 255, 170))
+    local Wall = Master:Toggle({ Name = "Wallbang", Flag = "legit_wallbang", Tooltip = "Also targets players behind walls that the equipped weapon can shoot through, using the game's own penetration rule (entry to exit thickness summed against penetration depth)" }):Settings("Wallbang", 230)
+    Wall:Slider({ Name = "Penetration safety", Flag = "legit_pen_safety", Min = 50, Max = 100, Default = 90, Decimals = 1, Suffix = "%", Tooltip = "Share of the weapon's penetration depth the walls may use" })
+    local Pred = Master:Toggle({ Name = "Bullet prediction", Flag = "legit_pred", Tooltip = "Solves where the bullet meets the target from its speed, drop and the target's tracked velocity" }):Settings("Bullet prediction", 230)
+    Pred:Toggle({ Name = "Show prediction dot", Flag = "legit_pred_show", Default = true })
+    pickColor(Pred, "Dot", "legit_pred_color", Color3.fromRGB(255, 40, 40))
+    Pred:Toggle({ Name = "Dot outline", Flag = "legit_pred_outline", Default = true })
+    Pred:Toggle({ Name = "All enemies in FOV", Flag = "legit_pred_all", Tooltip = "Draws the dot for every enemy inside the FOV instead of only the aim target" })
+    Pred:Toggle({ Name = "Aim at prediction", Flag = "legit_pred_aim", Tooltip = "Aims at the solved intercept point (full lead and drop) instead of the strength-limited lead below" })
+    local Quiet = Master:Toggle({ Name = "Silent aim", Flag = "legit_silent", Tooltip = "Redirects your own bullets (client bullet and the newbullets packet) at the target without moving the camera or weapon. Risk: the server sees shots that do not match your view direction" }):Settings("Silent aim", 230)
+    Quiet:Slider({ Name = "Silent FOV", Flag = "legit_silent_fov", Min = 5, Max = 600, Default = 90, Decimals = 1, Suffix = " px", Tooltip = "Radius around the screen centre where a target can be redirected to" })
+    Quiet:Toggle({ Name = "Draw silent FOV", Flag = "legit_silent_draw", Default = true })
+    pickColor(Quiet, "Silent circle", "legit_silent_color", Color3.fromRGB(255, 200, 80))
+    Quiet:Slider({ Name = "Hit chance", Flag = "legit_silent_chance", Min = 1, Max = 100, Default = 100, Decimals = 1, Suffix = "%", Tooltip = "Chance that a shot is redirected" })
+    Quiet:Toggle({ Name = "Only visible or penetrable", Flag = "legit_silent_visible", Default = true })
     Master:Toggle({ Name = "Only while aiming down sights", Flag = "legit_ads" })
     Master:Toggle({ Name = "Only while shooting", Flag = "legit_shooting" })
     Master:Toggle({ Name = "Aim from barrel", Flag = "legit_barrel", Default = true, Tooltip = "Uses the weapon's bullet origin and direction (as the game computes them) for visibility, prediction and aiming; the camera is still the only thing that moves" })
@@ -4111,9 +4544,8 @@ do
     Fov:Slider({ Name = "Barrel distance", Flag = "barrel_distance", Min = 50, Max = 1000, Default = 300, Decimals = 1, Suffix = " studs", Tooltip = "Convergence distance of the Aim hit point along the barrel" })
     Fov:Slider({ Name = "Radius", Flag = "legit_fov", Min = 10, Max = 800, Default = 120, Decimals = 1, Suffix = " px" })
     Fov:Slider({ Name = "Thickness", Flag = "legit_fov_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
-    Fov:Toggle({ Name = "Dynamic radius", Flag = "legit_fov_dynamic", Tooltip = "The radius shrinks with the equipped scope's zoom, blended with the aim-down-sights progress" })
-    Fov:Slider({ Name = "Zoom influence", Flag = "legit_fov_zoom", Min = 0, Max = 1.5, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Radius = Radius / zoom ^ influence; 1 is proportional to the zoom factor, 0 ignores zoom" })
-    Fov:Slider({ Name = "Minimum radius", Flag = "legit_fov_min", Min = 5, Max = 400, Default = 30, Decimals = 1, Suffix = " px" })
+    Fov:Toggle({ Name = "Dynamic radius", Flag = "legit_fov_dynamic", Tooltip = "The radius grows while scoped: Radius x (unscoped FOV / current FOV) ^ scale, up to 4x or half the screen height, so the circle keeps the same angular coverage as the view zooms in" })
+    Fov:Slider({ Name = "Zoom FOV scale", Flag = "legit_fov_zoom", Min = 0, Max = 2, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Exponent on the zoom ratio; 1 keeps the angular coverage, 0 ignores zoom" })
     Fov:Slider({ Name = "Blend speed", Flag = "legit_fov_speed", Min = 2, Max = 30, Default = 10, Decimals = 0.1 })
     Fov:Toggle({ Name = "Target line", Flag = "legit_snapline", Tooltip = "A line from the crosshair to the aimed body part" }):Colorpicker({ Name = "Line", Flag = "legit_snapline_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
 
@@ -4152,70 +4584,6 @@ do
     RcsBox:Slider({ Name = "Horizontal control", Flag = "rcs_h", Min = 0, Max = 100, Default = 40, Decimals = 1, Suffix = "%" })
     RcsBox:Toggle({ Name = "Hipfire too", Flag = "rcs_hip", Default = true, Tooltip = "Off: only controls recoil while aiming down sights" })
     RcsBox:Slider({ Name = "Variation", Flag = "rcs_human", Min = 0, Max = 40, Default = 10, Decimals = 1, Suffix = "%", Tooltip = "Varies the strength over time so the spray does not look machine perfect" })
-end
-
-local PW_SPEC = {
-    { "Aimbot", "legit_aim", "aim", "Toggle", "Aimbot enabled" },
-    { "Aimbot", "legit_fov", "fov", "Slider", "FOV radius", Min = 10, Max = 800, Default = 120, Suffix = " px" },
-    { "Aimbot", "legit_smooth", "smooth", "Slider", "Smoothing", Min = 1, Max = 60, Default = 12 },
-    { "Aimbot", "legit_dist", "dist", "Slider", "Max distance", Min = 50, Max = 1500, Default = 600, Suffix = " studs" },
-    { "Aimbot", "legit_priority", "priority", "Dropdown", "Hitbox priority", Items = { "Closest", "Head", "Torso" }, Default = "Closest" },
-    { "Aimbot", "legit_parts", "parts", "Dropdown", "Hitboxes", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } },
-    { "Aimbot", "legit_drop", "drop", "Toggle", "Bullet drop", Default = true },
-    { "Aimbot", "legit_move", "move", "Toggle", "Moving targets", Default = true },
-    { "Recoil control", "rcs_on", "rcs_on", "Toggle", "Recoil control enabled" },
-    { "Recoil control", "rcs_v", "rcs_v", "Slider", "Vertical control", Min = 0, Max = 100, Default = 70, Suffix = "%" },
-    { "Recoil control", "rcs_h", "rcs_h", "Slider", "Horizontal control", Min = 0, Max = 100, Default = 40, Suffix = "%" },
-    { "Triggerbot", "trig_on", "trig_on", "Toggle", "Triggerbot enabled" },
-    { "Triggerbot", "trig_delay", "trig_delay", "Slider", "Delay", Min = 0, Max = 300, Default = 40, Suffix = " ms" },
-    { "Triggerbot", "trig_parts", "trig_parts", "Dropdown", "Hitboxes", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } },
-}
-local PW_SIDE = { Aimbot = 1, ["Recoil control"] = 2, Triggerbot = 2 }
-
-local function copyGlobalTo(id)
-    for _, spec in ipairs(PW_SPEC) do
-        local source, target = Toggles[spec[2]] or Options[spec[2]], Toggles["pw_" .. id .. "_" .. spec[3]] or Options["pw_" .. id .. "_" .. spec[3]]
-        if source and target and source.Value ~= nil then
-            local value = source.Value
-            if type(value) == "table" then
-                local copy = {}
-                for key, on in pairs(value) do copy[key] = on end
-                value = copy
-            end
-            pcall(function() target:SetValue(value) end)
-        end
-    end
-end
-
-do
-    local names = { { "General", "layers" } }
-    for _, class in ipairs(Game.classes) do names[#names + 1] = { class.name, "crosshair" } end
-    local Subs = Pages.Weapons:SubTabs(names)
-
-    local General = Subs.General:Section({ Name = "Per-weapon configs", Side = 1, Icon = "layers" })
-    General:Toggle({ Name = "Per-weapon configs", Flag = "pw_enabled", Tooltip = "Weapon classes with their override on use their own aimbot, recoil and triggerbot values instead of the global ones" })
-    Status.pwGeneral = General:Label({ Name = "Class: none" })
-
-    for _, class in ipairs(Game.classes) do
-        local page = Subs[class.name]
-        local Head = page:Section({ Name = class.name, Side = 1, Icon = "crosshair" })
-        Head:Toggle({ Name = "Override global", Flag = "pw_" .. class.id .. "_override", Tooltip = "Off: this class uses the global Legit settings" })
-        Status["pw_" .. class.id] = Head:Label({ Name = "Class: none" })
-        Head:Button({ Name = "Copy global to this class", Callback = function()
-            copyGlobalTo(class.id)
-            pcall(function() Library:Notify("Copied global settings to " .. class.name, 3) end)
-        end })
-        local boxes = {}
-        for _, spec in ipairs(PW_SPEC) do
-            local box = boxes[spec[1]]
-            if not box then
-                box = page:Section({ Name = spec[1], Side = PW_SIDE[spec[1]] })
-                boxes[spec[1]] = box
-            end
-            local info = { Name = spec[5], Flag = "pw_" .. class.id .. "_" .. spec[3], Min = spec.Min, Max = spec.Max, Default = spec.Default, Suffix = spec.Suffix, Decimals = 1, Items = spec.Items, Multi = spec.Multi }
-            box[spec[4]](box, info)
-        end
-    end
 end
 
 do
@@ -5487,7 +5855,7 @@ function Loop.step()
                 pcall(function() Library:Notify("Core " .. tostring(Game.summary), 4) end)
             end
         end
-        Legit.circle.Visible, Legit.circleFill.Visible = false, false
+        Legit.circle.Visible, Legit.circleFill.Visible, Silent.circle.Visible = false, false, false
         ESP.clear()
         Util.guard("items", Items.step, cam, now)
         Util.guard("feedback", Feedback.step, cam, center, now)
@@ -5504,7 +5872,6 @@ function Loop.step()
 
     local records = Entities.update()
     Util.guard("fov", World.stepFov, dt)
-    Game.pwUpdate()
     Legit.read()
     local gameCam = Game.gameCamera()
     Util.guard("barrel", Barrel.update, cam, gameCam, Game.weapon(), now)
@@ -5527,16 +5894,6 @@ function Loop.step()
         local speed = Game.stat(weapon, "bulletspeed")
         if type(speed) == "number" then text = text .. " | " .. math.floor(speed) .. " studs/s" end
         if Status.weapon and Loop.weaponText ~= text then Loop.weaponText = text; Status.weapon:SetText(text) end
-        local pw = Game.pw
-        local classText = "Class: " .. (pw.class and Game.classNames[pw.class] or "none") .. (pw.active and " (override)" or "")
-        if Loop.classText ~= classText then
-            Loop.classText = classText
-            if Status.pwGeneral then Status.pwGeneral:SetText(classText) end
-            for _, entry in ipairs(Game.classes) do
-                local label = Status["pw_" .. entry.id]
-                if label then label:SetText(classText) end
-            end
-        end
         text = "Target: none"
         if Legit.target and Legit.record then
             text = string.format("Target: %s | %d hp | %dm", Legit.record.name, math.floor(Legit.record.health), math.floor((Legit.record.torso.Position - Game.eye(cam).Position).Magnitude * STUDS_TO_M))

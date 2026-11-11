@@ -1,3 +1,4 @@
+
 local BUILD = "phantom-bbot-1"
 local SOURCE_URL = ""
 local UI_REPO = "https://raw.githubusercontent.com/WhyWKey/linoria/main/"
@@ -225,7 +226,7 @@ pcall(function()
 end)
 
 local LibWindow = Library:CreateWindow({
-    Title = "Aster  |  Phantom Forces  |  " .. BUILD,
+    Title = "Aster",
     Size = UDim2.fromOffset(780, 560),
     Center = true,
     AutoShow = false,
@@ -234,6 +235,22 @@ local LibWindow = Library:CreateWindow({
     UseDarken = false,
 })
 pcall(function() Library.ScreenGui.DisplayOrder = 100 end)
+
+local introPlayed = false
+if not getgenv().AsterSkipIntro and type(Library.PlayIntro) == "function" then
+    introPlayed = pcall(function()
+        Library:PlayIntro({
+            Title = "ASTER",
+            Subtitle = "Aster.lua",
+            Duration = 3,
+            Steps = { "Loading modules", "Hooking network", "Waiting for game", "Ready" },
+            Blur = true,
+            OnFinish = function()
+                if not Library.Toggled and not Library.Unloaded then Library:Toggle() end
+            end,
+        })
+    end)
+end
 
 local UI = {}
 
@@ -417,7 +434,7 @@ print("[Aster] build " .. BUILD)
 local Game = { ready = false, mods = {}, via = {}, missing = {}, frame = 0, accel = Vector3.new(0, -196.2, 0), hooked = {} }
 
 local REQUIRED = { "ReplicationInterface", "CharacterInterface", "CameraInterface" }
-local OPTIONAL = { "PublicSettings", "NetworkClient", "HudCrosshairsInterface", "HudDamageInterface", "BulletInterface", "PlayerStatusEvents" }
+local OPTIONAL = { "PublicSettings", "NetworkClient", "HudCrosshairsInterface", "HudDamageInterface", "BulletInterface", "PlayerStatusEvents", "ContentInterface" }
 
 function Game.load()
     Game.ready, Game.mods, Game.via, Game.missing = false, {}, {}, {}
@@ -550,6 +567,23 @@ end
 
 function Game.isFirearm(weapon)
     return type(Game.stat(weapon, "bulletspeed")) == "number"
+end
+
+function Game.time()
+    local network = Game.mods.NetworkClient
+    if type(network) == "table" and type(network.getTime) == "function" then
+        local ok, value = pcall(network.getTime, network)
+        if ok and type(value) == "number" then return value end
+    end
+    return os.clock()
+end
+
+function Game.rootPart()
+    local interface = Game.mods.CharacterInterface
+    if not (interface and Game.localAlive()) then return nil end
+    local ok, root = pcall(function() return interface.getCharacterObject():getRootPart() end)
+    if ok and typeof(root) == "Instance" then return root end
+    return nil
 end
 
 function Game.isEnemy(entry, player)
@@ -721,6 +755,54 @@ function Draw.project(cam, position)
     return Vector2.new(point.X, point.Y), point.Z > 0, point.Z
 end
 
+local Barrel = { valid = false, paramsAt = 0 }
+
+function Barrel.refreshParams(now)
+    if Barrel.params and now < Barrel.paramsAt then return end
+    Barrel.paramsAt = now + 1
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    pcall(function() params.RespectCanCollide = true end)
+    local list = {}
+    local current = Game.camera()
+    if current then list[#list + 1] = current end
+    local ignore = Workspace:FindFirstChild("Ignore")
+    if ignore then list[#list + 1] = ignore end
+    params.FilterDescendantsInstances = list
+    Barrel.params = params
+end
+
+function Barrel.update(cam, gameCam, weapon, now)
+    Barrel.valid = false
+    if not (cam and gameCam and weapon and type(weapon.getBarrelCFrame) == "function") then return end
+    local ok, frame = pcall(weapon.getBarrelCFrame, weapon)
+    if not (ok and typeof(frame) == "CFrame") then return end
+    local muzzle, look = frame.Position, frame.LookVector
+    if muzzle ~= muzzle or look ~= look then return end
+    Barrel.refreshParams(now)
+    local fire = muzzle
+    local okBase, base = pcall(gameCam.getBaseCFrame, gameCam)
+    if okBase and typeof(base) == "CFrame" then
+        local from = base.Position
+        local hit = Workspace:Raycast(from, muzzle - from, Barrel.params)
+        if hit then fire = hit.Position + hit.Normal * 0.01 end
+    end
+    local aim = Workspace:Raycast(fire, look * 2000, Barrel.params)
+    Barrel.fire, Barrel.look = fire, look
+    Barrel.hit = aim and aim.Position or fire + look * 500
+    local muzzlePoint, muzzleFront = Draw.project(cam, muzzle)
+    Barrel.muzzle2d = muzzleFront and muzzlePoint or nil
+    local hitPoint, hitFront = Draw.project(cam, Barrel.hit)
+    Barrel.hit2d = hitFront and hitPoint or nil
+    Barrel.valid = true
+end
+
+function Barrel.point(mode, center)
+    if not Barrel.valid then return center end
+    if mode == "Muzzle" then return Barrel.muzzle2d or center end
+    return Barrel.hit2d or center
+end
+
 local ESP = { objects = {}, seen = {}, enemy = {}, team = {}, S = {}, chams = {}, lastPrint = 0 }
 local FONT_IDS = { Plex = 2, UI = 0, System = 1, Monospace = 3 }
 local STRIPS = 8
@@ -852,8 +934,8 @@ function ESP.readSettings()
     S.visOverride = flag("esp_vis", false)
     S.visColor, S.occColor = flag("esp_vis_color", Color3.fromRGB(80, 255, 120)), flag("esp_occ_color", Color3.fromRGB(255, 80, 80))
     S.chamMode = flag("cham_mode", "Through walls")
-    S.chamOutline = flag("cham_outline", true)
-    S.chamOutlineT = flag("cham_outline_t", 0)
+    S.chamGrow, S.chamGlowSize = flag("cham_grow", 0.1), flag("cham_glow_size", 0.35)
+    S.chamGlow, S.chamRound = flag("cham_glow", true), flag("cham_round_head", true)
     S.oovSize, S.oovRadius = flag("oov_size", 14), flag("oov_radius", 40)
     S.viewLen = flag("esp_view_len", 8)
 end
@@ -905,7 +987,8 @@ local function setLine(drawing, from, to, color, alpha, thick)
     if thick then drawing.Thickness = thick end
 end
 
-local Chams = { objs = {}, container = nil }
+local Chams = { objs = {}, pool = {}, container = nil }
+local CHAM_PARTS = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }
 
 function Chams.getContainer()
     if Chams.container and Chams.container.Parent then return Chams.container end
@@ -924,44 +1007,129 @@ function Chams.getContainer()
     return nil
 end
 
+function Chams.acquire(round)
+    local class = round and "SphereHandleAdornment" or "BoxHandleAdornment"
+    local list = Chams.pool[class]
+    local adornment = list and table.remove(list)
+    if adornment then return adornment end
+    local container = Chams.getContainer()
+    if not container then return nil end
+    local ok, created = pcall(Instance.new, class)
+    if not (ok and created) then return nil end
+    created.Name = Util.randomName()
+    created.AdornCullingMode = Enum.AdornCullingMode.Never
+    created.Parent = container
+    return created
+end
+
+function Chams.release(adornment)
+    if not adornment then return end
+    pcall(function()
+        adornment.Visible = false
+        adornment.Adornee = nil
+    end)
+    local class = adornment.ClassName
+    Chams.pool[class] = Chams.pool[class] or {}
+    table.insert(Chams.pool[class], adornment)
+end
+
+function Chams.dropSlot(slot)
+    for _, adornment in pairs(slot.layers) do Chams.release(adornment) end
+    slot.layers, slot.sig = {}, nil
+end
+
 function Chams.remove(player)
     local entry = Chams.objs[player]
-    if entry then
-        pcall(function() entry.hl:Destroy() end)
-        Chams.objs[player] = nil
+    if not entry then return end
+    for _, slot in pairs(entry.parts) do Chams.dropSlot(slot) end
+    Chams.objs[player] = nil
+end
+
+function Chams.hide(entry)
+    if entry.hidden then return end
+    entry.hidden = true
+    for _, slot in pairs(entry.parts) do
+        slot.sig = nil
+        for _, adornment in pairs(slot.layers) do adornment.Visible = false end
     end
 end
 
-function Chams.update(record, cfg, S, visible)
-    local want = cfg and cfg.chams and record.rendered and record.model and record.model.Parent ~= nil
-    local entry = Chams.objs[record.player]
+function Chams.build(slot)
+    local behind, visible, glow = Chams.acquire(slot.round), Chams.acquire(slot.round), Chams.acquire(slot.round)
+    if not (behind and visible and glow) then
+        Chams.release(behind)
+        Chams.release(visible)
+        Chams.release(glow)
+        return false
+    end
+    behind.AlwaysOnTop, behind.ZIndex = true, 1
+    visible.AlwaysOnTop, visible.ZIndex = false, -1
+    glow.AlwaysOnTop, glow.ZIndex = false, -2
+    slot.layers = { behind = behind, visible = visible, glow = glow }
+    return true
+end
+
+function Chams.style(slot, part, name, cfg, S)
+    local layers = slot.layers
+    local grow, extra = S.chamGrow, S.chamGlowSize
+    for _, adornment in pairs(layers) do adornment.Adornee = part end
+    if slot.round then
+        local radius = 0.62 + grow * 0.5
+        layers.behind.Radius, layers.visible.Radius, layers.glow.Radius = radius, radius, radius + extra * 0.5
+    else
+        local size = PART_SIZES[name] + Vector3.new(grow, grow, grow)
+        layers.behind.Size, layers.visible.Size = size, size
+        layers.glow.Size = size + Vector3.new(extra, extra, extra)
+    end
+    layers.behind.Color3, layers.behind.Transparency = cfg.chamHid, cfg.chamHidT
+    layers.behind.Visible = S.chamMode == "Through walls"
+    layers.visible.Color3, layers.visible.Transparency, layers.visible.Visible = cfg.chamVis, cfg.chamVisT, true
+    layers.glow.Color3, layers.glow.Transparency = cfg.chamVis, 1 - (1 - cfg.chamVisT) * 0.35
+    layers.glow.Visible = S.chamGlow
+end
+
+function Chams.update(rec, cfg, S)
+    local entry = Chams.objs[rec.player]
+    local want = cfg and cfg.chams and rec.rendered and rec.model and rec.model.Parent ~= nil
     if not want then
-        if entry then entry.hl.Enabled = false end
+        if entry then Chams.hide(entry) end
         return
     end
-    if entry and (entry.model ~= record.model or not entry.hl.Parent) then
-        Chams.remove(record.player)
-        entry = nil
-    end
     if not entry then
-        local container = Chams.getContainer()
-        if not container then return end
-        local hl = Instance.new("Highlight")
-        hl.Name = Util.randomName()
-        hl.Adornee = record.model
-        hl.Parent = container
-        entry = { hl = hl, model = record.model }
-        Chams.objs[record.player] = entry
+        entry = { parts = {} }
+        Chams.objs[rec.player] = entry
     end
-    local hl = entry.hl
-    local throughWalls = S.chamMode == "Through walls"
-    local color, transparency = cfg.chamVis, cfg.chamVisT
-    if throughWalls and not visible then color, transparency = cfg.chamHid, cfg.chamHidT end
-    hl.Enabled = true
-    hl.DepthMode = throughWalls and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
-    hl.FillColor, hl.FillTransparency = color, transparency
-    hl.OutlineColor = color
-    hl.OutlineTransparency = S.chamOutline and S.chamOutlineT or 1
+    entry.hidden = false
+    local sig = table.concat({
+        tostring(cfg.chamVis), cfg.chamVisT, tostring(cfg.chamHid), cfg.chamHidT,
+        S.chamMode, S.chamGrow, tostring(S.chamGlow), S.chamGlowSize, tostring(S.chamRound),
+    }, "|")
+    for _, name in ipairs(CHAM_PARTS) do
+        local part = rec.hash[name]
+        local slot = entry.parts[name]
+        if not (part and part.Parent) then
+            if slot then
+                Chams.dropSlot(slot)
+                entry.parts[name] = nil
+            end
+        else
+            local round = name == "Head" and S.chamRound
+            if slot and slot.round ~= round then
+                Chams.dropSlot(slot)
+                entry.parts[name] = nil
+                slot = nil
+            end
+            if not slot then
+                slot = { round = round, layers = {} }
+                entry.parts[name] = slot
+            end
+            if not slot.layers.visible and not Chams.build(slot) then return end
+            if slot.adornee ~= part or slot.sig ~= sig then
+                slot.adornee, slot.sig = part, sig
+                Chams.style(slot, part, name, cfg, S)
+            end
+        end
+    end
 end
 
 function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, center)
@@ -1153,15 +1321,15 @@ function ESP.processRecord(cam, rec, now, origin, viewport, center)
     local dist = (rec.pos - origin).Magnitude
     if not cfg.enabled or dist > cfg.maxdist then
         ESP.hide(o)
-        Chams.update(rec, nil, S, false)
+        Chams.update(rec, nil, S)
         return
     end
     local visible = false
-    if rec.rendered and (cfg.chams or S.visOverride) then
+    if rec.rendered and S.visOverride then
         visible = Visible.check(rec.head, origin, now) or Visible.check(rec.torso, origin, now)
     end
     ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, center)
-    Chams.update(rec, cfg, S, visible)
+    Chams.update(rec, cfg, S)
 end
 
 function ESP.step(cam, now, records)
@@ -1202,6 +1370,10 @@ Util.onUnload(function()
     for _, o in pairs(ESP.objects) do ESP.destroy(o) end
     ESP.objects = {}
     for player in pairs(Chams.objs) do Chams.remove(player) end
+    for _, list in pairs(Chams.pool) do
+        for _, adornment in ipairs(list) do pcall(function() adornment:Destroy() end) end
+    end
+    Chams.pool = {}
     if Chams.container then pcall(function() Chams.container:Destroy() end) end
 end)
 
@@ -1242,46 +1414,116 @@ function Items.position(instance)
 end
 
 function Items.step(cam, now)
-    local wantDrops, wantGrenades = flag("item_drops", false), flag("item_grenades", false)
     local used = 0
-    local function show(instance, label, color, alpha, maxDistance, origin)
-        local position = Items.position(instance)
-        if not position then return end
-        local distance = (position - origin).Magnitude
-        if distance > maxDistance then return end
-        local point, front = Draw.project(cam, position)
-        if not front then return end
-        used = used + 1
-        local text = Items.texts[used]
-        if not text then
-            text = Draw.text(13, 7)
-            Items.texts[used] = text
-        end
-        text.Font, text.Size = ESP.S.font or 2, ESP.S.size or 13
-        text.Text = label .. " " .. math.floor(distance * STUDS_TO_M) .. "m"
-        text.Position = Vector2.new(point.X, point.Y)
-        text.Color, text.Transparency, text.Visible = color, alpha, true
-    end
-    if wantDrops or wantGrenades then
+    if flag("item_drops", false) then
         Items.scan(now)
         local origin = cam.CFrame.Position
-        if wantDrops then
-            local color, alpha, maxDistance = flag("item_drops_color", WHITE), Util.opacity("item_drops_color"), flag("item_dist", 300)
-            for _, instance in ipairs(Items.drops) do
-                if instance.Parent then show(instance, tostring(instance.Name), color, alpha, maxDistance, origin) end
-            end
-        end
-        if wantGrenades then
-            local color, alpha, maxDistance = flag("item_grenades_color", WHITE), Util.opacity("item_grenades_color"), flag("item_dist", 300)
-            for _, instance in ipairs(Items.grenades) do
-                if instance.Parent then show(instance, "Grenade", color, alpha, maxDistance, origin) end
+        local color, alpha, maxDistance = flag("item_drops_color", WHITE), Util.opacity("item_drops_color"), flag("item_dist", 300)
+        for _, instance in ipairs(Items.drops) do
+            local position = instance.Parent and Items.position(instance)
+            local distance = position and (position - origin).Magnitude
+            if distance and distance <= maxDistance then
+                local point, front = Draw.project(cam, position)
+                if front then
+                    used = used + 1
+                    local text = Items.texts[used]
+                    if not text then
+                        text = Draw.text(13, 7)
+                        Items.texts[used] = text
+                    end
+                    text.Font, text.Size = ESP.S.font or 2, ESP.S.size or 13
+                    text.Text = tostring(instance.Name) .. " " .. math.floor(distance * STUDS_TO_M) .. "m"
+                    text.Position = Vector2.new(point.X, point.Y)
+                    text.Color, text.Transparency, text.Visible = color, alpha, true
+                end
             end
         end
     end
     for index = used + 1, #Items.texts do Items.texts[index].Visible = false end
 end
 
-local World = { orig = {}, sky = nil, atmos = nil, ownAtmos = false, fx = {}, fov = {} }
+local World = { orig = {}, sky = nil, ownSky = nil, atmos = nil, ownAtmos = false, fx = {}, fov = {}, clouds = {}, weather = { cells = {} }, hour = nil, hue = 0, angle = 0 }
+
+local SKY_FACES = { "SkyboxUp", "SkyboxDn", "SkyboxFt", "SkyboxBk", "SkyboxLf", "SkyboxRt" }
+local SKY_PRESETS = {
+    ["Afternoon"] = { "162001926", "161998893", "162001897", "162001887", "162001904", "162001919" },
+    ["Aesthetic Mountains"] = { "15470207755", "15470151245", "15470200128", "15470198023", "15470202648", "15470204862" },
+    ["Better Night"] = { "15470303050", "15470291746", "15470294431", "15470289121", "15470297162", "15470299887" },
+    ["Blue Space"] = { "367149078", "367147970", "366731193", "366731024", "366731613", "366731514" },
+    ["Cloudy"] = { "246480504", "246480523", "246480105", "246480323", "246480549", "246480565" },
+    ["Dawn"] = { "323478865", "323481190", "323480314", "323479840", "323480786", "323480131" },
+    ["Dusk"] = { "9778106496", "9778110864", "9778101192", "9778108979", "9778103329", "9778104889" },
+    ["Earth"] = { "15753304473", "15753362674", "15753305823", "15753305495", "15753310707", "15753304774" },
+    ["Ethereal"] = { "16823395515", "16823388586", "16823390254", "16823386986", "16823392344", "16823394120" },
+    ["Galaxy"] = { "2049518578", "2049519279", "2049519882", "2049520382", "2049522478", "2049521207" },
+    ["Heaven"] = { "7951703855", "7951706908", "7951694757", "7951826533", "7951697216", "7951700251" },
+    ["Hell"] = { "11730857150", "11730842997", "11730849615", "11730840088", "11730852920", "11730855491" },
+    ["Jungle"] = { "525546479", "525544628", "525548536", "525546178", "525550171", "525545319" },
+    ["Lunar Night"] = { "187712111", "187712428", "187712836", "187713366", "187713755", "187714525" },
+    ["Milkyway"] = { "137817405681365", "108406529909981", "104400530594543", "129876530632297", "73372229972523", "87408857415924" },
+    ["Mountains"] = { "48015387", "48015300", "368388290", "368385273", "368390615", "368385190" },
+    ["Nebula"] = { "171448889", "171448902", "171448848", "171448875", "171448933", "171448925" },
+    ["Night"] = { "12064131", "12064152", "12064121", "12064107", "12063984", "12064115" },
+    ["Ocean Sky"] = { "11854708161", "11854687121", "11854693863", "11854686548", "11854696162", "11854698541" },
+    ["Pink Clouds"] = { "271077958", "271077243", "271042556", "271042516", "271042310", "271042467" },
+    ["Purple Night"] = { "5084576400", "5260653793", "5260817288", "5260808177", "5260800833", "5260800833" },
+    ["Red Dusk"] = { "136208328681929", "123407860042117", "132624761762466", "85146619291315", "102069641249982", "136526747107728" },
+    ["Redshift"] = { "401664936", "401664862", "401664960", "401664839", "401664881", "401664901" },
+    ["Saturn"] = { "1898736761", "1898727189", "1898722814", "1898724755", "1898729298", "1898741025" },
+    ["Solid Black"] = { "2013298", "2013298", "2013298", "2013298", "2013298", "2013298" },
+    ["Space"] = { "155441905", "155441905", "155441905", "155441905", "155441905", "155441905" },
+    ["Storm"] = { "171410789", "171410792", "171410775", "171410784", "171410807", "171410798" },
+    ["Sunset"] = { "264907379", "264907909", "264909420", "264908339", "264909758", "264908886" },
+    ["Underworld"] = { "171561009", "171561019", "171560968", "171560994", "171561065", "171561026" },
+    ["Winter"] = { "155674931", "155674246", "155657609", "155657655", "155657671", "155657619" },
+}
+local SKY_ORDER = { "Afternoon", "Aesthetic Mountains", "Better Night", "Blue Space", "Cloudy", "Dawn", "Dusk", "Earth", "Ethereal", "Galaxy", "Heaven", "Hell", "Jungle", "Lunar Night", "Milkyway", "Mountains", "Nebula", "Night", "Ocean Sky", "Pink Clouds", "Purple Night", "Red Dusk", "Redshift", "Saturn", "Solid Black", "Space", "Storm", "Sunset", "Underworld", "Winter" }
+local SKY_CHOICES = {}
+for index, name in ipairs(SKY_ORDER) do SKY_CHOICES[index] = name end
+SKY_CHOICES[#SKY_CHOICES + 1] = "Custom"
+
+local CELL = 28
+local SMOKE = "rbxasset://textures/particles/smoke_main.dds"
+local SPARK = "rbxasset://textures/particles/sparkles_main.dds"
+local SNOW_WHITE = Color3.fromRGB(255, 255, 255)
+local WEATHER = {
+    Snow = { layers = {
+        { texture = SMOKE, color = SNOW_WHITE, alpha = 0.15, count = 90, speed = { 6, 10 }, size = { 0.35, 0.25 }, spread = 0.4, spin = true },
+        { texture = SPARK, color = SNOW_WHITE, alpha = 0.35, count = 25, speed = { 5, 8 }, size = { 0.2, 0.15 }, spread = 0.6, spin = true },
+    } },
+    Rain = { layers = {
+        { texture = SMOKE, color = Color3.fromRGB(190, 205, 230), alpha = 0.35, count = 170, speed = { 70, 90 }, size = { 0.12, 0.1 }, spread = 0.05, parallel = true },
+    } },
+    Blizzard = { layers = {
+        { texture = SMOKE, color = SNOW_WHITE, alpha = 0.1, count = 220, speed = { 18, 28 }, size = { 0.3, 0.2 }, spread = 0.8, spin = true, wind = 1.5, push = 6 },
+        { texture = SMOKE, color = Color3.fromRGB(235, 240, 250), alpha = 0.75, count = 14, speed = { 14, 22 }, size = { 3, 5 }, spread = 1, spin = true, wind = 1.5, push = 6 },
+    } },
+    Ash = { layers = {
+        { texture = SMOKE, color = Color3.fromRGB(120, 120, 120), alpha = 0.3, count = 60, speed = { 2, 4 }, size = { 0.3, 0.2 }, spread = 0.8, spin = true, wind = 1.5 },
+        { texture = SMOKE, color = Color3.fromRGB(60, 60, 60), alpha = 0.5, count = 20, speed = { 1.5, 3 }, size = { 0.5, 0.3 }, spread = 1, spin = true, wind = 1.5 },
+    } },
+    Leaves = { layers = {
+        { texture = SMOKE, color = Color3.fromRGB(190, 120, 40), alpha = 0.1, count = 16, speed = { 3, 5 }, size = { 0.55, 0.4 }, spread = 1.2, spin = true, wind = 1.6 },
+        { texture = SMOKE, color = Color3.fromRGB(120, 150, 50), alpha = 0.1, count = 10, speed = { 3, 5 }, size = { 0.5, 0.35 }, spread = 1.2, spin = true, wind = 1.6 },
+    } },
+    Petals = { layers = {
+        { texture = SMOKE, color = Color3.fromRGB(255, 170, 200), alpha = 0.1, count = 24, speed = { 2, 3.5 }, size = { 0.4, 0.3 }, spread = 1, spin = true, wind = 1.4 },
+    } },
+    Fireflies = { maxH = 9, layers = {
+        { texture = SPARK, color = Color3.fromRGB(200, 255, 100), alpha = 0.1, count = 7, speed = { 0.6, 1.4 }, size = { 0.35, 0.25 }, spread = 1.5, life = { 5, 7 }, light = 1, wind = 0.3 },
+    } },
+    Sandstorm = { layers = {
+        { texture = SMOKE, color = Color3.fromRGB(205, 170, 110), alpha = 0.55, count = 150, speed = { 3, 6 }, size = { 2.5, 3.5 }, spread = 1, spin = true, wind = 1, push = 22 },
+        { texture = SMOKE, color = Color3.fromRGB(180, 145, 90), alpha = 0.3, count = 120, speed = { 2, 5 }, size = { 0.4, 0.3 }, spread = 1, wind = 1, push = 26 },
+    } },
+    Embers = { rise = true, layers = {
+        { texture = SPARK, color = Color3.fromRGB(255, 130, 40), alpha = 0.05, count = 28, speed = { 3, 7 }, size = { 0.25, 0.1 }, spread = 25, life = { 2.5, 4 }, light = 1, accel = 2, wind = 0.8 },
+    } },
+    ['Fog bank'] = { maxH = 6, layers = {
+        { texture = SMOKE, color = Color3.fromRGB(205, 210, 215), alpha = 0.88, count = 6, speed = { 0.2, 0.5 }, size = { 14, 20 }, spread = 1, spin = true, life = { 8, 10 }, wind = 0.4 },
+    } },
+}
+local WEATHER_NAMES = { "Snow", "Rain", "Blizzard", "Ash", "Leaves", "Petals", "Fireflies", "Sandstorm", "Embers", "Fog bank" }
 
 local function propGet(object, prop)
     local ok, value = pcall(function() return object[prop] end)
@@ -1315,7 +1557,98 @@ local function effect(key, class, enabled)
     return object
 end
 
-function World.apply()
+local function tune(key, class, flagName, set)
+    local enabled = on(flagName) == true
+    local object = effect(key, class, enabled)
+    if object and enabled then set(object) end
+end
+
+function World.skyIds()
+    local choice = val("world_sky_box")
+    if choice == "Custom" then
+        local ids = {}
+        for number in string.gmatch(tostring(val("world_sky_custom") or ""), "%d+") do ids[#ids + 1] = number end
+        if #ids == 1 then return { ids[1], ids[1], ids[1], ids[1], ids[1], ids[1] } end
+        if #ids == 6 then return ids end
+        return nil
+    end
+    return SKY_PRESETS[choice]
+end
+
+function World.stepSky(dt)
+    local skyOn = on("world_skybox") == true
+    local sky = Lighting:FindFirstChildOfClass("Sky")
+    if on("world_nosky") and not skyOn then
+        if sky and sky ~= World.ownSky then
+            World.sky = sky
+            pcall(function() sky.Parent = nil end)
+        end
+        sky = nil
+    elseif World.sky and not World.sky.Parent then
+        pcall(function() World.sky.Parent = Lighting end)
+        sky = World.sky
+    end
+    if skyOn then
+        if not sky then
+            local ok, created = pcall(Instance.new, "Sky")
+            if ok and created then
+                created.Name = Util.randomName()
+                pcall(function() created.Parent = Lighting end)
+                World.ownSky, sky = created, created
+            end
+        end
+        local ids = sky and World.skyIds()
+        if ids then
+            for index, face in ipairs(SKY_FACES) do put(sky, face, "rbxassetid://" .. ids[index]) end
+        end
+    elseif World.ownSky then
+        want[World.ownSky], World.orig[World.ownSky] = nil, nil
+        pcall(function() World.ownSky:Destroy() end)
+        World.ownSky = nil
+    end
+    if not sky then return end
+    if on("world_sky_objects") then
+        put(sky, "StarCount", val("world_sky_stars"))
+        put(sky, "SunAngularSize", val("world_sky_sun"))
+        put(sky, "MoonAngularSize", val("world_sky_moon"))
+        put(sky, "CelestialBodiesShown", val("world_sky_bodies") ~= false)
+    end
+    if on("world_sky_spin") then
+        World.angle = (World.angle + val("world_sky_spin_speed") * dt) % 360
+        put(sky, "SkyboxOrientation", Vector3.new(0, World.angle, 0))
+    end
+end
+
+function World.cloudObject(enabled)
+    local state = World.clouds
+    if enabled then
+        if not (state.object and state.object.Parent) then
+            local terrain
+            pcall(function() terrain = Workspace:FindFirstChildOfClass("Terrain") end)
+            if not terrain then return nil end
+            local existing = terrain:FindFirstChildOfClass("Clouds")
+            if existing then
+                state.object, state.created = existing, false
+            else
+                local ok, created = pcall(Instance.new, "Clouds")
+                if not (ok and created) then return nil end
+                created.Parent = terrain
+                state.object, state.created = created, true
+            end
+        end
+        return state.object
+    end
+    if state.object then
+        if state.created then
+            want[state.object], World.orig[state.object] = nil, nil
+            pcall(function() state.object:Destroy() end)
+        end
+        state.object = nil
+    end
+    return nil
+end
+
+function World.apply(dt, now)
     for _, props in pairs(want) do
         for prop in pairs(props) do props[prop] = nil end
     end
@@ -1334,14 +1667,33 @@ function World.apply()
     end
 
     if on("world_time") then put(Lighting, "ClockTime", val("world_time_v")) end
+    if on("world_cycle") then
+        World.hour = ((World.hour or propGet(Lighting, "ClockTime") or 12) + val("world_cycle_speed") * dt) % 24
+        put(Lighting, "ClockTime", World.hour)
+    else
+        World.hour = nil
+    end
+    if on("world_lat") then put(Lighting, "GeographicLatitude", val("world_lat_v")) end
     if on("world_ambient") then
         put(Lighting, "Ambient", val("world_ambient_in"))
         put(Lighting, "OutdoorAmbient", val("world_ambient_out"))
+    end
+    if on("world_shift") then
+        put(Lighting, "ColorShift_Top", val("world_shift_top"))
+        put(Lighting, "ColorShift_Bottom", val("world_shift_bottom"))
+    end
+    if on("world_env") then
+        put(Lighting, "EnvironmentDiffuseScale", val("world_env_diffuse"))
+        put(Lighting, "EnvironmentSpecularScale", val("world_env_specular"))
     end
     if on("world_fog") then
         put(Lighting, "FogStart", val("world_fog_start"))
         put(Lighting, "FogEnd", math.max(val("world_fog_end"), val("world_fog_start") + 1))
         put(Lighting, "FogColor", val("world_fog_color"))
+    end
+    if on("world_fog_grad") then
+        local wave = (math.sin(now * val("world_fog_grad_speed")) + 1) * 0.5
+        put(Lighting, "FogColor", Util.lerpColor(val("world_fog_color"), val("world_fog_color2"), wave))
     end
     if on("world_bright") then put(Lighting, "Brightness", val("world_bright_v")) end
     if on("world_exposure") then put(Lighting, "ExposureCompensation", val("world_exposure_v")) end
@@ -1349,6 +1701,8 @@ function World.apply()
         put(atmos, "Density", val("world_atmos_density"))
         put(atmos, "Color", val("world_atmos_color"))
         put(atmos, "Decay", val("world_atmos_decay"))
+        put(atmos, "Glare", val("world_atmos_glare"))
+        put(atmos, "Haze", val("world_atmos_haze"))
     end
     if on("world_sky") then
         local preset = val("world_sky_preset")
@@ -1377,6 +1731,27 @@ function World.apply()
         put(Lighting, "FogEnd", 1e9)
         put(Lighting, "FogStart", 1e9 - 1)
     end
+    if on("world_rainbow") then
+        World.hue = (World.hue + val("world_rainbow_speed") * dt) % 1
+        local colour = Color3.fromHSV(World.hue, val("world_rainbow_sat"), 1)
+        local targets = Util.set("world_rainbow_targets", {})
+        if targets.Ambient then
+            put(Lighting, "Ambient", colour)
+            put(Lighting, "OutdoorAmbient", colour)
+        end
+        if targets.Fog then put(Lighting, "FogColor", colour) end
+        if targets["Colour shift"] then put(Lighting, "ColorShift_Top", colour) end
+        if targets.Atmosphere and atmos then put(atmos, "Color", colour) end
+    end
+
+    Util.guard("sky", World.stepSky, dt)
+    local clouds = World.cloudObject(on("world_clouds") == true)
+    if clouds then
+        put(clouds, "Enabled", true)
+        put(clouds, "Cover", val("world_clouds_cover"))
+        put(clouds, "Density", val("world_clouds_density"))
+        put(clouds, "Color", val("world_clouds_color"))
+    end
 
     for object, props in pairs(want) do
         World.orig[object] = World.orig[object] or {}
@@ -1395,31 +1770,180 @@ function World.apply()
         if next(saved) == nil then World.orig[object] = nil end
     end
 
-    local sky = World.sky
-    if on("world_nosky") then
-        local found = Lighting:FindFirstChildOfClass("Sky")
-        if found then World.sky = found; pcall(function() found.Parent = nil end) end
-    elseif sky and not sky.Parent then
-        pcall(function() sky.Parent = Lighting end)
-    end
     if not on("world_atmos") and World.ownAtmos and World.atmos then
         pcall(function() World.atmos:Destroy() end)
+        want[World.atmos], World.orig[World.atmos] = nil, nil
         World.atmos, World.ownAtmos = nil, false
     end
 
-    local correction = effect("cc", "ColorCorrectionEffect", on("world_cc") == true)
-    if correction then
-        correction.TintColor, correction.Saturation = val("world_cc_tint"), val("world_cc_sat")
-        correction.Contrast, correction.Brightness = val("world_cc_con"), val("world_cc_bri")
+    tune("cc", "ColorCorrectionEffect", "world_cc", function(object)
+        object.TintColor, object.Saturation = val("world_cc_tint"), val("world_cc_sat")
+        object.Contrast, object.Brightness = val("world_cc_con"), val("world_cc_bri")
+    end)
+    tune("bloom", "BloomEffect", "world_bloom", function(object)
+        object.Intensity, object.Size, object.Threshold = val("world_bloom_i"), val("world_bloom_s"), val("world_bloom_t")
+    end)
+    tune("rays", "SunRaysEffect", "world_rays", function(object)
+        object.Intensity, object.Spread = val("world_rays_i"), val("world_rays_s")
+    end)
+    tune("dof", "DepthOfFieldEffect", "world_dof", function(object)
+        object.FocusDistance, object.InFocusRadius = val("world_dof_focus"), val("world_dof_radius")
+        object.NearIntensity, object.FarIntensity = val("world_dof_near"), val("world_dof_far")
+    end)
+    tune("blur", "BlurEffect", "world_blur", function(object)
+        object.Size = val("world_blur_size")
+    end)
+end
+
+function World.dropWeather()
+    local state = World.weather
+    for _, cell in pairs(state.cells) do pcall(function() cell.part:Destroy() end) end
+    state.cells, state.preset, state.sig = {}, nil, nil
+end
+
+function World.buildCell(cam, def, gx, gz)
+    local part = Instance.new("Part")
+    part.Name = Util.randomName()
+    part.Anchored, part.CanCollide, part.CanQuery, part.CanTouch = true, false, false, false
+    part.Transparency = 1
+    part.Size = Vector3.new(CELL, 0.5, CELL)
+    local cell = { part = part, emitters = {}, gx = gx, gz = gz, nextAt = 0, open = false, x = (gx + 0.5) * CELL, z = (gz + 0.5) * CELL, ground = 0, camY = 0 }
+    for _, layer in ipairs(def.layers) do
+        local emitter = Instance.new("ParticleEmitter")
+        emitter.Texture = layer.texture
+        if layer.spin then
+            emitter.Rotation = NumberRange.new(0, 360)
+            emitter.RotSpeed = NumberRange.new(-40, 40)
+        end
+        emitter.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.15, layer.alpha),
+            NumberSequenceKeypoint.new(0.85, layer.alpha),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+        emitter.LightEmission = layer.light or 0
+        emitter.LockedToPart = false
+        emitter.EmissionDirection = def.rise and Enum.NormalId.Top or Enum.NormalId.Bottom
+        if layer.parallel then emitter.Orientation = Enum.ParticleOrientation.VelocityParallel end
+        emitter.Enabled = false
+        emitter.Parent = part
+        cell.emitters[#cell.emitters + 1] = { object = emitter, layer = layer }
+    end
+    cell.parented = pcall(function() part.Parent = cam end)
+    if not cell.parented then cell.parented = pcall(function() part.Parent = Workspace end) end
+    return cell
+end
+
+function World.scanCell(cell, camY)
+    local origin = Vector3.new(cell.x, camY + 3, cell.z)
+    cell.camY = camY
+    cell.open = Workspace:Raycast(origin, Vector3.new(0, 400, 0), Visible.params) == nil
+    if not cell.open then return end
+    local down = Workspace:Raycast(origin, Vector3.new(0, -400, 0), Visible.params)
+    cell.ground = down and down.Position.Y or camY - 40
+end
+
+function World.shapeCell(cell, def, cfg, sig)
+    cell.sig, cell.dirty = sig, false
+    for _, entry in ipairs(cell.emitters) do entry.object.Enabled = cell.open end
+    if not cell.open then return end
+    local span = math.clamp(cell.camY + cfg.height - cell.ground, 6, 90)
+    if def.maxH then span = math.min(span, def.maxH) end
+    cell.part.Position = Vector3.new(cell.x, def.rise and cell.ground + 0.5 or cell.ground + span, cell.z)
+    local radians = math.rad(cfg.windDir)
+    for _, entry in ipairs(cell.emitters) do
+        local emitter, layer = entry.object, entry.layer
+        local slow, fast = layer.speed[1] * cfg.speed, layer.speed[2] * cfg.speed
+        local lifeLo, lifeHi
+        if layer.life then
+            lifeLo, lifeHi = layer.life[1], layer.life[2]
+        else
+            lifeHi = math.clamp(span / fast, 0.25, 14)
+            lifeLo = lifeHi * 0.8
+        end
+        local push = cfg.wind * (layer.wind or 1) + (layer.push or 0)
+        emitter.Lifetime = NumberRange.new(lifeLo, lifeHi)
+        emitter.Rate = layer.count * cfg.density / ((lifeLo + lifeHi) * 0.5)
+        emitter.Speed = NumberRange.new(slow, fast)
+        emitter.Size = NumberSequence.new(layer.size[1] * cfg.size, layer.size[2] * cfg.size)
+        emitter.SpreadAngle = Vector2.new(layer.spread, layer.spread)
+        emitter.Color = ColorSequence.new(cfg.custom and cfg.color or layer.color)
+        emitter.Acceleration = Vector3.new(math.sin(radians) * push, layer.accel or 0, math.cos(radians) * push)
     end
 end
 
-function World.stepFov()
+function World.stepWeather(cam, now)
+    local state = World.weather
+    if not on("world_weather") then
+        if next(state.cells) then World.dropWeather() end
+        return
+    end
+    local preset = val("world_weather_preset")
+    local def = WEATHER[preset]
+    if not def then return end
+    if state.preset ~= preset then
+        World.dropWeather()
+        state.preset = preset
+    end
+    local cfg = {
+        density = val("world_weather_amount"), speed = val("world_weather_speed"), size = val("world_weather_size"),
+        wind = val("world_weather_wind"), windDir = val("world_weather_wind_dir"), height = val("world_weather_height"),
+        custom = on("world_weather_custom") == true, color = val("world_weather_color"),
+    }
+    local sig = table.concat({ cfg.density, cfg.speed, cfg.size, cfg.wind, cfg.windDir, cfg.height, tostring(cfg.custom), tostring(cfg.color) }, "|")
+    local position = cam.CFrame.Position
+    local gx0, gz0 = math.floor(position.X / CELL), math.floor(position.Z / CELL)
+    local range = math.clamp(math.floor(val("world_weather_range") or 2), 1, 3)
+    local keep = {}
+    for dx = -range, range do
+        for dz = -range, range do
+            if dx * dx + dz * dz <= (range + 0.5) * (range + 0.5) then
+                local gx, gz = gx0 + dx, gz0 + dz
+                local key = gx .. ":" .. gz
+                keep[key] = true
+                local cell = state.cells[key]
+                if cell and cell.parented and not cell.part.Parent then
+                    pcall(function() cell.part:Destroy() end)
+                    cell = nil
+                end
+                if not cell then
+                    cell = World.buildCell(cam, def, gx, gz)
+                    state.cells[key] = cell
+                end
+                if now >= cell.nextAt then
+                    cell.nextAt = now + 0.35 + ((dx * 7 + dz * 3) % 5) * 0.06
+                    World.scanCell(cell, position.Y)
+                    cell.dirty = true
+                end
+                if cell.dirty or cell.sig ~= sig then World.shapeCell(cell, def, cfg, sig) end
+            end
+        end
+    end
+    for key, cell in pairs(state.cells) do
+        if not keep[key] then
+            pcall(function() cell.part:Destroy() end)
+            state.cells[key] = nil
+        end
+    end
+end
+
+function World.stepFov(dt)
     local state = World.fov
     local camera = Game.gameCamera()
     if flag("world_fov", false) and camera and type(camera._baseFov) == "number" then
-        if state.object ~= camera then state.object, state.orig = camera, camera._baseFov end
-        camera._baseFov = flag("world_fov_v", 90)
+        if state.object ~= camera then state.object, state.orig, state.blend = camera, camera._baseFov, 0 end
+        local tanHalf = math.tan(math.rad(flag("world_fov_v", 90)) / 2)
+        if flag("world_fov_dyn", false) then
+            local weapon = Game.weapon()
+            local target = (weapon and Game.aiming(weapon)) and 1 or 0
+            state.blend = state.blend + (target - state.blend) * (1 - math.exp(-dt * flag("world_fov_speed", 10)))
+            local scopedTan = math.tan(math.rad(flag("world_fov_ads", 60)) / 2)
+            tanHalf = math.exp(Util.lerp(math.log(tanHalf), math.log(scopedTan), state.blend))
+        end
+        local magnify = camera._magSpring
+        local zoom = type(magnify) == "table" and magnify.p
+        if type(zoom) == "number" then tanHalf = tanHalf * math.exp(zoom * (1 - flag("world_fov_mult", 1))) end
+        camera._baseFov = math.clamp(math.deg(2 * math.atan(tanHalf)), 5, 150)
     elseif state.object then
         if state.orig and type(state.object._baseFov) == "number" then state.object._baseFov = state.orig end
         state.object, state.orig = nil, nil
@@ -1474,10 +1998,419 @@ Util.onUnload(function()
     end
     World.orig = {}
     if World.sky and not World.sky.Parent then pcall(function() World.sky.Parent = Lighting end) end
+    if World.ownSky then pcall(function() World.ownSky:Destroy() end) end
+    World.cloudObject(false)
+    World.dropWeather()
     for _, object in pairs(World.fx) do pcall(function() object:Destroy() end) end
     World.fx = {}
     if World.ownAtmos and World.atmos then pcall(function() World.atmos:Destroy() end) end
 end)
+
+local Trail = { list = {}, lines = {} }
+
+function Trail.add(bullet, info, mine)
+    local start = info.visualorigin or info.position
+    if typeof(start) ~= "Vector3" then return end
+    if #Trail.list >= 48 then table.remove(Trail.list, 1) end
+    Trail.list[#Trail.list + 1] = { bullet = bullet, points = { { start, os.clock() } }, mine = mine }
+end
+
+function Trail.hideBeam(bullet)
+    local beams = type(bullet._beamObject) == "table" and bullet._beamObject.beams
+    if type(beams) ~= "table" then return end
+    for _, beam in pairs(beams) do propSet(beam, "Enabled", false) end
+end
+
+function Trail.step(cam, now)
+    local ownOn, otherOn = flag("trace_path_on", false), flag("trace_path_enemy_on", false)
+    local duration, thick = flag("trace_time", 1.5), flag("trace_thick", 1.5)
+    local ownColor, otherColor = flag("trace_path_color", Color3.fromRGB(255, 94, 94)), flag("trace_path_enemy_color", Color3.fromRGB(94, 160, 255))
+    local used = 0
+    if not (ownOn or otherOn) then Trail.list = {} end
+    for index = #Trail.list, 1, -1 do
+        local record = Trail.list[index]
+        local points = record.points
+        if not record.endedAt then
+            local bullet = record.bullet
+            local position = type(bullet) == "table" and bullet.position
+            if typeof(position) == "Vector3" and (position - points[#points][1]).Magnitude > 0.05 then
+                points[#points + 1] = { position, now }
+            end
+            if type(bullet) ~= "table" or bullet.pendingDeletion then record.endedAt = now end
+        end
+        while #points > 2 and now - points[1][2] > duration do table.remove(points, 1) end
+        if record.endedAt and now - record.endedAt > duration then
+            table.remove(Trail.list, index)
+        elseif (record.mine and ownOn) or (not record.mine and otherOn) then
+            local color = record.mine and ownColor or otherColor
+            for segment = 1, #points - 1 do
+                local alpha = 1 - (now - points[segment + 1][2]) / duration
+                if alpha > 0 and used < 600 then
+                    local from, fromFront = Draw.project(cam, points[segment][1])
+                    local to, toFront = Draw.project(cam, points[segment + 1][1])
+                    if fromFront and toFront then
+                        used = used + 1
+                        local line = Trail.lines[used]
+                        if not line then
+                            line = Draw.new("Line", { ZIndex = 4, Visible = false })
+                            Trail.lines[used] = line
+                        end
+                        line.From, line.To, line.Color, line.Thickness, line.Transparency, line.Visible = from, to, color, thick, alpha, true
+                    end
+                end
+            end
+        end
+    end
+    for index = used + 1, #Trail.lines do Trail.lines[index].Visible = false end
+end
+
+local Nades = { list = {}, known = {}, lines = {}, texts = {}, hooked = false, scanAt = -math.huge, predAt = -math.huge }
+
+local function hermite(t0, p0, v0, t1, p1, v1, t)
+    if t0 == t1 then return p1 end
+    local span = t1 - t0
+    local a, b = (t - t0) / span, (t1 - t) / span
+    return b * b * (b + 3 * a) * p0 + span * b * b * a * v0 - span * b * a * a * v1 + a * a * (a + 3 * b) * p1
+end
+
+local function graphDamage(graph, distance)
+    for index = 1, #graph do
+        local node = graph[index]
+        if distance < node.distance then
+            local previous = graph[index - 1]
+            if not previous then return node.damage end
+            local fraction = (distance - previous.distance) / (node.distance - previous.distance)
+            return (1 - fraction) * previous.damage + fraction * node.damage
+        end
+    end
+    return graph[#graph].damage
+end
+
+function Nades.data(name)
+    local cached = Nades.known[name]
+    if cached ~= nil then return cached or nil end
+    local content = Game.mods.ContentInterface
+    local data
+    if content and type(content.getWeaponData) == "function" then
+        local ok, value = pcall(content.getWeaponData, name)
+        if ok and type(value) == "table" then data = value end
+    end
+    Nades.known[name] = data or false
+    return data
+end
+
+function Nades.sample(nodes, t)
+    local count = #nodes
+    if t <= nodes[1].t then return nodes[1].p end
+    for index = 1, count - 1 do
+        local a, b = nodes[index], nodes[index + 1]
+        if t < b.t then return hermite(a.t, a.p, a.v, b.t, b.p, b.v, t) end
+    end
+    return nodes[count].p
+end
+
+function Nades.onThrow(player, name, nodes, fuse)
+    if type(nodes) ~= "table" or #nodes == 0 or type(fuse) ~= "number" or typeof(nodes[1].p) ~= "Vector3" then return end
+    local own = player == LocalPlayer
+    if not own and player.TeamColor == LocalPlayer.TeamColor then return end
+    local ping = 0
+    pcall(function() ping = Game.mods.NetworkClient.getPing() end)
+    local boom = fuse - ping / 2
+    local first, limit = nodes[1].t, math.min(boom, nodes[#nodes].t)
+    local points = {}
+    local t = first
+    while t < limit and #points < 90 do
+        points[#points + 1] = Nades.sample(nodes, t)
+        t = t + 0.1
+    end
+    points[#points + 1] = Nades.sample(nodes, math.max(limit, first))
+    if #Nades.list >= 24 then table.remove(Nades.list, 1) end
+    Nades.list[#Nades.list + 1] = {
+        player = player, name = name, nodes = nodes, own = own, data = Nades.data(name),
+        recv = Game.time(), boom = boom, first = first, points = points, land = points[#points],
+    }
+end
+
+function Nades.scanHandlers(fn)
+    if type(fn) ~= "function" then return nil end
+    local values = {}
+    local getter = debug.getupvalues or getupvalues
+    if type(getter) == "function" then
+        local ok, list = pcall(getter, fn)
+        if ok and type(list) == "table" then
+            for _, value in pairs(list) do values[#values + 1] = value end
+        end
+    end
+    if type(debug.getupvalue) == "function" then
+        for index = 1, 40 do
+            local ok, a, b = pcall(debug.getupvalue, fn, index)
+            if not ok or (a == nil and b == nil) then break end
+            values[#values + 1] = type(b) == "table" and b or a
+        end
+    end
+    for _, value in ipairs(values) do
+        if type(value) == "table" and type(rawget(value, "newgrenade")) == "function" then return value end
+    end
+    return nil
+end
+
+function Nades.findHandlers()
+    local network = Game.mods.NetworkClient
+    if type(network) ~= "table" then return nil end
+    local found = Nades.scanHandlers(network.receive) or Nades.scanHandlers(network.fireReady)
+    if found then return found end
+    local now = os.clock()
+    if type(getgc) == "function" and now - Nades.scanAt >= 30 then
+        Nades.scanAt = now
+        pcall(function()
+            for _, value in ipairs(getgc(true)) do
+                if type(value) == "table" and type(rawget(value, "newgrenade")) == "function" and type(rawget(value, "ping")) == "function" then
+                    found = value
+                    return
+                end
+            end
+        end)
+    end
+    return found
+end
+
+function Nades.hook()
+    if Nades.hooked then return end
+    local handlers = Nades.findHandlers()
+    if not handlers then return end
+    local original = rawget(handlers, "newgrenade")
+    handlers.newgrenade = function(player, name, nodes, windows, fuse, ...)
+        pcall(Nades.onThrow, player, name, nodes, fuse)
+        return original(player, name, nodes, windows, fuse, ...)
+    end
+    Nades.hooked = true
+    Util.onUnload(function()
+        pcall(function() handlers.newgrenade = original end)
+        Nades.hooked = false
+    end)
+end
+
+function Nades.mapParams()
+    if Nades.params ~= nil then return Nades.params or nil end
+    local map = Workspace:FindFirstChild("Map")
+    if not map then return nil end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Include
+    params.FilterDescendantsInstances = { map }
+    Nades.params = params
+    return params
+end
+
+function Nades.damage(data, land, origin, cache, now)
+    local graph = data and data.damageGraph
+    if type(graph) ~= "table" or #graph == 0 then return nil end
+    local radius = graph[#graph].distance
+    local distance = (origin - land).Magnitude
+    if distance >= radius then return 0, radius end
+    if now - (cache.losAt or -1) > 0.15 then
+        cache.losAt = now
+        local params = Nades.mapParams()
+        cache.blocked = params ~= nil and Workspace:Raycast(land, origin - land, params) ~= nil
+    end
+    if cache.blocked then return 0, radius end
+    return graphDamage(graph, distance), radius
+end
+
+function Nades.line(cam, a, b, color, alpha, thick)
+    local from, fromFront = Draw.project(cam, a)
+    local to, toFront = Draw.project(cam, b)
+    if not (fromFront and toFront) then return end
+    Nades.lineUsed = Nades.lineUsed + 1
+    local line = Nades.lines[Nades.lineUsed]
+    if not line then
+        line = Draw.new("Line", { ZIndex = 5, Visible = false })
+        Nades.lines[Nades.lineUsed] = line
+    end
+    line.From, line.To, line.Color, line.Thickness, line.Transparency, line.Visible = from, to, color, thick, alpha, true
+end
+
+function Nades.ring(cam, center, radius, color, alpha)
+    local segments = 28
+    local previous
+    for index = 0, segments do
+        local angle = index / segments * math.pi * 2
+        local point = center + Vector3.new(math.cos(angle) * radius, 0.15, math.sin(angle) * radius)
+        if previous then Nades.line(cam, previous, point, color, alpha, 1) end
+        previous = point
+    end
+end
+
+function Nades.label(cam, position, lines)
+    local point, front = Draw.project(cam, position)
+    if not front then return end
+    local y = point.Y
+    for _, entry in ipairs(lines) do
+        Nades.textUsed = Nades.textUsed + 1
+        local text = Nades.texts[Nades.textUsed]
+        if not text then
+            text = Draw.text(13, 9)
+            Nades.texts[Nades.textUsed] = text
+        end
+        text.Font, text.Size = ESP.S.font or 2, ESP.S.size or 13
+        text.Text, text.Position, text.Color, text.Transparency, text.Visible = entry[1], Vector2.new(point.X, y), entry[2], 1, true
+        y = y + (ESP.S.size or 13) + 1
+    end
+end
+
+function Nades.verdict(damage)
+    if damage == nil then return nil end
+    if damage <= 0 then return "SAFE", flag("nade_safe_color", Color3.fromRGB(90, 255, 130)) end
+    local shown = math.floor(damage + 0.5)
+    local label = shown >= 100 and "LETHAL " .. shown or "-" .. shown .. " HP"
+    return label, Util.lerpColor(Color3.fromRGB(255, 220, 60), flag("nade_danger_color", Color3.fromRGB(255, 60, 60)), math.clamp(damage / 100, 0, 1))
+end
+
+function Nades.simulate(origin, velocity, gravity, elasticity, friction, duration)
+    local params = Nades.mapParams()
+    local step = 0.05
+    local points, bounces = { origin }, {}
+    local position, speed = origin, velocity
+    local elapsed = 0
+    while elapsed < duration and #points < 130 do
+        local move = speed * step + gravity * (0.5 * step * step)
+        local hit = params and Workspace:Raycast(position, move, params)
+        if hit then
+            position = hit.Position + hit.Normal * 0.05
+            local along = hit.Normal * speed:Dot(hit.Normal)
+            speed = (speed - along) * (1 - friction) - along * elasticity + gravity * step
+            points[#points + 1] = position
+            bounces[#bounces + 1] = position
+            if #bounces > 5 or speed.Magnitude < 2 then break end
+        else
+            position = position + move
+            speed = speed + gravity * step
+            points[#points + 1] = position
+        end
+        elapsed = elapsed + step
+    end
+    return points, bounces
+end
+
+function Nades.throwState(weapon)
+    local gameCam = Game.gameCamera()
+    local root = Game.rootPart()
+    if not (gameCam and root and weapon._mainPart) then return nil end
+    local speed = Game.stat(weapon, "throwspeed")
+    if type(speed) ~= "number" then return nil end
+    local ok, frame, base, mainPosition = pcall(function()
+        return gameCam:getCFrame(), gameCam:getBaseCFrame().Position, weapon._mainPart.CFrame.Position
+    end)
+    if not (ok and typeof(frame) == "CFrame") then return nil end
+    local aim = (frame * CFrame.Angles(math.rad(Game.stat(weapon, "throwangle") or 0), 0, 0)).LookVector
+    local okVelocity, rootVelocity = pcall(function() return root.AssemblyLinearVelocity end)
+    if not (okVelocity and typeof(rootVelocity) == "Vector3") then
+        okVelocity, rootVelocity = pcall(function() return root.Velocity end)
+    end
+    if not (okVelocity and typeof(rootVelocity) == "Vector3") then rootVelocity = Vector3.zero end
+    local start = mainPosition
+    local params = Nades.mapParams()
+    local hit = params and Workspace:Raycast(base, mainPosition - base, params)
+    if hit then start = hit.Position + hit.Normal * 0.01 end
+    return start, aim * speed + rootVelocity
+end
+
+function Nades.predict(cam, now, origin)
+    local weapon = Game.weapon()
+    local held = false
+    if flag("nade_predict", false) and weapon and type(weapon.getWeaponType) == "function" then
+        local ok, kind = pcall(weapon.getWeaponType, weapon)
+        held = ok and kind == "Grenade" and type(weapon.isEquipped) == "function" and weapon:isEquipped() == true
+    end
+    if not held then
+        Nades.pred = nil
+        return
+    end
+    local pred = Nades.pred
+    if not pred or pred.weapon ~= weapon or now - Nades.predAt > 0.05 then
+        Nades.predAt = now
+        local start, velocity = Nades.throwState(weapon)
+        if not start then
+            Nades.pred = nil
+            return
+        end
+        local duration = Game.stat(weapon, "fusetime") or 5
+        local okArmed, armed = pcall(weapon.isState, weapon, "armed")
+        if okArmed and armed and type(weapon._fuseTime) == "number" then duration = math.max(weapon._fuseTime - Game.time(), 0.1) end
+        local gravity = typeof(weapon._acceleration) == "Vector3" and weapon._acceleration or Vector3.new(0, -80, 0)
+        local points, bounces = Nades.simulate(start, velocity, gravity, weapon._bounceElasticity or 0.2, weapon._frictionConstant or 0.08, duration)
+        pred = { weapon = weapon, points = points, bounces = bounces, land = points[#points], duration = duration, cache = pred and pred.cache or {} }
+        Nades.pred = pred
+    end
+    local color = flag("nade_predict_color", Color3.fromRGB(120, 200, 255))
+    for index = 1, #pred.points - 1 do Nades.line(cam, pred.points[index], pred.points[index + 1], color, 1, 1.5) end
+    if flag("nade_predict_bounce", true) then
+        for _, point in ipairs(pred.bounces) do Nades.ring(cam, point, 0.8, color, 1) end
+    end
+    local data = weapon._weaponData or weapon.weaponData
+    local verdict, verdictColor = Nades.verdict((Nades.damage(data, pred.land, origin, pred.cache, now)))
+    local radius = data and type(data.damageGraph) == "table" and #data.damageGraph > 0 and data.damageGraph[#data.damageGraph].distance
+    Nades.ring(cam, pred.land, 1.5, color, 1)
+    if radius and flag("nade_ring", true) then Nades.ring(cam, pred.land, radius, verdictColor or color, 0.6) end
+    local lines = { { string.format("Lands %.1fs", pred.duration), color } }
+    if verdict and flag("nade_dmg", true) then lines[2] = { verdict, verdictColor } end
+    Nades.label(cam, pred.land + Vector3.new(0, 1.5, 0), lines)
+end
+
+function Nades.step(cam, now)
+    Nades.lineUsed, Nades.textUsed = 0, 0
+    if flag("nade_on", false) then
+        local ownOn, enemyOn = flag("nade_own", true), flag("nade_enemy", true)
+        local maxDistance = flag("nade_dist", 400)
+        local ownColor, enemyColor = flag("nade_own_color", Color3.fromRGB(120, 255, 170)), flag("nade_enemy_color", Color3.fromRGB(255, 90, 60))
+        local root = Game.rootPart()
+        local camPosition = cam.CFrame.Position
+        local origin = root and root.Position or camPosition
+        local time = Game.time()
+        for index = #Nades.list, 1, -1 do
+            local record = Nades.list[index]
+            local elapsed = time - record.recv
+            local remaining = record.boom - elapsed
+            if remaining < -0.3 then
+                table.remove(Nades.list, index)
+            elseif (record.own and ownOn) or (not record.own and enemyOn) then
+                local position = Nades.sample(record.nodes, math.max(elapsed, record.first))
+                if (position - camPosition).Magnitude <= maxDistance then
+                    local color = record.own and ownColor or enemyColor
+                    if flag("nade_path", true) then
+                        local from = math.max(1, math.floor((elapsed - record.first) / 0.1) + 1)
+                        local last = position
+                        for pointIndex = from, #record.points do
+                            Nades.line(cam, last, record.points[pointIndex], color, 0.9, 1.5)
+                            last = record.points[pointIndex]
+                        end
+                    end
+                    local lines = {}
+                    if flag("nade_timer", true) then lines[#lines + 1] = { string.format("%.1fs", math.max(remaining, 0)), color } end
+                    local verdict, verdictColor
+                    record.cache = record.cache or {}
+                    local damage, radius = Nades.damage(record.data, record.land, origin, record.cache, now)
+                    verdict, verdictColor = Nades.verdict(damage)
+                    if verdict and flag("nade_dmg", true) then lines[#lines + 1] = { verdict, verdictColor } end
+                    if radius and flag("nade_ring", true) then Nades.ring(cam, record.land, radius, verdictColor or color, 0.7) end
+                    if #lines > 0 then Nades.label(cam, position + Vector3.new(0, 1, 0), lines) end
+                end
+            end
+        end
+        if not Nades.hooked then
+            Items.scan(now)
+            for _, instance in ipairs(Items.grenades) do
+                local position = instance.Parent and Items.position(instance)
+                if position and (position - camPosition).Magnitude <= maxDistance then
+                    Nades.label(cam, position, { { "Grenade " .. math.floor((position - camPosition).Magnitude * STUDS_TO_M) .. "m", enemyColor } })
+                end
+            end
+        end
+    end
+    local root = Game.rootPart()
+    Nades.predict(cam, now, root and root.Position or cam.CFrame.Position)
+    for index = Nades.lineUsed + 1, #Nades.lines do Nades.lines[index].Visible = false end
+    for index = Nades.textUsed + 1, #Nades.texts do Nades.texts[index].Visible = false end
+end
 
 local Feedback = { at = -10, head = false, numbers = {}, texts = {}, spiral = 0, hooked = {} }
 
@@ -1491,11 +2424,11 @@ local HIT_SOUNDS = {
     ["Rust"] = "rbxassetid://5043539486",
     ["TF2"] = "rbxassetid://8255306220",
     ["Windows"] = "rbxassetid://9066167010",
-    ["PF Hitmarker"] = "rbxassetid://287062939",
-    ["PF Killshot"] = { "rbxassetid://898398768", "rbxassetid://898398730", "rbxassetid://898398743" },
-    ["PF Headshot kill"] = { "rbxassetid://898398768", "rbxassetid://898398785", "rbxassetid://898398795", "rbxassetid://898398809", "rbxassetid://898398817", "rbxassetid://898398837" },
+    ["Alt Hitmarker"] = "rbxassetid://287062939",
+    ["Alt Killshot"] = { "rbxassetid://898398768", "rbxassetid://898398730", "rbxassetid://898398743" },
+    ["Alt Headshot kill"] = { "rbxassetid://898398768", "rbxassetid://898398785", "rbxassetid://898398795", "rbxassetid://898398809", "rbxassetid://898398817", "rbxassetid://898398837" },
 }
-local HIT_SOUND_ORDER = { "Gamesense", "CSGO", "Click", "Hitmarker", "Minecraft", "Neverlose", "Rust", "TF2", "Windows", "PF Hitmarker", "PF Killshot", "PF Headshot kill" }
+local HIT_SOUND_ORDER = { "Gamesense", "CSGO", "Click", "Hitmarker", "Minecraft", "Neverlose", "Rust", "TF2", "Windows", "Alt Hitmarker", "Alt Killshot", "Alt Headshot kill" }
 
 function Feedback.play(name, volume, pitch)
     local entry = HIT_SOUNDS[name]
@@ -1514,7 +2447,7 @@ function Feedback.onHit(isHead)
     Feedback.at, Feedback.head = os.clock(), isHead
     if flag("hit_snd", false) then
         local name = flag("hit_snd_id", "Gamesense")
-        if isHead and flag("hit_snd_head", false) then name = flag("hit_snd_head_id", "PF Headshot kill") end
+        if isHead and flag("hit_snd_head", false) then name = flag("hit_snd_head_id", "Alt Headshot kill") end
         Feedback.play(name, flag("hit_snd_vol", 1.5), flag("hit_snd_pitch", 1))
     end
 end
@@ -1522,7 +2455,7 @@ end
 function Feedback.onKill(info)
     if type(info) ~= "table" or info.attacker ~= LocalPlayer or info.victim == LocalPlayer then return end
     if not flag("kill_snd", false) then return end
-    Feedback.play(flag("kill_snd_id", "PF Killshot"), flag("kill_snd_vol", 1.5), flag("kill_snd_pitch", 1))
+    Feedback.play(flag("kill_snd_id", "Alt Killshot"), flag("kill_snd_vol", 1.5), flag("kill_snd_pitch", 1))
 end
 
 function Feedback.addNumber(position, part, damage, big)
@@ -1575,6 +2508,10 @@ function Feedback.hook()
                         bullet:setColor(flag("trace_color", Color3.fromRGB(255, 94, 94)))
                     elseif not mine and flag("trace_enemy_on", false) then
                         bullet:setColor(flag("trace_enemy_color", Color3.fromRGB(94, 160, 255)))
+                    end
+                    if (mine and flag("trace_path_on", false)) or (not mine and flag("trace_path_enemy_on", false)) then
+                        Trail.add(bullet, info, mine)
+                        if flag("trace_hide_beam", false) then Trail.hideBeam(bullet) end
                     end
                 end)
                 return bullet
@@ -1671,6 +2608,8 @@ function Legit.read()
     L.fovRadius, L.fovDynamic = flag("legit_fov", 120), flag("legit_fov_dynamic", false)
     L.fovNear, L.fovFar = flag("legit_fov_near", 240), flag("legit_fov_far", 60)
     L.teamCheck = flag("legit_team_check", true)
+    L.barrel = flag("legit_barrel", true)
+    L.fovBarrel, L.fovAttach = flag("legit_fov_barrel", false), flag("legit_fov_attach", "Aim hit")
 end
 
 function Legit.radiusFor(distance)
@@ -1741,7 +2680,7 @@ function Legit.choose(records, cam, origin, center, now)
     return bestRecord, bestPart
 end
 
-function Legit.turn(gameCam, origin, aimPoint, dt, now, center, cam)
+function Legit.turn(gameCam, origin, aimPoint, dt, now, cam, barrelLook)
     local L = Legit.L
     local direction = aimPoint - origin
     if direction.Magnitude < 0.01 then return false end
@@ -1754,15 +2693,15 @@ function Legit.turn(gameCam, origin, aimPoint, dt, now, center, cam)
         targetYaw = targetYaw + math.rad(L.noise) * math.noise(now * L.noiseSpeed, 47.9) * 2
     end
 
-    local look = gameCam:getLookVector()
+    local look = barrelLook or gameCam:getLookVector()
     if typeof(look) ~= "Vector3" then return false end
     local currentPitch = math.atan2(look.Y, math.sqrt(look.X * look.X + look.Z * look.Z))
     local currentYaw = math.atan2(-look.X, -look.Z)
     local deltaPitch = targetPitch - currentPitch
     local deltaYaw = (targetYaw - currentYaw + math.pi) % (math.pi * 2) - math.pi
 
-    local onScreen, front = Draw.project(cam, aimPoint)
-    if front and (onScreen - center).Magnitude < L.deadzone then return false end
+    local pixels = (cam.ViewportSize.Y / 2) / math.tan(math.rad(cam.FieldOfView) / 2)
+    if math.sqrt(deltaPitch * deltaPitch + deltaYaw * deltaYaw) * pixels < L.deadzone then return false end
 
     local alpha = 1 - math.exp(-dt * 60 / math.max(L.smooth, 1))
     local stepPitch, stepYaw = deltaPitch * alpha, deltaYaw * alpha
@@ -1803,9 +2742,10 @@ function Legit.drawFov(center)
     end
 end
 
-function Legit.stepAim(dt, cam, now, records, center)
+function Legit.stepAim(dt, cam, now, records, screen)
     local L = Legit.L
     Legit.moved = false
+    local center = L.fovBarrel and Barrel.point(L.fovAttach, screen) or screen
     Legit.drawFov(center)
     Legit.snapline.Visible = false
 
@@ -1817,7 +2757,8 @@ function Legit.stepAim(dt, cam, now, records, center)
 
     local gameCam = Game.gameCamera()
     if not gameCam then return end
-    local origin = cam.CFrame.Position
+    local useBarrel = L.barrel and Barrel.valid
+    local origin = useBarrel and Barrel.fire or cam.CFrame.Position
 
     local record, part
     if Legit.target and L.sticky then
@@ -1856,7 +2797,7 @@ function Legit.stepAim(dt, cam, now, records, center)
     end
     if now < Legit.reactUntil then return end
     local aimPoint = Legit.lead(origin, part.Position, record.velocity, weapon)
-    Legit.moved = Legit.turn(gameCam, origin, aimPoint, dt, now, center, cam)
+    Legit.moved = Legit.turn(gameCam, origin, aimPoint, dt, now, cam, useBarrel and Barrel.look or nil)
 end
 
 local Recoil = { body = nil, head = nil, last = Vector3.zero, shown = Vector3.zero }
@@ -1940,6 +2881,7 @@ function Legit.stepTrigger(cam, now, records)
     if flag("trig_ads", false) and not Game.aiming(weapon) then Trigger.onSince = nil return end
 
     local origin, direction = cam.CFrame.Position, cam.CFrame.LookVector
+    if flag("legit_barrel", true) and Barrel.valid then origin, direction = Barrel.fire, Barrel.look end
     local maxDistance, scale = flag("trig_dist", 400), flag("trig_scale", 1)
     local groups, wantVisible = Util.set("trig_parts", { Head = true, Torso = true }), flag("trig_visible", true)
     local teamCheck = flag("legit_team_check", true)
@@ -1990,6 +2932,7 @@ do
     Master:Toggle({ Name = "Visible only", Flag = "legit_visible", Default = true })
     Master:Toggle({ Name = "Only while aiming down sights", Flag = "legit_ads" })
     Master:Toggle({ Name = "Only while shooting", Flag = "legit_shooting" })
+    Master:Toggle({ Name = "Aim from barrel", Flag = "legit_barrel", Default = true, Tooltip = "Uses the weapon's bullet origin and direction (as the game computes them) for visibility, prediction and aiming; the camera is still the only thing that moves" })
     Master:Dropdown({ Name = "Hitbox priority", Flag = "legit_priority", Items = { "Closest", "Head", "Torso" }, Default = "Closest", Tooltip = "Closest picks the part nearest the crosshair; Head/Torso prefer that part when it qualifies" })
     Master:Dropdown({ Name = "Hitboxes", Flag = "legit_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
     Master:Dropdown({ Name = "Target by", Flag = "legit_target_by", Items = { "Crosshair", "Distance", "Lowest health" }, Default = "Crosshair" })
@@ -2013,6 +2956,8 @@ do
     Fov:Toggle({ Name = "Draw FOV circle", Flag = "legit_fov_draw", Default = true }):Colorpicker({ Name = "Circle", Flag = "legit_fov_color", Default = WHITE, Alpha = 0 })
     Fov:Toggle({ Name = "Filled", Flag = "legit_fov_fill" }):Colorpicker({ Name = "Fill", Flag = "legit_fov_fill_color", Default = WHITE, Alpha = 0.92 })
     Fov:Toggle({ Name = "Locked colour", Flag = "legit_fov_lock", Default = true, Tooltip = "The circle changes colour while a target is held" }):Colorpicker({ Name = "Locked", Flag = "legit_fov_lock_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
+    Fov:Toggle({ Name = "Attach to barrel", Flag = "legit_fov_barrel", Tooltip = "Centres the circle on the weapon barrel instead of the screen centre" })
+    Fov:Dropdown({ Name = "Attach point", Flag = "legit_fov_attach", Items = { "Aim hit", "Muzzle" }, Default = "Aim hit", Tooltip = "Aim hit is where the barrel is pointing; Muzzle is the barrel tip" })
     Fov:Slider({ Name = "Radius", Flag = "legit_fov", Min = 10, Max = 800, Default = 120, Decimals = 1, Suffix = " px" })
     Fov:Slider({ Name = "Thickness", Flag = "legit_fov_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
     Fov:Toggle({ Name = "Dynamic radius", Flag = "legit_fov_dynamic", Tooltip = "The radius shrinks with the target's distance" })
@@ -2029,6 +2974,7 @@ do
         Game.load()
         Game.hookNetwork()
         Feedback.hook()
+        Nades.hook()
         Status.core:SetText("Core: " .. tostring(Game.summary))
         pcall(function() Library:Notify("Core " .. tostring(Game.summary), 4) end)
     end })
@@ -2061,7 +3007,7 @@ do
 end
 
 do
-    local Subs = Pages.ESP:SubTabs({ { "Enemies", "swords" }, { "Teammates", "shield" }, { "Settings", "sliders-horizontal" }, { "Items", "package" } })
+    local Subs = Pages.ESP:SubTabs({ { "Enemies", "swords" }, { "Teammates", "shield" }, { "Settings", "sliders-horizontal" }, { "Items", "package" }, { "Grenades", "flame" } })
 
     local function buildTeam(sub, prefix, label, tint, hidden)
         local function key(name) return prefix .. name end
@@ -2082,7 +3028,7 @@ do
         Over:Toggle({ Name = "Tracer", Flag = key("tracer"), Tooltip = "Line from the screen to the player's feet" }):Colorpicker({ Name = "Tracer", Flag = key("tracer_color"), Default = tint, Alpha = 0 })
         Over:Toggle({ Name = "View direction", Flag = key("view"), Tooltip = "Where the player is looking, drawn from the head" }):Colorpicker({ Name = "View", Flag = key("view_color"), Default = Color3.fromRGB(255, 220, 60), Alpha = 0 })
         Over:Toggle({ Name = "Off-screen arrows", Flag = key("oov"), Tooltip = "Arrows pointing at players you cannot see on screen" }):Colorpicker({ Name = "Arrow", Flag = key("oov_color"), Default = tint, Alpha = 0 })
-        Over:Toggle({ Name = "Chams", Flag = key("chams"), Tooltip = "Highlight on the character. First colour is the visible part, second the part behind walls" }):Colorpicker({ Name = "Visible", Flag = key("cham_vis"), Default = tint, Alpha = 0.5 }):Colorpicker({ Name = "Behind walls", Flag = key("cham_hid"), Default = hidden, Alpha = 0.5 })
+        Over:Toggle({ Name = "Chams", Flag = key("chams"), Tooltip = "Adornment chams on each body part. First colour is the visible layer, second the layer behind walls" }):Colorpicker({ Name = "Visible", Flag = key("cham_vis"), Default = tint, Alpha = 0.5 }):Colorpicker({ Name = "Behind walls", Flag = key("cham_hid"), Default = hidden, Alpha = 0.5 })
     end
     buildTeam(Subs.Enemies, "esp_enemy_", "Enemy", Color3.fromRGB(255, 70, 90), Color3.fromRGB(170, 60, 255))
     buildTeam(Subs.Teammates, "esp_team_", "Teammate", Color3.fromRGB(90, 220, 130), Color3.fromRGB(60, 150, 255))
@@ -2108,29 +3054,52 @@ do
     Lines:Slider({ Name = "Skeleton thickness", Flag = "esp_skel_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
     Lines:Slider({ Name = "View line length", Flag = "esp_view_len", Min = 2, Max = 30, Default = 8, Decimals = 0.1, Suffix = " studs" })
     Cham:Dropdown({ Name = "Mode", Flag = "cham_mode", Items = { "Through walls", "Visible only" }, Default = "Through walls", Tooltip = "Through walls switches between the two colours by line of sight" })
-    Cham:Toggle({ Name = "Outline", Flag = "cham_outline", Default = true })
-    Cham:Slider({ Name = "Outline transparency", Flag = "cham_outline_t", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
+    Cham:Slider({ Name = "Thickness", Flag = "cham_grow", Min = 0, Max = 1, Default = 0.1, Decimals = 0.01, Suffix = " studs" })
+    Cham:Toggle({ Name = "Glow", Flag = "cham_glow", Default = true, Tooltip = "Adds a soft halo layer around the visible chams" })
+    Cham:Slider({ Name = "Glow size", Flag = "cham_glow_size", Min = 0.05, Max = 1.5, Default = 0.35, Decimals = 0.01, Suffix = " studs" })
+    Cham:Toggle({ Name = "Round head", Flag = "cham_round_head", Default = true })
     Arrow:Slider({ Name = "Arrow size", Flag = "oov_size", Min = 8, Max = 32, Default = 14, Decimals = 1, Suffix = " px" })
     Arrow:Slider({ Name = "Arrow distance", Flag = "oov_radius", Min = 5, Max = 100, Default = 40, Decimals = 1, Suffix = " %", Tooltip = "Distance from the screen centre; 100 is the edge" })
 
     local Item = Subs.Items:Section({ Name = "Items", Side = 1, Icon = "package" })
     Item:Toggle({ Name = "Dropped weapons", Flag = "item_drops" }):Colorpicker({ Name = "Weapons", Flag = "item_drops_color", Default = Color3.fromRGB(255, 190, 60), Alpha = 0 })
-    Item:Toggle({ Name = "Grenades", Flag = "item_grenades", Tooltip = "Thrown grenades from any player" }):Colorpicker({ Name = "Grenades", Flag = "item_grenades_color", Default = Color3.fromRGB(255, 90, 60), Alpha = 0 })
     Item:Slider({ Name = "Max distance", Flag = "item_dist", Min = 20, Max = 1500, Default = 300, Decimals = 1, Suffix = " studs" })
+
+    local Warn = Subs.Grenades:Section({ Name = "Grenade warning", Side = 1, Icon = "flame" })
+    Warn:Toggle({ Name = "Enabled", Flag = "nade_on", Tooltip = "Tracks enemy grenades and your own from the game's throw event" })
+    Warn:Toggle({ Name = "Enemy grenades", Flag = "nade_enemy", Default = true }):Colorpicker({ Name = "Enemy", Flag = "nade_enemy_color", Default = Color3.fromRGB(255, 90, 60), Alpha = 0 })
+    Warn:Toggle({ Name = "My grenades", Flag = "nade_own", Default = true }):Colorpicker({ Name = "Mine", Flag = "nade_own_color", Default = Color3.fromRGB(120, 255, 170), Alpha = 0 })
+    Warn:Toggle({ Name = "Fuse timer", Flag = "nade_timer", Default = true })
+    Warn:Toggle({ Name = "Flight path", Flag = "nade_path", Default = true, Tooltip = "The path from the server's replicated grenade nodes, up to the blast" })
+    Warn:Slider({ Name = "Max distance", Flag = "nade_dist", Min = 50, Max = 1500, Default = 400, Decimals = 1, Suffix = " studs" })
+    local Blast = Subs.Grenades:Section({ Name = "Damage visualizer", Side = 2, Icon = "flame" })
+    Blast:Toggle({ Name = "Damage estimate", Flag = "nade_dmg", Default = true, Tooltip = "Torso damage to you at the blast point from the grenade's damage graph, 0 behind map cover" }):Colorpicker({ Name = "Safe", Flag = "nade_safe_color", Default = Color3.fromRGB(90, 255, 130), Alpha = 0 }):Colorpicker({ Name = "Danger", Flag = "nade_danger_color", Default = Color3.fromRGB(255, 60, 60), Alpha = 0 })
+    Blast:Toggle({ Name = "Blast radius ring", Flag = "nade_ring", Default = true, Tooltip = "Ground ring at the damage range of the grenade" })
+    local Pred = Subs.Grenades:Section({ Name = "Throw predictor", Side = 2, Icon = "crosshair" })
+    Pred:Toggle({ Name = "Predict throw", Flag = "nade_predict", Tooltip = "While holding a grenade, draws the predicted path and landing" }):Colorpicker({ Name = "Path", Flag = "nade_predict_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 })
+    Pred:Toggle({ Name = "Bounce markers", Flag = "nade_predict_bounce", Default = true })
 end
 
 do
-    local Subs = Pages.World:SubTabs({ { "Environment", "sun" }, { "Camera", "camera" }, { "Feedback", "bell" } })
+    local Subs = Pages.World:SubTabs({ { "Environment", "sun" }, { "Sky", "moon" }, { "Weather", "cloud" }, { "Effects", "palette" }, { "Camera", "camera" }, { "Feedback", "flame" } })
 
     local Env = Subs.Environment
     local Light = Env:Section({ Name = "Lighting", Side = 1, Icon = "sun" })
     Light:Toggle({ Name = "Time of day", Flag = "world_time" })
     Light:Slider({ Name = "Clock time", Flag = "world_time_v", Min = 0, Max = 24, Default = 14, Decimals = 0.1, Suffix = " h" })
+    Light:Toggle({ Name = "Day / night cycle", Flag = "world_cycle", Tooltip = "Runs the clock continuously from the current time" })
+    Light:Slider({ Name = "Cycle speed", Flag = "world_cycle_speed", Min = 0.05, Max = 6, Default = 0.5, Decimals = 0.05, Suffix = " h/s" })
+    Light:Toggle({ Name = "Sun latitude", Flag = "world_lat", Tooltip = "Tilts the sun's path across the sky" })
+    Light:Slider({ Name = "Latitude", Flag = "world_lat_v", Min = -80, Max = 80, Default = 20, Decimals = 1, Suffix = " deg" })
     Light:Toggle({ Name = "Brightness", Flag = "world_bright" })
     Light:Slider({ Name = "Brightness value", Flag = "world_bright_v", Min = 0, Max = 10, Default = 2, Decimals = 0.1 })
     Light:Toggle({ Name = "Exposure", Flag = "world_exposure" })
     Light:Slider({ Name = "Exposure value", Flag = "world_exposure_v", Min = -3, Max = 3, Default = 0, Decimals = 0.1 })
     Light:Toggle({ Name = "Ambient", Flag = "world_ambient" }):Colorpicker({ Name = "Indoor", Flag = "world_ambient_in", Default = Color3.fromRGB(150, 150, 170) }):Colorpicker({ Name = "Outdoor", Flag = "world_ambient_out", Default = Color3.fromRGB(170, 170, 190) })
+    Light:Toggle({ Name = "Colour shift", Flag = "world_shift", Tooltip = "Tints the light that hits surfaces facing the sky (top) and the ground (bottom)" }):Colorpicker({ Name = "Top", Flag = "world_shift_top", Default = Color3.fromRGB(255, 170, 90) }):Colorpicker({ Name = "Bottom", Flag = "world_shift_bottom", Default = Color3.fromRGB(60, 80, 140) })
+    Light:Toggle({ Name = "Environment light", Flag = "world_env" })
+    Light:Slider({ Name = "Diffuse", Flag = "world_env_diffuse", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
+    Light:Slider({ Name = "Specular", Flag = "world_env_specular", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
 
     local Quick = Env:Section({ Name = "Quick toggles", Side = 1, Icon = "zap" })
     Quick:Toggle({ Name = "Full bright", Flag = "world_fullbright", Tooltip = "Overrides lighting values while on" })
@@ -2142,22 +3111,86 @@ do
     Atmo:Toggle({ Name = "Custom fog", Flag = "world_fog" }):Colorpicker({ Name = "Fog", Flag = "world_fog_color", Default = Color3.fromRGB(180, 190, 210) })
     Atmo:Slider({ Name = "Fog start", Flag = "world_fog_start", Min = 0, Max = 2000, Default = 0, Decimals = 1, Suffix = " studs" })
     Atmo:Slider({ Name = "Fog end", Flag = "world_fog_end", Min = 10, Max = 5000, Default = 1500, Decimals = 1, Suffix = " studs" })
+    Atmo:Toggle({ Name = "Fog gradient", Flag = "world_fog_grad", Tooltip = "Fades the fog colour between the fog colour above and this one" }):Colorpicker({ Name = "Second fog", Flag = "world_fog_color2", Default = Color3.fromRGB(120, 70, 190) })
+    Atmo:Slider({ Name = "Gradient speed", Flag = "world_fog_grad_speed", Min = 0.1, Max = 6, Default = 1, Decimals = 0.1 })
     Atmo:Toggle({ Name = "Atmosphere", Flag = "world_atmos" }):Colorpicker({ Name = "Colour", Flag = "world_atmos_color", Default = Color3.fromRGB(199, 199, 199) }):Colorpicker({ Name = "Decay", Flag = "world_atmos_decay", Default = Color3.fromRGB(106, 112, 125) })
     Atmo:Slider({ Name = "Density", Flag = "world_atmos_density", Min = 0, Max = 1, Default = 0.3, Decimals = 0.01 })
-    Atmo:Toggle({ Name = "Sky preset", Flag = "world_sky" })
+    Atmo:Slider({ Name = "Glare", Flag = "world_atmos_glare", Min = 0, Max = 10, Default = 0, Decimals = 0.01 })
+    Atmo:Slider({ Name = "Haze", Flag = "world_atmos_haze", Min = 0, Max = 10, Default = 0, Decimals = 0.01 })
+    Atmo:Toggle({ Name = "Mood preset", Flag = "world_sky", Tooltip = "Sets the time of day and atmosphere colours together" })
     Atmo:Dropdown({ Name = "Preset", Flag = "world_sky_preset", Items = { "Night", "Sunset", "Overcast", "Dusk" }, Default = "Night" })
-    local Screen = Env:Section({ Name = "Colour correction", Side = 2, Icon = "palette" })
+
+    local SkySub = Subs.Sky
+    local Box = SkySub:Section({ Name = "Skybox", Side = 1, Icon = "moon" })
+    Box:Toggle({ Name = "Custom skybox", Flag = "world_skybox", Tooltip = "Replaces the sky textures; the original sky comes back when this is off" })
+    Box:Dropdown({ Name = "Skybox", Flag = "world_sky_box", Items = SKY_CHOICES, Default = SKY_CHOICES[1] })
+    Box:Input({ Name = "Custom ids", Flag = "world_sky_custom", Placeholder = "1 image id, or 6: up down front back left right" })
+    Box:Toggle({ Name = "Rotate skybox", Flag = "world_sky_spin" })
+    Box:Slider({ Name = "Rotation speed", Flag = "world_sky_spin_speed", Min = -60, Max = 60, Default = 6, Decimals = 0.1, Suffix = " deg/s" })
+    local Bodies = SkySub:Section({ Name = "Sun, moon and stars", Side = 2, Icon = "sun" })
+    Bodies:Toggle({ Name = "Override", Flag = "world_sky_objects" })
+    Bodies:Slider({ Name = "Stars", Flag = "world_sky_stars", Min = 0, Max = 5000, Default = 3000, Decimals = 1 })
+    Bodies:Slider({ Name = "Sun size", Flag = "world_sky_sun", Min = 0, Max = 60, Default = 21, Decimals = 1, Suffix = " deg" })
+    Bodies:Slider({ Name = "Moon size", Flag = "world_sky_moon", Min = 0, Max = 60, Default = 11, Decimals = 1, Suffix = " deg" })
+    Bodies:Toggle({ Name = "Show sun and moon", Flag = "world_sky_bodies", Default = true })
+    local Cloud = SkySub:Section({ Name = "Clouds", Side = 2, Icon = "cloud" })
+    Cloud:Toggle({ Name = "Clouds", Flag = "world_clouds" }):Colorpicker({ Name = "Clouds", Flag = "world_clouds_color", Default = WHITE })
+    Cloud:Slider({ Name = "Cover", Flag = "world_clouds_cover", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
+    Cloud:Slider({ Name = "Density", Flag = "world_clouds_density", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
+
+    local Wx = Subs.Weather:Section({ Name = "Weather", Side = 1, Icon = "cloud" })
+    Wx:Toggle({ Name = "Enabled", Flag = "world_weather", Tooltip = "Particles follow you in map-anchored cells and only fall where the sky is open above" })
+    Wx:Dropdown({ Name = "Type", Flag = "world_weather_preset", Items = WEATHER_NAMES, Default = "Snow" })
+    Wx:Slider({ Name = "Density", Flag = "world_weather_amount", Min = 0.1, Max = 3, Default = 1, Decimals = 0.05 })
+    Wx:Slider({ Name = "Speed", Flag = "world_weather_speed", Min = 0.2, Max = 3, Default = 1, Decimals = 0.05 })
+    Wx:Slider({ Name = "Particle size", Flag = "world_weather_size", Min = 0.3, Max = 3, Default = 1, Decimals = 0.05 })
+    Wx:Slider({ Name = "Range", Flag = "world_weather_range", Min = 1, Max = 3, Default = 2, Decimals = 1, Suffix = " cells", Tooltip = "Rings of 28 stud cells around you" })
+    Wx:Slider({ Name = "Spawn height", Flag = "world_weather_height", Min = 10, Max = 80, Default = 35, Decimals = 1, Suffix = " studs" })
+    local Wind = Subs.Weather:Section({ Name = "Wind and colour", Side = 2, Icon = "cloud" })
+    Wind:Slider({ Name = "Wind strength", Flag = "world_weather_wind", Min = 0, Max = 30, Default = 4, Decimals = 0.1 })
+    Wind:Slider({ Name = "Wind direction", Flag = "world_weather_wind_dir", Min = 0, Max = 360, Default = 0, Decimals = 1, Suffix = " deg" })
+    Wind:Toggle({ Name = "Custom colour", Flag = "world_weather_custom", Tooltip = "Overrides the colour each weather type comes with" }):Colorpicker({ Name = "Weather", Flag = "world_weather_color", Default = WHITE })
+
+    local Fx = Subs.Effects
+    local Screen = Fx:Section({ Name = "Colour correction", Side = 1, Icon = "palette" })
     Screen:Toggle({ Name = "Enabled", Flag = "world_cc" }):Colorpicker({ Name = "Tint", Flag = "world_cc_tint", Default = WHITE })
     Screen:Slider({ Name = "Saturation", Flag = "world_cc_sat", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
     Screen:Slider({ Name = "Contrast", Flag = "world_cc_con", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
     Screen:Slider({ Name = "Brightness", Flag = "world_cc_bri", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
+    local Bloom = Fx:Section({ Name = "Bloom and sun rays", Side = 2, Icon = "sun" })
+    Bloom:Toggle({ Name = "Bloom", Flag = "world_bloom" })
+    Bloom:Slider({ Name = "Intensity", Flag = "world_bloom_i", Min = 0, Max = 3, Default = 0.4, Decimals = 0.01 })
+    Bloom:Slider({ Name = "Size", Flag = "world_bloom_s", Min = 0, Max = 56, Default = 24, Decimals = 0.1 })
+    Bloom:Slider({ Name = "Threshold", Flag = "world_bloom_t", Min = 0, Max = 2, Default = 0.95, Decimals = 0.01 })
+    Bloom:Toggle({ Name = "Sun rays", Flag = "world_rays" })
+    Bloom:Slider({ Name = "Ray intensity", Flag = "world_rays_i", Min = 0, Max = 1, Default = 0.25, Decimals = 0.01 })
+    Bloom:Slider({ Name = "Ray spread", Flag = "world_rays_s", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
+    local Blur = Fx:Section({ Name = "Depth of field and blur", Side = 1, Icon = "scan" })
+    Blur:Toggle({ Name = "Depth of field", Flag = "world_dof" })
+    Blur:Slider({ Name = "Focus distance", Flag = "world_dof_focus", Min = 0, Max = 500, Default = 50, Decimals = 1, Suffix = " studs" })
+    Blur:Slider({ Name = "In focus radius", Flag = "world_dof_radius", Min = 0, Max = 200, Default = 30, Decimals = 1, Suffix = " studs" })
+    Blur:Slider({ Name = "Near blur", Flag = "world_dof_near", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
+    Blur:Slider({ Name = "Far blur", Flag = "world_dof_far", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
+    Blur:Toggle({ Name = "Screen blur", Flag = "world_blur" })
+    Blur:Slider({ Name = "Blur size", Flag = "world_blur_size", Min = 0, Max = 56, Default = 8, Decimals = 0.1 })
+    local Rainbow = Env:Section({ Name = "Colour cycle", Side = 2, Icon = "palette" })
+    Rainbow:Toggle({ Name = "Rainbow", Flag = "world_rainbow", Tooltip = "Cycles the chosen colours through the rainbow" })
+    Rainbow:Dropdown({ Name = "Applies to", Flag = "world_rainbow_targets", Items = { "Ambient", "Fog", "Colour shift", "Atmosphere" }, Multi = true, Default = { "Ambient" } })
+    Rainbow:Slider({ Name = "Speed", Flag = "world_rainbow_speed", Min = 0.01, Max = 1, Default = 0.1, Decimals = 0.01 })
+    Rainbow:Slider({ Name = "Saturation", Flag = "world_rainbow_sat", Min = 0, Max = 1, Default = 0.7, Decimals = 0.01 })
 
     local Cam = Subs.Camera
     local Fov = Cam:Section({ Name = "Camera", Side = 1, Icon = "camera" })
     Fov:Toggle({ Name = "Field of view", Flag = "world_fov", Tooltip = "Sets the game camera's base FOV; aiming zoom stays relative to it" })
     Fov:Slider({ Name = "FOV", Flag = "world_fov_v", Min = 60, Max = 120, Default = 90, Decimals = 1, Suffix = " deg" })
+    Fov:Toggle({ Name = "Dynamic scope FOV", Flag = "world_fov_dyn", Tooltip = "Blends smoothly from the FOV above to the scoped FOV below while you aim" })
+    Fov:Slider({ Name = "Scoped FOV", Flag = "world_fov_ads", Min = 20, Max = 120, Default = 60, Decimals = 1, Suffix = " deg" })
+    Fov:Slider({ Name = "Blend speed", Flag = "world_fov_speed", Min = 2, Max = 30, Default = 10, Decimals = 0.1 })
+    Fov:Slider({ Name = "Scope zoom multiplier", Flag = "world_fov_mult", Min = 0.5, Max = 3, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Scales the game's own scope zoom; 1 leaves it unchanged" })
     local Cross = Cam:Section({ Name = "Crosshair", Side = 2, Icon = "crosshair" })
     Cross:Toggle({ Name = "Custom crosshair", Flag = "cross_on" }):Colorpicker({ Name = "Crosshair", Flag = "cross_color", Default = Color3.fromRGB(120, 255, 170), Alpha = 0 })
+    Cross:Toggle({ Name = "Attach to barrel", Flag = "cross_barrel", Tooltip = "Draws the crosshair at the weapon barrel instead of the screen centre" })
+    Cross:Dropdown({ Name = "Attach point", Flag = "cross_barrel_pt", Items = { "Aim hit", "Muzzle" }, Default = "Aim hit", Tooltip = "Aim hit is where the barrel is pointing; Muzzle is the barrel tip" })
     Cross:Slider({ Name = "Length", Flag = "cross_len", Min = 1, Max = 40, Default = 8, Decimals = 1, Suffix = " px" })
     Cross:Slider({ Name = "Thickness", Flag = "cross_thick", Min = 1, Max = 6, Default = 2, Decimals = 1, Suffix = " px" })
     Cross:Slider({ Name = "Gap", Flag = "cross_gap", Min = 0, Max = 30, Default = 5, Decimals = 1, Suffix = " px" })
@@ -2181,9 +3214,9 @@ do
     HitSnd:Slider({ Name = "Volume", Flag = "hit_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
     HitSnd:Slider({ Name = "Pitch", Flag = "hit_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
     HitSnd:Toggle({ Name = "Different on headshot", Flag = "hit_snd_head" })
-    HitSnd:Dropdown({ Name = "Headshot sound", Flag = "hit_snd_head_id", Items = HIT_SOUND_ORDER, Default = "PF Headshot kill" })
+    HitSnd:Dropdown({ Name = "Headshot sound", Flag = "hit_snd_head_id", Items = HIT_SOUND_ORDER, Default = "Alt Headshot kill" })
     KillSnd:Toggle({ Name = "Kill sound", Flag = "kill_snd", Tooltip = "Plays when you kill a player (from the game's death event)" })
-    KillSnd:Dropdown({ Name = "Sound", Flag = "kill_snd_id", Items = HIT_SOUND_ORDER, Default = "PF Killshot" })
+    KillSnd:Dropdown({ Name = "Sound", Flag = "kill_snd_id", Items = HIT_SOUND_ORDER, Default = "Alt Killshot" })
     KillSnd:Slider({ Name = "Volume", Flag = "kill_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
     KillSnd:Slider({ Name = "Pitch", Flag = "kill_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
 
@@ -2197,6 +3230,11 @@ do
     Dmg:Slider({ Name = "Duration", Flag = "dmg_time", Min = 0.4, Max = 3, Default = 1.1, Decimals = 0.01, Suffix = " s" })
     Trace:Toggle({ Name = "Own bullets", Flag = "trace_on", Tooltip = "Recolours the game's tracer beams of your shots" }):Colorpicker({ Name = "Tracer", Flag = "trace_color", Default = Color3.fromRGB(255, 94, 94) })
     Trace:Toggle({ Name = "Other players' bullets", Flag = "trace_enemy_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
+    Trace:Toggle({ Name = "Own bullet path", Flag = "trace_path_on", Tooltip = "Draws the path your bullet actually flew, from the barrel, including drop" }):Colorpicker({ Name = "Path", Flag = "trace_path_color", Default = Color3.fromRGB(255, 94, 94) })
+    Trace:Toggle({ Name = "Other players' bullet path", Flag = "trace_path_enemy_on" }):Colorpicker({ Name = "Path", Flag = "trace_path_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
+    Trace:Slider({ Name = "Path duration", Flag = "trace_time", Min = 0.2, Max = 5, Default = 1.5, Decimals = 0.1, Suffix = " s" })
+    Trace:Slider({ Name = "Path thickness", Flag = "trace_thick", Min = 1, Max = 4, Default = 1.5, Decimals = 0.1, Suffix = " px" })
+    Trace:Toggle({ Name = "Hide the game's beam", Flag = "trace_hide_beam", Tooltip = "Turns off the game's own tracer beam on bullets whose path is drawn" })
 end
 
 do
@@ -2270,10 +3308,12 @@ function Loop.step()
     Visible.refresh(now)
     local center = cam.ViewportSize / 2
 
-    Util.guard("world", World.apply)
-    Util.guard("crosshair", World.stepCrosshair, center, now, dt)
+    Util.guard("world", World.apply, dt, now)
+    Util.guard("weather", World.stepWeather, cam, now)
 
     if not Game.ready then
+        Barrel.valid = false
+        Util.guard("crosshair", World.stepCrosshair, center, now, dt)
         if now - Loop.retryAt > Loop.retryDelay then
             Loop.retryAt = now
             Loop.retryDelay = math.min(Loop.retryDelay * 2, 30)
@@ -2288,23 +3328,33 @@ function Loop.step()
         ESP.clear()
         Util.guard("items", Items.step, cam, now)
         Util.guard("feedback", Feedback.step, cam, center, now)
+        Util.guard("trail", Trail.step, cam, now)
+        Util.guard("nades", Nades.step, cam, now)
         return
     end
 
     if now - Loop.hookAt > 3 then
         Loop.hookAt = now
         Util.guard("hooks", Feedback.hook)
+        Util.guard("nadehook", Nades.hook)
     end
 
     local records = Entities.update()
-    Util.guard("fov", World.stepFov)
+    Util.guard("fov", World.stepFov, dt)
     Legit.read()
+    local gameCam = Game.gameCamera()
+    Util.guard("barrel", Barrel.update, cam, gameCam, Game.weapon(), now)
+    local crossAt = center
+    if flag("cross_barrel", false) then crossAt = Barrel.point(flag("cross_barrel_pt", "Aim hit"), center) end
+    Util.guard("crosshair", World.stepCrosshair, crossAt, now, dt)
     Util.guard("aim", Legit.stepAim, dt, cam, now, records, center)
     Util.guard("recoil", Legit.stepRecoil, now)
     Util.guard("trigger", Legit.stepTrigger, cam, now, records)
     Util.guard("esp", ESP.step, cam, now, records)
     Util.guard("items", Items.step, cam, now)
     Util.guard("feedback", Feedback.step, cam, center, now)
+    Util.guard("trail", Trail.step, cam, now)
+    Util.guard("nades", Nades.step, cam, now)
 
     if now - Loop.watermarkAt > 0.5 then
         Loop.watermarkAt = now
@@ -2313,7 +3363,7 @@ function Loop.step()
             local network = Game.mods.NetworkClient
             if network and network.getPing then ping = " | " .. math.floor(network.getPing() * 1000) .. "ms" end
         end)
-        pcall(function() Library:SetWatermark(string.format("Aster | Phantom Forces | %d fps%s", Loop.fps, ping)) end)
+        pcall(function() Library:SetWatermark(string.format("Aster | %d fps%s", Loop.fps, ping)) end)
     end
 
     if now - Loop.labelAt > 0.2 then
@@ -2333,6 +3383,8 @@ function Loop.step()
     end
 end
 
+Nades.hook()
+
 Util.track(RunService.RenderStepped:Connect(function()
     local ok, problem = pcall(Loop.step)
     if not ok then Util.note("loop" .. tostring(problem), "frame:", problem) end
@@ -2340,7 +3392,7 @@ end))
 
 pcall(function() SaveManager:LoadAutoloadConfig() end)
 pcall(function() Library:SetWatermarkVisibility(Toggles.menu_watermark == nil or Toggles.menu_watermark.Value) end)
-if not Library.Toggled then pcall(function() Library:Toggle() end) end
+if not introPlayed and not Library.Toggled then pcall(function() Library:Toggle() end) end
 Library:Notify("Aster loaded | core " .. tostring(Game.summary), 5)
 
 end, debug.traceback)

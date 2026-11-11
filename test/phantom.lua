@@ -521,6 +521,48 @@ function Game.camera()
     return Workspace.CurrentCamera
 end
 
+local PhantomCam = { api = nil, failed = false, retryAt = 0 }
+
+function Game.eye(cam)
+    local api = PhantomCam.api
+    local frame = api and api.GameCFrame()
+    if typeof(frame) == "CFrame" then return frame end
+    return cam.CFrame
+end
+
+function Game.isGlass(part)
+    if not flag("vis_ignore_glass", true) then return false end
+    local ok, glass = pcall(function()
+        if part.Material == Enum.Material.Glass then return true end
+        local name = string.lower(part.Name)
+        return part.Transparency > 0 and (string.find(name, "glass", 1, true) ~= nil or string.find(name, "window", 1, true) ~= nil)
+    end)
+    return ok and glass == true
+end
+
+function Game.skipHit(part)
+    local ok, skip = pcall(function() return part.CanCollide == false or part.Transparency >= 1 end)
+    if ok and skip then return true end
+    return Game.isGlass(part)
+end
+
+function Game.cast(origin, vector, params, skip)
+    skip = skip or Game.skipHit
+    local from, remaining = origin, vector
+    for _ = 1, 16 do
+        local hit = Workspace:Raycast(from, remaining, params)
+        if not hit then return nil end
+        local instance = hit.Instance
+        if instance == nil or not skip(instance) then return hit end
+        local rest = remaining - (hit.Position - from)
+        local length = rest.Magnitude
+        if length < 0.05 then return nil end
+        from = hit.Position + rest * (0.02 / length)
+        remaining = rest - rest * (0.02 / length)
+    end
+    return nil
+end
+
 function Game.gameCamera()
     local interface = Game.mods.CameraInterface
     if not interface then return nil end
@@ -691,7 +733,7 @@ function Entities.update()
             Entities.byPlayer[player] = record
         end
         record.seen = true
-        record.entry, record.hash, record.torso, record.head = entry, hash, torso, head
+        record.entry, record.hash, record.torso, record.head, record.object = entry, hash, torso, head, object
         record.rendered, record.pos = rendered, position
         record.enemy = Game.isEnemy(entry, player)
 
@@ -732,6 +774,7 @@ local Visible = { cache = setmetatable({}, { __mode = "k" }), nextFilter = 0 }
 Visible.params = RaycastParams.new()
 Visible.params.FilterType = Enum.RaycastFilterType.Exclude
 pcall(function() Visible.params.RespectCanCollide = true end)
+pcall(function() Visible.params.IgnoreWater = true end)
 
 function Visible.refresh(now)
     if now < Visible.nextFilter then return end
@@ -749,7 +792,7 @@ end
 function Visible.check(part, origin, now)
     local cached = Visible.cache[part]
     if cached and now - cached[1] < 0.06 then return cached[2] end
-    local hit = Workspace:Raycast(origin, (part.Position - origin) * 0.998, Visible.params)
+    local hit = Game.cast(origin, (part.Position - origin) * 0.998, Visible.params)
     local result = hit == nil
     Visible.cache[part] = { now, result }
     return result
@@ -795,6 +838,7 @@ function Barrel.refreshParams(now)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     pcall(function() params.RespectCanCollide = true end)
+    pcall(function() params.IgnoreWater = true end)
     local list = {}
     local function add(instance)
         if typeof(instance) == "Instance" then list[#list + 1] = instance end
@@ -815,7 +859,7 @@ end
 
 function Barrel.target(fire, look, distance, speed)
     local origin = fire
-    local aim = Workspace:Raycast(origin, look * 2000, Barrel.params)
+    local aim = Game.cast(origin, look * 2000, Barrel.params)
     local reach = distance
     if aim then
         local hitDistance = (aim.Position - origin).Magnitude
@@ -838,7 +882,7 @@ function Barrel.update(cam, gameCam, weapon, now)
     local okBase, base = pcall(gameCam.getBaseCFrame, gameCam)
     if okBase and typeof(base) == "CFrame" then
         local from = base.Position
-        local hit = Workspace:Raycast(from, muzzle - from, Barrel.params)
+        local hit = Game.cast(from, muzzle - from, Barrel.params)
         if hit and (hit.Position - from).Magnitude > 0.5 then fire = hit.Position + hit.Normal * 0.01 end
     end
     Barrel.fire, Barrel.look = fire, look
@@ -873,16 +917,21 @@ local STUDS_TO_M = 0.28
 
 local JOINTS = {
     head = { "Head", Vector3.new(0, 0, 0) },
-    lShoulder = { "Left Arm", Vector3.new(0, 0.5, 0) }, lHand = { "Left Arm", Vector3.new(0, -0.7, 0) },
-    rShoulder = { "Right Arm", Vector3.new(0, 0.5, 0) }, rHand = { "Right Arm", Vector3.new(0, -0.7, 0) },
-    lHip = { "Left Leg", Vector3.new(0, 0.7, 0) }, lFoot = { "Left Leg", Vector3.new(0, -0.7, 0) },
-    rHip = { "Right Leg", Vector3.new(0, 0.7, 0) }, rFoot = { "Right Leg", Vector3.new(0, -0.7, 0) },
+    neck = { "Torso", Vector3.new(0, 1, 0) }, pelvis = { "Torso", Vector3.new(0, -1, 0) },
+    lShoulder = { "Left Arm", Vector3.new(0, 0.85, 0) }, lElbow = { "Left Arm", Vector3.new(0, 0, 0) }, lHand = { "Left Arm", Vector3.new(0, -0.9, 0) },
+    rShoulder = { "Right Arm", Vector3.new(0, 0.85, 0) }, rElbow = { "Right Arm", Vector3.new(0, 0, 0) }, rHand = { "Right Arm", Vector3.new(0, -0.9, 0) },
+    lHip = { "Left Leg", Vector3.new(0, 0.85, 0) }, lKnee = { "Left Leg", Vector3.new(0, 0, 0) }, lFoot = { "Left Leg", Vector3.new(0, -0.95, 0) },
+    rHip = { "Right Leg", Vector3.new(0, 0.85, 0) }, rKnee = { "Right Leg", Vector3.new(0, 0, 0) }, rFoot = { "Right Leg", Vector3.new(0, -0.95, 0) },
 }
 local BONES = {
-    { "head", "shoulderMid" }, { "shoulderMid", "hipMid" },
-    { "lShoulder", "rShoulder" }, { "lShoulder", "lHand" }, { "rShoulder", "rHand" },
-    { "lHip", "rHip" }, { "lHip", "lFoot" }, { "rHip", "rFoot" },
+    { "head", "neck" }, { "neck", "pelvis" },
+    { "neck", "lShoulder" }, { "lShoulder", "lElbow" }, { "lElbow", "lHand" },
+    { "neck", "rShoulder" }, { "rShoulder", "rElbow" }, { "rElbow", "rHand" },
+    { "pelvis", "lHip" }, { "lHip", "lKnee" }, { "lKnee", "lFoot" },
+    { "pelvis", "rHip" }, { "rHip", "rKnee" }, { "rKnee", "rFoot" },
 }
+local JOINT_DOTS = { "neck", "pelvis", "lShoulder", "lElbow", "lHand", "rShoulder", "rElbow", "rHand", "lHip", "lKnee", "lFoot", "rHip", "rKnee", "rFoot" }
+local NEAR_PLANE = 0.1
 
 function ESP.bonePoints(hash)
     local head, torso = hash.Head, hash.Torso
@@ -895,9 +944,16 @@ function ESP.bonePoints(hash)
             points[name] = part.CFrame:PointToWorldSpace(joint[2])
         end
     end
-    if points.lShoulder and points.rShoulder then points.shoulderMid = (points.lShoulder + points.rShoulder) * 0.5 end
-    if points.lHip and points.rHip then points.hipMid = (points.lHip + points.rHip) * 0.5 end
     return points
+end
+
+function ESP.clip(cam, a, b)
+    local frame = cam.CFrame
+    local da, db = -frame:PointToObjectSpace(a).Z, -frame:PointToObjectSpace(b).Z
+    if da < NEAR_PLANE and db < NEAR_PLANE then return nil end
+    if da < NEAR_PLANE then a = a + (b - a) * ((NEAR_PLANE - da) / (db - da))
+    elseif db < NEAR_PLANE then b = a + (b - a) * ((NEAR_PLANE - da) / (db - da)) end
+    return a, b
 end
 
 function ESP.bounds(cam, record, static)
@@ -992,6 +1048,7 @@ function ESP.readSettings()
     S.tracerOrigin = flag("esp_tracer_origin", "Bottom")
     S.tracerThick = flag("esp_tracer_thick", 1)
     S.skelThick = flag("esp_skel_thick", 1)
+    S.skelOutline, S.skelJoints = flag("esp_skeleton_outline", true), flag("esp_skeleton_joints", false)
     S.case = flag("esp_case", "Normal")
     S.visOverride = flag("esp_vis", false)
     S.visColor, S.occColor = flag("esp_vis_color", Color3.fromRGB(80, 255, 120)), flag("esp_occ_color", Color3.fromRGB(255, 80, 80))
@@ -999,12 +1056,13 @@ function ESP.readSettings()
     S.chamGrow, S.chamGlowSize = flag("cham_grow", 0.1), flag("cham_glow_size", 1.75)
     S.chamGlow, S.chamRound = flag("cham_glow", false), flag("cham_round_head", true)
     S.chamHead = flag("cham_head_size", 1.15)
+    S.chamGear = flag("chams_remove_gear", true)
     S.oovSize, S.oovRadius = flag("oov_size", 14), flag("oov_radius", 40)
     S.viewLen = flag("esp_view_len", 8)
 end
 
 function ESP.make()
-    local o = { all = {}, strips = {}, corners = {}, cornerEdges = {}, bones = {}, hidden = false }
+    local o = { all = {}, strips = {}, corners = {}, cornerEdges = {}, bones = {}, boneEdges = {}, joints = {}, hidden = false }
     local function add(drawing) o.all[#o.all + 1] = drawing return drawing end
     local function line(thick, z, color) return add(Draw.new("Line", { Thickness = thick, ZIndex = z, Color = color, Visible = false })) end
     local function square(filled, z, color) return add(Draw.new("Square", { Thickness = 1, Filled = filled, ZIndex = z, Color = color, Visible = false })) end
@@ -1019,7 +1077,11 @@ function ESP.make()
     end
     o.hpBack, o.hpBar = square(true, 4, Color3.fromRGB(10, 10, 10)), square(true, 5)
     o.hpText, o.name, o.dist, o.weapon = text(), text(), text(), text()
-    for index = 1, #BONES do o.bones[index] = line(1, 3) end
+    for index = 1, #BONES do
+        o.boneEdges[index] = line(3, 2, BLACK)
+        o.bones[index] = line(1, 3)
+    end
+    for index = 1, #JOINT_DOTS do o.joints[index] = add(Draw.new("Circle", { Filled = true, NumSides = 12, ZIndex = 4, Visible = false })) end
     o.dotEdge = add(Draw.new("Circle", { Filled = false, NumSides = 16, Thickness = 1, Color = BLACK, ZIndex = 6, Visible = false }))
     o.dot = add(Draw.new("Circle", { Filled = true, NumSides = 16, ZIndex = 7, Visible = false }))
     o.tracer, o.view = line(1, 3), line(1, 3)
@@ -1102,14 +1164,43 @@ function Chams.dropSlot(slot)
     slot.layers, slot.sig = {}, nil
 end
 
+function Chams.restoreGear(entry)
+    if not entry.gear then return end
+    for part, original in pairs(entry.gear) do pcall(function() part.Transparency = original end) end
+    entry.gear = nil
+end
+
+function Chams.stripGear(entry, rec, now)
+    if now < (entry.gearAt or 0) then return end
+    entry.gearAt = now + 0.5
+    local weaponModel = rec.object and rec.object._weaponModel
+    local body = {}
+    for _, part in pairs(rec.hash) do body[part] = true end
+    local gear = entry.gear or {}
+    entry.gear = gear
+    local ok, list = pcall(rec.model.GetDescendants, rec.model)
+    if not (ok and type(list) == "table") then return end
+    for _, part in ipairs(list) do
+        if not body[part] and gear[part] == nil and part:IsA("BasePart") and not (weaponModel and part:IsDescendantOf(weaponModel)) then
+            local okRead, original = pcall(function() return part.Transparency end)
+            if okRead and type(original) == "number" then
+                gear[part] = original
+                pcall(function() part.Transparency = 1 end)
+            end
+        end
+    end
+end
+
 function Chams.remove(player)
     local entry = Chams.objs[player]
     if not entry then return end
+    Chams.restoreGear(entry)
     for _, slot in pairs(entry.parts) do Chams.dropSlot(slot) end
     Chams.objs[player] = nil
 end
 
 function Chams.hide(entry)
+    Chams.restoreGear(entry)
     if entry.hidden then return end
     entry.hidden = true
     for _, slot in pairs(entry.parts) do
@@ -1138,7 +1229,7 @@ function Chams.headDimensions(part)
     return math.min(size.X, size.Z) / 2, size.Y
 end
 
-function Chams.style(slot, part, name, cfg, S)
+function Chams.style(slot, part, name, cfg, S, seen)
     local layers = slot.layers
     local grow = S.chamGrow
     for _, adornment in pairs(layers) do adornment.Adornee = part end
@@ -1149,19 +1240,26 @@ function Chams.style(slot, part, name, cfg, S)
         layers.visible.Radius, layers.visible.Height = radius + grow / 2, height + grow
     else
         local size = typeof(part.Size) == "Vector3" and part.Size or PART_SIZES[name]
+        if math.min(size.X, size.Y, size.Z) < 0.05 then size = PART_SIZES[name] end
         layers.behind.Size = size
         layers.visible.Size = size + Vector3.new(grow, grow, grow)
     end
-    layers.behind.Color3, layers.behind.Transparency = cfg.chamHid, cfg.chamHidT
-    layers.behind.Visible = S.chamMode == "Through walls"
-    local color, transparency = cfg.chamVis, cfg.chamVisT
-    if S.chamGlow then
-        local strength = math.max(S.chamGlowSize, 1)
-        color = color:Lerp(Color3.new(1, 1, 1), math.clamp((strength - 1) / 3, 0, 0.5))
-        transparency = transparency / strength
+    if seen then
+        layers.behind.Color3, layers.behind.Transparency = cfg.chamVis, cfg.chamVisT
+    else
+        layers.behind.Color3, layers.behind.Transparency = cfg.chamHid, cfg.chamHidT
     end
-    layers.visible.Color3, layers.visible.Transparency, layers.visible.Visible = color, transparency, true
-    layers.visible.AlwaysOnTop = S.chamGlow == true
+    layers.behind.Visible = S.chamMode == "Through walls"
+    layers.visible.Color3, layers.visible.Transparency, layers.visible.Visible = cfg.chamVis, cfg.chamVisT, true
+    layers.visible.AlwaysOnTop = false
+    if S.chamGlow == true then
+        pcall(function()
+            local strength = math.max(tonumber(S.chamGlowSize) or 1, 1)
+            layers.visible.Color3 = cfg.chamVis:Lerp(Color3.new(1, 1, 1), math.clamp((strength - 1) / 3, 0, 0.5))
+            layers.visible.Transparency = cfg.chamVisT / strength
+            layers.visible.AlwaysOnTop = S.chamMode == "Through walls"
+        end)
+    end
 end
 
 function Chams.shown()
@@ -1171,7 +1269,7 @@ function Chams.shown()
     return false
 end
 
-function Chams.update(rec, cfg, S)
+function Chams.update(rec, cfg, S, seen)
     local entry = Chams.objs[rec.player]
     local want = cfg and cfg.chams and rec.rendered and rec.model and rec.model.Parent ~= nil
     if not want then
@@ -1183,9 +1281,14 @@ function Chams.update(rec, cfg, S)
         Chams.objs[rec.player] = entry
     end
     entry.hidden = false
+    if S.chamGear then
+        Chams.stripGear(entry, rec, os.clock())
+    else
+        Chams.restoreGear(entry)
+    end
     local sig = table.concat({
         tostring(cfg.chamVis), cfg.chamVisT, tostring(cfg.chamHid), cfg.chamHidT,
-        S.chamMode, S.chamGrow, tostring(S.chamGlow), S.chamGlowSize, tostring(S.chamRound), S.chamHead,
+        S.chamMode, tostring(seen), S.chamGrow, tostring(S.chamGlow), S.chamGlowSize, tostring(S.chamRound), S.chamHead,
     }, "|")
     for _, name in ipairs(CHAM_PARTS) do
         local part = rec.hash[name]
@@ -1206,10 +1309,12 @@ function Chams.update(rec, cfg, S)
                 slot = { round = round, layers = {} }
                 entry.parts[name] = slot
             end
+            local built = slot.layers.visible
+            if built and not (built.Parent and slot.layers.behind.Parent) then slot.layers, slot.sig = {}, nil end
             if not slot.layers.visible and not Chams.build(slot) then return end
             if slot.adornee ~= part or slot.sig ~= sig then
                 slot.adornee, slot.sig = part, sig
-                Chams.style(slot, part, name, cfg, S)
+                Chams.style(slot, part, name, cfg, S, seen)
             end
         end
     end
@@ -1351,7 +1456,8 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
         o.weapon.Color, o.weapon.Transparency, o.weapon.Visible = cfg.weaponColor, cfg.weaponA, true
     end
 
-    for index = 1, #BONES do o.bones[index].Visible = false end
+    for index = 1, #BONES do o.bones[index].Visible, o.boneEdges[index].Visible = false, false end
+    for index = 1, #JOINT_DOTS do o.joints[index].Visible = false end
     if cfg.skeleton then
         local points = ESP.bonePoints(rec.hash)
         if points then
@@ -1359,9 +1465,24 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
             for index, bone in ipairs(BONES) do
                 local a, b = points[bone[1]], points[bone[2]]
                 if a and b then
-                    local pa, fa = Draw.project(cam, a)
-                    local pb, fb = Draw.project(cam, b)
-                    if fa and fb then setLine(o.bones[index], pa, pb, color, cfg.skeletonA, S.skelThick) end
+                    local ca, cb = ESP.clip(cam, a, b)
+                    if ca then
+                        local pa, pb = Draw.project(cam, ca), Draw.project(cam, cb)
+                        if S.skelOutline then setLine(o.boneEdges[index], pa, pb, BLACK, cfg.skeletonA, S.skelThick + 2) end
+                        setLine(o.bones[index], pa, pb, color, cfg.skeletonA, S.skelThick)
+                    end
+                end
+            end
+            if S.skelJoints then
+                for index, name in ipairs(JOINT_DOTS) do
+                    local world = points[name]
+                    if world then
+                        local point, front = Draw.project(cam, world)
+                        if front then
+                            local dot = o.joints[index]
+                            dot.Position, dot.Radius, dot.Color, dot.Transparency, dot.Visible = point, S.skelThick + 0.75, color, cfg.skeletonA, true
+                        end
+                    end
                 end
             end
         end
@@ -1390,6 +1511,11 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
     end
 end
 
+function ESP.chams(rec, cfg, S, seen)
+    local ok, problem = pcall(Chams.update, rec, cfg, S, seen)
+    if not ok then Util.note("cham:" .. tostring(problem), "chams (" .. tostring(rec.name) .. "):", problem) end
+end
+
 function ESP.processRecord(cam, rec, now, origin, viewport, center)
     local S = ESP.S
     local cfg = rec.enemy and ESP.enemy or ESP.team
@@ -1404,22 +1530,26 @@ function ESP.processRecord(cam, rec, now, origin, viewport, center)
     local dist = (rec.pos - origin).Magnitude
     if not cfg.enabled or dist > cfg.maxdist then
         ESP.hide(o)
-        Chams.update(rec, nil, S)
+        ESP.chams(rec, nil, S)
         return
     end
     local visible = false
     if rec.rendered and S.visOverride then
         visible = Visible.check(rec.head, origin, now) or Visible.check(rec.torso, origin, now)
     end
+    local seen = false
+    if cfg.chams and rec.rendered and S.chamMode == "Through walls" then
+        seen = visible or Visible.check(rec.head, origin, now) or Visible.check(rec.torso, origin, now)
+    end
+    ESP.chams(rec, cfg, S, seen)
     ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, center)
-    Chams.update(rec, cfg, S)
 end
 
 function ESP.step(cam, now, records)
     ESP.readSettings()
     ESP.readTeam("esp_enemy_", ESP.enemy)
     ESP.readTeam("esp_team_", ESP.team)
-    local origin = cam.CFrame.Position
+    local origin = Game.eye(cam).Position
     local viewport = cam.ViewportSize
     local center = viewport / 2
     local seen = ESP.seen
@@ -1500,7 +1630,7 @@ function Items.step(cam, now)
     local used = 0
     if flag("item_drops", false) then
         Items.scan(now)
-        local origin = cam.CFrame.Position
+        local origin = Game.eye(cam).Position
         local color, alpha, maxDistance = flag("item_drops_color", WHITE), Util.opacity("item_drops_color"), flag("item_dist", 300)
         for _, instance in ipairs(Items.drops) do
             local position = instance.Parent and Items.position(instance)
@@ -1863,16 +1993,18 @@ function World.apply(dt, now)
         object.TintColor, object.Saturation = val("world_cc_tint"), val("world_cc_sat")
         object.Contrast, object.Brightness = val("world_cc_con"), val("world_cc_bri")
     end)
-    local glowBloom = on("cham_glow") == true and on("cham_bloom") == true and Chams.shown()
-    local worldBloom = on("world_bloom") == true
-    local bloom = effect("bloom", "BloomEffect", worldBloom or glowBloom)
-    if bloom then
-        if worldBloom then
-            bloom.Intensity, bloom.Size, bloom.Threshold = val("world_bloom_i"), val("world_bloom_s"), val("world_bloom_t")
-        else
-            bloom.Intensity, bloom.Size, bloom.Threshold = val("cham_bloom_i"), val("cham_bloom_s"), val("cham_bloom_t")
+    pcall(function()
+        local glowBloom = on("cham_glow") == true and on("cham_bloom") == true and Chams.shown()
+        local worldBloom = on("world_bloom") == true
+        local bloom = effect("bloom", "BloomEffect", worldBloom or glowBloom)
+        if bloom then
+            if worldBloom then
+                bloom.Intensity, bloom.Size, bloom.Threshold = val("world_bloom_i"), val("world_bloom_s"), val("world_bloom_t")
+            else
+                bloom.Intensity, bloom.Size, bloom.Threshold = val("cham_bloom_i"), val("cham_bloom_s"), val("cham_bloom_t")
+            end
         end
-    end
+    end)
     tune("rays", "SunRaysEffect", "world_rays", function(object)
         object.Intensity, object.Spread = val("world_rays_i"), val("world_rays_s")
     end)
@@ -1888,16 +2020,33 @@ end
 function World.dropWeather()
     local state = World.weather
     for _, cell in pairs(state.cells) do pcall(function() cell.part:Destroy() end) end
-    state.cells, state.preset, state.sig = {}, nil, nil
+    state.cells, state.preset, state.sig, state.mode = {}, nil, nil, nil
 end
 
-function World.buildCell(cam, def, gx, gz)
+function World.mapBounds(now)
+    local state = World.weather
+    if state.boundsAt and now < state.boundsAt then return state.bounds end
+    state.boundsAt = now + 3
+    state.bounds = nil
+    local map = Workspace:FindFirstChild("Map")
+    if map and type(map.GetBoundingBox) == "function" then
+        local ok, frame, size = pcall(map.GetBoundingBox, map)
+        if ok and typeof(frame) == "CFrame" and typeof(size) == "Vector3" and size.X > 1 and size.Z > 1 then
+            local center = frame.Position
+            state.bounds = { x = center.X - size.X / 2, z = center.Z - size.Z / 2, w = size.X, d = size.Z, top = center.Y + size.Y / 2 }
+        end
+    end
+    return state.bounds
+end
+
+function World.buildCell(cam, def, gx, gz, size, x, z)
     local part = Instance.new("Part")
     part.Name = Util.randomName()
     part.Anchored, part.CanCollide, part.CanQuery, part.CanTouch = true, false, false, false
     part.Transparency = 1
-    part.Size = Vector3.new(CELL, 0.5, CELL)
-    local cell = { part = part, emitters = {}, gx = gx, gz = gz, nextAt = 0, open = false, x = (gx + 0.5) * CELL, z = (gz + 0.5) * CELL, ground = 0, camY = 0 }
+    part.Size = Vector3.new(size, 0.5, size)
+    part.Position = Vector3.new(x, 0, z)
+    local cell = { part = part, emitters = {}, gx = gx, gz = gz, nextAt = 0, open = false, x = x, z = z, size = size, ground = 0, camY = 0 }
     for _, layer in ipairs(def.layers) do
         local emitter = Instance.new("ParticleEmitter")
         emitter.Texture = layer.texture
@@ -1924,12 +2073,22 @@ function World.buildCell(cam, def, gx, gz)
     return cell
 end
 
-function World.scanCell(cell, camY)
-    local origin = Vector3.new(cell.x, camY + 3, cell.z)
+function World.scanCell(cell, camY, top)
     cell.camY = camY
-    cell.open = Workspace:Raycast(origin, Vector3.new(0, 400, 0), Visible.params) == nil
+    if top then
+        local hit = Game.cast(Vector3.new(cell.x, top + 5, cell.z), Vector3.new(0, -(top + 1000), 0), Visible.params)
+        if not hit then
+            cell.open, cell.ground = false, camY
+            return
+        end
+        cell.ground = hit.Position.Y
+        cell.open = true
+        return
+    end
+    local origin = Vector3.new(cell.x, camY + 3, cell.z)
+    cell.open = Game.cast(origin, Vector3.new(0, 400, 0), Visible.params) == nil
     if not cell.open then return end
-    local down = Workspace:Raycast(origin, Vector3.new(0, -400, 0), Visible.params)
+    local down = Game.cast(origin, Vector3.new(0, -400, 0), Visible.params)
     cell.ground = down and down.Position.Y or camY - 40
 end
 
@@ -1953,7 +2112,7 @@ function World.shapeCell(cell, def, cfg, sig)
         end
         local push = cfg.wind * (layer.wind or 1) + (layer.push or 0)
         emitter.Lifetime = NumberRange.new(lifeLo, lifeHi)
-        emitter.Rate = layer.count * cfg.density / ((lifeLo + lifeHi) * 0.5)
+        emitter.Rate = layer.count * cfg.density * (cell.size / CELL) ^ 2 / ((lifeLo + lifeHi) * 0.5)
         emitter.Speed = NumberRange.new(slow, fast)
         emitter.Size = NumberSequence.new(layer.size[1] * cfg.size, layer.size[2] * cfg.size)
         emitter.SpreadAngle = Vector2.new(layer.spread, layer.spread)
@@ -1982,32 +2141,58 @@ function World.stepWeather(cam, now)
     }
     local sig = table.concat({ cfg.density, cfg.speed, cfg.size, cfg.wind, cfg.windDir, cfg.height, tostring(cfg.custom), tostring(cfg.color) }, "|")
     local position = cam.CFrame.Position
-    local gx0, gz0 = math.floor(position.X / CELL), math.floor(position.Z / CELL)
-    local range = math.clamp(math.floor(val("world_weather_range") or 2), 1, 3)
-    local keep = {}
-    for dx = -range, range do
-        for dz = -range, range do
-            if dx * dx + dz * dz <= (range + 0.5) * (range + 0.5) then
-                local gx, gz = gx0 + dx, gz0 + dz
-                local key = gx .. ":" .. gz
-                keep[key] = true
-                local cell = state.cells[key]
-                if cell and cell.parented and not cell.part.Parent then
-                    pcall(function() cell.part:Destroy() end)
-                    cell = nil
-                end
-                if not cell then
-                    cell = World.buildCell(cam, def, gx, gz)
-                    state.cells[key] = cell
-                end
-                if now >= cell.nextAt then
-                    cell.nextAt = now + 0.35 + ((dx * 7 + dz * 3) % 5) * 0.06
-                    World.scanCell(cell, position.Y)
-                    cell.dirty = true
-                end
-                if cell.dirty or cell.sig ~= sig then World.shapeCell(cell, def, cfg, sig) end
+    local plan, mode = {}, "near"
+    local bounds = on("world_weather_map") and World.mapBounds(now)
+    if bounds then
+        local cap = math.clamp(math.floor(val("world_weather_map_cap") or 100), 16, 400)
+        local size = math.max(CELL, math.sqrt(bounds.w * bounds.d / cap))
+        local nx, nz = math.ceil(bounds.w / size), math.ceil(bounds.d / size)
+        while nx * nz > cap do
+            size = size * 1.05
+            nx, nz = math.ceil(bounds.w / size), math.ceil(bounds.d / size)
+        end
+        mode = table.concat({ "map", nx, nz, math.floor(size * 100) }, ":")
+        for gx = 0, nx - 1 do
+            for gz = 0, nz - 1 do
+                plan[#plan + 1] = { key = gx .. ":" .. gz, gx = gx, gz = gz, size = size, x = bounds.x + (gx + 0.5) * size, z = bounds.z + (gz + 0.5) * size, every = 1.5, stagger = (gx * 7 + gz * 3) % 11 * 0.1 }
             end
         end
+    else
+        local gx0, gz0 = math.floor(position.X / CELL), math.floor(position.Z / CELL)
+        local range = math.clamp(math.floor(val("world_weather_range") or 2), 1, 3)
+        for dx = -range, range do
+            for dz = -range, range do
+                if dx * dx + dz * dz <= (range + 0.5) * (range + 0.5) then
+                    local gx, gz = gx0 + dx, gz0 + dz
+                    plan[#plan + 1] = { key = gx .. ":" .. gz, gx = gx, gz = gz, size = CELL, x = (gx + 0.5) * CELL, z = (gz + 0.5) * CELL, every = 0.35, stagger = ((dx * 7 + dz * 3) % 5) * 0.06 }
+                end
+            end
+        end
+    end
+    if state.mode ~= mode then
+        World.dropWeather()
+        state.preset, state.mode = preset, mode
+    end
+    local keep, scans = {}, 0
+    for _, item in ipairs(plan) do
+        local key = item.key
+        keep[key] = true
+        local cell = state.cells[key]
+        if cell and cell.parented and not cell.part.Parent then
+            pcall(function() cell.part:Destroy() end)
+            cell = nil
+        end
+        if not cell then
+            cell = World.buildCell(cam, def, item.gx, item.gz, item.size, item.x, item.z)
+            state.cells[key] = cell
+        end
+        if now >= cell.nextAt and scans < 8 then
+            scans = scans + 1
+            cell.nextAt = now + item.every + item.stagger
+            World.scanCell(cell, position.Y, bounds and bounds.top)
+            cell.dirty = true
+        end
+        if cell.dirty or cell.sig ~= sig then World.shapeCell(cell, def, cfg, sig) end
     end
     for key, cell in pairs(state.cells) do
         if not keep[key] then
@@ -2158,7 +2343,7 @@ function Trail.step(cam, now)
     for index = used + 1, #Trail.lines do Trail.lines[index].Visible = false end
 end
 
-local Nades = { list = {}, known = {}, lines = {}, badges = {}, hooked = false, scanAt = -math.huge, predAt = -math.huge }
+local Nades = { list = {}, known = {}, lines = {}, badges = {}, fade = setmetatable({}, { __mode = "k" }), hooked = false, scanAt = -math.huge, predAt = -math.huge }
 
 local function hermite(t0, p0, v0, t1, p1, v1, t)
     if t0 == t1 then return p1 end
@@ -2291,6 +2476,8 @@ function Nades.mapParams()
     if cached and cached.FilterDescendantsInstances[1] == map then return cached end
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Include
+    pcall(function() params.RespectCanCollide = true end)
+    pcall(function() params.IgnoreWater = true end)
     params.FilterDescendantsInstances = { map }
     Nades.params = params
     return params
@@ -2335,6 +2522,8 @@ function Nades.ring(cam, center, radius, color, alpha)
     end
 end
 
+Nades.predKey = {}
+
 function Nades.badge()
     local grey = Color3.fromRGB(170, 172, 178)
     return {
@@ -2349,6 +2538,39 @@ function Nades.badge()
     }
 end
 
+local BADGE_R = 19
+
+function Nades.fit(badge, text, top, bottom)
+    local key = text .. "|" .. top .. "|" .. bottom
+    if badge.fitKey == key then return badge.fitSize end
+    local reach = math.max(math.abs(top), math.abs(bottom))
+    local allowed = 2 * math.sqrt(math.max(BADGE_R * BADGE_R - reach * reach, 0)) - 2
+    local size = 11
+    while size > 7 do
+        badge.text.Size = size
+        local ok, bounds = pcall(function() return badge.text.TextBounds end)
+        local width = ok and typeof(bounds) == "Vector2" and bounds.X > 0 and bounds.X or #text * size * 0.56
+        if width <= allowed then break end
+        size = size - 1
+    end
+    badge.text.Size = size
+    badge.fitKey, badge.fitSize = key, size
+    return size
+end
+
+function Nades.ease(key, target)
+    local now = os.clock()
+    local state = Nades.fade[key]
+    if not state then
+        state = { t = target, at = now }
+        Nades.fade[key] = state
+    end
+    local dt = math.clamp(now - state.at, 0, 0.1)
+    state.at = now
+    state.t = state.t + (target - state.t) * math.min(1, dt * 8)
+    return state.t
+end
+
 function Nades.label(cam, position, info)
     local point, front = Draw.project(cam, position)
     if not front then return end
@@ -2359,33 +2581,50 @@ function Nades.label(cam, position, info)
         Nades.badges[Nades.badgeUsed] = badge
     end
     local x, y = point.X, point.Y
-    local style = info.style
-    badge.disc.Position, badge.disc.Color, badge.disc.Transparency, badge.disc.Visible = point, style.disc, style.lethal and 0.95 or 0.85, true
-    badge.rim.Color = style.lethal and Color3.fromRGB(255, 140, 140) or Color3.fromRGB(60, 60, 66)
+    local t = Nades.ease(info.key or badge, info.threat or 0)
+    local style = Nades.style(info.verdict, info.fallback, t)
+    badge.disc.Position, badge.disc.Color, badge.disc.Transparency, badge.disc.Visible = point, style.disc, style.opacity, true
+    badge.rim.Color = style.rim
     badge.body.Color, badge.top.Color, badge.lever.Color = style.icon, style.icon, style.icon
     badge.rim.Position, badge.rim.Visible = point, true
-    badge.body.Position, badge.body.Visible = Vector2.new(x, y - 7), true
+    badge.body.Position, badge.body.Visible = Vector2.new(x, y - 8), true
     badge.top.Position, badge.top.Visible = Vector2.new(x - 2, y - 15), true
     badge.lever.Position, badge.lever.Visible = Vector2.new(x - 1, y - 17), true
-    badge.text.Text, badge.text.Position, badge.text.Color, badge.text.Visible = info.text or "", Vector2.new(x, y + 1), WHITE, info.text ~= nil
-    if info.frac then
+    local hasBar = info.frac ~= nil
+    if info.text then
+        local top = hasBar and -1 or 1
+        local size = Nades.fit(badge, info.text, top, top + 11)
+        badge.text.Text, badge.text.Position, badge.text.Color, badge.text.Visible = info.text, Vector2.new(x, y + top + (11 - size) / 2), style.text, true
+    else
+        badge.text.Visible = false
+    end
+    if hasBar then
         local width = math.max(math.floor(24 * math.clamp(info.frac, 0, 1) + 0.5), 1)
-        badge.back.Position, badge.back.Color, badge.back.Visible = Vector2.new(x - 12, y + 14), style.back, true
-        badge.bar.Position, badge.bar.Size, badge.bar.Color, badge.bar.Visible = Vector2.new(x - 12, y + 14), Vector2.new(width, 3), style.bar, true
+        badge.back.Position, badge.back.Color, badge.back.Visible = Vector2.new(x - 12, y + 12), style.back, true
+        badge.bar.Position, badge.bar.Size, badge.bar.Color, badge.bar.Visible = Vector2.new(x - 12, y + 12), Vector2.new(width, 3), style.bar, true
     else
         badge.back.Visible, badge.bar.Visible = false, false
     end
 end
 
 function Nades.hideBadge(badge)
-    for _, object in pairs(badge) do object.Visible = false end
+    for _, object in pairs(badge) do
+        if typeof(object) ~= "string" and typeof(object) ~= "number" then object.Visible = false end
+    end
 end
 
-function Nades.style(verdict, fallback)
-    if verdict == "LETHAL" then
-        return { icon = Color3.fromRGB(235, 235, 235), disc = flag("nade_danger_color", Color3.fromRGB(255, 60, 60)), bar = Color3.fromRGB(120, 10, 10), back = Color3.fromRGB(200, 70, 70), lethal = true }
-    end
-    return { icon = Color3.fromRGB(170, 172, 178), disc = Color3.fromRGB(12, 12, 14), bar = verdict and Color3.fromRGB(255, 60, 60) or fallback, back = Color3.fromRGB(40, 40, 44) }
+function Nades.style(verdict, fallback, t)
+    local danger = flag("nade_danger_color", Color3.fromRGB(255, 60, 60))
+    local mix = Util.lerpColor
+    return {
+        icon = mix(Color3.fromRGB(170, 172, 178), Color3.fromRGB(235, 235, 235), t),
+        disc = mix(Color3.fromRGB(12, 12, 14), danger, t),
+        opacity = 0.85 + 0.1 * t,
+        rim = mix(Color3.fromRGB(60, 60, 66), Color3.fromRGB(255, 140, 140), t),
+        text = WHITE,
+        bar = mix(verdict and Color3.fromRGB(255, 60, 60) or fallback, Color3.fromRGB(120, 10, 10), t),
+        back = mix(Color3.fromRGB(40, 40, 44), Color3.fromRGB(200, 70, 70), t),
+    }
 end
 
 function Nades.verdict(damage)
@@ -2393,7 +2632,7 @@ function Nades.verdict(damage)
     if damage <= 0 then return "Safe", flag("nade_safe_color", Color3.fromRGB(90, 255, 130)) end
     local shown = math.floor(damage + 0.5)
     local label = shown >= 100 and "LETHAL" or "-" .. shown .. " hp"
-    return label, Util.lerpColor(Color3.fromRGB(255, 220, 60), flag("nade_danger_color", Color3.fromRGB(255, 60, 60)), math.clamp(damage / 100, 0, 1))
+    return label, Util.lerpColor(flag("nade_ring_color", Color3.fromRGB(255, 220, 60)), flag("nade_ring_lethal_color", Color3.fromRGB(255, 60, 60)), math.clamp(damage / 100, 0, 1))
 end
 
 function Nades.simulate(origin, velocity, gravity, elasticity, friction, duration)
@@ -2404,7 +2643,7 @@ function Nades.simulate(origin, velocity, gravity, elasticity, friction, duratio
     local elapsed = 0
     while elapsed < duration and #points < 130 do
         local move = speed * step + gravity * (0.5 * step * step)
-        local hit = params and Workspace:Raycast(position, move, params)
+        local hit = params and Game.cast(position, move, params)
         if hit then
             local used = step * math.clamp((hit.Position - position).Magnitude / math.max(move.Magnitude, 1e-6), 0, 1)
             speed = speed + gravity * used
@@ -2485,7 +2724,8 @@ function Nades.predict(cam, now, origin)
         for _, point in ipairs(pred.bounces) do Nades.ring(cam, point, 0.8, color, alpha) end
     end
     local data = weapon._weaponData or weapon.weaponData
-    local verdict, verdictColor = Nades.verdict((Nades.damage(data, pred.land, origin, pred.cache, now)))
+    local damage = Nades.damage(data, pred.land, origin, pred.cache, now)
+    local verdict, verdictColor = Nades.verdict(damage)
     local radius = data and type(data.damageGraph) == "table" and #data.damageGraph > 0 and data.damageGraph[#data.damageGraph].distance
     Nades.ring(cam, pred.land, 1.5, color, alpha)
     if radius and flag("nade_ring", true) then Nades.ring(cam, pred.land, radius, verdictColor or color, 0.6 * alpha) end
@@ -2493,8 +2733,8 @@ function Nades.predict(cam, now, origin)
     local total = math.max(Game.stat(weapon, "fusetime") or pred.duration, 0.1)
     local show = verdict and flag("nade_dmg", true)
     Nades.label(cam, pred.land, {
-        text = show and verdict or nil, style = Nades.style(show and verdict, color),
-        frac = left / total,
+        text = show and verdict or nil, verdict = show and verdict or nil, fallback = color, key = Nades.predKey,
+        threat = show and damage and math.clamp(damage / 100, 0, 1) or 0, frac = left / total,
     })
 end
 
@@ -2505,7 +2745,7 @@ function Nades.step(cam, now)
         local maxDistance = flag("nade_dist", 400)
         local ownColor, enemyColor = flag("nade_own_color", Color3.fromRGB(120, 255, 170)), flag("nade_enemy_color", Color3.fromRGB(255, 90, 60))
         local root = Game.rootPart()
-        local camPosition = cam.CFrame.Position
+        local camPosition = Game.eye(cam).Position
         local origin = root and root.Position or camPosition
         local time = Game.time()
         for index = #Nades.list, 1, -1 do
@@ -2532,7 +2772,8 @@ function Nades.step(cam, now)
                     if radius and flag("nade_ring", true) then Nades.ring(cam, record.land, radius, verdictColor or color, 0.7) end
                     local show = verdict and flag("nade_dmg", true)
                     Nades.label(cam, position, {
-                        text = show and verdict or nil, style = Nades.style(show and verdict, color),
+                        text = show and verdict or nil, verdict = show and verdict or nil, fallback = color, key = record,
+                        threat = show and damage and math.clamp(damage / 100, 0, 1) or 0,
                         frac = flag("nade_timer", true) and math.max(remaining, 0) / math.max(record.boom, 0.1) or nil,
                     })
                 end
@@ -2543,13 +2784,13 @@ function Nades.step(cam, now)
             for _, instance in ipairs(Items.grenades) do
                 local position = instance.Parent and Items.position(instance)
                 if position and (position - camPosition).Magnitude <= maxDistance then
-                    Nades.label(cam, position, { text = math.floor((position - camPosition).Magnitude * STUDS_TO_M) .. "m", style = Nades.style(nil, enemyColor) })
+                    Nades.label(cam, position, { text = math.floor((position - camPosition).Magnitude * STUDS_TO_M) .. "m", fallback = enemyColor, key = instance })
                 end
             end
         end
     end
     local root = Game.rootPart()
-    Nades.predict(cam, now, root and root.Position or cam.CFrame.Position)
+    Nades.predict(cam, now, root and root.Position or Game.eye(cam).Position)
     for index = Nades.lineUsed + 1, #Nades.lines do Nades.lines[index].Visible = false end
     for index = Nades.badgeUsed + 1, #Nades.badges do Nades.hideBadge(Nades.badges[index]) end
 end
@@ -2904,7 +3145,7 @@ function Legit.stepAim(dt, cam, now, records, screen)
     local gameCam = Game.gameCamera()
     if not gameCam then return end
     local useBarrel = L.barrel and Barrel.valid
-    local origin = useBarrel and Barrel.fire or cam.CFrame.Position
+    local origin = useBarrel and Barrel.fire or Game.eye(cam).Position
 
     local record, part
     if Legit.target and L.sticky then
@@ -3030,7 +3271,8 @@ function Legit.stepTrigger(cam, now, records)
     if not (weapon and Game.isFirearm(weapon)) then Trigger.onSince = nil return end
     if flag("trig_ads", false) and not Game.aiming(weapon) then Trigger.onSince = nil return end
 
-    local origin, direction = cam.CFrame.Position, cam.CFrame.LookVector
+    local eye = Game.eye(cam)
+    local origin, direction = eye.Position, eye.LookVector
     if flag("legit_barrel", true) and Barrel.valid then origin, direction = Barrel.fire, Barrel.look end
     local maxDistance, scale = flag("trig_dist", 400), flag("trig_scale", 1)
     local groups, wantVisible = Util.set("trig_parts", { Head = true, Torso = true }), flag("trig_visible", true)
@@ -3156,7 +3398,21 @@ end
 
 do
     Pages.Rage:Section({ Name = "Rage", Side = 1, Icon = "swords" }):Label({ Name = "Coming soon" })
-    Pages.Misc:Section({ Name = "Misc", Side = 1, Icon = "shapes" }):Label({ Name = "Coming soon" })
+    local Fun = Pages.Misc:Section({ Name = "Fun", Side = 1, Icon = "shapes" })
+    local Pc = Fun:Toggle({ Name = "PhantomCam", Flag = "misc_phantomcam", Tooltip = "Body cam: the view follows where the weapon's barrel points. Loads phantomcam.lua from the repo when first enabled" })
+        :Keybind({ Name = "PhantomCam key", Flag = "misc_phantomcam_key", Default = "None", Mode = "Toggle", Sync = true })
+        :Settings("PhantomCam", 230)
+    Pc:Slider({ Name = "Strength", Flag = "misc_phantomcam_strength", Min = 0, Max = 1.5, Default = 1, Decimals = 0.01, Tooltip = "0 leaves the view alone, 1 points it where the barrel points" })
+    Pc:Slider({ Name = "Smoothing", Flag = "misc_phantomcam_smooth", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
+    Pc:Slider({ Name = "Position follow", Flag = "misc_phantomcam_position", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Tooltip = "Moves the camera toward the weapon's barrel" })
+    Pc:Toggle({ Name = "Roll", Flag = "misc_phantomcam_roll", Tooltip = "Also follows the barrel's roll" })
+    Pc:Toggle({ Name = "Only while aiming", Flag = "misc_phantomcam_aiming" })
+    Pc:Toggle({ Name = "Disable while scoped", Flag = "misc_phantomcam_noscope" })
+    Pc:Dropdown({ Name = "Mode", Flag = "misc_phantomcam_mode", Items = { "Barrel", "World character" }, Default = "Barrel", Tooltip = "Barrel follows the weapon's aim; World character puts the camera at your character's head" })
+    Pc:Toggle({ Name = "Hide viewmodel", Flag = "misc_phantomcam_viewmodel", Default = true, Tooltip = "World character mode: hides the first-person arms and weapon" })
+    Pc:Toggle({ Name = "Hide hat/head", Flag = "misc_phantomcam_hat", Default = true, Tooltip = "World character mode: hides your character's head and hat so they do not block the view" })
+    Pc:Slider({ Name = "Forward offset", Flag = "misc_phantomcam_forward", Min = 0, Max = 2, Default = 0.5, Decimals = 0.01, Suffix = " studs" })
+    Pc:Slider({ Name = "Camera FOV", Flag = "misc_phantomcam_fov", Min = 0, Max = 120, Default = 0, Decimals = 1, Tooltip = "0 keeps the game's FOV" })
 end
 
 do
@@ -3166,7 +3422,7 @@ do
         popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
     end
 
-    local function buildTeam(sub, prefix, label, tint, hidden)
+    local function buildTeam(sub, prefix, label, tint, hidden, shared)
         local function key(name) return prefix .. name end
         local Main = sub:Section({ Name = label .. " ESP", Side = 1, Icon = "eye" })
         local On = Main:Toggle({ Name = "Enabled", Flag = key("on"), Tooltip = "Master switch for this tab" }):Settings("Range", 230)
@@ -3176,15 +3432,31 @@ do
         pickColor(Box, "Box", key("box_color"), tint)
         Box:Toggle({ Name = "Filled", Flag = key("fill") })
         pickColor(Box, "Fill", key("fill_color"), tint, 0.85)
+        if shared then
+            Box:Dropdown({ Name = "Box style", Flag = "esp_box_style", Items = { "Corners", "Full" }, Default = "Corners" })
+            Box:Dropdown({ Name = "Box mode", Flag = "esp_box_mode", Items = { "Static", "Dynamic" }, Default = "Static", Tooltip = "Static is a fixed size box; Dynamic wraps the body parts" })
+            Box:Toggle({ Name = "Gradient fill", Flag = "esp_fill_gradient", Default = true, Tooltip = "Blends the fill into the second colour toward the feet" })
+            pickColor(Box, "Fill end", "esp_fill_color2", Color3.fromRGB(20, 20, 20))
+            Box:Toggle({ Name = "Outlines", Flag = "esp_outline", Default = true, Tooltip = "Dark outline on the box, dot and arrows" })
+        end
 
-        local Name = Main:Toggle({ Name = "Names", Flag = key("name") }):Settings("Names", 200)
+        local Name = Main:Toggle({ Name = "Names", Flag = key("name") }):Settings("Names", 230)
         pickColor(Name, "Name", key("name_color"), WHITE)
+        if shared then
+            Name:Dropdown({ Name = "Font", Flag = "esp_font", Items = { "Plex", "UI", "System", "Monospace" }, Default = "Plex" })
+            Name:Slider({ Name = "Size", Flag = "esp_text", Min = 10, Max = 20, Default = 13, Decimals = 1, Suffix = " px" })
+            Name:Dropdown({ Name = "Text case", Flag = "esp_case", Items = { "Normal", "lower", "UPPER" }, Default = "Normal" })
+        end
 
         local Hp = Main:Toggle({ Name = "Health", Flag = key("hp") }):Settings("Health", 230)
         pickColor(Hp, "Low health", key("hp_low"), Color3.fromRGB(255, 60, 60))
         pickColor(Hp, "Full health", key("hp_full"), Color3.fromRGB(80, 255, 120))
         Hp:Toggle({ Name = "Health number", Flag = key("hp_num") })
         pickColor(Hp, "Number", key("hp_num_color"), WHITE)
+        if shared then
+            Hp:Dropdown({ Name = "Health bar side", Flag = "esp_hp_side", Items = { "Left", "Right" }, Default = "Left" })
+            pickColor(Hp, "Mid health", "esp_hp_mid", Color3.fromRGB(255, 210, 60))
+        end
 
         local Dist = Main:Toggle({ Name = "Distance", Flag = key("show_dist") }):Settings("Distance", 200)
         pickColor(Dist, "Distance", key("show_dist_color"), Color3.fromRGB(190, 190, 205))
@@ -3194,65 +3466,61 @@ do
 
         local Skel = Main:Toggle({ Name = "Skeleton", Flag = key("skeleton") }):Settings("Skeleton", 200)
         pickColor(Skel, "Skeleton", key("skeleton_color"), WHITE)
+        if shared then
+            Skel:Slider({ Name = "Skeleton thickness", Flag = "esp_skel_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
+            Skel:Toggle({ Name = "Outline", Flag = "esp_skeleton_outline", Default = true, Tooltip = "Thin dark line under the bones" })
+            Skel:Toggle({ Name = "Joint dots", Flag = "esp_skeleton_joints", Tooltip = "Dots at the shoulders, elbows, hands, hips, knees and feet" })
+        end
 
         local Dot = Main:Toggle({ Name = "Head dot", Flag = key("dot") }):Settings("Head dot", 200)
         pickColor(Dot, "Head dot", key("dot_color"), tint)
 
         local Trace = Main:Toggle({ Name = "Snaplines", Flag = key("tracer"), Tooltip = "Line from the screen to the player's feet" }):Settings("Snaplines", 200)
         pickColor(Trace, "Snapline", key("tracer_color"), tint)
+        if shared then
+            Trace:Dropdown({ Name = "Snapline origin", Flag = "esp_tracer_origin", Items = { "Bottom", "Center", "Top", "Mouse" }, Default = "Bottom" })
+            Trace:Slider({ Name = "Snapline thickness", Flag = "esp_tracer_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
+        end
 
         local View = Main:Toggle({ Name = "View direction", Flag = key("view"), Tooltip = "Where the player is looking, drawn from the head" }):Settings("View direction", 200)
         pickColor(View, "View", key("view_color"), Color3.fromRGB(255, 220, 60))
+        if shared then View:Slider({ Name = "View line length", Flag = "esp_view_len", Min = 2, Max = 30, Default = 8, Decimals = 0.1, Suffix = " studs" }) end
 
-        local Arrow = Main:Toggle({ Name = "Arrows", Flag = key("oov"), Tooltip = "Arrows pointing at players you cannot see on screen" }):Settings("Arrows", 200)
+        local Arrow = Main:Toggle({ Name = "Arrows", Flag = key("oov"), Tooltip = "Arrows pointing at players you cannot see on screen" }):Settings("Arrows", 230)
         pickColor(Arrow, "Arrow", key("oov_color"), tint)
+        if shared then
+            Arrow:Slider({ Name = "Arrow size", Flag = "oov_size", Min = 8, Max = 32, Default = 14, Decimals = 1, Suffix = " px" })
+            Arrow:Slider({ Name = "Arrow distance", Flag = "oov_radius", Min = 5, Max = 100, Default = 40, Decimals = 1, Suffix = " %", Tooltip = "Distance from the screen centre; 100 is the edge" })
+        end
 
-        local Cham = Main:Toggle({ Name = "Chams", Flag = key("chams"), Tooltip = "Adornment chams on each body part" }):Settings("Chams", 200)
+        local Cham = Main:Toggle({ Name = "Chams", Flag = key("chams"), Tooltip = "Adornment chams on each body part" }):Settings("Chams", 230)
         pickColor(Cham, "Visible", key("cham_vis"), tint, 0.5)
         pickColor(Cham, "Behind walls", key("cham_hid"), hidden, 0.5)
+        if shared then
+            Cham:Dropdown({ Name = "Mode", Flag = "cham_mode", Items = { "Through walls", "Visible only" }, Default = "Through walls", Tooltip = "Through walls switches between the two colours by line of sight" })
+            Cham:Slider({ Name = "Thickness", Flag = "cham_grow", Min = 0, Max = 1, Default = 0.1, Decimals = 0.01, Suffix = " studs" })
+            Cham:Toggle({ Name = "Glow", Flag = "cham_glow", Tooltip = "Draws the visible layer on top, brighter and more opaque, so bloom picks it up" })
+            Cham:Slider({ Name = "Glow strength", Flag = "cham_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
+            Cham:Toggle({ Name = "Bloom", Flag = "cham_bloom", Default = true, Tooltip = "Drives a bloom effect while the glow is on; the World bloom settings win if that is enabled" })
+            Cham:Slider({ Name = "Bloom intensity", Flag = "cham_bloom_i", Min = 0, Max = 3, Default = 0.4, Decimals = 0.01 })
+            Cham:Slider({ Name = "Bloom size", Flag = "cham_bloom_s", Min = 0, Max = 56, Default = 24, Decimals = 0.1 })
+            Cham:Slider({ Name = "Bloom threshold", Flag = "cham_bloom_t", Min = 0, Max = 2, Default = 0.95, Decimals = 0.01 })
+            Cham:Slider({ Name = "Head size", Flag = "cham_head_size", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
+            Cham:Toggle({ Name = "Round head", Flag = "cham_round_head", Default = true })
+            Cham:Toggle({ Name = "Remove armor/gear", Flag = "chams_remove_gear", Default = true, Tooltip = "Hides helmets, armor and other cosmetics on players with chams so the body is covered cleanly; restored when chams stop" })
+        end
+        if shared then
+            local Vis = Main:Toggle({ Name = "Colour by visibility", Flag = "esp_vis", Tooltip = "Box, skeleton, snapline, dot, view line and arrows use the popup colours" }):Settings("Visibility colours", 200)
+            pickColor(Vis, "Visible", "esp_vis_color", Color3.fromRGB(80, 255, 120))
+            pickColor(Vis, "Behind walls", "esp_occ_color", Color3.fromRGB(255, 80, 80))
+            Main:Toggle({ Name = "Ignore glass", Flag = "vis_ignore_glass", Default = true, Tooltip = "Bullets pass through glass, so visibility checks, aimbot, triggerbot and grenade prediction see through it" })
+        end
     end
-    buildTeam(Subs.Enemies, "esp_enemy_", "Enemy", Color3.fromRGB(255, 70, 90), Color3.fromRGB(170, 60, 255))
+    buildTeam(Subs.Enemies, "esp_enemy_", "Enemy", Color3.fromRGB(255, 70, 90), Color3.fromRGB(170, 60, 255), true)
     buildTeam(Subs.Teammates, "esp_team_", "Teammate", Color3.fromRGB(90, 220, 130), Color3.fromRGB(60, 150, 255))
 
     local Other = Subs.Other
-    local Shared = Other:Section({ Name = "Shared style", Side = 1, Icon = "sliders-horizontal" })
-    local Text = Shared:Label({ Name = "Text" }):Settings("Text", 230)
-    Text:Dropdown({ Name = "Font", Flag = "esp_font", Items = { "Plex", "UI", "System", "Monospace" }, Default = "Plex" })
-    Text:Slider({ Name = "Size", Flag = "esp_text", Min = 10, Max = 20, Default = 13, Decimals = 1, Suffix = " px" })
-    Text:Dropdown({ Name = "Text case", Flag = "esp_case", Items = { "Normal", "lower", "UPPER" }, Default = "Normal" })
-    Text:Toggle({ Name = "Outlines", Flag = "esp_outline", Default = true, Tooltip = "Dark outline on the box, dot and arrows" })
-    local Box = Shared:Label({ Name = "Boxes" }):Settings("Boxes", 230)
-    Box:Dropdown({ Name = "Box style", Flag = "esp_box_style", Items = { "Corners", "Full" }, Default = "Corners" })
-    Box:Dropdown({ Name = "Box mode", Flag = "esp_box_mode", Items = { "Static", "Dynamic" }, Default = "Static", Tooltip = "Static is a fixed size box; Dynamic wraps the body parts" })
-    Box:Toggle({ Name = "Gradient fill", Flag = "esp_fill_gradient", Default = true, Tooltip = "Blends the fill into the second colour toward the feet" })
-    pickColor(Box, "Fill end", "esp_fill_color2", Color3.fromRGB(20, 20, 20))
-    local Health = Shared:Label({ Name = "Health" }):Settings("Health", 230)
-    Health:Dropdown({ Name = "Health bar side", Flag = "esp_hp_side", Items = { "Left", "Right" }, Default = "Left" })
-    pickColor(Health, "Mid health", "esp_hp_mid", Color3.fromRGB(255, 210, 60))
-    local Lines = Shared:Label({ Name = "Lines" }):Settings("Lines", 230)
-    Lines:Dropdown({ Name = "Snapline origin", Flag = "esp_tracer_origin", Items = { "Bottom", "Center", "Top", "Mouse" }, Default = "Bottom" })
-    Lines:Slider({ Name = "Snapline thickness", Flag = "esp_tracer_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
-    Lines:Slider({ Name = "Skeleton thickness", Flag = "esp_skel_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
-    Lines:Slider({ Name = "View line length", Flag = "esp_view_len", Min = 2, Max = 30, Default = 8, Decimals = 0.1, Suffix = " studs" })
-    local Vis = Shared:Toggle({ Name = "Colour by visibility", Flag = "esp_vis", Tooltip = "Box, skeleton, snapline, dot, view line and arrows use the popup colours" }):Settings("Visibility colours", 200)
-    pickColor(Vis, "Visible", "esp_vis_color", Color3.fromRGB(80, 255, 120))
-    pickColor(Vis, "Behind walls", "esp_occ_color", Color3.fromRGB(255, 80, 80))
-    local Cham = Shared:Label({ Name = "Chams" }):Settings("Chams", 230)
-    Cham:Dropdown({ Name = "Mode", Flag = "cham_mode", Items = { "Through walls", "Visible only" }, Default = "Through walls", Tooltip = "Through walls switches between the two colours by line of sight" })
-    Cham:Slider({ Name = "Thickness", Flag = "cham_grow", Min = 0, Max = 1, Default = 0.1, Decimals = 0.01, Suffix = " studs" })
-    Cham:Toggle({ Name = "Glow", Flag = "cham_glow", Tooltip = "Draws the visible layer on top, brighter and more opaque, so bloom picks it up" })
-    Cham:Slider({ Name = "Glow strength", Flag = "cham_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
-    Cham:Toggle({ Name = "Bloom", Flag = "cham_bloom", Default = true, Tooltip = "Drives a bloom effect while the glow is on; the World bloom settings win if that is enabled" })
-    Cham:Slider({ Name = "Bloom intensity", Flag = "cham_bloom_i", Min = 0, Max = 3, Default = 0.4, Decimals = 0.01 })
-    Cham:Slider({ Name = "Bloom size", Flag = "cham_bloom_s", Min = 0, Max = 56, Default = 24, Decimals = 0.1 })
-    Cham:Slider({ Name = "Bloom threshold", Flag = "cham_bloom_t", Min = 0, Max = 2, Default = 0.95, Decimals = 0.01 })
-    Cham:Slider({ Name = "Head size", Flag = "cham_head_size", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
-    Cham:Toggle({ Name = "Round head", Flag = "cham_round_head", Default = true })
-    local Arrow = Shared:Label({ Name = "Arrows" }):Settings("Arrows", 230)
-    Arrow:Slider({ Name = "Arrow size", Flag = "oov_size", Min = 8, Max = 32, Default = 14, Decimals = 1, Suffix = " px" })
-    Arrow:Slider({ Name = "Arrow distance", Flag = "oov_radius", Min = 5, Max = 100, Default = 40, Decimals = 1, Suffix = " %", Tooltip = "Distance from the screen centre; 100 is the edge" })
-
-    local World = Other:Section({ Name = "Items and grenades", Side = 2, Icon = "package" })
+    local World = Other:Section({ Name = "Items and grenades", Side = 1, Icon = "package" })
     local Item = World:Toggle({ Name = "Dropped items", Flag = "item_drops" }):Settings("Dropped items", 230)
     pickColor(Item, "Weapons", "item_drops_color", Color3.fromRGB(255, 190, 60))
     Item:Slider({ Name = "Max distance", Flag = "item_dist", Min = 20, Max = 1500, Default = 300, Decimals = 1, Suffix = " studs" })
@@ -3262,6 +3530,8 @@ do
     pickColor(Warn, "Enemy", "nade_enemy_color", Color3.fromRGB(255, 90, 60))
     Warn:Toggle({ Name = "My grenades", Flag = "nade_own", Default = true })
     pickColor(Warn, "Mine", "nade_own_color", Color3.fromRGB(120, 255, 170))
+    pickColor(Warn, "Blast ring", "nade_ring_color", Color3.fromRGB(255, 220, 60))
+    pickColor(Warn, "Blast ring (lethal)", "nade_ring_lethal_color", Color3.fromRGB(255, 60, 60))
     Warn:Toggle({ Name = "Fuse timer", Flag = "nade_timer", Default = true })
     Warn:Toggle({ Name = "Flight path", Flag = "nade_path", Default = true, Tooltip = "The path from the server's replicated grenade nodes, up to the blast" })
     Warn:Slider({ Name = "Max distance", Flag = "nade_dist", Min = 50, Max = 1500, Default = 400, Decimals = 1, Suffix = " studs" })
@@ -3281,22 +3551,27 @@ do
     local Subs = Pages.World:SubTabs({ { "Environment", "sun" }, { "Sky", "moon" }, { "Weather", "cloud" }, { "Effects", "palette" }, { "Camera", "camera" }, { "Feedback", "flame" } })
 
     local Env = Subs.Environment
+    local function pickColor(popup, label, flagName, default, alpha)
+        popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
+    end
+
     local Light = Env:Section({ Name = "Lighting", Side = 1, Icon = "sun" })
-    Light:Toggle({ Name = "Time of day", Flag = "world_time" })
-    Light:Slider({ Name = "Clock time", Flag = "world_time_v", Min = 0, Max = 24, Default = 14, Decimals = 0.1, Suffix = " h" })
-    Light:Toggle({ Name = "Day / night cycle", Flag = "world_cycle", Tooltip = "Runs the clock continuously from the current time" })
-    Light:Slider({ Name = "Cycle speed", Flag = "world_cycle_speed", Min = 0.05, Max = 6, Default = 0.5, Decimals = 0.05, Suffix = " h/s" })
-    Light:Toggle({ Name = "Sun latitude", Flag = "world_lat", Tooltip = "Tilts the sun's path across the sky" })
-    Light:Slider({ Name = "Latitude", Flag = "world_lat_v", Min = -80, Max = 80, Default = 20, Decimals = 1, Suffix = " deg" })
-    Light:Toggle({ Name = "Brightness", Flag = "world_bright" })
-    Light:Slider({ Name = "Brightness value", Flag = "world_bright_v", Min = 0, Max = 10, Default = 2, Decimals = 0.1 })
-    Light:Toggle({ Name = "Exposure", Flag = "world_exposure" })
-    Light:Slider({ Name = "Exposure value", Flag = "world_exposure_v", Min = -3, Max = 3, Default = 0, Decimals = 0.1 })
-    Light:Toggle({ Name = "Ambient", Flag = "world_ambient" }):Colorpicker({ Name = "Indoor", Flag = "world_ambient_in", Default = Color3.fromRGB(150, 150, 170) }):Colorpicker({ Name = "Outdoor", Flag = "world_ambient_out", Default = Color3.fromRGB(170, 170, 190) })
-    Light:Toggle({ Name = "Colour shift", Flag = "world_shift", Tooltip = "Tints the light that hits surfaces facing the sky (top) and the ground (bottom)" }):Colorpicker({ Name = "Top", Flag = "world_shift_top", Default = Color3.fromRGB(255, 170, 90) }):Colorpicker({ Name = "Bottom", Flag = "world_shift_bottom", Default = Color3.fromRGB(60, 80, 140) })
-    Light:Toggle({ Name = "Environment light", Flag = "world_env" })
-    Light:Slider({ Name = "Diffuse", Flag = "world_env_diffuse", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
-    Light:Slider({ Name = "Specular", Flag = "world_env_specular", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
+    local Time = Light:Toggle({ Name = "Time of day", Flag = "world_time" }):Settings("Time of day", 230)
+    Time:Slider({ Name = "Clock time", Flag = "world_time_v", Min = 0, Max = 24, Default = 14, Decimals = 0.1, Suffix = " h" })
+    Time:Toggle({ Name = "Day / night cycle", Flag = "world_cycle", Tooltip = "Runs the clock continuously from the current time" })
+    Time:Slider({ Name = "Cycle speed", Flag = "world_cycle_speed", Min = 0.05, Max = 6, Default = 0.5, Decimals = 0.05, Suffix = " h/s" })
+    Light:Toggle({ Name = "Sun latitude", Flag = "world_lat", Tooltip = "Tilts the sun's path across the sky" }):Settings("Sun latitude", 230):Slider({ Name = "Latitude", Flag = "world_lat_v", Min = -80, Max = 80, Default = 20, Decimals = 1, Suffix = " deg" })
+    Light:Toggle({ Name = "Brightness", Flag = "world_bright" }):Settings("Brightness", 230):Slider({ Name = "Brightness value", Flag = "world_bright_v", Min = 0, Max = 10, Default = 2, Decimals = 0.1 })
+    Light:Toggle({ Name = "Exposure", Flag = "world_exposure" }):Settings("Exposure", 230):Slider({ Name = "Exposure value", Flag = "world_exposure_v", Min = -3, Max = 3, Default = 0, Decimals = 0.1 })
+    local Ambient = Light:Toggle({ Name = "Ambient", Flag = "world_ambient" }):Settings("Ambient", 230)
+    pickColor(Ambient, "Indoor", "world_ambient_in", Color3.fromRGB(150, 150, 170))
+    pickColor(Ambient, "Outdoor", "world_ambient_out", Color3.fromRGB(170, 170, 190))
+    local Shift = Light:Toggle({ Name = "Colour shift", Flag = "world_shift", Tooltip = "Tints the light that hits surfaces facing the sky (top) and the ground (bottom)" }):Settings("Colour shift", 230)
+    pickColor(Shift, "Top", "world_shift_top", Color3.fromRGB(255, 170, 90))
+    pickColor(Shift, "Bottom", "world_shift_bottom", Color3.fromRGB(60, 80, 140))
+    local EnvLight = Light:Toggle({ Name = "Environment light", Flag = "world_env" }):Settings("Environment light", 230)
+    EnvLight:Slider({ Name = "Diffuse", Flag = "world_env_diffuse", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
+    EnvLight:Slider({ Name = "Specular", Flag = "world_env_specular", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
 
     local Quick = Env:Section({ Name = "Quick toggles", Side = 1, Icon = "zap" })
     Quick:Toggle({ Name = "Full bright", Flag = "world_fullbright", Tooltip = "Overrides lighting values while on" })
@@ -3305,35 +3580,39 @@ do
     Quick:Toggle({ Name = "Remove sky", Flag = "world_nosky" })
 
     local Atmo = Env:Section({ Name = "Fog and atmosphere", Side = 2, Icon = "cloud" })
-    Atmo:Toggle({ Name = "Custom fog", Flag = "world_fog" }):Colorpicker({ Name = "Fog", Flag = "world_fog_color", Default = Color3.fromRGB(180, 190, 210) })
-    Atmo:Slider({ Name = "Fog start", Flag = "world_fog_start", Min = 0, Max = 2000, Default = 0, Decimals = 1, Suffix = " studs" })
-    Atmo:Slider({ Name = "Fog end", Flag = "world_fog_end", Min = 10, Max = 5000, Default = 1500, Decimals = 1, Suffix = " studs" })
-    Atmo:Toggle({ Name = "Fog gradient", Flag = "world_fog_grad", Tooltip = "Fades the fog colour between the fog colour above and this one" }):Colorpicker({ Name = "Second fog", Flag = "world_fog_color2", Default = Color3.fromRGB(120, 70, 190) })
-    Atmo:Slider({ Name = "Gradient speed", Flag = "world_fog_grad_speed", Min = 0.1, Max = 6, Default = 1, Decimals = 0.1 })
-    Atmo:Toggle({ Name = "Atmosphere", Flag = "world_atmos" }):Colorpicker({ Name = "Colour", Flag = "world_atmos_color", Default = Color3.fromRGB(199, 199, 199) }):Colorpicker({ Name = "Decay", Flag = "world_atmos_decay", Default = Color3.fromRGB(106, 112, 125) })
-    Atmo:Slider({ Name = "Density", Flag = "world_atmos_density", Min = 0, Max = 1, Default = 0.3, Decimals = 0.01 })
-    Atmo:Slider({ Name = "Glare", Flag = "world_atmos_glare", Min = 0, Max = 10, Default = 0, Decimals = 0.01 })
-    Atmo:Slider({ Name = "Haze", Flag = "world_atmos_haze", Min = 0, Max = 10, Default = 0, Decimals = 0.01 })
-    Atmo:Toggle({ Name = "Mood preset", Flag = "world_sky", Tooltip = "Sets the time of day and atmosphere colours together" })
-    Atmo:Dropdown({ Name = "Preset", Flag = "world_sky_preset", Items = { "Night", "Sunset", "Overcast", "Dusk" }, Default = "Night" })
+    local Fog = Atmo:Toggle({ Name = "Custom fog", Flag = "world_fog" }):Settings("Custom fog", 230)
+    pickColor(Fog, "Fog", "world_fog_color", Color3.fromRGB(180, 190, 210))
+    Fog:Slider({ Name = "Fog start", Flag = "world_fog_start", Min = 0, Max = 2000, Default = 0, Decimals = 1, Suffix = " studs" })
+    Fog:Slider({ Name = "Fog end", Flag = "world_fog_end", Min = 10, Max = 5000, Default = 1500, Decimals = 1, Suffix = " studs" })
+    local FogGrad = Atmo:Toggle({ Name = "Fog gradient", Flag = "world_fog_grad", Tooltip = "Fades the fog colour between the fog colour above and this one" }):Settings("Fog gradient", 230)
+    pickColor(FogGrad, "Second fog", "world_fog_color2", Color3.fromRGB(120, 70, 190))
+    FogGrad:Slider({ Name = "Gradient speed", Flag = "world_fog_grad_speed", Min = 0.1, Max = 6, Default = 1, Decimals = 0.1 })
+    local Atmos = Atmo:Toggle({ Name = "Atmosphere", Flag = "world_atmos" }):Settings("Atmosphere", 230)
+    pickColor(Atmos, "Colour", "world_atmos_color", Color3.fromRGB(199, 199, 199))
+    pickColor(Atmos, "Decay", "world_atmos_decay", Color3.fromRGB(106, 112, 125))
+    Atmos:Slider({ Name = "Density", Flag = "world_atmos_density", Min = 0, Max = 1, Default = 0.3, Decimals = 0.01 })
+    Atmos:Slider({ Name = "Glare", Flag = "world_atmos_glare", Min = 0, Max = 10, Default = 0, Decimals = 0.01 })
+    Atmos:Slider({ Name = "Haze", Flag = "world_atmos_haze", Min = 0, Max = 10, Default = 0, Decimals = 0.01 })
+    Atmo:Toggle({ Name = "Mood preset", Flag = "world_sky", Tooltip = "Sets the time of day and atmosphere colours together" }):Settings("Mood preset", 200):Dropdown({ Name = "Preset", Flag = "world_sky_preset", Items = { "Night", "Sunset", "Overcast", "Dusk" }, Default = "Night" })
 
     local SkySub = Subs.Sky
     local Box = SkySub:Section({ Name = "Skybox", Side = 1, Icon = "moon" })
-    Box:Toggle({ Name = "Custom skybox", Flag = "world_skybox", Tooltip = "Replaces the sky textures; the original sky comes back when this is off" })
-    Box:Dropdown({ Name = "Skybox", Flag = "world_sky_box", Items = SKY_CHOICES, Default = SKY_CHOICES[1] })
-    Box:Input({ Name = "Custom ids", Flag = "world_sky_custom", Placeholder = "1 image id, or 6: up down front back left right" })
-    Box:Toggle({ Name = "Rotate skybox", Flag = "world_sky_spin" })
-    Box:Slider({ Name = "Rotation speed", Flag = "world_sky_spin_speed", Min = -60, Max = 60, Default = 6, Decimals = 0.1, Suffix = " deg/s" })
+    local Skybox = Box:Toggle({ Name = "Custom skybox", Flag = "world_skybox", Tooltip = "Replaces the sky textures; the original sky comes back when this is off" }):Settings("Custom skybox", 230)
+    Skybox:Dropdown({ Name = "Skybox", Flag = "world_sky_box", Items = SKY_CHOICES, Default = SKY_CHOICES[1] })
+    Skybox:Input({ Name = "Custom ids", Flag = "world_sky_custom", Placeholder = "1 image id, or 6: up down front back left right" })
+    Skybox:Toggle({ Name = "Rotate skybox", Flag = "world_sky_spin" })
+    Skybox:Slider({ Name = "Rotation speed", Flag = "world_sky_spin_speed", Min = -60, Max = 60, Default = 6, Decimals = 0.1, Suffix = " deg/s" })
     local Bodies = SkySub:Section({ Name = "Sun, moon and stars", Side = 2, Icon = "sun" })
-    Bodies:Toggle({ Name = "Override", Flag = "world_sky_objects" })
-    Bodies:Slider({ Name = "Stars", Flag = "world_sky_stars", Min = 0, Max = 5000, Default = 3000, Decimals = 1 })
-    Bodies:Slider({ Name = "Sun size", Flag = "world_sky_sun", Min = 0, Max = 60, Default = 21, Decimals = 1, Suffix = " deg" })
-    Bodies:Slider({ Name = "Moon size", Flag = "world_sky_moon", Min = 0, Max = 60, Default = 11, Decimals = 1, Suffix = " deg" })
-    Bodies:Toggle({ Name = "Show sun and moon", Flag = "world_sky_bodies", Default = true })
+    local Sky = Bodies:Toggle({ Name = "Override", Flag = "world_sky_objects" }):Settings("Sun, moon and stars", 230)
+    Sky:Slider({ Name = "Stars", Flag = "world_sky_stars", Min = 0, Max = 5000, Default = 3000, Decimals = 1 })
+    Sky:Slider({ Name = "Sun size", Flag = "world_sky_sun", Min = 0, Max = 60, Default = 21, Decimals = 1, Suffix = " deg" })
+    Sky:Slider({ Name = "Moon size", Flag = "world_sky_moon", Min = 0, Max = 60, Default = 11, Decimals = 1, Suffix = " deg" })
+    Sky:Toggle({ Name = "Show sun and moon", Flag = "world_sky_bodies", Default = true })
     local Cloud = SkySub:Section({ Name = "Clouds", Side = 2, Icon = "cloud" })
-    Cloud:Toggle({ Name = "Clouds", Flag = "world_clouds" }):Colorpicker({ Name = "Clouds", Flag = "world_clouds_color", Default = WHITE })
-    Cloud:Slider({ Name = "Cover", Flag = "world_clouds_cover", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
-    Cloud:Slider({ Name = "Density", Flag = "world_clouds_density", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
+    local Clouds = Cloud:Toggle({ Name = "Clouds", Flag = "world_clouds" }):Settings("Clouds", 230)
+    pickColor(Clouds, "Clouds", "world_clouds_color", WHITE)
+    Clouds:Slider({ Name = "Cover", Flag = "world_clouds_cover", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
+    Clouds:Slider({ Name = "Density", Flag = "world_clouds_density", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
 
     local Wx = Subs.Weather:Section({ Name = "Weather", Side = 1, Icon = "cloud" })
     Wx:Toggle({ Name = "Enabled", Flag = "world_weather", Tooltip = "Particles follow you in map-anchored cells and only fall where the sky is open above" })
@@ -3341,6 +3620,7 @@ do
     Wx:Slider({ Name = "Density", Flag = "world_weather_amount", Min = 0.1, Max = 3, Default = 1, Decimals = 0.05 })
     Wx:Slider({ Name = "Speed", Flag = "world_weather_speed", Min = 0.2, Max = 3, Default = 1, Decimals = 0.05 })
     Wx:Slider({ Name = "Particle size", Flag = "world_weather_size", Min = 0.3, Max = 3, Default = 1, Decimals = 0.05 })
+    Wx:Toggle({ Name = "Cover whole map", Flag = "world_weather_map", Tooltip = "Spreads the cells over the whole map instead of around you; cells grow so the count stays under the cap" }):Settings("Whole map", 200):Slider({ Name = "Max cells", Flag = "world_weather_map_cap", Min = 16, Max = 400, Default = 100, Decimals = 1, Tooltip = "More cells = finer roof detection but more emitters" })
     Wx:Slider({ Name = "Range", Flag = "world_weather_range", Min = 1, Max = 3, Default = 2, Decimals = 1, Suffix = " cells", Tooltip = "Rings of 28 stud cells around you" })
     Wx:Slider({ Name = "Spawn height", Flag = "world_weather_height", Min = 10, Max = 80, Default = 35, Decimals = 1, Suffix = " studs" })
     local Wind = Subs.Weather:Section({ Name = "Wind and colour", Side = 2, Icon = "cloud" })
@@ -3350,55 +3630,56 @@ do
 
     local Fx = Subs.Effects
     local Screen = Fx:Section({ Name = "Colour correction", Side = 1, Icon = "palette" })
-    Screen:Toggle({ Name = "Enabled", Flag = "world_cc" }):Colorpicker({ Name = "Tint", Flag = "world_cc_tint", Default = WHITE })
-    Screen:Slider({ Name = "Saturation", Flag = "world_cc_sat", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
-    Screen:Slider({ Name = "Contrast", Flag = "world_cc_con", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
-    Screen:Slider({ Name = "Brightness", Flag = "world_cc_bri", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
+    local Cc = Screen:Toggle({ Name = "Enabled", Flag = "world_cc" }):Settings("Colour correction", 230)
+    pickColor(Cc, "Tint", "world_cc_tint", WHITE)
+    Cc:Slider({ Name = "Saturation", Flag = "world_cc_sat", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
+    Cc:Slider({ Name = "Contrast", Flag = "world_cc_con", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
+    Cc:Slider({ Name = "Brightness", Flag = "world_cc_bri", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
     local Bloom = Fx:Section({ Name = "Bloom and sun rays", Side = 2, Icon = "sun" })
-    Bloom:Toggle({ Name = "Bloom", Flag = "world_bloom" })
-    Bloom:Slider({ Name = "Intensity", Flag = "world_bloom_i", Min = 0, Max = 3, Default = 0.4, Decimals = 0.01 })
-    Bloom:Slider({ Name = "Size", Flag = "world_bloom_s", Min = 0, Max = 56, Default = 24, Decimals = 0.1 })
-    Bloom:Slider({ Name = "Threshold", Flag = "world_bloom_t", Min = 0, Max = 2, Default = 0.95, Decimals = 0.01 })
-    Bloom:Toggle({ Name = "Sun rays", Flag = "world_rays" })
-    Bloom:Slider({ Name = "Ray intensity", Flag = "world_rays_i", Min = 0, Max = 1, Default = 0.25, Decimals = 0.01 })
-    Bloom:Slider({ Name = "Ray spread", Flag = "world_rays_s", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
+    local Bl = Bloom:Toggle({ Name = "Bloom", Flag = "world_bloom" }):Settings("Bloom", 230)
+    Bl:Slider({ Name = "Intensity", Flag = "world_bloom_i", Min = 0, Max = 3, Default = 0.4, Decimals = 0.01 })
+    Bl:Slider({ Name = "Size", Flag = "world_bloom_s", Min = 0, Max = 56, Default = 24, Decimals = 0.1 })
+    Bl:Slider({ Name = "Threshold", Flag = "world_bloom_t", Min = 0, Max = 2, Default = 0.95, Decimals = 0.01 })
+    local Rays = Bloom:Toggle({ Name = "Sun rays", Flag = "world_rays" }):Settings("Sun rays", 230)
+    Rays:Slider({ Name = "Ray intensity", Flag = "world_rays_i", Min = 0, Max = 1, Default = 0.25, Decimals = 0.01 })
+    Rays:Slider({ Name = "Ray spread", Flag = "world_rays_s", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
     local Blur = Fx:Section({ Name = "Depth of field and blur", Side = 1, Icon = "scan" })
-    Blur:Toggle({ Name = "Depth of field", Flag = "world_dof" })
-    Blur:Slider({ Name = "Focus distance", Flag = "world_dof_focus", Min = 0, Max = 500, Default = 50, Decimals = 1, Suffix = " studs" })
-    Blur:Slider({ Name = "In focus radius", Flag = "world_dof_radius", Min = 0, Max = 200, Default = 30, Decimals = 1, Suffix = " studs" })
-    Blur:Slider({ Name = "Near blur", Flag = "world_dof_near", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
-    Blur:Slider({ Name = "Far blur", Flag = "world_dof_far", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
-    Blur:Toggle({ Name = "Screen blur", Flag = "world_blur" })
-    Blur:Slider({ Name = "Blur size", Flag = "world_blur_size", Min = 0, Max = 56, Default = 8, Decimals = 0.1 })
+    local Dof = Blur:Toggle({ Name = "Depth of field", Flag = "world_dof" }):Settings("Depth of field", 230)
+    Dof:Slider({ Name = "Focus distance", Flag = "world_dof_focus", Min = 0, Max = 500, Default = 50, Decimals = 1, Suffix = " studs" })
+    Dof:Slider({ Name = "In focus radius", Flag = "world_dof_radius", Min = 0, Max = 200, Default = 30, Decimals = 1, Suffix = " studs" })
+    Dof:Slider({ Name = "Near blur", Flag = "world_dof_near", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
+    Dof:Slider({ Name = "Far blur", Flag = "world_dof_far", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
+    Blur:Toggle({ Name = "Screen blur", Flag = "world_blur" }):Settings("Screen blur", 200):Slider({ Name = "Blur size", Flag = "world_blur_size", Min = 0, Max = 56, Default = 8, Decimals = 0.1 })
     local Rainbow = Env:Section({ Name = "Colour cycle", Side = 2, Icon = "palette" })
-    Rainbow:Toggle({ Name = "Rainbow", Flag = "world_rainbow", Tooltip = "Cycles the chosen colours through the rainbow" })
-    Rainbow:Dropdown({ Name = "Applies to", Flag = "world_rainbow_targets", Items = { "Ambient", "Fog", "Colour shift", "Atmosphere" }, Multi = true, Default = { "Ambient" } })
-    Rainbow:Slider({ Name = "Speed", Flag = "world_rainbow_speed", Min = 0.01, Max = 1, Default = 0.1, Decimals = 0.01 })
-    Rainbow:Slider({ Name = "Saturation", Flag = "world_rainbow_sat", Min = 0, Max = 1, Default = 0.7, Decimals = 0.01 })
+    local Rb = Rainbow:Toggle({ Name = "Rainbow", Flag = "world_rainbow", Tooltip = "Cycles the chosen colours through the rainbow" }):Settings("Rainbow", 230)
+    Rb:Dropdown({ Name = "Applies to", Flag = "world_rainbow_targets", Items = { "Ambient", "Fog", "Colour shift", "Atmosphere" }, Multi = true, Default = { "Ambient" } })
+    Rb:Slider({ Name = "Speed", Flag = "world_rainbow_speed", Min = 0.01, Max = 1, Default = 0.1, Decimals = 0.01 })
+    Rb:Slider({ Name = "Saturation", Flag = "world_rainbow_sat", Min = 0, Max = 1, Default = 0.7, Decimals = 0.01 })
 
     local Cam = Subs.Camera
     local Fov = Cam:Section({ Name = "Camera", Side = 1, Icon = "camera" })
-    Fov:Toggle({ Name = "Field of view", Flag = "world_fov", Tooltip = "Sets the game camera's base FOV; aiming zoom stays relative to it" })
-    Fov:Slider({ Name = "FOV", Flag = "world_fov_v", Min = 60, Max = 120, Default = 90, Decimals = 1, Suffix = " deg" })
-    Fov:Toggle({ Name = "Dynamic scope FOV", Flag = "world_fov_dyn", Tooltip = "Blends smoothly from the FOV above to the scoped FOV below while you aim" })
-    Fov:Slider({ Name = "Scoped FOV", Flag = "world_fov_ads", Min = 20, Max = 120, Default = 60, Decimals = 1, Suffix = " deg" })
-    Fov:Slider({ Name = "Blend speed", Flag = "world_fov_speed", Min = 2, Max = 30, Default = 10, Decimals = 0.1 })
-    Fov:Slider({ Name = "Scope zoom multiplier", Flag = "world_fov_mult", Min = 0.5, Max = 3, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Scales the game's own scope zoom; 1 leaves it unchanged" })
+    local FovSet = Fov:Toggle({ Name = "Field of view", Flag = "world_fov", Tooltip = "Sets the game camera's base FOV; aiming zoom stays relative to it" }):Settings("Field of view", 230)
+    FovSet:Slider({ Name = "FOV", Flag = "world_fov_v", Min = 60, Max = 120, Default = 90, Decimals = 1, Suffix = " deg" })
+    FovSet:Toggle({ Name = "Dynamic scope FOV", Flag = "world_fov_dyn", Tooltip = "Blends smoothly from the FOV above to the scoped FOV below while you aim" })
+    FovSet:Slider({ Name = "Scoped FOV", Flag = "world_fov_ads", Min = 20, Max = 120, Default = 60, Decimals = 1, Suffix = " deg" })
+    FovSet:Slider({ Name = "Blend speed", Flag = "world_fov_speed", Min = 2, Max = 30, Default = 10, Decimals = 0.1 })
+    FovSet:Slider({ Name = "Scope zoom multiplier", Flag = "world_fov_mult", Min = 0.5, Max = 3, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Scales the game's own scope zoom; 1 leaves it unchanged" })
     local Cross = Cam:Section({ Name = "Crosshair", Side = 2, Icon = "crosshair" })
-    Cross:Toggle({ Name = "Custom crosshair", Flag = "cross_on" }):Colorpicker({ Name = "Crosshair", Flag = "cross_color", Default = Color3.fromRGB(120, 255, 170), Alpha = 0 })
-    Cross:Toggle({ Name = "Attach to barrel", Flag = "cross_barrel", Tooltip = "Draws the crosshair at the weapon barrel instead of the screen centre" })
-    Cross:Dropdown({ Name = "Attach point", Flag = "cross_barrel_pt", Items = { "Aim hit", "Muzzle" }, Default = "Aim hit", Tooltip = "Aim hit is where the barrel is pointing; Muzzle is the barrel tip" })
-    Cross:Slider({ Name = "Length", Flag = "cross_len", Min = 1, Max = 40, Default = 8, Decimals = 1, Suffix = " px" })
-    Cross:Slider({ Name = "Thickness", Flag = "cross_thick", Min = 1, Max = 6, Default = 2, Decimals = 1, Suffix = " px" })
-    Cross:Slider({ Name = "Gap", Flag = "cross_gap", Min = 0, Max = 30, Default = 5, Decimals = 1, Suffix = " px" })
-    Cross:Toggle({ Name = "Outline", Flag = "cross_outline", Default = true })
-    Cross:Toggle({ Name = "Centre dot", Flag = "cross_dot" })
-    Cross:Toggle({ Name = "T style", Flag = "cross_t", Tooltip = "Leaves out the top arm" })
-    Cross:Toggle({ Name = "Spin", Flag = "cross_spin" })
-    Cross:Slider({ Name = "Spin speed", Flag = "cross_spin_speed", Min = -360, Max = 360, Default = 90, Decimals = 1, Suffix = " deg/s" })
-    Cross:Toggle({ Name = "Pulse gap", Flag = "cross_pulse" })
-    Cross:Slider({ Name = "Pulse range", Flag = "cross_pulse_range", Min = 0, Max = 30, Default = 8, Decimals = 1, Suffix = " px" })
-    Cross:Slider({ Name = "Pulse speed", Flag = "cross_pulse_speed", Min = 0.2, Max = 10, Default = 3, Decimals = 0.1 })
+    local Ch = Cross:Toggle({ Name = "Custom crosshair", Flag = "cross_on" }):Settings("Crosshair", 230)
+    pickColor(Ch, "Crosshair", "cross_color", Color3.fromRGB(120, 255, 170))
+    Ch:Toggle({ Name = "Attach to barrel", Flag = "cross_barrel", Tooltip = "Draws the crosshair at the weapon barrel instead of the screen centre" })
+    Ch:Dropdown({ Name = "Attach point", Flag = "cross_barrel_pt", Items = { "Aim hit", "Muzzle" }, Default = "Aim hit", Tooltip = "Aim hit is where the barrel is pointing; Muzzle is the barrel tip" })
+    Ch:Slider({ Name = "Length", Flag = "cross_len", Min = 1, Max = 40, Default = 8, Decimals = 1, Suffix = " px" })
+    Ch:Slider({ Name = "Thickness", Flag = "cross_thick", Min = 1, Max = 6, Default = 2, Decimals = 1, Suffix = " px" })
+    Ch:Slider({ Name = "Gap", Flag = "cross_gap", Min = 0, Max = 30, Default = 5, Decimals = 1, Suffix = " px" })
+    Ch:Toggle({ Name = "Outline", Flag = "cross_outline", Default = true })
+    Ch:Toggle({ Name = "Centre dot", Flag = "cross_dot" })
+    Ch:Toggle({ Name = "T style", Flag = "cross_t", Tooltip = "Leaves out the top arm" })
+    local Spin = Cross:Toggle({ Name = "Spin", Flag = "cross_spin" }):Settings("Spin", 200)
+    Spin:Slider({ Name = "Spin speed", Flag = "cross_spin_speed", Min = -360, Max = 360, Default = 90, Decimals = 1, Suffix = " deg/s" })
+    local Pulse = Cross:Toggle({ Name = "Pulse gap", Flag = "cross_pulse" }):Settings("Pulse gap", 230)
+    Pulse:Slider({ Name = "Pulse range", Flag = "cross_pulse_range", Min = 0, Max = 30, Default = 8, Decimals = 1, Suffix = " px" })
+    Pulse:Slider({ Name = "Pulse speed", Flag = "cross_pulse_speed", Min = 0.2, Max = 10, Default = 3, Decimals = 0.1 })
 
     local Fb = Subs.Feedback
     local Marker, HitSnd, KillSnd = Fb:MultiSection({ Sections = { "Hit marker", "Hit sound", "Kill sound" }, Side = 1 })
@@ -3487,6 +3768,33 @@ do
     SaveManager:BuildConfigSection(ConfigSub)
 end
 
+function PhantomCam.load()
+    getgenv().PhantomCamHost = true
+    local ok, api = pcall(loadRemote, "phantomcam.lua")
+    getgenv().PhantomCamHost = nil
+    if not (ok and type(api) == "table" and type(api.Sync) == "function") then return false end
+    PhantomCam.api = api
+    Util.onUnload(api.Destroy)
+    return true
+end
+
+function PhantomCam.read(name, default)
+    return flag(name == "on" and "misc_phantomcam" or "misc_phantomcam_" .. name, default)
+end
+
+function PhantomCam.sync(now)
+    if not PhantomCam.api then
+        if not flag("misc_phantomcam", false) or now < PhantomCam.retryAt then return end
+        PhantomCam.retryAt = now + 10
+        if not PhantomCam.load() then
+            pcall(function() Library:Notify("PhantomCam could not be loaded from the repo", 5) end)
+            pcall(function() Toggles.misc_phantomcam:SetValue(false) end)
+            return
+        end
+    end
+    PhantomCam.api.Sync(PhantomCam.read)
+end
+
 local Loop = { last = os.clock(), labelAt = 0, retryAt = 0, retryDelay = 3, hookAt = 0, frames = 0, fpsAt = os.clock(), fps = 60 }
 
 function Loop.step()
@@ -3502,6 +3810,7 @@ function Loop.step()
 
     local cam = Game.camera()
     if not cam then return end
+    Util.guard("phantomcam", PhantomCam.sync, now)
     Visible.refresh(now)
     local center = cam.ViewportSize / 2
 
@@ -3562,7 +3871,7 @@ function Loop.step()
         if Status.weapon and Loop.weaponText ~= text then Loop.weaponText = text; Status.weapon:SetText(text) end
         text = "Target: none"
         if Legit.target and Legit.record then
-            text = string.format("Target: %s | %d hp | %dm", Legit.record.name, math.floor(Legit.record.health), math.floor((Legit.record.torso.Position - cam.CFrame.Position).Magnitude * STUDS_TO_M))
+            text = string.format("Target: %s | %d hp | %dm", Legit.record.name, math.floor(Legit.record.health), math.floor((Legit.record.torso.Position - Game.eye(cam).Position).Magnitude * STUDS_TO_M))
         end
         if Status.target and Loop.targetText ~= text then Loop.targetText = text; Status.target:SetText(text) end
         text = string.format("Recoil: %.1f / %.1f deg", math.deg(Recoil.shown.X), math.deg(Recoil.shown.Y))
@@ -3572,10 +3881,18 @@ end
 
 Nades.hook()
 
-Util.track(RunService.RenderStepped:Connect(function()
+local function loopFrame()
     local ok, problem = pcall(Loop.step)
     if not ok then Util.note("loop" .. tostring(problem), "frame:", problem) end
-end))
+end
+
+local LOOP_BIND = Util.randomName()
+local okCameraPriority, cameraPriority = pcall(function() return Enum.RenderPriority.Camera.Value end)
+if okCameraPriority and type(cameraPriority) == "number" and pcall(function() RunService:BindToRenderStep(LOOP_BIND, cameraPriority + 2, loopFrame) end) then
+    Util.onUnload(function() pcall(function() RunService:UnbindFromRenderStep(LOOP_BIND) end) end)
+else
+    Util.track(RunService.RenderStepped:Connect(loopFrame))
+end
 
 pcall(function() SaveManager:LoadAutoloadConfig() end)
 pcall(function() Library:SetWatermark("Aster") end)

@@ -530,12 +530,17 @@ function Game.eye(cam)
     return cam.CFrame
 end
 
+Game.mapSnap = setmetatable({}, { __mode = "k" })
+
 function Game.isGlass(part)
     if not flag("vis_ignore_glass", true) then return false end
     local ok, glass = pcall(function()
-        if part.Material == Enum.Material.Glass then return true end
+        local snap = Game.mapSnap[part]
+        local material = snap and snap.Material or part.Material
+        local transparency = snap and snap.Transparency or part.Transparency
+        if material == Enum.Material.Glass then return true end
         local name = string.lower(part.Name)
-        return part.Transparency > 0 and (string.find(name, "glass", 1, true) ~= nil or string.find(name, "window", 1, true) ~= nil)
+        return transparency > 0 and (string.find(name, "glass", 1, true) ~= nil or string.find(name, "window", 1, true) ~= nil)
     end)
     return ok and glass == true
 end
@@ -1853,6 +1858,110 @@ function World.cloudObject(enabled)
     return nil
 end
 
+World.mapLight = { list = nil, cursor = 1, added = {}, sig = nil, map = nil, conn = nil }
+
+function World.mapSpec()
+    if not on("world_map") then return nil end
+    local neon = on("world_map_neon") == true
+    local material = neon and "Neon" or val("world_map_mat")
+    if material == "Default" then material = nil end
+    local k = 0
+    if on("world_map_tint_on") or neon then
+        k = val("world_map_tint_k") or 0
+        if neon then k = math.max(k, 0.6) end
+    end
+    local trans = on("world_map_trans_on") and val("world_map_trans") or 0
+    local refl = on("world_map_refl_on") and val("world_map_refl") or nil
+    if not (material or k > 0 or trans > 0 or refl) then return nil end
+    local tint = val("world_map_tint") or Color3.new(1, 1, 1)
+    return { tint = tint, k = k, material = material, trans = trans, refl = refl,
+        sig = string.format("%s|%s|%.3f|%.3f|%s", tostring(tint), tostring(material), k, trans, tostring(refl)) }
+end
+
+function World.mapPart(part, spec)
+    local isPart = false
+    pcall(function() isPart = part:IsA("BasePart") end)
+    if not isPart then return end
+    local snap = Game.mapSnap[part]
+    if spec and not snap then
+        snap = { Color = propGet(part, "Color"), Material = propGet(part, "Material"), Transparency = propGet(part, "Transparency"), Reflectance = propGet(part, "Reflectance"), CanCollide = propGet(part, "CanCollide") }
+        if snap.Color == nil or snap.Transparency == nil then return end
+        Game.mapSnap[part] = snap
+    end
+    if not snap then return end
+    local color, material, transparency, reflectance = snap.Color, snap.Material, snap.Transparency, snap.Reflectance
+    if spec then
+        if spec.k > 0 then color = Util.lerpColor(snap.Color, spec.tint, spec.k) end
+        if spec.material then
+            local ok, enum = pcall(function() return Enum.Material[spec.material] end)
+            if ok and enum then material = enum end
+        end
+        if spec.trans > 0 and snap.CanCollide == true then transparency = math.max(snap.Transparency, spec.trans) end
+        if spec.refl then reflectance = spec.refl end
+    else
+        Game.mapSnap[part] = nil
+    end
+    if propGet(part, "Color") ~= color then propSet(part, "Color", color) end
+    if material ~= nil and propGet(part, "Material") ~= material then propSet(part, "Material", material) end
+    if propGet(part, "Transparency") ~= transparency then propSet(part, "Transparency", transparency) end
+    if reflectance ~= nil and propGet(part, "Reflectance") ~= reflectance then propSet(part, "Reflectance", reflectance) end
+end
+
+function World.mapUnhook()
+    local state = World.mapLight
+    if state.conn then pcall(function() state.conn:Disconnect() end) end
+    state.conn, state.added = nil, {}
+end
+
+function World.stepMap()
+    local state = World.mapLight
+    local spec = World.mapSpec()
+    local map = Workspace:FindFirstChild("Map")
+    if map ~= state.map then
+        World.mapUnhook()
+        state.map, state.sig = map, nil
+    end
+    if spec and map and not state.conn then
+        local ok, conn = pcall(function()
+            return map.DescendantAdded:Connect(function(object)
+                if #state.added < 5000 then state.added[#state.added + 1] = object end
+            end)
+        end)
+        if ok and conn then state.conn = conn end
+    elseif not spec and state.conn then
+        World.mapUnhook()
+    end
+    local sig = spec and map and spec.sig or (not spec and next(Game.mapSnap) and "restore") or nil
+    if sig ~= state.sig then
+        state.sig, state.cursor, state.list = sig, 1, nil
+        if sig == "restore" then
+            state.list = {}
+            for part in pairs(Game.mapSnap) do state.list[#state.list + 1] = part end
+        elseif sig then
+            local ok, all = pcall(function() return map:GetDescendants() end)
+            state.list = ok and all or {}
+        end
+    end
+    if not sig then return end
+    local budget = 300
+    while budget > 0 and #state.added > 0 do
+        World.mapPart(table.remove(state.added), spec)
+        budget = budget - 1
+    end
+    local list = state.list
+    while list and budget > 0 and state.cursor <= #list do
+        World.mapPart(list[state.cursor], spec)
+        state.cursor, budget = state.cursor + 1, budget - 1
+    end
+end
+
+function World.dropMap()
+    World.mapUnhook()
+    local state = World.mapLight
+    state.list, state.sig, state.map = nil, nil, nil
+    for part in pairs(Game.mapSnap) do World.mapPart(part, nil) end
+end
+
 function World.apply(dt, now)
     for _, props in pairs(want) do
         for prop in pairs(props) do props[prop] = nil end
@@ -1925,6 +2034,10 @@ function World.apply(dt, now)
             if atmos then put(atmos, "Color", Color3.fromRGB(140, 110, 200)); put(atmos, "Decay", Color3.fromRGB(40, 30, 80)) end
         end
     end
+    if on("world_map_shadow") then
+        put(Lighting, "GlobalShadows", on("world_map_shadow_on") ~= false)
+        put(Lighting, "ShadowSoftness", val("world_map_soft"))
+    end
     if on("world_noshadow") then put(Lighting, "GlobalShadows", false) end
     if on("world_nofog") then put(Lighting, "FogEnd", 1e9); put(Lighting, "FogStart", 1e9 - 1) end
     if on("world_fullbright") then
@@ -1950,6 +2063,7 @@ function World.apply(dt, now)
     end
 
     Util.guard("sky", World.stepSky, dt)
+    Util.guard("map-light", World.stepMap)
     local clouds = World.cloudObject(on("world_clouds") == true)
     if clouds then
         put(clouds, "Enabled", true)
@@ -2282,6 +2396,7 @@ Util.onUnload(function()
         for prop, old in pairs(saved) do propSet(object, prop, old) end
     end
     World.orig = {}
+    World.dropMap()
     if World.sky and not World.sky.Parent then pcall(function() World.sky.Parent = Lighting end) end
     if World.ownSky then pcall(function() World.ownSky:Destroy() end) end
     World.cloudObject(false)
@@ -3600,6 +3715,21 @@ do
     Atmos:Slider({ Name = "Glare", Flag = "world_atmos_glare", Min = 0, Max = 10, Default = 0, Decimals = 0.01 })
     Atmos:Slider({ Name = "Haze", Flag = "world_atmos_haze", Min = 0, Max = 10, Default = 0, Decimals = 0.01 })
     Atmo:Toggle({ Name = "Mood preset", Flag = "world_sky", Tooltip = "Sets the time of day and atmosphere colours together" }):Settings("Mood preset", 200):Dropdown({ Name = "Preset", Flag = "world_sky_preset", Items = { "Night", "Sunset", "Overcast", "Dusk" }, Default = "Night" })
+
+    local MapLight = Env:Section({ Name = "Map lighting", Side = 2, Icon = "palette" })
+    local MapShadow = MapLight:Toggle({ Name = "Map shadows", Flag = "world_map_shadow", Tooltip = "Global shadows and how soft they are; No shadows / Full bright still win" }):Settings("Map shadows", 230)
+    MapShadow:Toggle({ Name = "Shadows enabled", Flag = "world_map_shadow_on", Default = true })
+    MapShadow:Slider({ Name = "Shadow softness", Flag = "world_map_soft", Min = 0, Max = 1, Default = 0.2, Decimals = 0.01 })
+    local MapSurf = MapLight:Toggle({ Name = "Map surfaces", Flag = "world_map", Tooltip = "Recolours and restyles the map's parts; collision and sizes are never touched" }):Settings("Map surfaces", 240)
+    MapSurf:Toggle({ Name = "Colour tint", Flag = "world_map_tint_on" })
+    pickColor(MapSurf, "Tint", "world_map_tint", Color3.fromRGB(120, 170, 255))
+    MapSurf:Slider({ Name = "Tint strength", Flag = "world_map_tint_k", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
+    MapSurf:Dropdown({ Name = "Material", Flag = "world_map_mat", Items = { "Default", "SmoothPlastic", "Plastic", "Metal", "Neon", "Glass", "ForceField" }, Default = "Default" })
+    MapSurf:Toggle({ Name = "Neon map", Flag = "world_map_neon", Tooltip = "Neon material with the tint (at least 60% strength)" })
+    MapSurf:Toggle({ Name = "Transparency", Flag = "world_map_trans_on", Tooltip = "Only affects solid parts; walls still block shots and movement" })
+    MapSurf:Slider({ Name = "Map transparency", Flag = "world_map_trans", Min = 0, Max = 0.9, Default = 0.3, Decimals = 0.01 })
+    MapSurf:Toggle({ Name = "Reflectance", Flag = "world_map_refl_on" })
+    MapSurf:Slider({ Name = "Map reflectance", Flag = "world_map_refl", Min = 0, Max = 1, Default = 0.3, Decimals = 0.01 })
 
     local SkySub = Subs.Sky
     local Box = SkySub:Section({ Name = "Skybox", Side = 1, Icon = "moon" })

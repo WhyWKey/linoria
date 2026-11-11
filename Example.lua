@@ -64,6 +64,7 @@ end
 local Tabs = {
     Legit = Window:AddTab('Legit', 'crosshair'),
     Visuals = Window:AddTab('Visuals', 'eye'),
+    World = Window:AddTab('World', 'globe'),
     Misc = Window:AddTab('Misc', 'shapes'),
     Players = Window:AddTab('Players', 'users'),
     Settings = Window:AddTab('Settings', 'settings'),
@@ -131,8 +132,6 @@ end
 ----------------------------------------------------------------------
 -- Visuals: Enemy | Friendly | LocalPlayer
 ----------------------------------------------------------------------
-local Previews = {}
-
 local function ColorToggle(Parent, Idx, Text, Colors, Tooltip)
     Parent:AddToggle(Idx, { Text = Text, Default = false, Tooltip = Tooltip })
     local Toggle = Toggles[Idx]
@@ -196,30 +195,6 @@ local function BuildEsp(Sub, P, Label)
     return Box
 end
 
-local function LinkPreview(Preview, P)
-    Preview:Bind({
-        Name = Toggles[P .. 'Name'], NameColor = Options[P .. 'NameColor'],
-        Box = Toggles[P .. 'Box'], BoxColor = Options[P .. 'BoxColor'],
-        Health = Toggles[P .. 'Health'], HealthColor = Options[P .. 'HealthColor'], HealthLowColor = Options[P .. 'HealthColor2'],
-        HealthNumber = Toggles[P .. 'HealthNumber'],
-        Weapon = Toggles[P .. 'Weapon'], WeaponColor = Options[P .. 'WeaponColor'],
-        Flags = Toggles[P .. 'Flags'], FlagsColor = Options[P .. 'FlagsColor'],
-        Distance = Toggles[P .. 'Distance'], DistanceColor = Options[P .. 'DistanceColor'],
-        Chams = Toggles[P .. 'Chams'], ChamsColor = Options[P .. 'ChamsColor'], ChamsOutlineColor = Options[P .. 'ChamsColor2'],
-        ChamsTransparency = Options[P .. 'ChamsTransparency'], ChamsOutline = Toggles[P .. 'ChamsOutline'],
-        BoxStyle = Options[P .. 'BoxStyle'],
-    })
-    -- Transform form: dropdown value -> preview text
-    Preview:Link('FlagsText', Options[P .. 'FlagList'], function(Value)
-        local Out = {}
-        for Name, On in next, Value do
-            if On then Out[#Out + 1] = Name:upper() end
-        end
-        table.sort(Out)
-        return Out
-    end)
-end
-
 do
     local Enemy = Tabs.Visuals:AddSubTab('Enemy', 'swords')
     local Friendly = Tabs.Visuals:AddSubTab('Friendly', 'shield')
@@ -228,12 +203,6 @@ do
     BuildEsp(Enemy, 'Enemy', 'Enemy')
     BuildEsp(Friendly, 'Friendly', 'Friendly')
     BuildEsp(Local, 'Self', 'LocalPlayer')
-
-    local PreviewBox = Enemy:AddRightGroupbox('ESP Preview', 'scan')
-    Previews.Enemy = PreviewBox:AddPreview({ Height = 260, Title = 'Enemy preview' })
-    LinkPreview(Previews.Enemy, 'Enemy')
-    PreviewBox:AddSlider('PreviewHealth', { Text = 'Preview health', Default = 78, Min = 0, Max = 100, Rounding = 0, Suffix = '%' })
-    Options.PreviewHealth:OnChanged(function() Previews.Enemy:SetHealth(Options.PreviewHealth.Value) end)
 
     local World = Enemy:AddRightTabbox()
     local Misc = World:AddTab('Misc')
@@ -489,6 +458,266 @@ Env.AsterExampleUnload = function()
 end
 
 ----------------------------------------------------------------------
+-- World: Lighting / Camera / Workspace overrides (restored when a feature is switched off)
+----------------------------------------------------------------------
+local WorldState = { Orig = {}, Sky = nil, Atmos = nil, OwnAtmos = false, Cross = nil, Last = 0 }
+
+local function Svc(Name)
+    local Ok, Result = pcall(function() return game:GetService(Name) end)
+    return Ok and Result or nil
+end
+local Lighting, Workspace, RunService = Svc('Lighting'), Svc('Workspace'), Svc('RunService')
+
+local function Cam()
+    local Ok, Result = pcall(function() return Workspace.CurrentCamera end)
+    return Ok and Result or nil
+end
+
+local function WGet(Obj, Prop)
+    local Ok, Value = pcall(function() return Obj[Prop] end)
+    if Ok then return Value end
+end
+
+local function WSet(Obj, Prop, Value)
+    pcall(function() Obj[Prop] = Value end)
+end
+
+-- Desired values are collected per frame; anything no longer wanted goes back to its saved original.
+local function WorldApply(Force)
+    if Library.Unloaded and not Force then return end
+    local Want = {}
+    local function Put(Obj, Prop, Value)
+        if not Obj then return end
+        Want[Obj] = Want[Obj] or {}
+        Want[Obj][Prop] = Value
+    end
+    local function On(Idx) return Toggles[Idx] and Toggles[Idx].Value end
+    local function Val(Idx) return Options[Idx] and Options[Idx].Value end
+
+    if Lighting then
+        local Atmos = WorldState.Atmos
+        if not (Atmos and Atmos.Parent) then
+            Atmos = Lighting:FindFirstChildOfClass('Atmosphere')
+            WorldState.Atmos = Atmos
+        end
+        if On('WorldAtmosphere') and not Atmos then
+            local Ok, New = pcall(Instance.new, 'Atmosphere')
+            if Ok and New then
+                pcall(function() New.Parent = Lighting end)
+                WorldState.Atmos, WorldState.OwnAtmos, Atmos = New, true, New
+            end
+        end
+
+        if On('WorldTime') then Put(Lighting, 'ClockTime', Val('WorldTimeValue')) end
+        if On('WorldAmbient') then
+            Put(Lighting, 'Ambient', Options.WorldAmbientColor.Value)
+            Put(Lighting, 'OutdoorAmbient', Options.WorldOutdoorColor.Value)
+        end
+        if On('WorldFog') then
+            Put(Lighting, 'FogStart', Val('WorldFogStart'))
+            Put(Lighting, 'FogEnd', math.max(Val('WorldFogEnd'), Val('WorldFogStart') + 1))
+            Put(Lighting, 'FogColor', Options.WorldFogColor.Value)
+        end
+        if On('WorldBrightness') then Put(Lighting, 'Brightness', Val('WorldBrightnessValue')) end
+        if On('WorldExposure') then Put(Lighting, 'ExposureCompensation', Val('WorldExposureValue')) end
+        if On('WorldAtmosphere') and Atmos then Put(Atmos, 'Density', Val('WorldAtmosphereDensity')) end
+        if On('WorldSkybox') then
+            local Preset = Val('WorldSkyboxPreset')
+            local Sky = WorldState.Sky
+            if Preset == 'Night' then
+                Put(Lighting, 'ClockTime', 0)
+                if Sky then Put(Sky, 'StarCount', 5000) end
+                if Atmos then Put(Atmos, 'Color', Color3.fromRGB(60, 70, 110)); Put(Atmos, 'Decay', Color3.fromRGB(10, 12, 30)) end
+            elseif Preset == 'Sunset' then
+                Put(Lighting, 'ClockTime', 18.2)
+                if Atmos then Put(Atmos, 'Color', Color3.fromRGB(255, 160, 100)); Put(Atmos, 'Decay', Color3.fromRGB(120, 60, 90)) end
+            elseif Preset == 'Overcast' then
+                Put(Lighting, 'ClockTime', 12)
+                if Atmos then Put(Atmos, 'Color', Color3.fromRGB(170, 175, 185)); Put(Atmos, 'Density', 0.55) end
+            elseif Preset == 'Dusk' then
+                Put(Lighting, 'ClockTime', 19.5)
+                if Atmos then Put(Atmos, 'Color', Color3.fromRGB(140, 110, 200)); Put(Atmos, 'Decay', Color3.fromRGB(40, 30, 80)) end
+            end
+        end
+        if On('WorldNoShadows') then Put(Lighting, 'GlobalShadows', false) end
+        if On('WorldNoFog') then Put(Lighting, 'FogEnd', 1e9); Put(Lighting, 'FogStart', 1e9 - 1) end
+        if On('WorldFullBright') then
+            Put(Lighting, 'Brightness', 2)
+            Put(Lighting, 'ClockTime', 14)
+            Put(Lighting, 'Ambient', Color3.new(1, 1, 1))
+            Put(Lighting, 'OutdoorAmbient', Color3.new(1, 1, 1))
+            Put(Lighting, 'GlobalShadows', false)
+            Put(Lighting, 'FogEnd', 1e9)
+            Put(Lighting, 'FogStart', 1e9 - 1)
+        end
+    end
+    if Workspace and On('WorldGravity') then Put(Workspace, 'Gravity', Val('WorldGravityValue')) end
+    local Camera = Cam()
+    if Camera and On('WorldFov') then Put(Camera, 'FieldOfView', Val('WorldFovValue')) end
+
+    for Obj, Props in next, Want do
+        WorldState.Orig[Obj] = WorldState.Orig[Obj] or {}
+        for Prop, Value in next, Props do
+            if WorldState.Orig[Obj][Prop] == nil then WorldState.Orig[Obj][Prop] = WGet(Obj, Prop) end
+            if WGet(Obj, Prop) ~= Value then WSet(Obj, Prop, Value) end
+        end
+    end
+    for Obj, Saved in next, WorldState.Orig do
+        for Prop, Old in next, Saved do
+            if not (Want[Obj] and Want[Obj][Prop] ~= nil) then
+                if Old ~= nil then WSet(Obj, Prop, Old) end
+                Saved[Prop] = nil
+            end
+        end
+        if next(Saved) == nil then WorldState.Orig[Obj] = nil end
+    end
+
+    -- Sky removal keeps the instance so it can be put back
+    if Lighting then
+        local Sky = WorldState.Sky
+        if On('WorldNoSky') then
+            local Found = Lighting:FindFirstChildOfClass('Sky')
+            if Found then WorldState.Sky = Found; pcall(function() Found.Parent = nil end) end
+        elseif Sky and not Sky.Parent then
+            pcall(function() Sky.Parent = Lighting end)
+        elseif not Sky then
+            WorldState.Sky = Lighting:FindFirstChildOfClass('Sky')
+        end
+        if not On('WorldAtmosphere') and WorldState.OwnAtmos and WorldState.Atmos then
+            pcall(function() WorldState.Atmos:Destroy() end)
+            WorldState.Atmos, WorldState.OwnAtmos = nil, false
+        end
+    end
+end
+
+-- Custom crosshair: four bars + optional dot in the Library's own gui container
+local function CrosshairUpdate()
+    local Enabled = Toggles.WorldCrosshair and Toggles.WorldCrosshair.Value
+    if not Enabled or Library.Unloaded then
+        if WorldState.Cross then pcall(function() WorldState.Cross:Destroy() end); WorldState.Cross = nil end
+        return
+    end
+    local Root = WorldState.Cross
+    if not (Root and Root.Parent) then
+        local Ok, Gui = pcall(function()
+            local New = Instance.new('ScreenGui')
+            New.Name = 'AsterCrosshair'
+            New.IgnoreGuiInset = true
+            New.DisplayOrder = 5
+            New.ResetOnSpawn = false
+            New.Parent = Library.ScreenGui and Library.ScreenGui.Parent or Svc('CoreGui')
+            local Holder = Instance.new('Frame')
+            Holder.Name = 'Holder'
+            Holder.BackgroundTransparency = 1
+            Holder.AnchorPoint = Vector2.new(0.5, 0.5)
+            Holder.Position = UDim2.fromScale(0.5, 0.5)
+            Holder.Size = UDim2.fromOffset(0, 0)
+            Holder.Parent = New
+            for _, Name in ipairs({ 'Up', 'Down', 'Left', 'Right', 'Dot' }) do
+                local Bar = Instance.new('Frame')
+                Bar.Name = Name
+                Bar.BorderSizePixel = 0
+                Bar.AnchorPoint = Vector2.new(0.5, 0.5)
+                Bar.Parent = Holder
+            end
+            return New
+        end)
+        if not Ok or not Gui then return end
+        Root = Gui
+        WorldState.Cross = Gui
+    end
+    pcall(function()
+        local Holder = Root.Holder
+        local Size, Gap, Thick = Options.WorldCrossSize.Value, Options.WorldCrossGap.Value, Options.WorldCrossThickness.Value
+        local Color = Options.WorldCrossColor.Value
+        local Half = Gap + Size / 2
+        local Layout = {
+            Up = { UDim2.fromOffset(0, -Half), UDim2.fromOffset(Thick, Size) },
+            Down = { UDim2.fromOffset(0, Half), UDim2.fromOffset(Thick, Size) },
+            Left = { UDim2.fromOffset(-Half, 0), UDim2.fromOffset(Size, Thick) },
+            Right = { UDim2.fromOffset(Half, 0), UDim2.fromOffset(Size, Thick) },
+            Dot = { UDim2.fromOffset(0, 0), UDim2.fromOffset(Thick + 1, Thick + 1) },
+        }
+        for Name, Data in next, Layout do
+            local Bar = Holder[Name]
+            Bar.Position, Bar.Size, Bar.BackgroundColor3 = Data[1], Data[2], Color
+            Bar.Visible = Name ~= 'Dot' or Toggles.WorldCrossDot.Value
+        end
+    end)
+end
+
+do
+    local Time = Tabs.World:AddLeftGroupbox('Lighting', 'sun')
+    Time:AddToggle('WorldTime', { Text = 'Time of day', Default = false })
+    Time:AddSlider('WorldTimeValue', { Text = 'Clock time', Default = 14, Min = 0, Max = 24, Rounding = 1, Suffix = 'h' })
+    Time:AddToggle('WorldBrightness', { Text = 'Brightness', Default = false })
+    Time:AddSlider('WorldBrightnessValue', { Text = 'Value', Default = 2, Min = 0, Max = 10, Rounding = 1 })
+    Time:AddToggle('WorldExposure', { Text = 'Exposure', Default = false })
+    Time:AddSlider('WorldExposureValue', { Text = 'Compensation', Default = 0, Min = -3, Max = 3, Rounding = 1 })
+    Time:AddToggle('WorldAmbient', { Text = 'Ambient colors', Default = false })
+    Time:AddLabel('Ambient'):AddColorPicker('WorldAmbientColor', { Default = Color3.fromRGB(120, 120, 140), Title = 'Ambient' })
+    Time:AddLabel('Outdoor ambient'):AddColorPicker('WorldOutdoorColor', { Default = Color3.fromRGB(140, 140, 160), Title = 'Outdoor ambient' })
+
+    local Atmo = Tabs.World:AddLeftGroupbox('Fog and atmosphere', 'cloud')
+    Atmo:AddToggle('WorldFog', { Text = 'Custom fog', Default = false })
+    Atmo:AddSlider('WorldFogStart', { Text = 'Fog start', Default = 0, Min = 0, Max = 2000, Rounding = 0, Suffix = 'st' })
+    Atmo:AddSlider('WorldFogEnd', { Text = 'Fog end', Default = 800, Min = 10, Max = 5000, Rounding = 0, Suffix = 'st' })
+    Atmo:AddLabel('Fog color'):AddColorPicker('WorldFogColor', { Default = Color3.fromRGB(150, 160, 180), Title = 'Fog color' })
+    Atmo:AddToggle('WorldAtmosphere', { Text = 'Atmosphere density', Default = false })
+    Atmo:AddSlider('WorldAtmosphereDensity', { Text = 'Density', Default = 0.3, Min = 0, Max = 1, Rounding = 2 })
+    Atmo:AddToggle('WorldSkybox', { Text = 'Sky preset', Default = false })
+    Atmo:AddDropdown('WorldSkyboxPreset', { Text = 'Preset', Values = { 'Night', 'Sunset', 'Overcast', 'Dusk' }, Default = 1 })
+
+    local Quick = Tabs.World:AddRightGroupbox('Quick toggles', 'zap')
+    Quick:AddToggle('WorldFullBright', { Text = 'Full bright', Default = false, Tooltip = 'Overrides lighting values while on' })
+    Quick:AddToggle('WorldNoFog', { Text = 'No fog', Default = false })
+    Quick:AddToggle('WorldNoSky', { Text = 'Remove sky', Default = false })
+    Quick:AddToggle('WorldNoShadows', { Text = 'Remove shadows', Default = false })
+
+    local Cm = Tabs.World:AddRightGroupbox('Camera and physics', 'camera')
+    Cm:AddToggle('WorldFov', { Text = 'Field of view', Default = false })
+    Cm:AddSlider('WorldFovValue', { Text = 'FOV', Default = 90, Min = 30, Max = 120, Rounding = 0, Stepper = true })
+    Cm:AddToggle('WorldGravity', { Text = 'Gravity', Default = false })
+    Cm:AddSlider('WorldGravityValue', { Text = 'Gravity', Default = 196, Min = 0, Max = 400, Rounding = 0 })
+
+    local Cross = Tabs.World:AddRightGroupbox('Crosshair', 'crosshair')
+    Cross:AddToggle('WorldCrosshair', { Text = 'Custom crosshair', Default = false })
+    Cross:AddLabel('Color'):AddColorPicker('WorldCrossColor', { Default = Color3.fromRGB(255, 255, 255), Title = 'Crosshair color' })
+    Cross:AddSlider('WorldCrossSize', { Text = 'Length', Default = 8, Min = 2, Max = 30, Rounding = 0, Suffix = 'px' })
+    Cross:AddSlider('WorldCrossGap', { Text = 'Gap', Default = 4, Min = 0, Max = 20, Rounding = 0, Suffix = 'px' })
+    Cross:AddSlider('WorldCrossThickness', { Text = 'Thickness', Default = 2, Min = 1, Max = 6, Rounding = 0, Suffix = 'px' })
+    Cross:AddToggle('WorldCrossDot', { Text = 'Center dot', Default = false })
+
+    for Idx in next, Toggles do
+        if Idx:sub(1, 5) == 'World' then
+            Toggles[Idx]:OnChanged(function() WorldApply(); CrosshairUpdate() end)
+        end
+    end
+    for Idx in next, Options do
+        if Idx:sub(1, 5) == 'World' then
+            Options[Idx]:OnChanged(function() WorldApply(); CrosshairUpdate() end)
+        end
+    end
+end
+
+-- Re-assert every 0.25s in case the game resets a value; restores on unload
+local WorldConn = RunService and RunService.Heartbeat:Connect(function()
+    local Now = os.clock()
+    if Now - WorldState.Last < 0.25 then return end
+    WorldState.Last = Now
+    pcall(WorldApply)
+end)
+
+Library:OnUnload(function()
+    if WorldConn then WorldConn:Disconnect() end
+    for Idx in next, Toggles do
+        if Idx:sub(1, 5) == 'World' then Toggles[Idx].Value = false end
+    end
+    pcall(WorldApply, true)
+    pcall(CrosshairUpdate)
+end)
+
+----------------------------------------------------------------------
 -- Players: player list with priorities
 ----------------------------------------------------------------------
 do
@@ -530,6 +759,13 @@ do
     Library.ToggleKeybind = Options.MenuKeybind
     Menu:AddToggle('MenuWatermark', { Text = 'Watermark', Default = true })
     Menu:AddToggle('MenuKeybindList', { Text = 'Keybind list', Default = true })
+    Menu:AddToggle('KeybindOnlyEnabled', { Text = 'Show only enabled features', Default = false, Tooltip = 'Keybind list hides features that are off' })
+    Menu:AddToggle('KeybindOnlyBound', { Text = 'Show only bound features', Default = false, Tooltip = 'Keybind list hides features without a key' })
+    local function ApplyKeybindFilter()
+        Library:SetKeybindListFilter({ OnlyEnabled = Toggles.KeybindOnlyEnabled.Value, OnlyBound = Toggles.KeybindOnlyBound.Value })
+    end
+    Toggles.KeybindOnlyEnabled:OnChanged(ApplyKeybindFilter)
+    Toggles.KeybindOnlyBound:OnChanged(ApplyKeybindFilter)
     Toggles.MenuWatermark:OnChanged(function() Library:SetWatermarkVisibility(Toggles.MenuWatermark.Value) end)
     Toggles.MenuKeybindList:OnChanged(function() Library:SetKeybindListVisibility(Toggles.MenuKeybindList.Value) end)
     Menu:AddDropdown('MenuNotifyCorner', {
@@ -560,14 +796,6 @@ do
             Library:PlayIntro({ Title = 'ASTER', Subtitle = 'Showcase', Duration = 2.2, Steps = { 'Replaying' } })
         end })
 
-        local Esp = ThemeSub:AddRightGroupbox('ESP preview', 'eye')
-        Esp:AddToggle('ThemePreviewRotate', { Text = 'Auto rotate', Default = false })
-        Esp:AddInput('ThemePreviewUserId', { Text = 'Avatar user ID', Default = '6135348224', Numeric = true, Finished = true })
-        Toggles.ThemePreviewRotate:OnChanged(function() Previews.Enemy:Set('AutoRotate', Toggles.ThemePreviewRotate.Value) end)
-        Options.ThemePreviewUserId:OnChanged(function()
-            local Id = tonumber(Options.ThemePreviewUserId.Value)
-            if Id and Id > 0 then Previews.Enemy:Set('UserId', Id) end
-        end)
         ThemeManager:Finalize()
     else
         Library:Notify('Outdated ThemeManager: upload addons/ThemeManager.lua from the latest release', 10)

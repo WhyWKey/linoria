@@ -1354,17 +1354,8 @@ function Library:CreateTabIcon(Parent, Icon, Name, ZIndex)
 end;
 
 -- Logo ----------------------------------------------------------------------
--- Geometric 'A': two slanted strokes, an offset crossbar and a diamond spark in the negative space.
--- Built from Frames only; the strokes carry an AccentColor -> AccentColor2 gradient so it recolours with the theme.
--- Returns the holder Frame plus a handle { SetSize, Draw, Destroy }. Hidden starts collapsed for Draw to animate in.
-local LOGO_TILT = 22.2;
-local LOGO_PIECES = {
-    { Name = 'Left';  Pos = Vector2.new(0.32, 0.52); Len = 0.95; Rot = LOGO_TILT; Grad = true };
-    { Name = 'Right'; Pos = Vector2.new(0.68, 0.52); Len = 0.95; Rot = -LOGO_TILT; Grad = true };
-    { Name = 'Bar';   Pos = Vector2.new(0.44, 0.7); Wide = 0.3; Rot = 0; Grad = true };
-    { Name = 'Spark'; Pos = Vector2.new(0.5, 0.42); Dia = 0.15; Rot = 45 };
-};
-
+-- Rounded badge with an accent gradient fill and a bold white 'A'; no rotated pieces, so it cannot misrender.
+-- Returns the holder Frame plus a handle { SetSize, Draw, Destroy }. Hidden starts invisible for Draw to fade in.
 function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
     local Holder = Library:Create('Frame', {
         BackgroundTransparency = 1;
@@ -1372,57 +1363,54 @@ function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
         ZIndex = ZIndex;
         Parent = Parent;
     });
-    local Thick = Size <= 20 and 0.19 or 0.15;
-    local Pieces = {};
+    local Badge = Library:Create('Frame', {
+        AnchorPoint = Vector2.new(0.5, 0.5);
+        BackgroundColor3 = Color3.new(1, 1, 1);
+        BackgroundTransparency = Hidden and 1 or 0;
+        BorderSizePixel = 0;
+        Position = UDim2.fromScale(0.5, 0.5);
+        Size = UDim2.fromScale(1, 1);
+        ZIndex = ZIndex;
+        Parent = Holder;
+    });
+    Library:Create('UICorner', { CornerRadius = UDim.new(0.28, 0); Parent = Badge });
+    local Scale = Library:Create('UIScale', { Scale = Hidden and 0.6 or 1; Parent = Badge });
+    local Gradient = Library:Create('UIGradient', { Rotation = 45; Parent = Badge });
+    Library:AddGradient(Gradient, 'slide', Always);
 
-    for _, Def in ipairs(LOGO_PIECES) do
-        local Full, Collapsed;
-        if Def.Len then
-            Full, Collapsed = UDim2.fromScale(Thick, Def.Len), UDim2.fromScale(Thick, 0);
-        elseif Def.Wide then
-            Full, Collapsed = UDim2.fromScale(Def.Wide, Thick * 0.8), UDim2.fromScale(0, Thick * 0.8);
-        else
-            Full, Collapsed = UDim2.fromScale(Def.Dia, Def.Dia), UDim2.fromScale(0, 0);
-        end;
-        local Piece = Library:Create('Frame', {
-            AnchorPoint = Vector2.new(0.5, 0.5);
-            BackgroundColor3 = Def.Grad and Color3.new(1, 1, 1) or Library.AccentColor2;
-            BorderSizePixel = 0;
-            Position = UDim2.fromScale(Def.Pos.X, Def.Pos.Y);
-            Rotation = Def.Rot;
-            Size = Hidden and Collapsed or Full;
-            ZIndex = ZIndex;
-            Parent = Holder;
-        });
-        if Def.Grad then
-            local Gradient = Library:Create('UIGradient', { Rotation = 90 - Def.Rot; Parent = Piece });
-            Library:AddGradient(Gradient, 'slide', Always, 'Y');
-        else
-            Library:AddToRegistry(Piece, { BackgroundColor3 = 'AccentColor2' }, true);
-        end;
-        table.insert(Pieces, { Frame = Piece; Full = Full; Collapsed = Collapsed });
-    end;
+    local Letter = Library:Create('TextLabel', {
+        AnchorPoint = Vector2.new(0.5, 0.5);
+        BackgroundTransparency = 1;
+        Font = Enum.Font.GothamBold;
+        Position = UDim2.fromScale(0.5, 0.5);
+        Size = UDim2.fromScale(1, 1);
+        Text = 'A';
+        TextColor3 = Color3.new(1, 1, 1);
+        TextSize = math.max(8, math.floor(Size * 0.62));
+        TextTransparency = Hidden and 1 or 0;
+        ZIndex = ZIndex + 1;
+        Parent = Badge;
+    });
 
     local Logo = {};
     function Logo.SetSize(NewSize)
         Holder.Size = UDim2.fromOffset(NewSize, NewSize);
+        Letter.TextSize = math.max(8, math.floor(NewSize * 0.62));
     end;
-    -- strokes grow out from their centres, then the bar and spark follow
     function Logo.Draw(Duration, Delay)
         Duration = Duration or 0.6;
-        for Idx, Piece in ipairs(Pieces) do
-            Piece.Frame.Size = Piece.Collapsed;
-            pcall(function()
-                local Style = Idx == #Pieces and Enum.EasingStyle.Back or Enum.EasingStyle.Quint;
-                local Part = Idx <= 2 and 0 or (Idx - 2) * 0.18;
-                TweenService:Create(Piece.Frame, TweenInfo.new(Duration * 0.6, Style, Enum.EasingDirection.Out, 0, false, (Delay or 0) + Duration * Part), { Size = Piece.Full }):Play();
-            end);
-        end;
+        Badge.BackgroundTransparency = 1;
+        Letter.TextTransparency = 1;
+        Scale.Scale = 0.6;
+        pcall(function()
+            local Fade = TweenInfo.new(Duration * 0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, Delay or 0);
+            TweenService:Create(Badge, Fade, { BackgroundTransparency = 0 }):Play();
+            TweenService:Create(Letter, Fade, { TextTransparency = 0 }):Play();
+            TweenService:Create(Scale, TweenInfo.new(Duration, Enum.EasingStyle.Back, Enum.EasingDirection.Out, 0, false, Delay or 0), { Scale = 1 }):Play();
+        end);
     end;
     function Logo.Destroy()
-        for _, Piece in ipairs(Pieces) do
-            Library:RemoveFromRegistry(Piece.Frame);
-        end;
+        Library:RemoveGradient(Gradient);
         Holder:Destroy();
     end;
     return Holder, Logo;
@@ -4982,12 +4970,6 @@ function Library:PlayIntro(Config)
         return Frame;
     end;
 
-    local Glow = Circle(150, 62, { BackgroundColor3 = Accent; BackgroundTransparency = 1 });
-    Reg(Glow, { BackgroundColor3 = 'AccentColor' }, true);
-    TweenDelayed(Glow, { BackgroundTransparency = 0.86 }, 0.7, 0.1);
-    pcall(function()
-        TweenService:Create(Glow, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true, 0.8), { Size = UDim2.fromOffset(176, 176) }):Play();
-    end);
     for Idx = 1, 2 do
         local Ring = Circle(70, 62, { BackgroundTransparency = 1 });
         local Stroke = Library:Create('UIStroke', { Color = Accent; Thickness = 2; Transparency = 0.1; Parent = Ring });
@@ -5038,7 +5020,7 @@ function Library:PlayIntro(Config)
         local Cell = Library:Create('Frame', {
             BackgroundTransparency = 1;
             LayoutOrder = Index;
-            Size = UDim2.fromOffset((Ok and Width or 22) + 4, 44);
+            Size = UDim2.fromOffset((Ok and Width or 22) + 8, 44);
             Parent = TitleRow;
         });
         local Letter = Library:Create('TextLabel', {
@@ -5757,22 +5739,6 @@ function Library:CreateWindow(...)
         Parent = Sidebar;
     });
     Library:AddToRegistry(SidebarEdge, { BackgroundColor3 = 'OutlineColor' });
-
-    local LogoGlow = Library:Create('ImageLabel', {
-        AnchorPoint = Vector2.new(0.5, 0.5);
-        BackgroundTransparency = 1;
-        Image = 'rbxassetid://6014261993';
-        ImageColor3 = Library.AccentColor;
-        ImageTransparency = 0.75;
-        Position = UDim2.new(0.5, 0, 0, 30);
-        ScaleType = Enum.ScaleType.Slice;
-        SliceCenter = Rect.new(49, 49, 450, 450);
-        Size = UDim2.fromOffset(52, 52);
-        ZIndex = 4;
-        Parent = Sidebar;
-    });
-    Library:AddToRegistry(LogoGlow, { ImageColor3 = 'AccentColor' });
-    Library.Glows[LogoGlow] = true;
 
     local SidebarLogo = Library:CreateLogo(Sidebar, 28, 5, true);
     SidebarLogo.AnchorPoint = Vector2.new(0.5, 0.5);

@@ -93,6 +93,8 @@ local Library = {
     GradientAngle = 45;
     OutlineMode = 'Gradient';
     OutlineThickness = 1;
+    WidgetAccent = true;
+    WidgetAccentStyle = 'Gradient';
     StrokeThickness = 1;
     CornerScale = 1;
     WindowTransparency = 0;
@@ -1083,7 +1085,63 @@ function Library:UpdateGradients()
             Entry.Gradient.Color = Library:GradientSequence(Entry.Mode, Entry.Outline and Flat);
         end);
     end;
+    Library:ApplyWidgetAccent();
     Library.GradientDirty = true;
+end;
+
+-- Accent bars on the watermark / keybind list: white frame tinted by its own gradient (Solid = flat accent)
+Library.WidgetBars = {};
+function Library:CreateWidgetBar(Parent, ZIndex)
+    local Bar = Library:Create('Frame', {
+        BackgroundColor3 = Color3.new(1, 1, 1);
+        BorderSizePixel = 0;
+        Position = UDim2.new(0, 8, 0, 0);
+        Size = UDim2.new(1, -16, 0, 2);
+        ZIndex = ZIndex;
+        Parent = Parent;
+    });
+    Library:Round(Bar, 1);
+    local G = Library:Create('UIGradient', { Parent = Bar });
+    Library:AddGradient(G, 'slide', true);
+    Library.GradientMap[G].Phase = 0;
+    table.insert(Library.WidgetBars, { Bar = Bar; Gradient = G });
+    Library:ApplyWidgetAccent();
+    return Bar;
+end;
+
+function Library:ApplyWidgetAccent()
+    local Flat = Library.WidgetAccentStyle ~= 'Gradient';
+    for _, Item in ipairs(Library.WidgetBars) do
+        pcall(function()
+            Item.Bar.Visible = Library.WidgetAccent;
+            Item.Gradient.Color = Library:GradientSequence('slide', Flat);
+            if Flat then Item.Gradient.Offset = Vector2.new(0, 0) end;
+        end);
+    end;
+end;
+
+function Library:SetWidgetAccent(Bool)
+    Library.WidgetAccent = not not Bool;
+    Library:ApplyWidgetAccent();
+end;
+
+function Library:SetWidgetAccentStyle(Style)
+    Library.WidgetAccentStyle = tostring(Style or ''):lower() == 'solid' and 'Solid' or 'Gradient';
+    Library:ApplyWidgetAccent();
+    Library.GradientDirty = true;
+end;
+
+-- Animates a keybind row open/closed; Visible is dropped only once the collapse has finished
+function Library:SetRowShown(Row, Shown)
+    if Row:GetAttribute('Shown') == Shown then return end;
+    Row:SetAttribute('Shown', Shown);
+    if Shown then Row.Visible = true end;
+    Library:Tween(Row, { Size = UDim2.new(1, 0, 0, Shown and 18 or 0) }, 0.16);
+    if not Shown then
+        task.delay(0.18, function()
+            if Row.Parent and Row:GetAttribute('Shown') == false then Row.Visible = false end;
+        end);
+    end;
 end;
 
 -- Paints the window outline for the current OutlineMode / thickness (nothing else uses the gradient)
@@ -2246,20 +2304,50 @@ do
         });
         local KeybindEntry = Library:Create('Frame', {
             BackgroundTransparency = 1,
-            Size = UDim2.new(1, 0, 0, 18),
+            ClipsDescendants = true,
+            Size = UDim2.new(1, 0, 0, 0),
             Visible = false,
             ZIndex = 110,
             Parent = Library.KeybindContainer,
         })
+        KeybindEntry:SetAttribute('Shown', false);
+        Library:Create('UIListLayout', {
+            FillDirection = Enum.FillDirection.Horizontal,
+            Padding = UDim.new(0, 6),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            Parent = KeybindEntry,
+        })
 
-        local ContainerLabel = Library:CreateLabel({
-            Position = UDim2.new(0, 2, 0, 0),
-            Size = UDim2.new(1, -4, 1, 0),
-            TextSize = Library.FontSize - 1,
-            TextXAlignment = Enum.TextXAlignment.Left,
+        local StateDot = Library:Create('Frame', {
+            BackgroundColor3 = Library:GetDimColor(),
+            BorderSizePixel = 0,
+            LayoutOrder = 1,
+            Size = UDim2.fromOffset(6, 6),
             ZIndex = 111,
             Parent = KeybindEntry,
-        }, true)
+        })
+        Library:Create('UICorner', { CornerRadius = UDim.new(1, 0), Parent = StateDot })
+        Library:AddToRegistry(StateDot, { BackgroundColor3 = function() return Library:GetDimColor() end }, true)
+
+        local function RowLabel(Order, Dim)
+            return Library:CreateLabel({
+                Dim = Dim,
+                AutomaticSize = Enum.AutomaticSize.X,
+                LayoutOrder = Order,
+                Size = UDim2.new(0, 0, 1, 0),
+                TextSize = Library.FontSize - 1,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = 111,
+                Parent = KeybindEntry,
+            }, true)
+        end
+        local KeyLabel = RowLabel(2, false)
+        local NameLabel = RowLabel(3, false)
+        local ModeLabel = RowLabel(4, true)
+        Library:RemoveFromRegistry(KeyLabel)
+        Library:AddToRegistry(KeyLabel, { TextColor3 = 'AccentColor' }, true)
+        KeyLabel.TextColor3 = Library.AccentColor
 
         local Modes = Info.Modes or { 'Always', 'Toggle', 'Hold' };
         local ModeButtons = {};
@@ -2313,10 +2401,13 @@ do
             local State = KeyPicker:GetState();
 
             local displayKey = (KeyPicker.Value == 'None') and '...' or KeyPicker.Value
-            ContainerLabel.Text = string.format('[%s] %s (%s) %s', displayKey, Info.Text, KeyPicker.Mode, State and 'ON' or 'OFF');
+            KeyLabel.Text = string.format('[%s]', displayKey);
+            NameLabel.Text = tostring(Info.Text);
+            ModeLabel.Text = string.format('%s', KeyPicker.Mode or '');
+            local Want = false
             local kbMode = Library.KeybindMode or 'All'
             if kbMode == 'Active' then
-                KeybindEntry.Visible = State == true
+                Want = State == true
             elseif kbMode == 'Toggled' then
                 local parentOn = false
                 if ParentObj and ParentObj.Type == 'Toggle' then
@@ -2326,38 +2417,46 @@ do
                 else
                     parentOn = true
                 end
-                KeybindEntry.Visible = parentOn
+                Want = parentOn
             else
-                KeybindEntry.Visible = true
+                Want = true
             end
 
             local Filter = Library.KeybindFilter;
             if Filter.OnlyBound and KeyPicker.Value == 'None' then
-                KeybindEntry.Visible = false;
+                Want = false;
             end;
             if Filter.OnlyEnabled then
                 local On = State;
                 if ParentObj and ParentObj.Type == 'Toggle' then On = ParentObj.Value == true end;
-                if not On then KeybindEntry.Visible = false end;
+                if not On then Want = false end;
             end;
 
-            ContainerLabel.TextColor3 = State and Library.AccentColor or Library.FontColor;
-            Library.RegistryMap[ContainerLabel].Properties.TextColor3 = State and 'AccentColor' or 'FontColor';
+            NameLabel.TextColor3 = State and Library.AccentColor or Library.FontColor;
+            Library.RegistryMap[NameLabel].Properties.TextColor3 = State and 'AccentColor' or 'FontColor';
+            StateDot.BackgroundColor3 = State and Library.AccentColor or Library:GetDimColor();
+            Library.RegistryMap[StateDot].Properties.BackgroundColor3 = State and 'AccentColor' or function() return Library:GetDimColor() end;
+
+            Library:SetRowShown(KeybindEntry, Want)
 
             local YSize = 0
             local XSize = 0
 
             for _, Frame in next, Library.KeybindContainer:GetChildren() do
-                if Frame:IsA('Frame') and Frame.Visible then
+                if Frame:IsA('Frame') and Frame:GetAttribute('Shown') then
                     YSize = YSize + 18;
-                    local LabelChild = Frame:FindFirstChildOfClass('TextLabel')
-                    if LabelChild and (LabelChild.TextBounds.X + 20 > XSize) then
-                        XSize = LabelChild.TextBounds.X + 20 
+                    local Layout = Frame:FindFirstChildOfClass('UIListLayout')
+                    if Layout and Layout.AbsoluteContentSize.X + 20 > XSize then
+                        XSize = Layout.AbsoluteContentSize.X + 20
                     end
                 end;
             end;
 
-            Library.KeybindFrame.Size = UDim2.new(0, math.max(XSize + 10 + 15, 210), 0, YSize + 36)
+            local Target = UDim2.new(0, math.max(XSize + 10, 210), 0, YSize + 36)
+            if Library.KeybindTarget ~= Target then
+                Library.KeybindTarget = Target
+                Library:Tween(Library.KeybindFrame, { Size = Target }, 0.16)
+            end
         end;
         function KeyPicker:GetState()
             if KeyPicker.Mode == 'Always' then
@@ -5225,7 +5324,7 @@ do
         AutomaticSize = Enum.AutomaticSize.X;
         AnchorPoint = Vector2.new(0.5, 0);
         Position = UDim2.new(0.5, 0, 0, 8);
-        Size = UDim2.new(0, 0, 0, 26);
+        Size = UDim2.new(0, 0, 0, 28);
         ZIndex = 200;
         Visible = false;
         Parent = ScreenGui;
@@ -5299,16 +5398,7 @@ do
         Library.WatermarkStatLabels[Key] = Stat;
     end;
 
-    local WatermarkLine = Library:Create('Frame', {
-        BackgroundColor3 = Library.AccentColor;
-        BorderSizePixel = 0;
-        Position = UDim2.new(0, 8, 1, -2);
-        Size = UDim2.new(1, -16, 0, 2);
-        ZIndex = 204;
-        Parent = WatermarkOuter;
-    });
-    Library:Round(WatermarkLine, 1);
-    Library:AddToRegistry(WatermarkLine, { BackgroundColor3 = 'AccentColor' }, true);
+    Library.WatermarkLine = Library:CreateWidgetBar(WatermarkOuter, 204);
 
     Library.Watermark = WatermarkOuter;
     Library.WatermarkText = WatermarkLabel;
@@ -5331,16 +5421,7 @@ do
         BackgroundColor3 = 'KeybindColor';
     }, true);
 
-    local ColorFrame = Library:Create('Frame', {
-        BackgroundColor3 = Library.AccentColor;
-        BorderSizePixel = 0;
-        Position = UDim2.new(0, 8, 0, 0);
-        Size = UDim2.new(1, -16, 0, 2);
-        ZIndex = 102;
-        Parent = KeybindOuter;
-    });
-    Library:Round(ColorFrame, 1);
-    Library:AddToRegistry(ColorFrame, { BackgroundColor3 = 'AccentColor' }, true);
+    local ColorFrame = Library:CreateWidgetBar(KeybindOuter, 102);
     Library.KeybindInner = KeybindOuter;
     Library.KeybindColorFrame = ColorFrame;
 
@@ -5380,10 +5461,13 @@ do
     });
     Library:Create('UIPadding', {
         PaddingLeft = UDim.new(0, 10),
+        PaddingRight = UDim.new(0, 10),
         Parent = KeybindContainer,
     })
+    KeybindContainer.ClipsDescendants = true;
 
     Library.KeybindFrame = KeybindOuter;
+    Library.KeybindTarget = KeybindOuter.Size;
     Library.KeybindContainer = KeybindContainer;
     Library:MakeDraggable(KeybindOuter);
 end;

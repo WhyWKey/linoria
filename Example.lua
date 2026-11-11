@@ -29,6 +29,12 @@ local function Log(...) print('[Example]', ...) end
 ----------------------------------------------------------------------
 -- Window + intro (window starts hidden; the intro shows the menu)
 ----------------------------------------------------------------------
+-- Default theme goes on the library before any UI or the intro paints
+ThemeManager:SetLibrary(Library)
+ThemeManager:SetFolder('AsterShowcase')
+ThemeManager:SetDefaultTheme(Env.AsterDefaultTheme or 'Aster Violet')
+ThemeManager:PreApply()
+
 local Window = Library:CreateWindow({
     Title = 'Aster Showcase',
     Center = true,
@@ -210,7 +216,7 @@ do
     Misc:AddToggle('NoSmoke', { Text = 'No smoke', Default = false })
     Misc:AddSlider('CameraFov', { Text = 'Camera FOV', Default = 70, Min = 30, Max = 120, Rounding = 0, Stepper = true })
     local Crosshair = World:AddTab('Crosshair')
-    ColorToggle(Crosshair, 'CustomCrosshair', 'Custom crosshair', { Color3.fromRGB(255, 255, 255) })
+    ColorToggle(Crosshair, 'CustomCrosshair', 'Custom crosshair', { Library.AccentColor })
     Crosshair:AddSlider('CrosshairSize', { Text = 'Size', Default = 8, Min = 2, Max = 30, Rounding = 0, Suffix = 'px' })
     Crosshair:AddSlider('CrosshairGap', { Text = 'Gap', Default = 3, Min = 0, Max = 20, Rounding = 0, Suffix = 'px' })
     local Viewmodel = World:AddTab('Viewmodel')
@@ -305,7 +311,7 @@ do
     Model:AddDropdown('WeaponMaterial', { Text = 'Material', Values = { 'Plastic', 'Neon', 'ForceField' }, Default = 1 })
     local Bullets = Gun:AddSection('Bullets', { Collapsed = true })
     Bullets:AddToggle('BulletTracers', { Text = 'Bullet tracers', Default = false })
-    Toggles.BulletTracers:AddColorPicker('BulletTracerColor', { Default = Color3.fromRGB(255, 255, 255), Title = 'Tracer color' })
+    Toggles.BulletTracers:AddColorPicker('BulletTracerColor', { Default = Library.AccentColor2, Title = 'Tracer color' })
     Bullets:AddSlider('TracerLife', { Text = 'Lifetime', Default = 1.5, Min = 0.2, Max = 5, Rounding = 1, Suffix = 's' })
 
     local Sections = Weaponry:AddRightGroupbox('Section control', 'layers')
@@ -682,7 +688,7 @@ do
 
     local Cross = Tabs.World:AddRightGroupbox('Crosshair', 'crosshair')
     Cross:AddToggle('WorldCrosshair', { Text = 'Custom crosshair', Default = false })
-    Cross:AddLabel('Color'):AddColorPicker('WorldCrossColor', { Default = Color3.fromRGB(255, 255, 255), Title = 'Crosshair color' })
+    Cross:AddLabel('Color'):AddColorPicker('WorldCrossColor', { Default = Library.AccentColor, Title = 'Crosshair color' })
     Cross:AddSlider('WorldCrossSize', { Text = 'Length', Default = 8, Min = 2, Max = 30, Rounding = 0, Suffix = 'px' })
     Cross:AddSlider('WorldCrossGap', { Text = 'Gap', Default = 4, Min = 0, Max = 20, Rounding = 0, Suffix = 'px' })
     Cross:AddSlider('WorldCrossThickness', { Text = 'Thickness', Default = 2, Min = 1, Max = 6, Rounding = 0, Suffix = 'px' })

@@ -759,13 +759,18 @@ do
     Library.ToggleKeybind = Options.MenuKeybind
     Menu:AddToggle('MenuWatermark', { Text = 'Watermark', Default = true })
     Menu:AddToggle('MenuKeybindList', { Text = 'Keybind list', Default = true })
-    Menu:AddToggle('KeybindOnlyEnabled', { Text = 'Show only enabled features', Default = false, Tooltip = 'Keybind list hides features that are off' })
-    Menu:AddToggle('KeybindOnlyBound', { Text = 'Show only bound features', Default = false, Tooltip = 'Keybind list hides features without a key' })
-    local function ApplyKeybindFilter()
-        Library:SetKeybindListFilter({ OnlyEnabled = Toggles.KeybindOnlyEnabled.Value, OnlyBound = Toggles.KeybindOnlyBound.Value })
-    end
-    Toggles.KeybindOnlyEnabled:OnChanged(ApplyKeybindFilter)
-    Toggles.KeybindOnlyBound:OnChanged(ApplyKeybindFilter)
+    Menu:AddDropdown('KeybindListFilter', {
+        Text = 'Keybind list shows',
+        Values = { 'All', 'Only enabled', 'Only bound', 'Enabled and bound' },
+        Default = 1,
+    })
+    Options.KeybindListFilter:OnChanged(function()
+        local V = Options.KeybindListFilter.Value
+        Library:SetKeybindListFilter({
+            OnlyEnabled = V == 'Only enabled' or V == 'Enabled and bound',
+            OnlyBound = V == 'Only bound' or V == 'Enabled and bound',
+        })
+    end)
     Toggles.MenuWatermark:OnChanged(function() Library:SetWatermarkVisibility(Toggles.MenuWatermark.Value) end)
     Toggles.MenuKeybindList:OnChanged(function() Library:SetKeybindListVisibility(Toggles.MenuKeybindList.Value) end)
     Menu:AddDropdown('MenuNotifyCorner', {

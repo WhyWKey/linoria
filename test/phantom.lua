@@ -565,6 +565,32 @@ function Game.aiming(weapon)
     return ok and state == true
 end
 
+function Game.zoom(weapon)
+    if type(weapon) ~= "table" or type(weapon.getActiveAimStats) ~= "function" then return nil end
+    local ok, stats = pcall(weapon.getActiveAimStats, weapon)
+    if not ok or type(stats) ~= "table" then return nil end
+    local total, found = 1, false
+    for _, stat in ipairs(stats) do
+        local magnify, aimed = type(stat.sightmagspring) == "table" and stat.sightmagspring.p, type(stat.sightaimspring) == "table" and stat.sightaimspring.p
+        local zoom = stat.zoom
+        if stat.blackscope and type(aimed) == "number" and aimed <= (stat.scopebegin or 0.9) and type(stat.prezoom) == "number" then zoom = stat.prezoom end
+        if type(zoom) == "number" and zoom > 0 and type(magnify) == "number" then
+            total = total * zoom ^ math.clamp(magnify, 0, 1)
+            found = true
+        end
+    end
+    if not found then return nil end
+    return math.max(total, 1)
+end
+
+function Game.cameraZoom()
+    local camera = Game.gameCamera()
+    local spring = camera and camera._magSpring
+    local value = type(spring) == "table" and spring.p
+    if type(value) ~= "number" then return 1 end
+    return math.max(math.exp(value), 1)
+end
+
 function Game.canFire(weapon)
     if type(weapon) ~= "table" or type(weapon.canFire) ~= "function" then return true end
     local ok, state = pcall(weapon.canFire, weapon)
@@ -801,7 +827,7 @@ function Barrel.target(fire, look, distance, speed)
 end
 
 function Barrel.update(cam, gameCam, weapon, now)
-    Barrel.valid = false
+    Barrel.valid, Barrel.offset = false, nil
     if not (cam and gameCam and weapon and type(weapon.getBarrelCFrame) == "function") then return end
     local ok, frame = pcall(weapon.getBarrelCFrame, weapon)
     if not (ok and typeof(frame) == "CFrame") then return end
@@ -816,6 +842,13 @@ function Barrel.update(cam, gameCam, weapon, now)
         if hit and (hit.Position - from).Magnitude > 0.5 then fire = hit.Position + hit.Normal * 0.01 end
     end
     Barrel.fire, Barrel.look = fire, look
+    Barrel.weapon, Barrel.aiming = weapon, Game.aiming(weapon)
+    local okAngles, angles = pcall(gameCam.getAngles, gameCam)
+    if okAngles and typeof(angles) == "Vector3" then
+        local pitch = math.atan2(look.Y, math.sqrt(look.X * look.X + look.Z * look.Z))
+        local yaw = math.atan2(-look.X, -look.Z)
+        Barrel.offset = Vector3.new(pitch - angles.X, (yaw - angles.Y + math.pi) % (math.pi * 2) - math.pi, 0)
+    end
     local speed = Game.stat(weapon, "bulletspeed")
     Barrel.hit = Barrel.target(fire, look, flag("barrel_distance", 300), speed)
     local muzzlePoint, muzzleFront = Draw.project(cam, muzzle)
@@ -2022,6 +2055,9 @@ function World.stepCrosshair(center, now, dt)
     local color, alpha = flag("cross_color", WHITE), Util.opacity("cross_color")
     local length, thick, gap = flag("cross_len", 8), flag("cross_thick", 2), flag("cross_gap", 5)
     local outline = flag("cross_outline", true)
+    local whole = math.floor(thick + 0.5)
+    local shift = whole % 2 == 1 and 0.5 or 0
+    center = Vector2.new(math.floor(center.X + 0.5) + shift, math.floor(center.Y + 0.5) + shift)
     if flag("cross_pulse", false) then gap = gap + flag("cross_pulse_range", 8) * (math.sin(now * flag("cross_pulse_speed", 3)) + 1) * 0.5 end
     if flag("cross_spin", false) then
         cross.angle = (cross.angle + math.rad(flag("cross_spin_speed", 90)) * dt) % (math.pi * 2)
@@ -2043,6 +2079,7 @@ function World.stepCrosshair(center, now, dt)
         end
     end
     if flag("cross_dot", false) then
+        cross.dot.Radius = whole % 2 == 1 and 1.5 or 2
         cross.dot.Position, cross.dot.Color, cross.dot.Transparency, cross.dot.Visible = center, color, alpha, true
     end
 end
@@ -2121,7 +2158,7 @@ function Trail.step(cam, now)
     for index = used + 1, #Trail.lines do Trail.lines[index].Visible = false end
 end
 
-local Nades = { list = {}, known = {}, lines = {}, texts = {}, hooked = false, scanAt = -math.huge, predAt = -math.huge }
+local Nades = { list = {}, known = {}, lines = {}, badges = {}, hooked = false, scanAt = -math.huge, predAt = -math.huge }
 
 local function hermite(t0, p0, v0, t1, p1, v1, t)
     if t0 == t1 then return p1 end
@@ -2298,28 +2335,64 @@ function Nades.ring(cam, center, radius, color, alpha)
     end
 end
 
-function Nades.label(cam, position, lines)
+function Nades.badge()
+    local grey = Color3.fromRGB(170, 172, 178)
+    return {
+        disc = Draw.new("Circle", { Filled = true, Radius = 20, NumSides = 32, Color = Color3.fromRGB(12, 12, 14), Transparency = 0.85, ZIndex = 6, Visible = false }),
+        rim = Draw.new("Circle", { Filled = false, Radius = 20, NumSides = 32, Thickness = 1, Color = Color3.fromRGB(60, 60, 66), Transparency = 1, ZIndex = 7, Visible = false }),
+        body = Draw.new("Circle", { Filled = true, Radius = 5, NumSides = 20, Color = grey, Transparency = 1, ZIndex = 8, Visible = false }),
+        top = Draw.new("Square", { Filled = true, Size = Vector2.new(4, 3), Color = grey, Transparency = 1, ZIndex = 8, Visible = false }),
+        lever = Draw.new("Square", { Filled = true, Size = Vector2.new(6, 2), Color = grey, Transparency = 1, ZIndex = 8, Visible = false }),
+        text = Draw.text(11, 9),
+        back = Draw.new("Square", { Filled = true, Size = Vector2.new(24, 3), Color = Color3.fromRGB(40, 40, 44), Transparency = 1, ZIndex = 8, Visible = false }),
+        bar = Draw.new("Square", { Filled = true, Size = Vector2.new(24, 3), Transparency = 1, ZIndex = 9, Visible = false }),
+    }
+end
+
+function Nades.label(cam, position, info)
     local point, front = Draw.project(cam, position)
     if not front then return end
-    local y = point.Y
-    for _, entry in ipairs(lines) do
-        Nades.textUsed = Nades.textUsed + 1
-        local text = Nades.texts[Nades.textUsed]
-        if not text then
-            text = Draw.text(13, 9)
-            Nades.texts[Nades.textUsed] = text
-        end
-        text.Font, text.Size = ESP.S.font or 2, ESP.S.size or 13
-        text.Text, text.Position, text.Color, text.Transparency, text.Visible = entry[1], Vector2.new(point.X, y), entry[2], 1, true
-        y = y + (ESP.S.size or 13) + 1
+    Nades.badgeUsed = Nades.badgeUsed + 1
+    local badge = Nades.badges[Nades.badgeUsed]
+    if not badge then
+        badge = Nades.badge()
+        Nades.badges[Nades.badgeUsed] = badge
     end
+    local x, y = point.X, point.Y
+    local style = info.style
+    badge.disc.Position, badge.disc.Color, badge.disc.Transparency, badge.disc.Visible = point, style.disc, style.lethal and 0.95 or 0.85, true
+    badge.rim.Color = style.lethal and Color3.fromRGB(255, 140, 140) or Color3.fromRGB(60, 60, 66)
+    badge.body.Color, badge.top.Color, badge.lever.Color = style.icon, style.icon, style.icon
+    badge.rim.Position, badge.rim.Visible = point, true
+    badge.body.Position, badge.body.Visible = Vector2.new(x, y - 7), true
+    badge.top.Position, badge.top.Visible = Vector2.new(x - 2, y - 15), true
+    badge.lever.Position, badge.lever.Visible = Vector2.new(x - 1, y - 17), true
+    badge.text.Text, badge.text.Position, badge.text.Color, badge.text.Visible = info.text or "", Vector2.new(x, y + 1), WHITE, info.text ~= nil
+    if info.frac then
+        local width = math.max(math.floor(24 * math.clamp(info.frac, 0, 1) + 0.5), 1)
+        badge.back.Position, badge.back.Color, badge.back.Visible = Vector2.new(x - 12, y + 14), style.back, true
+        badge.bar.Position, badge.bar.Size, badge.bar.Color, badge.bar.Visible = Vector2.new(x - 12, y + 14), Vector2.new(width, 3), style.bar, true
+    else
+        badge.back.Visible, badge.bar.Visible = false, false
+    end
+end
+
+function Nades.hideBadge(badge)
+    for _, object in pairs(badge) do object.Visible = false end
+end
+
+function Nades.style(verdict, fallback)
+    if verdict == "LETHAL" then
+        return { icon = Color3.fromRGB(235, 235, 235), disc = flag("nade_danger_color", Color3.fromRGB(255, 60, 60)), bar = Color3.fromRGB(120, 10, 10), back = Color3.fromRGB(200, 70, 70), lethal = true }
+    end
+    return { icon = Color3.fromRGB(170, 172, 178), disc = Color3.fromRGB(12, 12, 14), bar = verdict and Color3.fromRGB(255, 60, 60) or fallback, back = Color3.fromRGB(40, 40, 44) }
 end
 
 function Nades.verdict(damage)
     if damage == nil then return nil end
-    if damage <= 0 then return "SAFE", flag("nade_safe_color", Color3.fromRGB(90, 255, 130)) end
+    if damage <= 0 then return "Safe", flag("nade_safe_color", Color3.fromRGB(90, 255, 130)) end
     local shown = math.floor(damage + 0.5)
-    local label = shown >= 100 and "LETHAL " .. shown or "-" .. shown .. " HP"
+    local label = shown >= 100 and "LETHAL" or "-" .. shown .. " hp"
     return label, Util.lerpColor(Color3.fromRGB(255, 220, 60), flag("nade_danger_color", Color3.fromRGB(255, 60, 60)), math.clamp(damage / 100, 0, 1))
 end
 
@@ -2416,14 +2489,17 @@ function Nades.predict(cam, now, origin)
     local radius = data and type(data.damageGraph) == "table" and #data.damageGraph > 0 and data.damageGraph[#data.damageGraph].distance
     Nades.ring(cam, pred.land, 1.5, color, alpha)
     if radius and flag("nade_ring", true) then Nades.ring(cam, pred.land, radius, verdictColor or color, 0.6 * alpha) end
-    local left = armed and math.max(weapon._fuseTime - Game.time(), 0) or pred.duration
-    local lines = { { string.format(armed and "Fuse %.1fs" or "Fuse %.1fs (pin in)", left), color } }
-    if verdict and flag("nade_dmg", true) then lines[2] = { verdict, verdictColor } end
-    Nades.label(cam, pred.land + Vector3.new(0, 1.5, 0), lines)
+    local left = armed and type(weapon._fuseTime) == "number" and math.max(weapon._fuseTime - Game.time(), 0) or pred.duration
+    local total = math.max(Game.stat(weapon, "fusetime") or pred.duration, 0.1)
+    local show = verdict and flag("nade_dmg", true)
+    Nades.label(cam, pred.land, {
+        text = show and verdict or nil, style = Nades.style(show and verdict, color),
+        frac = left / total,
+    })
 end
 
 function Nades.step(cam, now)
-    Nades.lineUsed, Nades.textUsed = 0, 0
+    Nades.lineUsed, Nades.badgeUsed = 0, 0
     if flag("nade_on", false) then
         local ownOn, enemyOn = flag("nade_own", true), flag("nade_enemy", true)
         local maxDistance = flag("nade_dist", 400)
@@ -2450,15 +2526,15 @@ function Nades.step(cam, now)
                             last = record.points[pointIndex]
                         end
                     end
-                    local lines = {}
-                    if flag("nade_timer", true) then lines[#lines + 1] = { string.format("%.1fs", math.max(remaining, 0)), color } end
-                    local verdict, verdictColor
                     record.cache = record.cache or {}
                     local damage, radius = Nades.damage(record.data, record.land, origin, record.cache, now)
-                    verdict, verdictColor = Nades.verdict(damage)
-                    if verdict and flag("nade_dmg", true) then lines[#lines + 1] = { verdict, verdictColor } end
+                    local verdict, verdictColor = Nades.verdict(damage)
                     if radius and flag("nade_ring", true) then Nades.ring(cam, record.land, radius, verdictColor or color, 0.7) end
-                    if #lines > 0 then Nades.label(cam, position + Vector3.new(0, 1, 0), lines) end
+                    local show = verdict and flag("nade_dmg", true)
+                    Nades.label(cam, position, {
+                        text = show and verdict or nil, style = Nades.style(show and verdict, color),
+                        frac = flag("nade_timer", true) and math.max(remaining, 0) / math.max(record.boom, 0.1) or nil,
+                    })
                 end
             end
         end
@@ -2467,7 +2543,7 @@ function Nades.step(cam, now)
             for _, instance in ipairs(Items.grenades) do
                 local position = instance.Parent and Items.position(instance)
                 if position and (position - camPosition).Magnitude <= maxDistance then
-                    Nades.label(cam, position, { { "Grenade " .. math.floor((position - camPosition).Magnitude * STUDS_TO_M) .. "m", enemyColor } })
+                    Nades.label(cam, position, { text = math.floor((position - camPosition).Magnitude * STUDS_TO_M) .. "m", style = Nades.style(nil, enemyColor) })
                 end
             end
         end
@@ -2475,7 +2551,7 @@ function Nades.step(cam, now)
     local root = Game.rootPart()
     Nades.predict(cam, now, root and root.Position or cam.CFrame.Position)
     for index = Nades.lineUsed + 1, #Nades.lines do Nades.lines[index].Visible = false end
-    for index = Nades.textUsed + 1, #Nades.texts do Nades.texts[index].Visible = false end
+    for index = Nades.badgeUsed + 1, #Nades.badges do Nades.hideBadge(Nades.badges[index]) end
 end
 
 local Feedback = { at = -10, head = false, numbers = {}, texts = {}, spiral = 0, hooked = {} }
@@ -2651,7 +2727,7 @@ function Feedback.step(cam, center, now)
     for index = used + 1, #Feedback.texts do Feedback.texts[index].Visible = false end
 end
 
-local Legit = { target = nil, record = nil, part = nil, switchAt = 0, reactUntil = 0, moved = false, radius = 0, L = {} }
+local Legit = { target = nil, record = nil, part = nil, switchAt = 0, reactUntil = 0, moved = false, radius = 0, zoom = 1, L = {} }
 local GROUPS = { Head = { "Head" }, Torso = { "Torso" }, Arms = { "Left Arm", "Right Arm" }, Legs = { "Left Leg", "Right Leg" } }
 local GROUP_ORDER = { "Head", "Torso", "Arms", "Legs" }
 
@@ -2672,16 +2748,20 @@ function Legit.read()
     L.strength, L.maxLead = flag("legit_strength", 1), flag("legit_maxlead", 14)
     L.noise, L.noiseSpeed = flag("legit_noise", 0.25), flag("legit_noise_speed", 1.4)
     L.fovRadius, L.fovDynamic = flag("legit_fov", 120), flag("legit_fov_dynamic", false)
-    L.fovNear, L.fovFar = flag("legit_fov_near", 240), flag("legit_fov_far", 60)
+    L.fovZoom, L.fovMin, L.fovSpeed = flag("legit_fov_zoom", 1), flag("legit_fov_min", 30), flag("legit_fov_speed", 10)
     L.teamCheck = flag("legit_team_check", true)
     L.barrel = flag("legit_barrel", true)
     L.fovBarrel, L.fovAttach = flag("legit_fov_barrel", false), flag("legit_fov_attach", "Aim hit")
 end
 
-function Legit.radiusFor(distance)
+function Legit.stepRadius(dt, weapon)
     local L = Legit.L
-    if not L.fovDynamic then return L.fovRadius end
-    return Util.lerp(L.fovNear, L.fovFar, math.clamp(distance / math.max(L.maxdist, 1), 0, 1))
+    local zoom = 1
+    if L.fovDynamic and weapon then zoom = Game.zoom(weapon) or Game.cameraZoom() end
+    Legit.zoom = Legit.zoom + (zoom - Legit.zoom) * (1 - math.exp(-dt * L.fovSpeed))
+    local radius = L.fovRadius
+    if L.fovDynamic then radius = math.clamp(radius / Legit.zoom ^ L.fovZoom, math.min(L.fovMin, radius), radius) end
+    Legit.radius = radius
 end
 
 function Legit.lead(origin, position, velocity, weapon)
@@ -2733,7 +2813,7 @@ function Legit.choose(records, cam, origin, center, now)
         if record.rendered and (record.enemy or not L.teamCheck) then
             local distance = (record.torso.Position - origin).Magnitude
             if distance <= L.maxdist then
-                local part, screen = Legit.pickPart(record, cam, origin, center, now, Legit.radiusFor(distance))
+                local part, screen = Legit.pickPart(record, cam, origin, center, now, Legit.radius)
                 if part then
                     local score = screen
                     if L.targetBy == "Distance" then score = distance
@@ -2793,8 +2873,7 @@ function Legit.drawFov(center)
         Legit.circleFill.Visible = false
         return
     end
-    local radius = L.fovRadius
-    if L.fovDynamic then radius = Legit.target and Legit.radius or L.fovNear end
+    local radius = Legit.radius
     local color = flag("legit_fov_color", WHITE)
     if Legit.target and flag("legit_fov_lock", true) then color = flag("legit_fov_lock_color", color) end
     Legit.circle.Position, Legit.circle.Radius, Legit.circle.Color = center, radius, color
@@ -2812,6 +2891,7 @@ function Legit.stepAim(dt, cam, now, records, screen)
     local L = Legit.L
     Legit.moved = false
     local center = L.fovBarrel and Barrel.point(L.fovAttach, screen) or screen
+    Legit.stepRadius(dt, Game.weapon())
     Legit.drawFov(center)
     Legit.snapline.Visible = false
 
@@ -2833,7 +2913,6 @@ function Legit.stepAim(dt, cam, now, records, screen)
             record = held
             part = Legit.pickPart(held, cam, origin, center, now, nil)
             Legit.record = held
-            Legit.radius = Legit.radiusFor((held.torso.Position - origin).Magnitude)
             if not part then return end
         else
             Legit.target = nil
@@ -2851,7 +2930,6 @@ function Legit.stepAim(dt, cam, now, records, screen)
         Legit.reactUntil = now + L.react / 1000
     end
     Legit.part, Legit.record = part, record
-    Legit.radius = Legit.radiusFor((record.torso.Position - origin).Magnitude)
 
     if flag("legit_snapline", false) then
         local point, front = Draw.project(cam, part.Position)
@@ -2866,24 +2944,30 @@ function Legit.stepAim(dt, cam, now, records, screen)
     Legit.moved = Legit.turn(gameCam, origin, aimPoint, dt, now, cam, useBarrel and Barrel.look or nil)
 end
 
-local Recoil = { body = nil, head = nil, last = Vector3.zero, shown = Vector3.zero }
+local Recoil = { key = nil, last = Vector3.zero, shown = Vector3.zero }
 
 function Legit.stepRecoil(now)
     local gameCam = Game.gameCamera()
     if not gameCam then return end
-    local body, head = gameCam._cameraBodySprings, gameCam._cameraHeadSprings
     local offset = Vector3.zero
-    pcall(function()
-        if body then offset = offset + body:getP() end
-        if head then offset = offset + head:getP() end
-    end)
-    Recoil.shown = offset
-    if body ~= Recoil.body or head ~= Recoil.head then
-        Recoil.body, Recoil.head, Recoil.last = body, head, offset
-        return
+    local body, head = gameCam._cameraBodySprings, gameCam._cameraHeadSprings
+    local useBarrel = flag("rcs_barrel", true) and Barrel.valid and Barrel.offset ~= nil
+    local key1, key2
+    if useBarrel then
+        offset, key1, key2 = Barrel.offset, Barrel.weapon, Barrel.aiming
+    else
+        pcall(function()
+            if body then offset = offset + body:getP() end
+            if head then offset = offset + head:getP() end
+        end)
+        key1, key2 = body, head
     end
+    Recoil.shown = offset
     local delta = offset - Recoil.last
     Recoil.last = offset
+    local reset = Recoil.barrel ~= useBarrel or Recoil.key1 ~= key1 or Recoil.key2 ~= key2 or delta.Magnitude > math.rad(20)
+    Recoil.barrel, Recoil.key1, Recoil.key2 = useBarrel, key1, key2
+    if reset then return end
 
     if not (flag("rcs_on", false) and Util.keyActive("rcs_key")) or Util.menuOpen() or Legit.moved then return end
     local weapon = Game.weapon()
@@ -3027,9 +3111,10 @@ do
     Fov:Slider({ Name = "Barrel distance", Flag = "barrel_distance", Min = 50, Max = 1000, Default = 300, Decimals = 1, Suffix = " studs", Tooltip = "Convergence distance of the Aim hit point along the barrel" })
     Fov:Slider({ Name = "Radius", Flag = "legit_fov", Min = 10, Max = 800, Default = 120, Decimals = 1, Suffix = " px" })
     Fov:Slider({ Name = "Thickness", Flag = "legit_fov_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
-    Fov:Toggle({ Name = "Dynamic radius", Flag = "legit_fov_dynamic", Tooltip = "The radius shrinks with the target's distance" })
-    Fov:Slider({ Name = "Radius when close", Flag = "legit_fov_near", Min = 10, Max = 800, Default = 240, Decimals = 1, Suffix = " px" })
-    Fov:Slider({ Name = "Radius at max distance", Flag = "legit_fov_far", Min = 10, Max = 800, Default = 60, Decimals = 1, Suffix = " px" })
+    Fov:Toggle({ Name = "Dynamic radius", Flag = "legit_fov_dynamic", Tooltip = "The radius shrinks with the equipped scope's zoom, blended with the aim-down-sights progress" })
+    Fov:Slider({ Name = "Zoom influence", Flag = "legit_fov_zoom", Min = 0, Max = 1.5, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Radius = Radius / zoom ^ influence; 1 is proportional to the zoom factor, 0 ignores zoom" })
+    Fov:Slider({ Name = "Minimum radius", Flag = "legit_fov_min", Min = 5, Max = 400, Default = 30, Decimals = 1, Suffix = " px" })
+    Fov:Slider({ Name = "Blend speed", Flag = "legit_fov_speed", Min = 2, Max = 30, Default = 10, Decimals = 0.1 })
     Fov:Toggle({ Name = "Target line", Flag = "legit_snapline", Tooltip = "A line from the crosshair to the aimed body part" }):Colorpicker({ Name = "Line", Flag = "legit_snapline_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
 
     local Info = Aim:Section({ Name = "Status", Side = 2, Icon = "info" })
@@ -3061,7 +3146,8 @@ do
 
     local Rcs = Subs["Recoil"]
     local RcsBox = Rcs:Section({ Name = "Recoil control", Side = 1, Icon = "target" })
-    RcsBox:Toggle({ Name = "Enabled", Flag = "rcs_on", Tooltip = "Cancels the camera kick of each shot by reading the camera's recoil springs" }):Keybind({ Name = "Recoil key", Flag = "rcs_key", Default = "None", Mode = "Always" })
+    RcsBox:Toggle({ Name = "Enabled", Flag = "rcs_on", Tooltip = "Cancels the recoil of each shot by tracking where the barrel points relative to your view" }):Keybind({ Name = "Recoil key", Flag = "rcs_key", Default = "None", Mode = "Always" })
+    RcsBox:Toggle({ Name = "Use barrel direction", Flag = "rcs_barrel", Default = true, Tooltip = "Compensates the barrel's own recoil, shake and sway; off falls back to the camera recoil springs only" })
     RcsBox:Slider({ Name = "Vertical control", Flag = "rcs_v", Min = 0, Max = 100, Default = 70, Decimals = 1, Suffix = "%" })
     RcsBox:Slider({ Name = "Horizontal control", Flag = "rcs_h", Min = 0, Max = 100, Default = 40, Decimals = 1, Suffix = "%" })
     RcsBox:Toggle({ Name = "Hipfire too", Flag = "rcs_hip", Default = true, Tooltip = "Off: only controls recoil while aiming down sights" })

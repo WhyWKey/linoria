@@ -23,6 +23,8 @@ end
 local SaveManager = {} do
 	SaveManager.Folder = 'Aster'
 	SaveManager.Ignore = {}
+	-- generated controls that must never be written to a config
+	SaveManager.IgnorePrefixes = { 'Theme_', 'AsterPlayerPriority', 'ThemeManager_' }
 	SaveManager.Parser = {
 		Toggle = {
 			Save = function(idx, object) 
@@ -101,6 +103,14 @@ local SaveManager = {} do
 		return (self.Library and self.Library.Toggles) or Toggles
 	end
 
+	function SaveManager:IsIgnored(idx)
+		if self.Ignore[idx] then return true end
+		for _, prefix in ipairs(self.IgnorePrefixes) do
+			if type(idx) == 'string' and idx:sub(1, #prefix) == prefix then return true end
+		end
+		return false
+	end
+
 	function SaveManager:SetIgnoreIndexes(list)
 		for _, key in next, list do
 			self.Ignore[key] = true
@@ -124,16 +134,20 @@ local SaveManager = {} do
 		}
 
 		for idx, toggle in next, self:GetToggles() do
-			if not self.Ignore[idx] and self.Parser[toggle.Type] then
+			if not self:IsIgnored(idx) and self.Parser[toggle.Type] then
 				table.insert(data.objects, self.Parser[toggle.Type].Save(idx, toggle))
 			end
 		end
 
 		for idx, option in next, self:GetOptions() do
-			if self.Parser[option.Type] and not self.Ignore[idx] then
+			if self.Parser[option.Type] and not self:IsIgnored(idx) then
 				table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
 			end
 		end	
+
+		if self.Library and self.Library.GetPlayerPriorities then
+			data.priorities = self.Library:GetPlayerPriorities()
+		end
 
 		local success, encoded = pcall(httpService.JSONEncode, httpService, data)
 		if not success then
@@ -161,6 +175,10 @@ local SaveManager = {} do
 		local success, decoded = pcall(httpService.JSONDecode, httpService, content)
 		if not success or type(decoded) ~= 'table' or type(decoded.objects) ~= 'table' then return false, 'decode error' end
 
+		if type(decoded.priorities) == 'table' and self.Library and self.Library.SetPlayerPriorities then
+			self.Library:SetPlayerPriorities(decoded.priorities)
+		end
+
 		for _, option in next, decoded.objects do
 			if self.Parser[option.type] then
 				task.spawn(function() self.Parser[option.type].Load(option.idx, option) end) -- task.spawn() so the config loading wont get stuck.
@@ -172,9 +190,14 @@ local SaveManager = {} do
 
 	function SaveManager:IgnoreThemeSettings()
 		self:SetIgnoreIndexes({ 
-			"BackgroundColor", "MainColor", "AccentColor", "AccentColor2", "OutlineColor", "FontColor", -- themes
+			"BackgroundColor", "MainColor", "AccentColor", "AccentColor2", "OutlineColor", "FontColor", "RiskColor", -- themes
 			"ThemeManager_ThemeList", 'ThemeManager_CustomThemeList', 'ThemeManager_CustomThemeName', -- themes
+			'AsterAnimatedGradient', 'AsterGradientSpeed',
 		})
+		local derived = self.Library and self.Library.DerivedColors
+		for _, def in ipairs(derived or {}) do
+			self.Ignore[def[1]] = true
+		end
 	end
 
 	function SaveManager:BuildFolderTree()

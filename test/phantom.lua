@@ -220,7 +220,7 @@ end
 pcall(function()
     ThemeManager:SetLibrary(Library)
     ThemeManager:SetFolder("Aster/PhantomForces")
-    if ThemeManager.SetDefaultTheme then ThemeManager:SetDefaultTheme("Aster Violet") end
+    if ThemeManager.SetDefaultTheme then ThemeManager:SetDefaultTheme(getgenv().AsterDefaultTheme or "Spoof") end
     if ThemeManager.PreApply then ThemeManager:PreApply() end
 end)
 
@@ -274,6 +274,8 @@ local function escapeUnbinds(name, fallback)
     end)
 end
 
+local wrapGroup
+
 local function wrapElement(object)
     local element = {}
     function element:SetText(text)
@@ -285,6 +287,10 @@ local function wrapElement(object)
         if info.Alpha then pickerInfo.Transparency = type(info.Alpha) == "number" and info.Alpha or 0 end
         object:AddColorPicker(info.Flag, pickerInfo)
         return element
+    end
+    function element:Settings(name, width)
+        local popup = object:AddSettings(name, { Width = width or 230 })
+        return wrapGroup(popup, { load = { 0, 0 } }, 1)
     end
     function element:Keybind(info)
         if not object.AddKeyPicker then return element end
@@ -301,7 +307,7 @@ local function wrapElement(object)
     return element
 end
 
-local function wrapGroup(group, page, side)
+function wrapGroup(group, page, side)
     local wrapped = {}
     local function bump() page.load[side] = page.load[side] + 1 end
 
@@ -763,12 +769,34 @@ function Barrel.refreshParams(now)
     params.FilterType = Enum.RaycastFilterType.Exclude
     pcall(function() params.RespectCanCollide = true end)
     local list = {}
-    local current = Game.camera()
-    if current then list[#list + 1] = current end
-    local ignore = Workspace:FindFirstChild("Ignore")
-    if ignore then list[#list + 1] = ignore end
+    local function add(instance)
+        if typeof(instance) == "Instance" then list[#list + 1] = instance end
+    end
+    add(Game.camera())
+    add(Workspace:FindFirstChild("Ignore"))
+    add(Workspace.Terrain)
+    local root = Game.rootPart()
+    if root then
+        local model = root.Parent
+        add(model)
+        add(model and model.Parent ~= Workspace and model.Parent)
+    end
+    pcall(function() add(LocalPlayer.Character) end)
     params.FilterDescendantsInstances = list
     Barrel.params = params
+end
+
+function Barrel.target(fire, look, distance, speed)
+    local origin = fire
+    local aim = Workspace:Raycast(origin, look * 2000, Barrel.params)
+    local reach = distance
+    if aim then
+        local hitDistance = (aim.Position - origin).Magnitude
+        if hitDistance > 3 then reach = math.min(hitDistance, distance) end
+    end
+    local flight = reach / math.max(speed or 2000, 1)
+    local drop = Game.accel * (0.5 * flight * flight)
+    return origin + look * reach + drop
 end
 
 function Barrel.update(cam, gameCam, weapon, now)
@@ -784,11 +812,11 @@ function Barrel.update(cam, gameCam, weapon, now)
     if okBase and typeof(base) == "CFrame" then
         local from = base.Position
         local hit = Workspace:Raycast(from, muzzle - from, Barrel.params)
-        if hit then fire = hit.Position + hit.Normal * 0.01 end
+        if hit and (hit.Position - from).Magnitude > 0.5 then fire = hit.Position + hit.Normal * 0.01 end
     end
-    local aim = Workspace:Raycast(fire, look * 2000, Barrel.params)
     Barrel.fire, Barrel.look = fire, look
-    Barrel.hit = aim and aim.Position or fire + look * 500
+    local speed = Game.stat(weapon, "bulletspeed")
+    Barrel.hit = Barrel.target(fire, look, flag("barrel_distance", 300), speed)
     local muzzlePoint, muzzleFront = Draw.project(cam, muzzle)
     Barrel.muzzle2d = muzzleFront and muzzlePoint or nil
     local hitPoint, hitFront = Draw.project(cam, Barrel.hit)
@@ -798,6 +826,7 @@ end
 
 function Barrel.point(mode, center)
     if not Barrel.valid then return center end
+    if Game.aiming(Game.weapon()) then return center end
     if mode == "Muzzle" then return Barrel.muzzle2d or center end
     return Barrel.hit2d or center
 end
@@ -933,8 +962,9 @@ function ESP.readSettings()
     S.visOverride = flag("esp_vis", false)
     S.visColor, S.occColor = flag("esp_vis_color", Color3.fromRGB(80, 255, 120)), flag("esp_occ_color", Color3.fromRGB(255, 80, 80))
     S.chamMode = flag("cham_mode", "Through walls")
-    S.chamGrow, S.chamGlowSize = flag("cham_grow", 0.1), flag("cham_glow_size", 0.35)
-    S.chamGlow, S.chamRound = flag("cham_glow", true), flag("cham_round_head", true)
+    S.chamGrow, S.chamGlowSize = flag("cham_grow", 0.1), flag("cham_glow_size", 1.75)
+    S.chamGlow, S.chamRound = flag("cham_glow", false), flag("cham_round_head", true)
+    S.chamHead = flag("cham_head_size", 1.15)
     S.oovSize, S.oovRadius = flag("oov_size", 14), flag("oov_radius", 40)
     S.viewLen = flag("esp_view_len", 8)
 end
@@ -1007,7 +1037,7 @@ function Chams.getContainer()
 end
 
 function Chams.acquire(round)
-    local class = round and "SphereHandleAdornment" or "BoxHandleAdornment"
+    local class = round and "CylinderHandleAdornment" or "BoxHandleAdornment"
     local list = Chams.pool[class]
     local adornment = list and table.remove(list)
     if adornment then return adornment end
@@ -1017,6 +1047,7 @@ function Chams.acquire(round)
     if not (ok and created) then return nil end
     created.Name = Util.randomName()
     created.AdornCullingMode = Enum.AdornCullingMode.Never
+    if round then created.CFrame = CFrame.new(Vector3.new(0, 0, 0), Vector3.new(0, 90, 0)) end
     created.Parent = container
     return created
 end
@@ -1054,37 +1085,56 @@ function Chams.hide(entry)
 end
 
 function Chams.build(slot)
-    local behind, visible, glow = Chams.acquire(slot.round), Chams.acquire(slot.round), Chams.acquire(slot.round)
-    if not (behind and visible and glow) then
+    local behind, visible = Chams.acquire(slot.round), Chams.acquire(slot.round)
+    if not (behind and visible) then
         Chams.release(behind)
         Chams.release(visible)
-        Chams.release(glow)
         return false
     end
     behind.AlwaysOnTop, behind.ZIndex = true, 1
     visible.AlwaysOnTop, visible.ZIndex = false, -1
-    glow.AlwaysOnTop, glow.ZIndex = false, -2
-    slot.layers = { behind = behind, visible = visible, glow = glow }
+    slot.layers = { behind = behind, visible = visible }
     return true
+end
+
+function Chams.headDimensions(part)
+    local size = typeof(part.Size) == "Vector3" and part.Size or PART_SIZES.Head
+    local ok, mesh = pcall(part.FindFirstChildOfClass, part, "SpecialMesh")
+    if ok and mesh then size = Vector3.new(size.X * mesh.Scale.X, size.Y * mesh.Scale.Y, size.Z * mesh.Scale.Z) end
+    return math.min(size.X, size.Z) / 2, size.Y
 end
 
 function Chams.style(slot, part, name, cfg, S)
     local layers = slot.layers
-    local grow, extra = S.chamGrow, S.chamGlowSize
+    local grow = S.chamGrow
     for _, adornment in pairs(layers) do adornment.Adornee = part end
     if slot.round then
-        local radius = 0.62 + grow * 0.5
-        layers.behind.Radius, layers.visible.Radius, layers.glow.Radius = radius, radius, radius + extra * 0.5
+        local radius, height = Chams.headDimensions(part)
+        radius, height = radius * S.chamHead, height * S.chamHead
+        layers.behind.Radius, layers.behind.Height = radius, height
+        layers.visible.Radius, layers.visible.Height = radius + grow / 2, height + grow
     else
-        local size = PART_SIZES[name] + Vector3.new(grow, grow, grow)
-        layers.behind.Size, layers.visible.Size = size, size
-        layers.glow.Size = size + Vector3.new(extra, extra, extra)
+        local size = typeof(part.Size) == "Vector3" and part.Size or PART_SIZES[name]
+        layers.behind.Size = size
+        layers.visible.Size = size + Vector3.new(grow, grow, grow)
     end
     layers.behind.Color3, layers.behind.Transparency = cfg.chamHid, cfg.chamHidT
     layers.behind.Visible = S.chamMode == "Through walls"
-    layers.visible.Color3, layers.visible.Transparency, layers.visible.Visible = cfg.chamVis, cfg.chamVisT, true
-    layers.glow.Color3, layers.glow.Transparency = cfg.chamVis, 1 - (1 - cfg.chamVisT) * 0.35
-    layers.glow.Visible = S.chamGlow
+    local color, transparency = cfg.chamVis, cfg.chamVisT
+    if S.chamGlow then
+        local strength = math.max(S.chamGlowSize, 1)
+        color = color:Lerp(Color3.new(1, 1, 1), math.clamp((strength - 1) / 3, 0, 0.5))
+        transparency = transparency / strength
+    end
+    layers.visible.Color3, layers.visible.Transparency, layers.visible.Visible = color, transparency, true
+    layers.visible.AlwaysOnTop = S.chamGlow == true
+end
+
+function Chams.shown()
+    for _, entry in pairs(Chams.objs) do
+        if not entry.hidden then return true end
+    end
+    return false
 end
 
 function Chams.update(rec, cfg, S)
@@ -1101,7 +1151,7 @@ function Chams.update(rec, cfg, S)
     entry.hidden = false
     local sig = table.concat({
         tostring(cfg.chamVis), cfg.chamVisT, tostring(cfg.chamHid), cfg.chamHidT,
-        S.chamMode, S.chamGrow, tostring(S.chamGlow), S.chamGlowSize, tostring(S.chamRound),
+        S.chamMode, S.chamGrow, tostring(S.chamGlow), S.chamGlowSize, tostring(S.chamRound), S.chamHead,
     }, "|")
     for _, name in ipairs(CHAM_PARTS) do
         local part = rec.hash[name]
@@ -1779,9 +1829,16 @@ function World.apply(dt, now)
         object.TintColor, object.Saturation = val("world_cc_tint"), val("world_cc_sat")
         object.Contrast, object.Brightness = val("world_cc_con"), val("world_cc_bri")
     end)
-    tune("bloom", "BloomEffect", "world_bloom", function(object)
-        object.Intensity, object.Size, object.Threshold = val("world_bloom_i"), val("world_bloom_s"), val("world_bloom_t")
-    end)
+    local glowBloom = on("cham_glow") == true and on("cham_bloom") == true and Chams.shown()
+    local worldBloom = on("world_bloom") == true
+    local bloom = effect("bloom", "BloomEffect", worldBloom or glowBloom)
+    if bloom then
+        if worldBloom then
+            bloom.Intensity, bloom.Size, bloom.Threshold = val("world_bloom_i"), val("world_bloom_s"), val("world_bloom_t")
+        else
+            bloom.Intensity, bloom.Size, bloom.Threshold = val("cham_bloom_i"), val("cham_bloom_s"), val("cham_bloom_t")
+        end
+    end
     tune("rays", "SunRaysEffect", "world_rays", function(object)
         object.Intensity, object.Spread = val("world_rays_i"), val("world_rays_s")
     end)
@@ -2190,9 +2247,10 @@ function Nades.hook()
 end
 
 function Nades.mapParams()
-    if Nades.params ~= nil then return Nades.params or nil end
     local map = Workspace:FindFirstChild("Map")
-    if not map then return nil end
+    if not map then Nades.params = nil return nil end
+    local cached = Nades.params
+    if cached and cached.FilterDescendantsInstances[1] == map then return cached end
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Include
     params.FilterDescendantsInstances = { map }
@@ -2274,9 +2332,11 @@ function Nades.simulate(origin, velocity, gravity, elasticity, friction, duratio
         local move = speed * step + gravity * (0.5 * step * step)
         local hit = params and Workspace:Raycast(position, move, params)
         if hit then
+            local used = step * math.clamp((hit.Position - position).Magnitude / math.max(move.Magnitude, 1e-6), 0, 1)
+            speed = speed + gravity * used
             position = hit.Position + hit.Normal * 0.05
             local along = hit.Normal * speed:Dot(hit.Normal)
-            speed = (speed - along) * (1 - friction) - along * elasticity + gravity * step
+            speed = (speed - along) * (1 - friction) - along * elasticity + gravity * (step - used)
             points[#points + 1] = position
             bounces[#bounces + 1] = position
             if #bounces > 5 or speed.Magnitude < 2 then break end
@@ -2315,17 +2375,22 @@ end
 
 function Nades.predict(cam, now, origin)
     local weapon = Game.weapon()
-    local held = false
+    local held, armed = false, false
     if flag("nade_predict", false) and weapon and type(weapon.getWeaponType) == "function" then
         local ok, kind = pcall(weapon.getWeaponType, weapon)
         held = ok and kind == "Grenade" and type(weapon.isEquipped) == "function" and weapon:isEquipped() == true
+        if held then
+            local okArmed, state = pcall(weapon.isState, weapon, "armed")
+            armed = okArmed and state == true
+            if not armed and not flag("nade_predict_pre", false) then held = false end
+        end
     end
     if not held then
         Nades.pred = nil
         return
     end
     local pred = Nades.pred
-    if not pred or pred.weapon ~= weapon or now - Nades.predAt > 0.05 then
+    if not pred or pred.weapon ~= weapon or pred.armed ~= armed or now - Nades.predAt > 0.05 then
         Nades.predAt = now
         local start, velocity = Nades.throwState(weapon)
         if not start then
@@ -2333,24 +2398,25 @@ function Nades.predict(cam, now, origin)
             return
         end
         local duration = Game.stat(weapon, "fusetime") or 5
-        local okArmed, armed = pcall(weapon.isState, weapon, "armed")
-        if okArmed and armed and type(weapon._fuseTime) == "number" then duration = math.max(weapon._fuseTime - Game.time(), 0.1) end
+        if armed and type(weapon._fuseTime) == "number" then duration = math.max(weapon._fuseTime - Game.time(), 0.1) end
         local gravity = typeof(weapon._acceleration) == "Vector3" and weapon._acceleration or Vector3.new(0, -80, 0)
         local points, bounces = Nades.simulate(start, velocity, gravity, weapon._bounceElasticity or 0.2, weapon._frictionConstant or 0.08, duration)
-        pred = { weapon = weapon, points = points, bounces = bounces, land = points[#points], duration = duration, cache = pred and pred.cache or {} }
+        pred = { weapon = weapon, points = points, bounces = bounces, land = points[#points], duration = duration, armed = armed, cache = pred and pred.cache or {} }
         Nades.pred = pred
     end
     local color = flag("nade_predict_color", Color3.fromRGB(120, 200, 255))
-    for index = 1, #pred.points - 1 do Nades.line(cam, pred.points[index], pred.points[index + 1], color, 1, 1.5) end
+    local alpha = armed and 1 or 0.45
+    for index = 1, #pred.points - 1 do Nades.line(cam, pred.points[index], pred.points[index + 1], color, alpha, 1.5) end
     if flag("nade_predict_bounce", true) then
-        for _, point in ipairs(pred.bounces) do Nades.ring(cam, point, 0.8, color, 1) end
+        for _, point in ipairs(pred.bounces) do Nades.ring(cam, point, 0.8, color, alpha) end
     end
     local data = weapon._weaponData or weapon.weaponData
     local verdict, verdictColor = Nades.verdict((Nades.damage(data, pred.land, origin, pred.cache, now)))
     local radius = data and type(data.damageGraph) == "table" and #data.damageGraph > 0 and data.damageGraph[#data.damageGraph].distance
-    Nades.ring(cam, pred.land, 1.5, color, 1)
-    if radius and flag("nade_ring", true) then Nades.ring(cam, pred.land, radius, verdictColor or color, 0.6) end
-    local lines = { { string.format("Lands %.1fs", pred.duration), color } }
+    Nades.ring(cam, pred.land, 1.5, color, alpha)
+    if radius and flag("nade_ring", true) then Nades.ring(cam, pred.land, radius, verdictColor or color, 0.6 * alpha) end
+    local left = armed and math.max(weapon._fuseTime - Game.time(), 0) or pred.duration
+    local lines = { { string.format(armed and "Fuse %.1fs" or "Fuse %.1fs (pin in)", left), color } }
     if verdict and flag("nade_dmg", true) then lines[2] = { verdict, verdictColor } end
     Nades.label(cam, pred.land + Vector3.new(0, 1.5, 0), lines)
 end
@@ -2957,6 +3023,7 @@ do
     Fov:Toggle({ Name = "Locked colour", Flag = "legit_fov_lock", Default = true, Tooltip = "The circle changes colour while a target is held" }):Colorpicker({ Name = "Locked", Flag = "legit_fov_lock_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
     Fov:Toggle({ Name = "Attach to barrel", Flag = "legit_fov_barrel", Tooltip = "Centres the circle on the weapon barrel instead of the screen centre" })
     Fov:Dropdown({ Name = "Attach point", Flag = "legit_fov_attach", Items = { "Aim hit", "Muzzle" }, Default = "Aim hit", Tooltip = "Aim hit is where the barrel is pointing; Muzzle is the barrel tip" })
+    Fov:Slider({ Name = "Barrel distance", Flag = "barrel_distance", Min = 50, Max = 1000, Default = 300, Decimals = 1, Suffix = " studs", Tooltip = "Convergence distance of the Aim hit point along the barrel" })
     Fov:Slider({ Name = "Radius", Flag = "legit_fov", Min = 10, Max = 800, Default = 120, Decimals = 1, Suffix = " px" })
     Fov:Slider({ Name = "Thickness", Flag = "legit_fov_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
     Fov:Toggle({ Name = "Dynamic radius", Flag = "legit_fov_dynamic", Tooltip = "The radius shrinks with the target's distance" })
@@ -3006,76 +3073,120 @@ do
 end
 
 do
-    local Subs = Pages.ESP:SubTabs({ { "Enemies", "swords" }, { "Teammates", "shield" }, { "Settings", "sliders-horizontal" }, { "Items", "package" }, { "Grenades", "flame" } })
+    local Subs = Pages.ESP:SubTabs({ { "Enemies", "swords" }, { "Teammates", "shield" }, { "Other", "package" } })
+
+    local function pickColor(popup, label, flagName, default, alpha)
+        popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
+    end
 
     local function buildTeam(sub, prefix, label, tint, hidden)
         local function key(name) return prefix .. name end
         local Main = sub:Section({ Name = label .. " ESP", Side = 1, Icon = "eye" })
-        Main:Toggle({ Name = "Enabled", Flag = key("on"), Tooltip = "Master switch for this tab" })
-        Main:Slider({ Name = "Max distance", Flag = key("dist"), Min = 50, Max = 3000, Default = 1500, Decimals = 1, Suffix = " studs", Tooltip = "Players further away are not drawn" })
-        Main:Toggle({ Name = "Box", Flag = key("box") }):Colorpicker({ Name = "Box", Flag = key("box_color"), Default = tint, Alpha = 0 })
-        Main:Toggle({ Name = "Filled", Flag = key("fill") }):Colorpicker({ Name = "Fill", Flag = key("fill_color"), Default = tint, Alpha = 0.85 })
-        Main:Toggle({ Name = "Name", Flag = key("name") }):Colorpicker({ Name = "Name", Flag = key("name_color"), Default = WHITE, Alpha = 0 })
-        Main:Toggle({ Name = "Health bar", Flag = key("hp") }):Colorpicker({ Name = "Low health", Flag = key("hp_low"), Default = Color3.fromRGB(255, 60, 60), Alpha = 0 }):Colorpicker({ Name = "Full health", Flag = key("hp_full"), Default = Color3.fromRGB(80, 255, 120), Alpha = 0 })
-        Main:Toggle({ Name = "Health number", Flag = key("hp_num") }):Colorpicker({ Name = "Number", Flag = key("hp_num_color"), Default = WHITE, Alpha = 0 })
-        Main:Toggle({ Name = "Distance", Flag = key("show_dist") }):Colorpicker({ Name = "Distance", Flag = key("show_dist_color"), Default = Color3.fromRGB(190, 190, 205), Alpha = 0 })
-        Main:Toggle({ Name = "Weapon", Flag = key("weapon") }):Colorpicker({ Name = "Weapon", Flag = key("weapon_color"), Default = Color3.fromRGB(205, 205, 215), Alpha = 0 })
+        local On = Main:Toggle({ Name = "Enabled", Flag = key("on"), Tooltip = "Master switch for this tab" }):Settings("Range", 230)
+        On:Slider({ Name = "Max distance", Flag = key("dist"), Min = 50, Max = 3000, Default = 1500, Decimals = 1, Suffix = " studs", Tooltip = "Players further away are not drawn" })
 
-        local Over = sub:Section({ Name = label .. " overlays", Side = 2, Icon = "layers" })
-        Over:Toggle({ Name = "Skeleton", Flag = key("skeleton") }):Colorpicker({ Name = "Skeleton", Flag = key("skeleton_color"), Default = WHITE, Alpha = 0 })
-        Over:Toggle({ Name = "Head dot", Flag = key("dot") }):Colorpicker({ Name = "Head dot", Flag = key("dot_color"), Default = tint, Alpha = 0 })
-        Over:Toggle({ Name = "Tracer", Flag = key("tracer"), Tooltip = "Line from the screen to the player's feet" }):Colorpicker({ Name = "Tracer", Flag = key("tracer_color"), Default = tint, Alpha = 0 })
-        Over:Toggle({ Name = "View direction", Flag = key("view"), Tooltip = "Where the player is looking, drawn from the head" }):Colorpicker({ Name = "View", Flag = key("view_color"), Default = Color3.fromRGB(255, 220, 60), Alpha = 0 })
-        Over:Toggle({ Name = "Off-screen arrows", Flag = key("oov"), Tooltip = "Arrows pointing at players you cannot see on screen" }):Colorpicker({ Name = "Arrow", Flag = key("oov_color"), Default = tint, Alpha = 0 })
-        Over:Toggle({ Name = "Chams", Flag = key("chams"), Tooltip = "Adornment chams on each body part. First colour is the visible layer, second the layer behind walls" }):Colorpicker({ Name = "Visible", Flag = key("cham_vis"), Default = tint, Alpha = 0.5 }):Colorpicker({ Name = "Behind walls", Flag = key("cham_hid"), Default = hidden, Alpha = 0.5 })
+        local Box = Main:Toggle({ Name = "Boxes", Flag = key("box") }):Settings("Boxes", 230)
+        pickColor(Box, "Box", key("box_color"), tint)
+        Box:Toggle({ Name = "Filled", Flag = key("fill") })
+        pickColor(Box, "Fill", key("fill_color"), tint, 0.85)
+
+        local Name = Main:Toggle({ Name = "Names", Flag = key("name") }):Settings("Names", 200)
+        pickColor(Name, "Name", key("name_color"), WHITE)
+
+        local Hp = Main:Toggle({ Name = "Health", Flag = key("hp") }):Settings("Health", 230)
+        pickColor(Hp, "Low health", key("hp_low"), Color3.fromRGB(255, 60, 60))
+        pickColor(Hp, "Full health", key("hp_full"), Color3.fromRGB(80, 255, 120))
+        Hp:Toggle({ Name = "Health number", Flag = key("hp_num") })
+        pickColor(Hp, "Number", key("hp_num_color"), WHITE)
+
+        local Dist = Main:Toggle({ Name = "Distance", Flag = key("show_dist") }):Settings("Distance", 200)
+        pickColor(Dist, "Distance", key("show_dist_color"), Color3.fromRGB(190, 190, 205))
+
+        local Weapon = Main:Toggle({ Name = "Weapon", Flag = key("weapon") }):Settings("Weapon", 200)
+        pickColor(Weapon, "Weapon", key("weapon_color"), Color3.fromRGB(205, 205, 215))
+
+        local Skel = Main:Toggle({ Name = "Skeleton", Flag = key("skeleton") }):Settings("Skeleton", 200)
+        pickColor(Skel, "Skeleton", key("skeleton_color"), WHITE)
+
+        local Dot = Main:Toggle({ Name = "Head dot", Flag = key("dot") }):Settings("Head dot", 200)
+        pickColor(Dot, "Head dot", key("dot_color"), tint)
+
+        local Trace = Main:Toggle({ Name = "Snaplines", Flag = key("tracer"), Tooltip = "Line from the screen to the player's feet" }):Settings("Snaplines", 200)
+        pickColor(Trace, "Snapline", key("tracer_color"), tint)
+
+        local View = Main:Toggle({ Name = "View direction", Flag = key("view"), Tooltip = "Where the player is looking, drawn from the head" }):Settings("View direction", 200)
+        pickColor(View, "View", key("view_color"), Color3.fromRGB(255, 220, 60))
+
+        local Arrow = Main:Toggle({ Name = "Arrows", Flag = key("oov"), Tooltip = "Arrows pointing at players you cannot see on screen" }):Settings("Arrows", 200)
+        pickColor(Arrow, "Arrow", key("oov_color"), tint)
+
+        local Cham = Main:Toggle({ Name = "Chams", Flag = key("chams"), Tooltip = "Adornment chams on each body part" }):Settings("Chams", 200)
+        pickColor(Cham, "Visible", key("cham_vis"), tint, 0.5)
+        pickColor(Cham, "Behind walls", key("cham_hid"), hidden, 0.5)
     end
     buildTeam(Subs.Enemies, "esp_enemy_", "Enemy", Color3.fromRGB(255, 70, 90), Color3.fromRGB(170, 60, 255))
     buildTeam(Subs.Teammates, "esp_team_", "Teammate", Color3.fromRGB(90, 220, 130), Color3.fromRGB(60, 150, 255))
 
-    local Set = Subs.Settings
-    local Text, Box, Colors = Set:MultiSection({ Sections = { "Text", "Box", "Colors" }, Side = 1 })
+    local Other = Subs.Other
+    local Shared = Other:Section({ Name = "Shared style", Side = 1, Icon = "sliders-horizontal" })
+    local Text = Shared:Label({ Name = "Text" }):Settings("Text", 230)
     Text:Dropdown({ Name = "Font", Flag = "esp_font", Items = { "Plex", "UI", "System", "Monospace" }, Default = "Plex" })
     Text:Slider({ Name = "Size", Flag = "esp_text", Min = 10, Max = 20, Default = 13, Decimals = 1, Suffix = " px" })
     Text:Dropdown({ Name = "Text case", Flag = "esp_case", Items = { "Normal", "lower", "UPPER" }, Default = "Normal" })
     Text:Toggle({ Name = "Outlines", Flag = "esp_outline", Default = true, Tooltip = "Dark outline on the box, dot and arrows" })
+    local Box = Shared:Label({ Name = "Boxes" }):Settings("Boxes", 230)
     Box:Dropdown({ Name = "Box style", Flag = "esp_box_style", Items = { "Corners", "Full" }, Default = "Corners" })
     Box:Dropdown({ Name = "Box mode", Flag = "esp_box_mode", Items = { "Static", "Dynamic" }, Default = "Static", Tooltip = "Static is a fixed size box; Dynamic wraps the body parts" })
-    Box:Toggle({ Name = "Gradient fill", Flag = "esp_fill_gradient", Default = true, Tooltip = "Blends the fill into the second colour toward the feet" }):Colorpicker({ Name = "Fill end", Flag = "esp_fill_color2", Default = Color3.fromRGB(20, 20, 20), Alpha = 0 })
-    Box:Dropdown({ Name = "Health bar side", Flag = "esp_hp_side", Items = { "Left", "Right" }, Default = "Left" })
-    Box:Label({ Name = "Mid health colour" }):Colorpicker({ Name = "Mid health", Flag = "esp_hp_mid", Default = Color3.fromRGB(255, 210, 60), Alpha = 0 })
-    Colors:Toggle({ Name = "Colour by visibility", Flag = "esp_vis", Tooltip = "Box, skeleton, tracer, dot, view line and arrows use the colours below" })
-    Colors:Label({ Name = "Visible" }):Colorpicker({ Name = "Visible", Flag = "esp_vis_color", Default = Color3.fromRGB(80, 255, 120), Alpha = 0 })
-    Colors:Label({ Name = "Behind walls" }):Colorpicker({ Name = "Behind walls", Flag = "esp_occ_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
-
-    local Lines, Cham, Arrow = Set:MultiSection({ Sections = { "Lines", "Chams", "Arrows" }, Side = 2 })
-    Lines:Dropdown({ Name = "Tracer origin", Flag = "esp_tracer_origin", Items = { "Bottom", "Center", "Top", "Mouse" }, Default = "Bottom" })
-    Lines:Slider({ Name = "Tracer thickness", Flag = "esp_tracer_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
+    Box:Toggle({ Name = "Gradient fill", Flag = "esp_fill_gradient", Default = true, Tooltip = "Blends the fill into the second colour toward the feet" })
+    pickColor(Box, "Fill end", "esp_fill_color2", Color3.fromRGB(20, 20, 20))
+    local Health = Shared:Label({ Name = "Health" }):Settings("Health", 230)
+    Health:Dropdown({ Name = "Health bar side", Flag = "esp_hp_side", Items = { "Left", "Right" }, Default = "Left" })
+    pickColor(Health, "Mid health", "esp_hp_mid", Color3.fromRGB(255, 210, 60))
+    local Lines = Shared:Label({ Name = "Lines" }):Settings("Lines", 230)
+    Lines:Dropdown({ Name = "Snapline origin", Flag = "esp_tracer_origin", Items = { "Bottom", "Center", "Top", "Mouse" }, Default = "Bottom" })
+    Lines:Slider({ Name = "Snapline thickness", Flag = "esp_tracer_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
     Lines:Slider({ Name = "Skeleton thickness", Flag = "esp_skel_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
     Lines:Slider({ Name = "View line length", Flag = "esp_view_len", Min = 2, Max = 30, Default = 8, Decimals = 0.1, Suffix = " studs" })
+    local Vis = Shared:Toggle({ Name = "Colour by visibility", Flag = "esp_vis", Tooltip = "Box, skeleton, snapline, dot, view line and arrows use the popup colours" }):Settings("Visibility colours", 200)
+    pickColor(Vis, "Visible", "esp_vis_color", Color3.fromRGB(80, 255, 120))
+    pickColor(Vis, "Behind walls", "esp_occ_color", Color3.fromRGB(255, 80, 80))
+    local Cham = Shared:Label({ Name = "Chams" }):Settings("Chams", 230)
     Cham:Dropdown({ Name = "Mode", Flag = "cham_mode", Items = { "Through walls", "Visible only" }, Default = "Through walls", Tooltip = "Through walls switches between the two colours by line of sight" })
     Cham:Slider({ Name = "Thickness", Flag = "cham_grow", Min = 0, Max = 1, Default = 0.1, Decimals = 0.01, Suffix = " studs" })
-    Cham:Toggle({ Name = "Glow", Flag = "cham_glow", Default = true, Tooltip = "Adds a soft halo layer around the visible chams" })
-    Cham:Slider({ Name = "Glow size", Flag = "cham_glow_size", Min = 0.05, Max = 1.5, Default = 0.35, Decimals = 0.01, Suffix = " studs" })
+    Cham:Toggle({ Name = "Glow", Flag = "cham_glow", Tooltip = "Draws the visible layer on top, brighter and more opaque, so bloom picks it up" })
+    Cham:Slider({ Name = "Glow strength", Flag = "cham_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
+    Cham:Toggle({ Name = "Bloom", Flag = "cham_bloom", Default = true, Tooltip = "Drives a bloom effect while the glow is on; the World bloom settings win if that is enabled" })
+    Cham:Slider({ Name = "Bloom intensity", Flag = "cham_bloom_i", Min = 0, Max = 3, Default = 0.4, Decimals = 0.01 })
+    Cham:Slider({ Name = "Bloom size", Flag = "cham_bloom_s", Min = 0, Max = 56, Default = 24, Decimals = 0.1 })
+    Cham:Slider({ Name = "Bloom threshold", Flag = "cham_bloom_t", Min = 0, Max = 2, Default = 0.95, Decimals = 0.01 })
+    Cham:Slider({ Name = "Head size", Flag = "cham_head_size", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
     Cham:Toggle({ Name = "Round head", Flag = "cham_round_head", Default = true })
+    local Arrow = Shared:Label({ Name = "Arrows" }):Settings("Arrows", 230)
     Arrow:Slider({ Name = "Arrow size", Flag = "oov_size", Min = 8, Max = 32, Default = 14, Decimals = 1, Suffix = " px" })
     Arrow:Slider({ Name = "Arrow distance", Flag = "oov_radius", Min = 5, Max = 100, Default = 40, Decimals = 1, Suffix = " %", Tooltip = "Distance from the screen centre; 100 is the edge" })
 
-    local Item = Subs.Items:Section({ Name = "Items", Side = 1, Icon = "package" })
-    Item:Toggle({ Name = "Dropped weapons", Flag = "item_drops" }):Colorpicker({ Name = "Weapons", Flag = "item_drops_color", Default = Color3.fromRGB(255, 190, 60), Alpha = 0 })
+    local World = Other:Section({ Name = "Items and grenades", Side = 2, Icon = "package" })
+    local Item = World:Toggle({ Name = "Dropped items", Flag = "item_drops" }):Settings("Dropped items", 230)
+    pickColor(Item, "Weapons", "item_drops_color", Color3.fromRGB(255, 190, 60))
     Item:Slider({ Name = "Max distance", Flag = "item_dist", Min = 20, Max = 1500, Default = 300, Decimals = 1, Suffix = " studs" })
 
-    local Warn = Subs.Grenades:Section({ Name = "Grenade warning", Side = 1, Icon = "flame" })
-    Warn:Toggle({ Name = "Enabled", Flag = "nade_on", Tooltip = "Tracks enemy grenades and your own from the game's throw event" })
-    Warn:Toggle({ Name = "Enemy grenades", Flag = "nade_enemy", Default = true }):Colorpicker({ Name = "Enemy", Flag = "nade_enemy_color", Default = Color3.fromRGB(255, 90, 60), Alpha = 0 })
-    Warn:Toggle({ Name = "My grenades", Flag = "nade_own", Default = true }):Colorpicker({ Name = "Mine", Flag = "nade_own_color", Default = Color3.fromRGB(120, 255, 170), Alpha = 0 })
+    local Warn = World:Toggle({ Name = "Grenade warning", Flag = "nade_on", Tooltip = "Tracks enemy grenades and your own from the game's throw event" }):Settings("Grenade warning", 230)
+    Warn:Toggle({ Name = "Enemy grenades", Flag = "nade_enemy", Default = true })
+    pickColor(Warn, "Enemy", "nade_enemy_color", Color3.fromRGB(255, 90, 60))
+    Warn:Toggle({ Name = "My grenades", Flag = "nade_own", Default = true })
+    pickColor(Warn, "Mine", "nade_own_color", Color3.fromRGB(120, 255, 170))
     Warn:Toggle({ Name = "Fuse timer", Flag = "nade_timer", Default = true })
     Warn:Toggle({ Name = "Flight path", Flag = "nade_path", Default = true, Tooltip = "The path from the server's replicated grenade nodes, up to the blast" })
     Warn:Slider({ Name = "Max distance", Flag = "nade_dist", Min = 50, Max = 1500, Default = 400, Decimals = 1, Suffix = " studs" })
-    local Blast = Subs.Grenades:Section({ Name = "Damage visualizer", Side = 2, Icon = "flame" })
-    Blast:Toggle({ Name = "Damage estimate", Flag = "nade_dmg", Default = true, Tooltip = "Torso damage to you at the blast point from the grenade's damage graph, 0 behind map cover" }):Colorpicker({ Name = "Safe", Flag = "nade_safe_color", Default = Color3.fromRGB(90, 255, 130), Alpha = 0 }):Colorpicker({ Name = "Danger", Flag = "nade_danger_color", Default = Color3.fromRGB(255, 60, 60), Alpha = 0 })
+
+    local Blast = World:Toggle({ Name = "Damage estimate", Flag = "nade_dmg", Default = true, Tooltip = "Torso damage to you at the blast point from the grenade's damage graph, 0 behind map cover" }):Settings("Damage estimate", 200)
+    pickColor(Blast, "Safe", "nade_safe_color", Color3.fromRGB(90, 255, 130))
+    pickColor(Blast, "Danger", "nade_danger_color", Color3.fromRGB(255, 60, 60))
     Blast:Toggle({ Name = "Blast radius ring", Flag = "nade_ring", Default = true, Tooltip = "Ground ring at the damage range of the grenade" })
-    local Pred = Subs.Grenades:Section({ Name = "Throw predictor", Side = 2, Icon = "crosshair" })
-    Pred:Toggle({ Name = "Predict throw", Flag = "nade_predict", Tooltip = "While holding a grenade, draws the predicted path and landing" }):Colorpicker({ Name = "Path", Flag = "nade_predict_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 })
+
+    local Pred = World:Toggle({ Name = "Predict throw", Flag = "nade_predict", Tooltip = "While the pin is pulled, draws the predicted path, landing and fuse left" }):Settings("Throw predictor", 200)
+    pickColor(Pred, "Path", "nade_predict_color", Color3.fromRGB(120, 200, 255))
+    Pred:Toggle({ Name = "Show before pin pull", Flag = "nade_predict_pre", Tooltip = "Dimmer preview while the pin is still in" })
     Pred:Toggle({ Name = "Bounce markers", Flag = "nade_predict_bounce", Default = true })
 end
 
@@ -3289,7 +3400,7 @@ do
     SaveManager:BuildConfigSection(ConfigSub)
 end
 
-local Loop = { last = os.clock(), labelAt = 0, watermarkAt = 0, retryAt = 0, retryDelay = 3, hookAt = 0, frames = 0, fpsAt = os.clock(), fps = 60 }
+local Loop = { last = os.clock(), labelAt = 0, retryAt = 0, retryDelay = 3, hookAt = 0, frames = 0, fpsAt = os.clock(), fps = 60 }
 
 function Loop.step()
     Game.frame = Game.frame + 1
@@ -3355,16 +3466,6 @@ function Loop.step()
     Util.guard("trail", Trail.step, cam, now)
     Util.guard("nades", Nades.step, cam, now)
 
-    if now - Loop.watermarkAt > 0.5 then
-        Loop.watermarkAt = now
-        local ping = ""
-        pcall(function()
-            local network = Game.mods.NetworkClient
-            if network and network.getPing then ping = " | " .. math.floor(network.getPing() * 1000) .. "ms" end
-        end)
-        pcall(function() Library:SetWatermark(string.format("Aster | %d fps%s", Loop.fps, ping)) end)
-    end
-
     if now - Loop.labelAt > 0.2 then
         Loop.labelAt = now
         local weapon = Game.weapon()
@@ -3390,6 +3491,7 @@ Util.track(RunService.RenderStepped:Connect(function()
 end))
 
 pcall(function() SaveManager:LoadAutoloadConfig() end)
+pcall(function() Library:SetWatermark("Aster") end)
 pcall(function() Library:SetWatermarkVisibility(Toggles.menu_watermark == nil or Toggles.menu_watermark.Value) end)
 if not introPlayed and not Library.Toggled then pcall(function() Library:Toggle() end) end
 Library:Notify("Aster loaded | core " .. tostring(Game.summary), 5)

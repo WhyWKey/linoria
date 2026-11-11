@@ -194,8 +194,7 @@ function Util.alpha(name, default)
     return default or 0
 end
 
-function Util.set(name, fallback)
-    local value = flag(name, fallback)
+function Util.toSet(value)
     local out = {}
     if type(value) == "table" then
         for key, on in pairs(value) do
@@ -203,6 +202,10 @@ function Util.set(name, fallback)
         end
     end
     return out
+end
+
+function Util.set(name, fallback)
+    return Util.toSet(flag(name, fallback))
 end
 
 function Util.keyActive(name)
@@ -648,6 +651,84 @@ function Game.isFirearm(weapon)
     return type(Game.stat(weapon, "bulletspeed")) == "number"
 end
 
+Game.classes = {
+    { id = "pistol", name = "Pistol", icon = "pistol" },
+    { id = "smg", name = "SMG", icon = "smg" },
+    { id = "rifle", name = "Rifle", icon = "rifle" },
+    { id = "lmg", name = "LMG", icon = "lmg" },
+    { id = "sniper", name = "Sniper", icon = "sniper" },
+    { id = "shotgun", name = "Shotgun", icon = "shotgun" },
+}
+Game.classNames = {}
+for _, entry in ipairs(Game.classes) do Game.classNames[entry.id] = entry.name end
+
+local CLASS_BY_TYPE = {
+    PISTOL = "pistol", PISTOLS = "pistol", REVOLVER = "pistol", REVOLVERS = "pistol",
+    SMG = "smg", PDW = "smg", ["MACHINE PISTOL"] = "smg", ["MACHINE PISTOLS"] = "smg",
+    ASSAULT = "rifle", ["ASSAULT RIFLE"] = "rifle", CARBINE = "rifle", BATTLE = "rifle", ["BATTLE RIFLE"] = "rifle",
+    LMG = "lmg", SNIPER = "sniper", ["SNIPER RIFLE"] = "sniper", DMR = "sniper", SHOTGUN = "shotgun",
+}
+
+local CLASS_BY_NAME = {
+    G18 = "smg", MP5K = "smg", MP7 = "smg", MP10 = "smg", P90 = "smg", UMP45 = "smg", MAC10 = "smg", ["KRISS VECTOR"] = "smg", VECTOR = "smg",
+    M9 = "pistol", M1911 = "pistol", ["DESERT EAGLE"] = "pistol", DEAGLE = "pistol",
+    M4A1 = "rifle", AK47 = "rifle", AK12 = "rifle", M16A3 = "rifle", SCAR = "rifle", G36 = "rifle",
+    M249 = "lmg", MG42 = "lmg", RPK = "lmg",
+    AWM = "sniper", INTERVENTION = "sniper", DRAGUNOV = "sniper", M14 = "sniper", MK11 = "sniper",
+    REMINGTON870 = "shotgun", M1014 = "shotgun", SPAS12 = "shotgun", ["MODEL 870"] = "shotgun",
+}
+
+local classCache = setmetatable({}, { __mode = "k" })
+
+function Game.weaponClass(weapon)
+    if type(weapon) ~= "table" then return nil end
+    local cached = classCache[weapon]
+    if cached ~= nil then return cached or nil end
+    local class
+    if Game.isFirearm(weapon) then
+        local name = type(weapon.weaponName) == "string" and weapon.weaponName:upper() or nil
+        class = name and CLASS_BY_NAME[name]
+        if not class then
+            local kind = Game.stat(weapon, "type")
+            if kind == nil and type(weapon.getWeaponType) == "function" then
+                local ok, value = pcall(weapon.getWeaponType, weapon)
+                if ok then kind = value end
+            end
+            class = type(kind) == "string" and CLASS_BY_TYPE[kind:upper()] or nil
+        end
+    end
+    classCache[weapon] = class or false
+    return class
+end
+
+local PW_KEYS = {
+    legit_aim = "aim", legit_fov = "fov", legit_smooth = "smooth", legit_dist = "dist", legit_priority = "priority", legit_parts = "parts",
+    legit_drop = "drop", legit_move = "move",
+    rcs_on = "rcs_on", rcs_v = "rcs_v", rcs_h = "rcs_h",
+    trig_on = "trig_on", trig_delay = "trig_delay", trig_parts = "trig_parts",
+}
+Game.pw = { active = false, class = nil, weapon = nil }
+
+function Game.pwUpdate()
+    local pw = Game.pw
+    local weapon = Game.weapon()
+    local class = weapon and Game.weaponClass(weapon) or nil
+    pw.weapon, pw.class = weapon, class
+    pw.active = class ~= nil and flag("pw_enabled", false) == true and flag("pw_" .. class .. "_override", false) == true
+    return pw
+end
+
+function Game.eff(name, default)
+    local pw = Game.pw
+    local key = pw.active and PW_KEYS[name]
+    if key then return flag("pw_" .. pw.class .. "_" .. key, default) end
+    return flag(name, default)
+end
+
+function Game.effSet(name, fallback)
+    return Util.toSet(Game.eff(name, fallback))
+end
+
 function Game.time()
     local network = Game.mods.NetworkClient
     if type(network) == "table" and type(network.getTime) == "function" then
@@ -751,11 +832,12 @@ function Entities.update()
         local velocity = spring and spring.p
         record.velocity = typeof(velocity) == "Vector3" and velocity or Vector3.zero
 
-        record.weaponName = nil
+        record.weaponName, record.weaponObject = nil, nil
         if rendered then
             pcall(function()
                 local weapon = entry:getWeaponObject()
                 record.weaponName = weapon and weapon.weaponName
+                record.weaponObject = weapon
             end)
         end
         local okModel, model = pcall(object.getCharacterModel, object)
@@ -829,6 +911,135 @@ Util.onUnload(function()
     for object in pairs(Draw.all) do pcall(function() object:Remove() end) end
     Draw.all = {}
 end)
+
+local Icons = {
+    data = {}, ratio = {}, busy = {}, retry = {}, bound = setmetatable({}, { __mode = "k" }),
+    folder = "Aster/PhantomForces/icons", prefix = "csgo_v1_", cooldown = 30, dataOk = true, colorOk = true,
+}
+
+local WEAPON_ICON = {
+    AK47 = "ak47", AK12 = "ak47", AK74 = "ak47", AKS74U = "ak47", AN94 = "ak47", ASVAL = "galilar", VAL = "galilar",
+    M4 = "m4a1", M4A1 = "m4a1", M16 = "m4a1", M16A3 = "m4a1", M16A4 = "m4a1", HK416 = "m4a1_silencer", SCARL = "m4a1", SCAR = "m4a1",
+    SCARH = "scar20", G36 = "sg556", G36C = "sg556", AUG = "aug", AUGA3 = "aug", FAL = "galilar", FAL5000 = "galilar", L85A2 = "famas", L85 = "famas",
+    MP5 = "mp5sd", MP5K = "mp7", MP7 = "mp7", MP10 = "mac10", MAC10 = "mac10", UMP45 = "ump45", UMP = "ump45", P90 = "p90",
+    VECTOR = "mp9", KRISSVECTOR = "mp9", BIZON = "bizon", PPSH = "bizon", MP9 = "mp9", TEC9 = "tec9",
+    G18 = "glock", G17 = "glock", GLOCK = "glock", GLOCK17 = "glock", GLOCK18 = "glock", M9 = "p2000", M1911 = "p250", P226 = "usp_silencer", USP = "usp_silencer",
+    FN57 = "fiveseven", FIVESEVEN = "fiveseven", DEAGLE = "deagle", DESERTEAGLE = "deagle", PYTHON = "revolver", REVOLVER = "revolver", M29 = "revolver", MAGNUM = "revolver",
+    REMINGTON870 = "nova", MODEL870 = "nova", R870 = "nova", ["870"] = "nova", KSG12 = "xm1014", KSG = "xm1014", SAIGA12 = "xm1014", M1014 = "xm1014",
+    SPAS12 = "mag7", DBS = "sawedoff", DB = "sawedoff", SAWEDOFF = "sawedoff",
+    INTERVENTION = "awp", AWM = "awp", M98B = "awp", BARRETT = "awp", M82 = "awp", M700 = "ssg08", MOSIN = "ssg08", MOSINNAGANT = "ssg08", M24 = "ssg08",
+    DRAGUNOV = "g3sg1", SVD = "g3sg1", MK11 = "g3sg1", M14 = "g3sg1", SKS = "g3sg1",
+    M249 = "m249", RPK = "negev", MG42 = "negev", MG36 = "negev", PKM = "negev", M60 = "negev",
+    TASER = "taser", C4 = "c4",
+}
+
+local CLASS_ICON = {
+    pistol = "class_pistol", smg = "class_smg", rifle = "class_rifle", sniper = "class_sniper", shotgun = "class_shotgun", lmg = "class_lmg",
+}
+
+function Icons.norm(name)
+    return (tostring(name):upper():gsub("[^%w]", ""))
+end
+
+function Icons.weaponKey(name, weapon)
+    if type(name) ~= "string" or name == "" then return nil end
+    local norm = Icons.norm(name)
+    local key = WEAPON_ICON[norm]
+    if key then return key end
+    if norm:find("KNIFE", 1, true) or norm:find("KARAMBIT", 1, true) or norm:find("MACHETE", 1, true) then return "knife" end
+    local class = CLASS_BY_NAME[name:upper()] or CLASS_BY_NAME[norm]
+    if not class and weapon then class = Game.weaponClass(weapon) end
+    return class and CLASS_ICON[class] or nil
+end
+
+function Icons.grenadeKey(name)
+    local norm = type(name) == "string" and Icons.norm(name) or ""
+    if norm:find("FLASH", 1, true) then return "flashbang" end
+    if norm:find("SMOKE", 1, true) then return "smokegrenade" end
+    if norm:find("MOLOTOV", 1, true) or norm:find("INCEN", 1, true) then return "molotov" end
+    if norm:find("STUN", 1, true) or norm:find("IMPACT", 1, true) or norm:find("DECOY", 1, true) then return "decoy" end
+    return "hegrenade"
+end
+
+function Icons.valid(data)
+    return type(data) == "string" and #data > 64 and string.sub(data, 2, 4) == "PNG"
+end
+
+local function beUint(data, at)
+    local a, b, c, d = string.byte(data, at, at + 3)
+    return ((a * 256 + b) * 256 + c) * 256 + d
+end
+
+function Icons.store(key, data)
+    local width, height = beUint(data, 17), beUint(data, 21)
+    if width < 1 or height < 1 then return false end
+    Icons.data[key], Icons.ratio[key] = data, width / height
+    return true
+end
+
+function Icons.load(key)
+    local file = key .. ".png"
+    local path = Icons.folder .. "/" .. Icons.prefix .. file
+    if type(isfile) == "function" and type(readfile) == "function" then
+        local ok, cached = pcall(function() return isfile(path) and readfile(path) or nil end)
+        if ok and Icons.valid(cached) and Icons.store(key, cached) then return true end
+    end
+    local ok, body = pcall(function() return game:HttpGet(UI_REPO .. "icons/" .. file) end)
+    if not (ok and Icons.valid(body) and Icons.store(key, body)) then return false end
+    if type(writefile) == "function" then
+        pcall(function()
+            if type(makefolder) == "function" then
+                local built = ""
+                for part in string.gmatch(Icons.folder, "[^/]+") do
+                    built = built == "" and part or (built .. "/" .. part)
+                    if not (type(isfolder) == "function" and isfolder(built)) then makefolder(built) end
+                end
+            end
+            writefile(path, body)
+        end)
+    end
+    return true
+end
+
+function Icons.get(key)
+    if type(key) ~= "string" then return nil end
+    local data = Icons.data[key]
+    if data then return data, Icons.ratio[key] end
+    if Icons.busy[key] or (Icons.retry[key] and os.clock() < Icons.retry[key]) then return nil end
+    Icons.busy[key] = true
+    task.spawn(function()
+        local ok, loaded = pcall(Icons.load, key)
+        Icons.busy[key] = nil
+        if not (ok and loaded) then Icons.retry[key] = os.clock() + Icons.cooldown end
+    end)
+    local ready = Icons.data[key]
+    if ready then return ready, Icons.ratio[key] end
+    return nil
+end
+
+local function setData(object, data) object.Data = data end
+local function setColor(object, color) object.Color = color end
+
+function Icons.place(image, key, cx, cy, maxW, maxH, color, alpha)
+    if image == SINK or not Icons.dataOk then return false end
+    local data, ratio = Icons.get(key)
+    if not data then return false end
+    if Icons.bound[image] ~= key then
+        if not pcall(setData, image, data) then Icons.dataOk = false return false end
+        Icons.bound[image] = key
+    end
+    local height = math.floor(math.min(maxH, maxW / ratio) + 0.5)
+    local width = math.floor(height * ratio + 0.5)
+    image.Size = Vector2.new(width, height)
+    image.Position = Vector2.new(math.floor(cx - width / 2 + 0.5), math.floor(cy - height / 2 + 0.5))
+    if Icons.colorOk and not pcall(setColor, image, color) then Icons.colorOk = false end
+    image.Transparency, image.Visible = alpha or 1, true
+    return true
+end
+
+function Draw.image(zindex)
+    return Draw.new("Image", { Transparency = 1, ZIndex = zindex or 8, Visible = false })
+end
 
 function Draw.project(cam, position)
     local point = cam:WorldToViewportPoint(position)
@@ -936,6 +1147,7 @@ local BONES = {
     { "pelvis", "rHip" }, { "rHip", "rKnee" }, { "rKnee", "rFoot" },
 }
 local JOINT_DOTS = { "neck", "pelvis", "lShoulder", "lElbow", "lHand", "rShoulder", "rElbow", "rHand", "lHip", "lKnee", "lFoot", "rHip", "rKnee", "rFoot" }
+local CAP_POINTS = { "head", table.unpack(JOINT_DOTS) }
 local NEAR_PLANE = 0.1
 
 function ESP.bonePoints(hash)
@@ -1055,6 +1267,7 @@ function ESP.readSettings()
     S.skelThick = flag("esp_skel_thick", 1)
     S.skelOutline, S.skelJoints = flag("esp_skeleton_outline", true), flag("esp_skeleton_joints", false)
     S.case = flag("esp_case", "Normal")
+    S.weaponDisplay = flag("esp_weapon_display", "Text")
     S.visOverride = flag("esp_vis", false)
     S.visColor, S.occColor = flag("esp_vis_color", Color3.fromRGB(80, 255, 120)), flag("esp_occ_color", Color3.fromRGB(255, 80, 80))
     S.chamMode = flag("cham_mode", "Through walls")
@@ -1067,7 +1280,7 @@ function ESP.readSettings()
 end
 
 function ESP.make()
-    local o = { all = {}, strips = {}, corners = {}, cornerEdges = {}, bones = {}, boneEdges = {}, joints = {}, hidden = false }
+    local o = { all = {}, strips = {}, corners = {}, cornerEdges = {}, bones = {}, boneEdges = {}, capEdges = {}, capFills = {}, hidden = false }
     local function add(drawing) o.all[#o.all + 1] = drawing return drawing end
     local function line(thick, z, color) return add(Draw.new("Line", { Thickness = thick, ZIndex = z, Color = color, Visible = false })) end
     local function square(filled, z, color) return add(Draw.new("Square", { Thickness = 1, Filled = filled, ZIndex = z, Color = color, Visible = false })) end
@@ -1082,11 +1295,15 @@ function ESP.make()
     end
     o.hpBack, o.hpBar = square(true, 4, Color3.fromRGB(10, 10, 10)), square(true, 5)
     o.hpText, o.name, o.dist, o.weapon = text(), text(), text(), text()
+    o.weaponIcon = add(Draw.image(8))
     for index = 1, #BONES do
         o.boneEdges[index] = line(3, 2, BLACK)
         o.bones[index] = line(1, 3)
     end
-    for index = 1, #JOINT_DOTS do o.joints[index] = add(Draw.new("Circle", { Filled = true, NumSides = 12, ZIndex = 4, Visible = false })) end
+    for index = 1, #CAP_POINTS do
+        o.capEdges[index] = add(Draw.new("Circle", { Filled = true, NumSides = 14, ZIndex = 2, Color = BLACK, Visible = false }))
+        o.capFills[index] = add(Draw.new("Circle", { Filled = true, NumSides = 14, ZIndex = 3, Visible = false }))
+    end
     o.dotEdge = add(Draw.new("Circle", { Filled = false, NumSides = 16, Thickness = 1, Color = BLACK, ZIndex = 6, Visible = false }))
     o.dot = add(Draw.new("Circle", { Filled = true, NumSides = 16, ZIndex = 7, Visible = false }))
     o.tracer, o.view = line(1, 3), line(1, 3)
@@ -1120,35 +1337,69 @@ end
 local Chams = { objs = {}, pool = {}, container = nil }
 local CHAM_PARTS = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }
 
+function Chams.identity()
+    if setthreadidentity then pcall(setthreadidentity, 7) end
+end
+
 function Chams.getContainer()
     if Chams.container and Chams.container.Parent then return Chams.container end
+    Chams.identity()
+    local parents = {}
+    pcall(function() parents[#parents + 1] = game:GetService("CoreGui") end)
+    pcall(function() if gethui then parents[#parents + 1] = gethui() end end)
+    for _, parent in ipairs(parents) do
+        local gui
+        local ok = pcall(function()
+            gui = Instance.new("ScreenGui")
+            gui.Name = Util.randomName()
+            gui.DisplayOrder = 9
+            gui.IgnoreGuiInset = true
+            gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+            gui.Parent = parent
+        end)
+        if ok and gui and gui.Parent then
+            Chams.container = gui
+            return gui
+        end
+        if gui then pcall(function() gui:Destroy() end) end
+    end
     local folder = Instance.new("Folder")
     folder.Name = Util.randomName()
-    local parents = {}
-    pcall(function() if gethui then parents[#parents + 1] = gethui() end end)
-    pcall(function() parents[#parents + 1] = game:GetService("CoreGui") end)
-    parents[#parents + 1] = Workspace.CurrentCamera
-    for _, parent in ipairs(parents) do
-        if parent and pcall(function() folder.Parent = parent end) and folder.Parent then
-            Chams.container = folder
-            return folder
-        end
+    if pcall(function() folder.Parent = Workspace.CurrentCamera end) and folder.Parent then
+        Chams.container = folder
+        return folder
     end
     return nil
 end
 
+function Chams.roundClass()
+    if Chams.round == nil then
+        local ok, probe = pcall(Instance.new, "CylinderHandleAdornment")
+        if ok and probe then
+            pcall(function() probe:Destroy() end)
+            Chams.round = "CylinderHandleAdornment"
+        else
+            Chams.round = "SphereHandleAdornment"
+        end
+    end
+    return Chams.round
+end
+
 function Chams.acquire(round)
-    local class = round and "CylinderHandleAdornment" or "BoxHandleAdornment"
+    local class = round and Chams.roundClass() or "BoxHandleAdornment"
     local list = Chams.pool[class]
     local adornment = list and table.remove(list)
     if adornment then return adornment end
     local container = Chams.getContainer()
     if not container then return nil end
+    Chams.identity()
     local ok, created = pcall(Instance.new, class)
     if not (ok and created) then return nil end
     created.Name = Util.randomName()
     created.AdornCullingMode = Enum.AdornCullingMode.Never
-    if round then created.CFrame = CFrame.Angles(math.pi / 2, 0, 0) end
+    if class == "CylinderHandleAdornment" then
+        created.CFrame = CFrame.new(Vector3.zero, Vector3.new(0, 90, 0))
+    end
     created.Parent = container
     return created
 end
@@ -1227,11 +1478,9 @@ function Chams.build(slot)
     return true
 end
 
-function Chams.headDimensions(part)
-    local size = typeof(part.Size) == "Vector3" and part.Size or PART_SIZES.Head
-    local ok, mesh = pcall(part.FindFirstChildOfClass, part, "SpecialMesh")
-    if ok and mesh then size = Vector3.new(size.X * mesh.Scale.X, size.Y * mesh.Scale.Y, size.Z * mesh.Scale.Z) end
-    return math.min(size.X, size.Z) / 2, size.Y
+function Chams.headDimensions()
+    local size = PART_SIZES.Head
+    return size.X / 2 - 0.4, size.Y
 end
 
 function Chams.style(slot, part, name, cfg, S)
@@ -1239,10 +1488,15 @@ function Chams.style(slot, part, name, cfg, S)
     local grow = S.chamGrow
     for _, adornment in pairs(layers) do adornment.Adornee = part end
     if slot.round then
-        local radius, height = Chams.headDimensions(part)
+        local radius, height = Chams.headDimensions()
         radius, height = radius * S.chamHead, height * S.chamHead
-        layers.behind.Radius, layers.behind.Height = radius, height
-        layers.visible.Radius, layers.visible.Height = radius + grow / 2, height + grow
+        if layers.behind.ClassName == "SphereHandleAdornment" then
+            radius, height = math.max(radius, height / 2), height
+            layers.behind.Radius, layers.visible.Radius = radius, radius + grow / 2
+        else
+            layers.behind.Radius, layers.behind.Height = radius, height
+            layers.visible.Radius, layers.visible.Height = radius + grow / 2, height + grow
+        end
     else
         local size = typeof(part.Size) == "Vector3" and part.Size or PART_SIZES[name]
         if math.min(size.X, size.Y, size.Z) < 0.05 then size = PART_SIZES[name] end
@@ -1313,9 +1567,14 @@ function Chams.update(rec, cfg, S)
             local built = slot.layers.visible
             if built and not (built.Parent and slot.layers.behind.Parent) then slot.layers, slot.sig = {}, nil end
             if not slot.layers.visible and not Chams.build(slot) then return end
+            Chams.identity()
             if slot.adornee ~= part or slot.sig ~= sig then
                 slot.adornee, slot.sig = part, sig
                 Chams.style(slot, part, name, cfg, S)
+            else
+                local layers = slot.layers
+                if layers.visible.Adornee ~= part then layers.visible.Adornee = part end
+                if layers.behind.Adornee ~= part then layers.behind.Adornee = part end
             end
         end
     end
@@ -1444,7 +1703,7 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
         o.name.Color, o.name.Transparency, o.name.Visible = cfg.nameColor, cfg.nameA, true
     end
     local lineY = y + h + 2
-    o.dist.Visible, o.weapon.Visible = false, false
+    o.dist.Visible, o.weapon.Visible, o.weaponIcon.Visible = false, false, false
     if cfg.dist then
         o.dist.Text = caseText(S.case, math.floor(dist * STUDS_TO_M) .. "m")
         o.dist.Position = Vector2.new(x + w / 2, lineY)
@@ -1452,13 +1711,21 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
         lineY = lineY + S.size + 1
     end
     if cfg.weapon and rec.weaponName then
-        o.weapon.Text = caseText(S.case, tostring(rec.weaponName))
-        o.weapon.Position = Vector2.new(x + w / 2, lineY)
-        o.weapon.Color, o.weapon.Transparency, o.weapon.Visible = cfg.weaponColor, cfg.weaponA, true
+        local mode = S.weaponDisplay
+        local icon = false
+        if mode ~= "Text" then
+            local top = mode == "Both" and lineY + S.size + 1 or lineY
+            icon = Icons.place(o.weaponIcon, Icons.weaponKey(rec.weaponName, rec.weaponObject), x + w / 2, top + 7, 60, 13, cfg.weaponColor, cfg.weaponA)
+        end
+        if mode ~= "Icon" or not icon then
+            o.weapon.Text = caseText(S.case, tostring(rec.weaponName))
+            o.weapon.Position = Vector2.new(x + w / 2, lineY)
+            o.weapon.Color, o.weapon.Transparency, o.weapon.Visible = cfg.weaponColor, cfg.weaponA, true
+        end
     end
 
     for index = 1, #BONES do o.bones[index].Visible, o.boneEdges[index].Visible = false, false end
-    for index = 1, #JOINT_DOTS do o.joints[index].Visible = false end
+    for index = 1, #CAP_POINTS do o.capEdges[index].Visible, o.capFills[index].Visible = false, false end
     if cfg.skeleton then
         local points = ESP.bonePoints(rec.hash)
         if points then
@@ -1474,14 +1741,19 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
                     end
                 end
             end
-            if S.skelJoints then
-                for index, name in ipairs(JOINT_DOTS) do
+            local fillRadius = S.skelJoints and S.skelThick + 0.75 or S.skelThick / 2
+            if S.skelOutline or S.skelJoints or S.skelThick >= 2 then
+                for index, name in ipairs(CAP_POINTS) do
                     local world = points[name]
                     if world then
                         local point, front = Draw.project(cam, world)
                         if front then
-                            local dot = o.joints[index]
-                            dot.Position, dot.Radius, dot.Color, dot.Transparency, dot.Visible = point, S.skelThick + 0.75, color, cfg.skeletonA, true
+                            if S.skelOutline then
+                                local edge = o.capEdges[index]
+                                edge.Position, edge.Radius, edge.Transparency, edge.Visible = point, fillRadius + 1, cfg.skeletonA, true
+                            end
+                            local fill = o.capFills[index]
+                            fill.Position, fill.Radius, fill.Color, fill.Transparency, fill.Visible = point, fillRadius, color, cfg.skeletonA, true
                         end
                     end
                 end
@@ -1587,7 +1859,7 @@ Util.onUnload(function()
     if Chams.container then pcall(function() Chams.container:Destroy() end) end
 end)
 
-local Items = { drops = {}, grenades = {}, texts = {}, nextScan = 0 }
+local Items = { drops = {}, grenades = {}, texts = {}, images = {}, nextScan = 0 }
 
 function Items.scan(now)
     if now < Items.nextScan then return end
@@ -1629,6 +1901,7 @@ function Items.step(cam, now)
         Items.scan(now)
         local origin = Game.eye(cam).Position
         local color, alpha, maxDistance = flag("item_drops_color", WHITE), Util.opacity("item_drops_color"), flag("item_dist", 300)
+        local display = flag("item_drops_display", "Text")
         for _, instance in ipairs(Items.drops) do
             local position = instance.Parent and Items.position(instance)
             local distance = position and (position - origin).Magnitude
@@ -1641,15 +1914,29 @@ function Items.step(cam, now)
                         text = Draw.text(13, 7)
                         Items.texts[used] = text
                     end
-                    text.Font, text.Size = ESP.S.font or 2, ESP.S.size or 13
-                    text.Text = tostring(instance.Name) .. " " .. math.floor(distance * STUDS_TO_M) .. "m"
-                    text.Position = Vector2.new(point.X, point.Y)
+                    local image = Items.images[used]
+                    if not image then
+                        image = Draw.image(7)
+                        Items.images[used] = image
+                    end
+                    local size = ESP.S.size or 13
+                    local mode = display
+                    local icon = false
+                    if mode ~= "Text" then
+                        icon = Icons.place(image, Icons.weaponKey(tostring(instance.Name)), point.X, point.Y, 60, 13, color, alpha)
+                    end
+                    if not icon then image.Visible = false end
+                    local meters = math.floor(distance * STUDS_TO_M) .. "m"
+                    text.Font, text.Size = ESP.S.font or 2, size
+                    text.Text = mode == "Text" and (tostring(instance.Name) .. " " .. meters) or (icon and mode == "Icon" and meters) or (tostring(instance.Name) .. " " .. meters)
+                    text.Position = Vector2.new(point.X, point.Y + (icon and 8 or 0))
                     text.Color, text.Transparency, text.Visible = color, alpha, true
                 end
             end
         end
     end
     for index = used + 1, #Items.texts do Items.texts[index].Visible = false end
+    for index = used + 1, #Items.images do Items.images[index].Visible = false end
 end
 
 local World = { orig = {}, sky = nil, ownSky = nil, atmos = nil, ownAtmos = false, fx = {}, fov = {}, clouds = {}, weather = { cells = {} }, hour = nil, hue = 0, angle = 0 }
@@ -2406,63 +2693,139 @@ Util.onUnload(function()
     if World.ownAtmos and World.atmos then pcall(function() World.atmos:Destroy() end) end
 end)
 
-local Trail = { list = {}, lines = {} }
+local Tracers = { list = {}, fade = 0.5 }
 
-function Trail.add(bullet, info, mine)
-    local start = info.visualorigin or info.position
-    if typeof(start) ~= "Vector3" then return end
-    if #Trail.list >= 48 then table.remove(Trail.list, 1) end
-    Trail.list[#Trail.list + 1] = { bullet = bullet, points = { { start, os.clock() } }, mine = mine }
+function Tracers.presets()
+    if Tracers.table then return Tracers.table end
+    local mode = Enum.TextureMode
+    local function sequence(value) return NumberSequence.new(value) end
+    Tracers.table = {
+        Obelus = {
+            Texture = "rbxassetid://2382169232", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
+            Segments = 1, TextureLength = 5, TextureMode = mode.Stretch, TextureSpeed = 0, Width0 = 0.3, Width1 = 0.3, FaceCamera = true,
+        },
+        Lightning = {
+            Texture = "rbxassetid://7151778302", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
+            Segments = 10, TextureLength = 1, TextureMode = mode.Stretch, TextureSpeed = 1, Width0 = 1.2, Width1 = 1.2, FaceCamera = true,
+        },
+        DNA = {
+            Texture = "rbxassetid://7071778278", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
+            Segments = 1, TextureLength = 12, TextureMode = mode.Wrap, TextureSpeed = 1, Width0 = 0.6, Width1 = 0.6, FaceCamera = true,
+        },
+    }
+    return Tracers.table
 end
 
-function Trail.hideBeam(bullet)
+function Tracers.drop(record)
+    pcall(function() record.beam:Destroy() end)
+    pcall(function() record.from:Destroy() end)
+    pcall(function() record.to:Destroy() end)
+end
+
+function Tracers.spawn(origin, target, color)
+    local presets = Tracers.presets()
+    local name = flag("trace_texture", "Lightning")
+    local preset = presets[name] or presets.Lightning
+    local scale = flag("trace_width", 1)
+    local terrain = Workspace.Terrain
+    local from, to, beam
+    local ok = pcall(function()
+        from, to = Instance.new("Attachment"), Instance.new("Attachment")
+        from.Name, to.Name = Util.randomName(), Util.randomName()
+        from.Parent, to.Parent = terrain, terrain
+        from.WorldCFrame, to.WorldCFrame = CFrame.new(origin), CFrame.new(target)
+        beam = Instance.new("Beam")
+        beam.Name = Util.randomName()
+        for prop, value in pairs(preset) do
+            if prop == "Width0" or prop == "Width1" then value = value * scale end
+            beam[prop] = value
+        end
+        beam.Color = ColorSequence.new(color)
+        beam.Attachment0, beam.Attachment1 = from, to
+        beam.Parent = terrain
+    end)
+    local record = { beam = beam, from = from, to = to, born = os.clock(), base = preset.Transparency, level = 0.45 }
+    if not ok then
+        Tracers.drop(record)
+        return false
+    end
+    if #Tracers.list >= 64 then Tracers.drop(table.remove(Tracers.list, 1)) end
+    Tracers.list[#Tracers.list + 1] = record
+    return true
+end
+
+function Tracers.hideBeam(bullet)
     local beams = type(bullet._beamObject) == "table" and bullet._beamObject.beams
     if type(beams) ~= "table" then return end
     for _, beam in pairs(beams) do propSet(beam, "Enabled", false) end
 end
 
-function Trail.step(cam, now)
-    local ownOn, otherOn = flag("trace_path_on", false), flag("trace_path_enemy_on", false)
-    local duration, thick = flag("trace_time", 1.5), flag("trace_thick", 1.5)
-    local ownColor, otherColor = flag("trace_path_color", Color3.fromRGB(255, 94, 94)), flag("trace_path_enemy_color", Color3.fromRGB(94, 160, 255))
-    local used = 0
-    if not (ownOn or otherOn) then Trail.list = {} end
-    for index = #Trail.list, 1, -1 do
-        local record = Trail.list[index]
-        local points = record.points
-        if not record.endedAt then
-            local bullet = record.bullet
-            local position = type(bullet) == "table" and bullet.position
-            if typeof(position) == "Vector3" and (position - points[#points][1]).Magnitude > 0.05 then
-                points[#points + 1] = { position, now }
-            end
-            if type(bullet) ~= "table" or bullet.pendingDeletion then record.endedAt = now end
-        end
-        while #points > 2 and now - points[1][2] > duration do table.remove(points, 1) end
-        if record.endedAt and now - record.endedAt > duration then
-            table.remove(Trail.list, index)
-        elseif (record.mine and ownOn) or (not record.mine and otherOn) then
-            local color = record.mine and ownColor or otherColor
-            for segment = 1, #points - 1 do
-                local alpha = 1 - (now - points[segment + 1][2]) / duration
-                if alpha > 0 and used < 600 then
-                    local from, fromFront = Draw.project(cam, points[segment][1])
-                    local to, toFront = Draw.project(cam, points[segment + 1][1])
-                    if fromFront and toFront then
-                        used = used + 1
-                        local line = Trail.lines[used]
-                        if not line then
-                            line = Draw.new("Line", { ZIndex = 4, Visible = false })
-                            Trail.lines[used] = line
-                        end
-                        line.From, line.To, line.Color, line.Thickness, line.Transparency, line.Visible = from, to, color, thick, alpha, true
-                    end
-                end
-            end
+function Tracers.isTeam(position)
+    local ok, list = pcall(Entities.update)
+    if not (ok and type(list) == "table") then return false end
+    local best, nearest = nil, 40
+    for _, rec in ipairs(list) do
+        local distance = (rec.pos - position).Magnitude
+        if distance < nearest then best, nearest = rec, distance end
+    end
+    return best ~= nil and best.enemy == false
+end
+
+function Tracers.origin(info, mine)
+    local origin = info.visualorigin
+    if not mine then return typeof(origin) == "Vector3" and origin or info.position end
+    local extra = type(info.extra) == "table" and info.extra
+    for _, weapon in ipairs({ extra and extra.firearmObject or false, Barrel.weapon or false }) do
+        if type(weapon) == "table" and type(weapon.getBarrelCFrame) == "function" then
+            local ok, frame = pcall(weapon.getBarrelCFrame, weapon)
+            if ok and typeof(frame) == "CFrame" and frame.Position == frame.Position then return frame.Position end
         end
     end
-    for index = used + 1, #Trail.lines do Trail.lines[index].Visible = false end
+    return typeof(origin) == "Vector3" and origin or info.position
 end
+
+function Tracers.fromBullet(info, mine)
+    local position, velocity = info.position, info.velocity
+    if typeof(position) ~= "Vector3" or typeof(velocity) ~= "Vector3" or velocity.Magnitude < 1e-3 then return false end
+    local color
+    if mine then
+        if not flag("trace_on", false) then return false end
+        color = flag("trace_color", Color3.fromRGB(255, 94, 94))
+    elseif Tracers.isTeam(position) then
+        if not flag("trace_team_on", false) then return false end
+        color = flag("trace_team_color", Color3.fromRGB(90, 220, 130))
+    else
+        if not flag("trace_enemy_on", false) then return false end
+        color = flag("trace_enemy_color", Color3.fromRGB(94, 160, 255))
+    end
+    local direction = velocity.Unit
+    Barrel.refreshParams(os.clock())
+    local hit = Game.cast(position, direction * 1000, Barrel.params)
+    local target = hit and hit.Position or position + direction * 500
+    local origin = Tracers.origin(info, mine)
+    if typeof(origin) ~= "Vector3" or (target - origin).Magnitude < 0.5 then return false end
+    return Tracers.spawn(origin, target, color)
+end
+
+function Tracers.step(now)
+    local life = flag("trace_time", 4)
+    for index = #Tracers.list, 1, -1 do
+        local record = Tracers.list[index]
+        local age = now - record.born
+        if age >= life + Tracers.fade then
+            Tracers.drop(record)
+            table.remove(Tracers.list, index)
+        elseif age > life then
+            local level = record.level + (1 - record.level) * ((age - life) / Tracers.fade)
+            propSet(record.beam, "Transparency", NumberSequence.new(level))
+        end
+    end
+end
+
+Util.onUnload(function()
+    for _, record in ipairs(Tracers.list) do Tracers.drop(record) end
+    Tracers.list = {}
+end)
 
 local Nades = { list = {}, known = {}, lines = {}, badges = {}, fade = setmetatable({}, { __mode = "k" }), hooked = false, scanAt = -math.huge, predAt = -math.huge }
 
@@ -2653,6 +3016,7 @@ function Nades.badge()
         body = Draw.new("Circle", { Filled = true, Radius = 5, NumSides = 20, Color = grey, Transparency = 1, ZIndex = 8, Visible = false }),
         top = Draw.new("Square", { Filled = true, Size = Vector2.new(4, 3), Color = grey, Transparency = 1, ZIndex = 8, Visible = false }),
         lever = Draw.new("Square", { Filled = true, Size = Vector2.new(6, 2), Color = grey, Transparency = 1, ZIndex = 8, Visible = false }),
+        icon = Draw.image(8),
         text = Draw.text(11, 9),
         back = Draw.new("Square", { Filled = true, Size = Vector2.new(24, 3), Color = Color3.fromRGB(40, 40, 44), Transparency = 1, ZIndex = 8, Visible = false }),
         bar = Draw.new("Square", { Filled = true, Size = Vector2.new(24, 3), Transparency = 1, ZIndex = 9, Visible = false }),
@@ -2706,11 +3070,16 @@ function Nades.label(cam, position, info)
     local style = Nades.style(info.verdict, info.fallback, t)
     badge.disc.Position, badge.disc.Color, badge.disc.Transparency, badge.disc.Visible = point, style.disc, style.opacity, true
     badge.rim.Color = style.rim
-    badge.body.Color, badge.top.Color, badge.lever.Color = style.icon, style.icon, style.icon
     badge.rim.Position, badge.rim.Visible = point, true
-    badge.body.Position, badge.body.Visible = Vector2.new(x, y - 8), true
-    badge.top.Position, badge.top.Visible = Vector2.new(x - 2, y - 15), true
-    badge.lever.Position, badge.lever.Visible = Vector2.new(x - 1, y - 17), true
+    if Icons.place(badge.icon, info.icon or "hegrenade", x, y - 9, 16, 14, style.icon, 1) then
+        badge.body.Visible, badge.top.Visible, badge.lever.Visible = false, false, false
+    else
+        badge.icon.Visible = false
+        badge.body.Color, badge.top.Color, badge.lever.Color = style.icon, style.icon, style.icon
+        badge.body.Position, badge.body.Visible = Vector2.new(x, y - 8), true
+        badge.top.Position, badge.top.Visible = Vector2.new(x - 2, y - 15), true
+        badge.lever.Position, badge.lever.Visible = Vector2.new(x - 1, y - 17), true
+    end
     local hasBar = info.frac ~= nil
     if info.text then
         local top = hasBar and -1 or 1
@@ -2854,7 +3223,7 @@ function Nades.predict(cam, now, origin)
     local total = math.max(Game.stat(weapon, "fusetime") or pred.duration, 0.1)
     local show = verdict and flag("nade_dmg", true)
     Nades.label(cam, pred.land, {
-        text = show and verdict or nil, verdict = show and verdict or nil, fallback = color, key = Nades.predKey,
+        text = show and verdict or nil, verdict = show and verdict or nil, fallback = color, key = Nades.predKey, icon = Icons.grenadeKey(weapon.weaponName),
         threat = show and damage and math.clamp(damage / 100, 0, 1) or 0, frac = left / total,
     })
 end
@@ -2893,7 +3262,7 @@ function Nades.step(cam, now)
                     if radius and flag("nade_ring", true) then Nades.ring(cam, record.land, radius, verdictColor or color, 0.7) end
                     local show = verdict and flag("nade_dmg", true)
                     Nades.label(cam, position, {
-                        text = show and verdict or nil, verdict = show and verdict or nil, fallback = color, key = record,
+                        text = show and verdict or nil, verdict = show and verdict or nil, fallback = color, key = record, icon = Icons.grenadeKey(record.name),
                         threat = show and damage and math.clamp(damage / 100, 0, 1) or 0,
                         frac = flag("nade_timer", true) and math.max(remaining, 0) / math.max(record.boom, 0.1) or nil,
                     })
@@ -3008,15 +3377,7 @@ function Feedback.hook()
                 pcall(function()
                     if not bullet or type(info) ~= "table" then return end
                     local mine = type(info.extra) == "table" and info.extra.firearmObject ~= nil
-                    if mine and flag("trace_on", false) then
-                        bullet:setColor(flag("trace_color", Color3.fromRGB(255, 94, 94)))
-                    elseif not mine and flag("trace_enemy_on", false) then
-                        bullet:setColor(flag("trace_enemy_color", Color3.fromRGB(94, 160, 255)))
-                    end
-                    if (mine and flag("trace_path_on", false)) or (not mine and flag("trace_path_enemy_on", false)) then
-                        Trail.add(bullet, info, mine)
-                        if flag("trace_hide_beam", false) then Trail.hideBeam(bullet) end
-                    end
+                    if Tracers.fromBullet(info, mine) and flag("trace_hide_beam", true) then Tracers.hideBeam(bullet) end
                 end)
                 return bullet
             end
@@ -3099,17 +3460,17 @@ Legit.snapline = Draw.new("Line", { Thickness = 1, Visible = false, ZIndex = 6 }
 
 function Legit.read()
     local L = Legit.L
-    L.aim = flag("legit_aim", false)
+    L.aim = Game.eff("legit_aim", false)
     L.visible, L.ads, L.shooting = flag("legit_visible", true), flag("legit_ads", false), flag("legit_shooting", false)
-    L.smooth, L.speed = flag("legit_smooth", 12), flag("legit_speed", 420)
-    L.maxdist, L.deadzone = flag("legit_dist", 600), flag("legit_deadzone", 2)
-    L.parts = Util.set("legit_parts", { Head = true, Torso = true })
-    L.choice, L.targetBy = flag("legit_priority", "Closest"), flag("legit_target_by", "Crosshair")
+    L.smooth, L.speed = Game.eff("legit_smooth", 12), flag("legit_speed", 420)
+    L.maxdist, L.deadzone = Game.eff("legit_dist", 600), flag("legit_deadzone", 2)
+    L.parts = Game.effSet("legit_parts", { Head = true, Torso = true })
+    L.choice, L.targetBy = Game.eff("legit_priority", "Closest"), flag("legit_target_by", "Crosshair")
     L.sticky, L.switch, L.react = flag("legit_sticky", true), flag("legit_switch", 120), flag("legit_react", 60)
-    L.drop, L.move = flag("legit_drop", true), flag("legit_move", true)
+    L.drop, L.move = Game.eff("legit_drop", true), Game.eff("legit_move", true)
     L.strength, L.maxLead = flag("legit_strength", 1), flag("legit_maxlead", 14)
     L.noise, L.noiseSpeed = flag("legit_noise", 0.25), flag("legit_noise_speed", 1.4)
-    L.fovRadius, L.fovDynamic = flag("legit_fov", 120), flag("legit_fov_dynamic", false)
+    L.fovRadius, L.fovDynamic = Game.eff("legit_fov", 120), flag("legit_fov_dynamic", false)
     L.fovZoom, L.fovMin, L.fovSpeed = flag("legit_fov_zoom", 1), flag("legit_fov_min", 30), flag("legit_fov_speed", 10)
     L.teamCheck = flag("legit_team_check", true)
     L.barrel = flag("legit_barrel", true)
@@ -3331,12 +3692,12 @@ function Legit.stepRecoil(now)
     Recoil.barrel, Recoil.key1, Recoil.key2 = useBarrel, key1, key2
     if reset then return end
 
-    if not (flag("rcs_on", false) and Util.keyActive("rcs_key")) or Util.menuOpen() or Legit.moved then return end
+    if not (Game.eff("rcs_on", false) and Util.keyActive("rcs_key")) or Util.menuOpen() or Legit.moved then return end
     local weapon = Game.weapon()
     if not (weapon and Game.isFirearm(weapon)) then return end
     if not flag("rcs_hip", true) and not Game.aiming(weapon) then return end
 
-    local vertical, horizontal = flag("rcs_v", 70) / 100, flag("rcs_h", 40) / 100
+    local vertical, horizontal = Game.eff("rcs_v", 70) / 100, Game.eff("rcs_h", 40) / 100
     local variation = flag("rcs_human", 10) / 100
     if variation > 0 then
         local factor = 1 - variation * (math.noise(now * 1.7, 31.4) + 1) * 0.5
@@ -3382,7 +3743,7 @@ function Legit.stepTrigger(cam, now, records)
         Trigger.release()
         Trigger.nextAt = now + flag("trig_cool", 90) / 1000
     end
-    local active = flag("trig_on", false) and Util.keyActive("trig_key") and not Util.menuOpen() and not Util.typing()
+    local active = Game.eff("trig_on", false) and Util.keyActive("trig_key") and not Util.menuOpen() and not Util.typing()
     if not active or type(mouse1press) ~= "function" then
         Trigger.onSince = nil
         if not active then Trigger.release() end
@@ -3396,7 +3757,7 @@ function Legit.stepTrigger(cam, now, records)
     local origin, direction = eye.Position, eye.LookVector
     if flag("legit_barrel", true) and Barrel.valid then origin, direction = Barrel.fire, Barrel.look end
     local maxDistance, scale = flag("trig_dist", 400), flag("trig_scale", 1)
-    local groups, wantVisible = Util.set("trig_parts", { Head = true, Torso = true }), flag("trig_visible", true)
+    local groups, wantVisible = Game.effSet("trig_parts", { Head = true, Torso = true }), flag("trig_visible", true)
     local teamCheck = flag("legit_team_check", true)
 
     local onTarget = false
@@ -3419,7 +3780,7 @@ function Legit.stepTrigger(cam, now, records)
     if not onTarget then Trigger.onSince = nil return end
     Trigger.onSince = Trigger.onSince or now
     if Trigger.down or now < Trigger.nextAt then return end
-    if now - Trigger.onSince < flag("trig_delay", 40) / 1000 then return end
+    if now - Trigger.onSince < Game.eff("trig_delay", 40) / 1000 then return end
     if not Game.canFire(weapon) then return end
     Trigger.down = true
     Trigger.releaseAt = now + flag("trig_hold", 70) / 1000
@@ -3428,6 +3789,7 @@ end
 
 local Pages = {
     Legit = UI.page("Legit", "crosshair"),
+    Weapons = UI.page("Weapons", "layers"),
     Rage = UI.page("Rage", "swords"),
     ESP = UI.page("ESP", "eye"),
     World = UI.page("World", "globe"),
@@ -3517,6 +3879,70 @@ do
     RcsBox:Slider({ Name = "Variation", Flag = "rcs_human", Min = 0, Max = 40, Default = 10, Decimals = 1, Suffix = "%", Tooltip = "Varies the strength over time so the spray does not look machine perfect" })
 end
 
+local PW_SPEC = {
+    { "Aimbot", "legit_aim", "aim", "Toggle", "Aimbot enabled" },
+    { "Aimbot", "legit_fov", "fov", "Slider", "FOV radius", Min = 10, Max = 800, Default = 120, Suffix = " px" },
+    { "Aimbot", "legit_smooth", "smooth", "Slider", "Smoothing", Min = 1, Max = 60, Default = 12 },
+    { "Aimbot", "legit_dist", "dist", "Slider", "Max distance", Min = 50, Max = 1500, Default = 600, Suffix = " studs" },
+    { "Aimbot", "legit_priority", "priority", "Dropdown", "Hitbox priority", Items = { "Closest", "Head", "Torso" }, Default = "Closest" },
+    { "Aimbot", "legit_parts", "parts", "Dropdown", "Hitboxes", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } },
+    { "Aimbot", "legit_drop", "drop", "Toggle", "Bullet drop", Default = true },
+    { "Aimbot", "legit_move", "move", "Toggle", "Moving targets", Default = true },
+    { "Recoil control", "rcs_on", "rcs_on", "Toggle", "Recoil control enabled" },
+    { "Recoil control", "rcs_v", "rcs_v", "Slider", "Vertical control", Min = 0, Max = 100, Default = 70, Suffix = "%" },
+    { "Recoil control", "rcs_h", "rcs_h", "Slider", "Horizontal control", Min = 0, Max = 100, Default = 40, Suffix = "%" },
+    { "Triggerbot", "trig_on", "trig_on", "Toggle", "Triggerbot enabled" },
+    { "Triggerbot", "trig_delay", "trig_delay", "Slider", "Delay", Min = 0, Max = 300, Default = 40, Suffix = " ms" },
+    { "Triggerbot", "trig_parts", "trig_parts", "Dropdown", "Hitboxes", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } },
+}
+local PW_SIDE = { Aimbot = 1, ["Recoil control"] = 2, Triggerbot = 2 }
+
+local function copyGlobalTo(id)
+    for _, spec in ipairs(PW_SPEC) do
+        local source, target = Toggles[spec[2]] or Options[spec[2]], Toggles["pw_" .. id .. "_" .. spec[3]] or Options["pw_" .. id .. "_" .. spec[3]]
+        if source and target and source.Value ~= nil then
+            local value = source.Value
+            if type(value) == "table" then
+                local copy = {}
+                for key, on in pairs(value) do copy[key] = on end
+                value = copy
+            end
+            pcall(function() target:SetValue(value) end)
+        end
+    end
+end
+
+do
+    local names = { { "General", "layers" } }
+    for _, class in ipairs(Game.classes) do names[#names + 1] = { class.name, "crosshair" } end
+    local Subs = Pages.Weapons:SubTabs(names)
+
+    local General = Subs.General:Section({ Name = "Per-weapon configs", Side = 1, Icon = "layers" })
+    General:Toggle({ Name = "Per-weapon configs", Flag = "pw_enabled", Tooltip = "Weapon classes with their override on use their own aimbot, recoil and triggerbot values instead of the global ones" })
+    Status.pwGeneral = General:Label({ Name = "Class: none" })
+
+    for _, class in ipairs(Game.classes) do
+        local page = Subs[class.name]
+        local Head = page:Section({ Name = class.name, Side = 1, Icon = "crosshair" })
+        Head:Toggle({ Name = "Override global", Flag = "pw_" .. class.id .. "_override", Tooltip = "Off: this class uses the global Legit settings" })
+        Status["pw_" .. class.id] = Head:Label({ Name = "Class: none" })
+        Head:Button({ Name = "Copy global to this class", Callback = function()
+            copyGlobalTo(class.id)
+            pcall(function() Library:Notify("Copied global settings to " .. class.name, 3) end)
+        end })
+        local boxes = {}
+        for _, spec in ipairs(PW_SPEC) do
+            local box = boxes[spec[1]]
+            if not box then
+                box = page:Section({ Name = spec[1], Side = PW_SIDE[spec[1]] })
+                boxes[spec[1]] = box
+            end
+            local info = { Name = spec[5], Flag = "pw_" .. class.id .. "_" .. spec[3], Min = spec.Min, Max = spec.Max, Default = spec.Default, Suffix = spec.Suffix, Decimals = 1, Items = spec.Items, Multi = spec.Multi }
+            box[spec[4]](box, info)
+        end
+    end
+end
+
 do
     Pages.Rage:Section({ Name = "Rage", Side = 1, Icon = "swords" }):Label({ Name = "Coming soon" })
     local Fun = Pages.Misc:Section({ Name = "Fun", Side = 1, Icon = "shapes" })
@@ -3584,6 +4010,7 @@ do
 
         local Weapon = Main:Toggle({ Name = "Weapon", Flag = key("weapon") }):Settings("Weapon", 200)
         pickColor(Weapon, "Weapon", key("weapon_color"), Color3.fromRGB(205, 205, 215))
+        if shared then Weapon:Dropdown({ Name = "Weapon display", Flag = "esp_weapon_display", Items = { "Text", "Icon", "Both" }, Default = "Text", Tooltip = "Icon draws the weapon's silhouette (downloaded on first use) and falls back to text until it loads" }) end
 
         local Skel = Main:Toggle({ Name = "Skeleton", Flag = key("skeleton") }):Settings("Skeleton", 200)
         pickColor(Skel, "Skeleton", key("skeleton_color"), WHITE)
@@ -3644,6 +4071,7 @@ do
     local World = Other:Section({ Name = "Items and grenades", Side = 1, Icon = "package" })
     local Item = World:Toggle({ Name = "Dropped items", Flag = "item_drops" }):Settings("Dropped items", 230)
     pickColor(Item, "Weapons", "item_drops_color", Color3.fromRGB(255, 190, 60))
+    Item:Dropdown({ Name = "Display", Flag = "item_drops_display", Items = { "Text", "Icon", "Both" }, Default = "Text", Tooltip = "Icon draws the weapon silhouette, with the distance under it" })
     Item:Slider({ Name = "Max distance", Flag = "item_dist", Min = 20, Max = 1500, Default = 300, Decimals = 1, Suffix = " studs" })
 
     local Warn = World:Toggle({ Name = "Grenade warning", Flag = "nade_on", Tooltip = "Tracks enemy grenades and your own from the game's throw event" }):Settings("Grenade warning", 230)
@@ -3844,13 +4272,13 @@ do
     Dmg:Slider({ Name = "Size", Flag = "dmg_size", Min = 8, Max = 32, Default = 16, Decimals = 1, Suffix = " px" })
     Dmg:Slider({ Name = "Rise", Flag = "dmg_rise", Min = 10, Max = 150, Default = 60, Decimals = 1, Suffix = " px" })
     Dmg:Slider({ Name = "Duration", Flag = "dmg_time", Min = 0.4, Max = 3, Default = 1.1, Decimals = 0.01, Suffix = " s" })
-    Trace:Toggle({ Name = "Own bullets", Flag = "trace_on", Tooltip = "Recolours the game's tracer beams of your shots" }):Colorpicker({ Name = "Tracer", Flag = "trace_color", Default = Color3.fromRGB(255, 94, 94) })
-    Trace:Toggle({ Name = "Other players' bullets", Flag = "trace_enemy_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
-    Trace:Toggle({ Name = "Own bullet path", Flag = "trace_path_on", Tooltip = "Draws the path your bullet actually flew, from the barrel, including drop" }):Colorpicker({ Name = "Path", Flag = "trace_path_color", Default = Color3.fromRGB(255, 94, 94) })
-    Trace:Toggle({ Name = "Other players' bullet path", Flag = "trace_path_enemy_on" }):Colorpicker({ Name = "Path", Flag = "trace_path_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
-    Trace:Slider({ Name = "Path duration", Flag = "trace_time", Min = 0.2, Max = 5, Default = 1.5, Decimals = 0.1, Suffix = " s" })
-    Trace:Slider({ Name = "Path thickness", Flag = "trace_thick", Min = 1, Max = 4, Default = 1.5, Decimals = 0.1, Suffix = " px" })
-    Trace:Toggle({ Name = "Hide the game's beam", Flag = "trace_hide_beam", Tooltip = "Turns off the game's own tracer beam on bullets whose path is drawn" })
+    Trace:Toggle({ Name = "Own bullets", Flag = "trace_on", Tooltip = "Draws a tracer from your barrel to where the shot lands" }):Colorpicker({ Name = "Tracer", Flag = "trace_color", Default = Color3.fromRGB(255, 94, 94) })
+    Trace:Toggle({ Name = "Enemy bullets", Flag = "trace_enemy_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
+    Trace:Toggle({ Name = "Team bullets", Flag = "trace_team_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_team_color", Default = Color3.fromRGB(90, 220, 130) })
+    Trace:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = { "Obelus", "Lightning", "DNA" }, Default = "Lightning" })
+    Trace:Slider({ Name = "Tracer lifetime", Flag = "trace_time", Min = 0.5, Max = 10, Default = 4, Decimals = 0.1, Suffix = " s" })
+    Trace:Slider({ Name = "Tracer width", Flag = "trace_width", Min = 0.2, Max = 3, Default = 1, Decimals = 0.1, Suffix = "x" })
+    Trace:Toggle({ Name = "Hide the game's beam", Flag = "trace_hide_beam", Default = true, Tooltip = "Turns off the game's own tracer beam on bullets that get a custom tracer" })
 end
 
 do
@@ -4466,7 +4894,7 @@ function Loop.step()
         ESP.clear()
         Util.guard("items", Items.step, cam, now)
         Util.guard("feedback", Feedback.step, cam, center, now)
-        Util.guard("trail", Trail.step, cam, now)
+        Util.guard("tracers", Tracers.step, now)
         Util.guard("nades", Nades.step, cam, now)
         return
     end
@@ -4479,6 +4907,7 @@ function Loop.step()
 
     local records = Entities.update()
     Util.guard("fov", World.stepFov, dt)
+    Game.pwUpdate()
     Legit.read()
     local gameCam = Game.gameCamera()
     Util.guard("barrel", Barrel.update, cam, gameCam, Game.weapon(), now)
@@ -4491,7 +4920,7 @@ function Loop.step()
     Util.guard("esp", ESP.step, cam, now, records)
     Util.guard("items", Items.step, cam, now)
     Util.guard("feedback", Feedback.step, cam, center, now)
-    Util.guard("trail", Trail.step, cam, now)
+    Util.guard("tracers", Tracers.step, now)
     Util.guard("nades", Nades.step, cam, now)
 
     if now - Loop.labelAt > 0.2 then
@@ -4501,6 +4930,16 @@ function Loop.step()
         local speed = Game.stat(weapon, "bulletspeed")
         if type(speed) == "number" then text = text .. " | " .. math.floor(speed) .. " studs/s" end
         if Status.weapon and Loop.weaponText ~= text then Loop.weaponText = text; Status.weapon:SetText(text) end
+        local pw = Game.pw
+        local classText = "Class: " .. (pw.class and Game.classNames[pw.class] or "none") .. (pw.active and " (override)" or "")
+        if Loop.classText ~= classText then
+            Loop.classText = classText
+            if Status.pwGeneral then Status.pwGeneral:SetText(classText) end
+            for _, entry in ipairs(Game.classes) do
+                local label = Status["pw_" .. entry.id]
+                if label then label:SetText(classText) end
+            end
+        end
         text = "Target: none"
         if Legit.target and Legit.record then
             text = string.format("Target: %s | %d hp | %dm", Legit.record.name, math.floor(Legit.record.health), math.floor((Legit.record.torso.Position - Game.eye(cam).Position).Magnitude * STUDS_TO_M))

@@ -1364,7 +1364,7 @@ task.spawn(function()
         if type(writefile) ~= 'function' or type(getcustomasset) ~= 'function' then
             return;
         end;
-        local Path = 'Aster/aster_logo.png';
+        local Path = 'Aster/aster_logo_v2.png';
         pcall(function()
             if type(makefolder) == 'function' and not (type(isfolder) == 'function' and isfolder('Aster')) then
                 makefolder('Aster');

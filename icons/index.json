@@ -1,0 +1,255 @@
+{
+ "source": "Valve CS:GO equipment icons via github.com/Juknum/counter-strike-icons (Valve Corporation assets); white, trimmed, 256px wide",
+ "icons": {
+  "glock": {
+   "file": "glock.png",
+   "w": 256,
+   "h": 166
+  },
+  "usp_silencer": {
+   "file": "usp_silencer.png",
+   "w": 256,
+   "h": 104
+  },
+  "p2000": {
+   "file": "p2000.png",
+   "w": 256,
+   "h": 197
+  },
+  "hkp2000": {
+   "file": "hkp2000.png",
+   "w": 256,
+   "h": 197
+  },
+  "deagle": {
+   "file": "deagle.png",
+   "w": 256,
+   "h": 150
+  },
+  "p250": {
+   "file": "p250.png",
+   "w": 256,
+   "h": 199
+  },
+  "fiveseven": {
+   "file": "fiveseven.png",
+   "w": 256,
+   "h": 187
+  },
+  "tec9": {
+   "file": "tec9.png",
+   "w": 256,
+   "h": 154
+  },
+  "cz75a": {
+   "file": "cz75a.png",
+   "w": 256,
+   "h": 165
+  },
+  "revolver": {
+   "file": "revolver.png",
+   "w": 256,
+   "h": 146
+  },
+  "elite": {
+   "file": "elite.png",
+   "w": 256,
+   "h": 97
+  },
+  "mp9": {
+   "file": "mp9.png",
+   "w": 256,
+   "h": 111
+  },
+  "mac10": {
+   "file": "mac10.png",
+   "w": 256,
+   "h": 186
+  },
+  "mp7": {
+   "file": "mp7.png",
+   "w": 256,
+   "h": 163
+  },
+  "mp5sd": {
+   "file": "mp5sd.png",
+   "w": 256,
+   "h": 113
+  },
+  "ump45": {
+   "file": "ump45.png",
+   "w": 256,
+   "h": 102
+  },
+  "p90": {
+   "file": "p90.png",
+   "w": 256,
+   "h": 112
+  },
+  "bizon": {
+   "file": "bizon.png",
+   "w": 256,
+   "h": 89
+  },
+  "ak47": {
+   "file": "ak47.png",
+   "w": 256,
+   "h": 85
+  },
+  "m4a1": {
+   "file": "m4a1.png",
+   "w": 256,
+   "h": 94
+  },
+  "m4a1_silencer": {
+   "file": "m4a1_silencer.png",
+   "w": 256,
+   "h": 75
+  },
+  "famas": {
+   "file": "famas.png",
+   "w": 256,
+   "h": 102
+  },
+  "galilar": {
+   "file": "galilar.png",
+   "w": 256,
+   "h": 84
+  },
+  "aug": {
+   "file": "aug.png",
+   "w": 256,
+   "h": 115
+  },
+  "sg556": {
+   "file": "sg556.png",
+   "w": 256,
+   "h": 99
+  },
+  "awp": {
+   "file": "awp.png",
+   "w": 256,
+   "h": 60
+  },
+  "ssg08": {
+   "file": "ssg08.png",
+   "w": 256,
+   "h": 77
+  },
+  "scar20": {
+   "file": "scar20.png",
+   "w": 256,
+   "h": 79
+  },
+  "g3sg1": {
+   "file": "g3sg1.png",
+   "w": 256,
+   "h": 79
+  },
+  "nova": {
+   "file": "nova.png",
+   "w": 256,
+   "h": 66
+  },
+  "xm1014": {
+   "file": "xm1014.png",
+   "w": 256,
+   "h": 68
+  },
+  "mag7": {
+   "file": "mag7.png",
+   "w": 256,
+   "h": 104
+  },
+  "sawedoff": {
+   "file": "sawedoff.png",
+   "w": 256,
+   "h": 65
+  },
+  "m249": {
+   "file": "m249.png",
+   "w": 256,
+   "h": 84
+  },
+  "negev": {
+   "file": "negev.png",
+   "w": 256,
+   "h": 110
+  },
+  "knife": {
+   "file": "knife.png",
+   "w": 256,
+   "h": 70
+  },
+  "taser": {
+   "file": "taser.png",
+   "w": 256,
+   "h": 191
+  },
+  "hegrenade": {
+   "file": "hegrenade.png",
+   "w": 256,
+   "h": 335
+  },
+  "flashbang": {
+   "file": "flashbang.png",
+   "w": 256,
+   "h": 312
+  },
+  "smokegrenade": {
+   "file": "smokegrenade.png",
+   "w": 256,
+   "h": 546
+  },
+  "molotov": {
+   "file": "molotov.png",
+   "w": 256,
+   "h": 370
+  },
+  "incgrenade": {
+   "file": "incgrenade.png",
+   "w": 256,
+   "h": 553
+  },
+  "decoy": {
+   "file": "decoy.png",
+   "w": 256,
+   "h": 301
+  },
+  "c4": {
+   "file": "c4.png",
+   "w": 256,
+   "h": 296
+  },
+  "class_pistol": {
+   "file": "class_pistol.png",
+   "w": 256,
+   "h": 166
+  },
+  "class_smg": {
+   "file": "class_smg.png",
+   "w": 256,
+   "h": 163
+  },
+  "class_rifle": {
+   "file": "class_rifle.png",
+   "w": 256,
+   "h": 85
+  },
+  "class_sniper": {
+   "file": "class_sniper.png",
+   "w": 256,
+   "h": 60
+  },
+  "class_shotgun": {
+   "file": "class_shotgun.png",
+   "w": 256,
+   "h": 66
+  },
+  "class_lmg": {
+   "file": "class_lmg.png",
+   "w": 256,
+   "h": 84
+  }
+ }
+}

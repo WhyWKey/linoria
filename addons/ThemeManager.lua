@@ -257,7 +257,19 @@ local ThemeManager = {} do
 		self:SyncPickers()
 	end
 
-	function ThemeManager:LoadDefault()
+	function ThemeManager:SetDefaultTheme(name)
+		if type(name) == 'string' then self.DefaultTheme = name end
+	end
+
+	-- Paints the default theme onto the library before any UI exists (intro, first frame)
+	function ThemeManager:PreApply()
+		if not self.Library then return end
+		local theme = self:ResolveDefault()
+		self:ApplyTheme(theme)
+		self.Library:UpdateColorsUsingRegistry()
+	end
+
+	function ThemeManager:ResolveDefault()
 		local theme = self.DefaultTheme
 		local path = self.Folder .. '/themes/default.txt'
 		local content = SafeIsFile(path) and SafeRead(path)
@@ -275,7 +287,11 @@ local ThemeManager = {} do
 		if not self.BuiltInThemes[theme] and isDefault then
 			theme = 'Aster Violet'
 		end
+		return theme, isDefault
+	end
 
+	function ThemeManager:LoadDefault()
+		local theme, isDefault = self:ResolveDefault()
 		local list = GetOptions().ThemeManager_ThemeList
 		if isDefault and list then
 			list:SetValue(theme)

@@ -5181,7 +5181,8 @@ do
     local WatermarkOuter = Library:Create('Frame', {
         BackgroundColor3 = Library.WatermarkColor;
         AutomaticSize = Enum.AutomaticSize.X;
-        Position = UDim2.new(0, 16, 0, -24);
+        AnchorPoint = Vector2.new(0.5, 0);
+        Position = UDim2.new(0.5, 0, 0, 8);
         Size = UDim2.new(0, 0, 0, 26);
         ZIndex = 200;
         Visible = false;
@@ -6781,12 +6782,20 @@ function Library:CreateWindow(...)
                 local State = InputService.MouseIconEnabled;
                 local GuiService = game:GetService("GuiService");
 
-                local Cursor = Instance.new("ImageLabel", ScreenGui);
+                local CursorGui = Instance.new("ScreenGui");
+                pcall(ProtectGui, CursorGui);
+                CursorGui.Name = "AsterCursor";
+                CursorGui.ResetOnSpawn = false;
+                CursorGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling;
+                pcall(function() CursorGui.IgnoreGuiInset = true; CursorGui.DisplayOrder = 2147483647 end);
+                CursorGui.Parent = GetGuiParent();
+
+                local Cursor = Instance.new("ImageLabel", CursorGui);
                 Cursor.Image = "http://www.roblox.com/asset/?id=4292970642";
                 Cursor.BackgroundTransparency = 1;
                 Cursor.ZIndex = 100;
 
-                local CursorOutline = Instance.new("ImageLabel", ScreenGui);
+                local CursorOutline = Instance.new("ImageLabel", CursorGui);
                 CursorOutline.Image = "http://www.roblox.com/asset/?id=4292970642";
                 CursorOutline.ImageColor3 = Color3.new();
                 CursorOutline.BackgroundTransparency = 1;
@@ -6799,7 +6808,7 @@ function Library:CreateWindow(...)
                     InputService.MouseIconEnabled = false;
 
                     local mPos = InputService:GetMouseLocation();
-                    local udim = UDim2.fromOffset(mPos.X, mPos.Y - GuiService:GetGuiInset().Y - 1);
+                    local udim = UDim2.fromOffset(mPos.X, mPos.Y - 1);
 
                     Cursor.ImageColor3 = Library.AccentColor;
                     Cursor.Position, CursorOutline.Position = udim, udim - UDim2.fromOffset(1, 1);
@@ -6809,8 +6818,7 @@ function Library:CreateWindow(...)
 
                 InputService.MouseIconEnabled = State;
 
-                Cursor:Destroy();
-                CursorOutline:Destroy();
+                CursorGui:Destroy();
             end);
         end;
         Library:UpdateBlur();

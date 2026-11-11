@@ -913,7 +913,7 @@ Util.onUnload(function()
 end)
 
 local Icons = {
-    data = {}, ratio = {}, busy = {}, retry = {}, bound = setmetatable({}, { __mode = "k" }),
+    data = {}, ratio = {}, asset = {}, busy = {}, retry = {}, bound = setmetatable({}, { __mode = "k" }),
     folder = "Aster/PhantomForces/icons", prefix = "csgo_v1_", cooldown = 30, dataOk = true, colorOk = true,
 }
 
@@ -970,35 +970,108 @@ local function beUint(data, at)
     return ((a * 256 + b) * 256 + c) * 256 + d
 end
 
-function Icons.store(key, data)
+function Icons.warn(reason)
+    if Icons.warned then return end
+    Icons.warned = true
+    warn("[Aster] icons: " .. reason)
+end
+
+function Icons.labelMode()
+    if Icons.labels == nil then Icons.labels = type(getcustomasset) == "function" and type(writefile) == "function" end
+    return Icons.labels
+end
+
+function Icons.fetch(url)
+    local ok, body = pcall(function() return game:HttpGet(url) end)
+    if ok and Icons.valid(body) then return body end
+    local send = (type(request) == "function" and request) or (type(http_request) == "function" and http_request) or (type(syn) == "table" and syn.request) or nil
+    if send then
+        local sent, response = pcall(send, { Url = url, Method = "GET" })
+        local data = sent and type(response) == "table" and response.Body
+        if Icons.valid(data) then return data end
+    end
+    return nil
+end
+
+function Icons.ensureFolder()
+    if type(makefolder) ~= "function" then return end
+    local built = ""
+    for part in string.gmatch(Icons.folder, "[^/]+") do
+        built = built == "" and part or (built .. "/" .. part)
+        local exists = false
+        if type(isfolder) == "function" then pcall(function() exists = isfolder(built) == true end) end
+        if not exists then pcall(makefolder, built) end
+    end
+end
+
+function Icons.container()
+    if Icons.gui and Icons.gui.Parent then return Icons.gui end
+    if setthreadidentity then pcall(setthreadidentity, 7) end
+    local parents = {}
+    pcall(function() parents[#parents + 1] = game:GetService("CoreGui") end)
+    pcall(function() if gethui then parents[#parents + 1] = gethui() end end)
+    for _, parent in ipairs(parents) do
+        local gui
+        local ok = pcall(function()
+            gui = Instance.new("ScreenGui")
+            gui.Name = Util.randomName()
+            gui.DisplayOrder = 9
+            gui.IgnoreGuiInset = true
+            gui.ResetOnSpawn = false
+            gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+            gui.Parent = parent
+        end)
+        if ok and gui and gui.Parent then
+            Icons.gui = gui
+            return gui
+        end
+        if gui then pcall(function() gui:Destroy() end) end
+    end
+    Icons.warn("no gui container for icon images")
+    return nil
+end
+
+function Icons.store(key, data, asset)
     local width, height = beUint(data, 17), beUint(data, 21)
     if width < 1 or height < 1 then return false end
-    Icons.data[key], Icons.ratio[key] = data, width / height
+    Icons.data[key], Icons.ratio[key], Icons.asset[key] = data, width / height, asset
     return true
 end
 
 function Icons.load(key)
     local file = key .. ".png"
     local path = Icons.folder .. "/" .. Icons.prefix .. file
+    local labels = Icons.labelMode()
+    local body, cached
     if type(isfile) == "function" and type(readfile) == "function" then
-        local ok, cached = pcall(function() return isfile(path) and readfile(path) or nil end)
-        if ok and Icons.valid(cached) and Icons.store(key, cached) then return true end
+        local ok, data = pcall(function() return isfile(path) and readfile(path) or nil end)
+        if ok and Icons.valid(data) then body, cached = data, true end
     end
-    local ok, body = pcall(function() return game:HttpGet(UI_REPO .. "icons/" .. file) end)
-    if not (ok and Icons.valid(body) and Icons.store(key, body)) then return false end
-    if type(writefile) == "function" then
-        pcall(function()
-            if type(makefolder) == "function" then
-                local built = ""
-                for part in string.gmatch(Icons.folder, "[^/]+") do
-                    built = built == "" and part or (built .. "/" .. part)
-                    if not (type(isfolder) == "function" and isfolder(built)) then makefolder(built) end
-                end
+    if not body then
+        body = Icons.fetch(UI_REPO .. "icons/" .. file)
+        if not body then
+            Icons.warn("download failed for " .. file)
+            return false
+        end
+    end
+    local asset
+    if labels then
+        if not cached then
+            Icons.ensureFolder()
+            local ok, err = pcall(writefile, path, body)
+            if not ok then
+                Icons.warn("write failed (" .. tostring(err) .. ")")
+                return false
             end
-            writefile(path, body)
-        end)
+        end
+        local ok, result = pcall(getcustomasset, path)
+        if not (ok and type(result) == "string" and result ~= "") then
+            Icons.warn("getcustomasset failed (" .. tostring(result) .. ")")
+            return false
+        end
+        asset = result
     end
-    return true
+    return Icons.store(key, body, asset)
 end
 
 function Icons.get(key)
@@ -1009,6 +1082,7 @@ function Icons.get(key)
     Icons.busy[key] = true
     task.spawn(function()
         local ok, loaded = pcall(Icons.load, key)
+        if not ok then Icons.warn("load error (" .. tostring(loaded) .. ")") end
         Icons.busy[key] = nil
         if not (ok and loaded) then Icons.retry[key] = os.clock() + Icons.cooldown end
     end)
@@ -1024,8 +1098,17 @@ function Icons.place(image, key, cx, cy, maxW, maxH, color, alpha)
     if image == SINK or not Icons.dataOk then return false end
     local data, ratio = Icons.get(key)
     if not data then return false end
+    local isLabel = type(image) == "table" and rawget(image, "_label") ~= nil
     if Icons.bound[image] ~= key then
-        if not pcall(setData, image, data) then Icons.dataOk = false return false end
+        local payload = isLabel and Icons.asset[key] or data
+        if not payload then return false end
+        local bound
+        if isLabel then bound = pcall(rawget(image, "_bind"), payload) else bound = pcall(setData, image, payload) end
+        if not bound then
+            Icons.warn(isLabel and "image label rejected the asset" or "Drawing Image has no Data support")
+            Icons.dataOk = false
+            return false
+        end
         Icons.bound[image] = key
     end
     local height = math.floor(math.min(maxH, maxW / ratio) + 0.5)
@@ -1037,9 +1120,55 @@ function Icons.place(image, key, cx, cy, maxW, maxH, color, alpha)
     return true
 end
 
-function Draw.image(zindex)
-    return Draw.new("Image", { Transparency = 1, ZIndex = zindex or 8, Visible = false })
+function Icons.label(zindex)
+    local gui = Icons.container()
+    if not gui then return nil end
+    local label
+    local ok = pcall(function()
+        label = Instance.new("ImageLabel")
+        label.Name = Util.randomName()
+        label.BackgroundTransparency = 1
+        label.BorderSizePixel = 0
+        label.ScaleType = Enum.ScaleType.Fit
+        label.ZIndex = zindex
+        label.Visible = false
+        label.Parent = gui
+    end)
+    if not (ok and label) then return nil end
+    local proxy = {}
+    local apply = {
+        Visible = function(value) label.Visible = value end,
+        Color = function(value) label.ImageColor3 = value end,
+        Transparency = function(value) label.ImageTransparency = 1 - value end,
+        Size = function(value) label.Size = UDim2.new(0, value.X, 0, value.Y) end,
+        Position = function(value) label.Position = UDim2.new(0, value.X, 0, value.Y) end,
+        ZIndex = function(value) label.ZIndex = value end,
+    }
+    rawset(proxy, "_label", label)
+    rawset(proxy, "_bind", function(asset) label.Image = asset end)
+    rawset(proxy, "Remove", function() pcall(function() label:Destroy() end) end)
+    return setmetatable(proxy, { __newindex = function(_, prop, value)
+        local set = apply[prop]
+        if set then pcall(set, value) end
+    end })
 end
+
+function Draw.image(zindex)
+    zindex = zindex or 8
+    if Icons.labelMode() then
+        local proxy = Icons.label(zindex)
+        if proxy then
+            Draw.all[proxy] = true
+            return proxy
+        end
+    end
+    return Draw.new("Image", { Transparency = 1, ZIndex = zindex, Visible = false })
+end
+
+Util.onUnload(function()
+    if Icons.gui then pcall(function() Icons.gui:Destroy() end) end
+    Icons.gui = nil
+end)
 
 function Draw.project(cam, position)
     local point = cam:WorldToViewportPoint(position)
@@ -2249,6 +2378,102 @@ function World.dropMap()
     for part in pairs(Game.mapSnap) do World.mapPart(part, nil) end
 end
 
+World.lightState = { list = nil, cursor = 1, added = {}, sig = nil, map = nil, conn = nil }
+Game.lightSnap = setmetatable({}, { __mode = "k" })
+
+function World.lightSpec()
+    if not on("world_lights") then return nil end
+    local spec = {
+        bright = val("world_lights_bright") or 1, range = val("world_lights_range") or 1, angle = val("world_lights_angle") or 1,
+        k = on("world_lights_tint_on") and (val("world_lights_tint_k") or 0) or 0, tint = val("world_lights_tint") or Color3.new(1, 1, 1),
+        noShadow = on("world_lights_noshadow") == true, off = on("world_lights_off") == true,
+    }
+    spec.sig = string.format("%.3f|%.3f|%.3f|%.3f|%s|%s|%s", spec.bright, spec.range, spec.angle, spec.k, tostring(spec.tint), tostring(spec.noShadow), tostring(spec.off))
+    return spec
+end
+
+function World.mapLightObject(object, spec)
+    local isLight = false
+    pcall(function() isLight = object:IsA("Light") end)
+    if not isLight then return end
+    local snap = Game.lightSnap[object]
+    if spec and not snap then
+        snap = { Brightness = propGet(object, "Brightness"), Range = propGet(object, "Range"), Angle = propGet(object, "Angle"), Color = propGet(object, "Color"), Shadows = propGet(object, "Shadows"), Enabled = propGet(object, "Enabled") }
+        if snap.Brightness == nil then return end
+        Game.lightSnap[object] = snap
+    end
+    if not snap then return end
+    local want = { Brightness = snap.Brightness, Range = snap.Range, Angle = snap.Angle, Color = snap.Color, Shadows = snap.Shadows, Enabled = snap.Enabled }
+    if spec then
+        want.Brightness = snap.Brightness * spec.bright
+        if snap.Range then want.Range = math.max(0, snap.Range * spec.range) end
+        if snap.Angle then want.Angle = math.clamp(snap.Angle * spec.angle, 1, 180) end
+        if snap.Color and spec.k > 0 then want.Color = Util.lerpColor(snap.Color, spec.tint, spec.k) end
+        if spec.noShadow and snap.Shadows ~= nil then want.Shadows = false end
+        if spec.off then want.Enabled = false end
+    else
+        Game.lightSnap[object] = nil
+    end
+    for prop, value in pairs(want) do
+        if value ~= nil and propGet(object, prop) ~= value then propSet(object, prop, value) end
+    end
+end
+
+function World.lightUnhook()
+    local state = World.lightState
+    if state.conn then pcall(function() state.conn:Disconnect() end) end
+    state.conn, state.added = nil, {}
+end
+
+function World.stepLights()
+    local state = World.lightState
+    local spec = World.lightSpec()
+    local map = Workspace:FindFirstChild("Map")
+    if map ~= state.map then
+        World.lightUnhook()
+        state.map, state.sig = map, nil
+    end
+    if spec and map and not state.conn then
+        local ok, conn = pcall(function()
+            return map.DescendantAdded:Connect(function(object)
+                if #state.added < 5000 then state.added[#state.added + 1] = object end
+            end)
+        end)
+        if ok and conn then state.conn = conn end
+    elseif not spec and state.conn then
+        World.lightUnhook()
+    end
+    local sig = spec and map and spec.sig or (not spec and next(Game.lightSnap) and "restore") or nil
+    if sig ~= state.sig then
+        state.sig, state.cursor, state.list = sig, 1, nil
+        if sig == "restore" then
+            state.list = {}
+            for object in pairs(Game.lightSnap) do state.list[#state.list + 1] = object end
+        elseif sig then
+            local ok, all = pcall(function() return map:GetDescendants() end)
+            state.list = ok and all or {}
+        end
+    end
+    if not sig then return end
+    local budget = 300
+    while budget > 0 and #state.added > 0 do
+        World.mapLightObject(table.remove(state.added), spec)
+        budget = budget - 1
+    end
+    local list = state.list
+    while list and budget > 0 and state.cursor <= #list do
+        World.mapLightObject(list[state.cursor], spec)
+        state.cursor, budget = state.cursor + 1, budget - 1
+    end
+end
+
+function World.dropLights()
+    World.lightUnhook()
+    local state = World.lightState
+    state.list, state.sig, state.map = nil, nil, nil
+    for object in pairs(Game.lightSnap) do World.mapLightObject(object, nil) end
+end
+
 function World.apply(dt, now)
     for _, props in pairs(want) do
         for prop in pairs(props) do props[prop] = nil end
@@ -2351,6 +2576,7 @@ function World.apply(dt, now)
 
     Util.guard("sky", World.stepSky, dt)
     Util.guard("map-light", World.stepMap)
+    Util.guard("map-lights", World.stepLights)
     local clouds = World.cloudObject(on("world_clouds") == true)
     if clouds then
         put(clouds, "Enabled", true)
@@ -2684,6 +2910,7 @@ Util.onUnload(function()
     end
     World.orig = {}
     World.dropMap()
+    World.dropLights()
     if World.sky and not World.sky.Parent then pcall(function() World.sky.Parent = Lighting end) end
     if World.ownSky then pcall(function() World.ownSky:Destroy() end) end
     World.cloudObject(false)
@@ -2699,7 +2926,22 @@ function Tracers.presets()
     if Tracers.table then return Tracers.table end
     local mode = Enum.TextureMode
     local function sequence(value) return NumberSequence.new(value) end
+    local function thinStyle(id, wrap)
+        return {
+            Texture = id, Brightness = 1.5, Transparency = sequence(0), LightEmission = 1, LightInfluence = 0,
+            Segments = 1, TextureLength = wrap and 3 or 5, TextureMode = wrap and mode.Wrap or mode.Stretch, TextureSpeed = wrap and 1 or 0,
+            Width0 = 0.12, Width1 = 0.12, FaceCamera = true,
+        }
+    end
     Tracers.table = {
+        Beam = thinStyle("rbxassetid://12781852245", false),
+        Bolt = thinStyle("rbxassetid://446111271", false),
+        Trail = thinStyle("rbxassetid://6419989824", false),
+        Zigzag = thinStyle("rbxassetid://1274380363", true),
+        Heartrate = thinStyle("rbxassetid://5830549480", true),
+        Chain = thinStyle("rbxassetid://9632168658", true),
+        Glitch = thinStyle("rbxassetid://8089467613", true),
+        Swirl = thinStyle("rbxassetid://5638168605", true),
         Obelus = {
             Texture = "rbxassetid://2382169232", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
             Segments = 1, TextureLength = 5, TextureMode = mode.Stretch, TextureSpeed = 0, Width0 = 0.3, Width1 = 0.3, FaceCamera = true,
@@ -2717,41 +2959,66 @@ function Tracers.presets()
 end
 
 function Tracers.drop(record)
-    pcall(function() record.beam:Destroy() end)
-    pcall(function() record.from:Destroy() end)
-    pcall(function() record.to:Destroy() end)
+    for _, beam in ipairs(record.beams) do pcall(function() beam:Destroy() end) end
+    for _, point in ipairs(record.points) do pcall(function() point:Destroy() end) end
 end
 
-function Tracers.spawn(origin, target, color)
+function Tracers.spawn(path, color)
     local presets = Tracers.presets()
     local name = flag("trace_texture", "Lightning")
     local preset = presets[name] or presets.Lightning
     local scale = flag("trace_width", 1)
     local terrain = Workspace.Terrain
-    local from, to, beam
+    local record = { beams = {}, points = {}, path = path, born = os.clock(), base = preset.Transparency, level = 0.45 }
     local ok = pcall(function()
-        from, to = Instance.new("Attachment"), Instance.new("Attachment")
-        from.Name, to.Name = Util.randomName(), Util.randomName()
-        from.Parent, to.Parent = terrain, terrain
-        from.WorldCFrame, to.WorldCFrame = CFrame.new(origin), CFrame.new(target)
-        beam = Instance.new("Beam")
-        beam.Name = Util.randomName()
-        for prop, value in pairs(preset) do
-            if prop == "Width0" or prop == "Width1" then value = value * scale end
-            beam[prop] = value
+        for index, position in ipairs(path) do
+            local point = Instance.new("Attachment")
+            point.Name = Util.randomName()
+            point.Parent = terrain
+            point.WorldCFrame = CFrame.new(position)
+            record.points[index] = point
         end
-        beam.Color = ColorSequence.new(color)
-        beam.Attachment0, beam.Attachment1 = from, to
-        beam.Parent = terrain
+        for index = 1, #path - 1 do
+            local beam = Instance.new("Beam")
+            beam.Name = Util.randomName()
+            for prop, value in pairs(preset) do
+                if prop == "Width0" or prop == "Width1" then value = value * scale end
+                beam[prop] = value
+            end
+            beam.Color = ColorSequence.new(color)
+            beam.Attachment0, beam.Attachment1 = record.points[index], record.points[index + 1]
+            beam.Parent = terrain
+            record.beams[index] = beam
+        end
     end)
-    local record = { beam = beam, from = from, to = to, born = os.clock(), base = preset.Transparency, level = 0.45 }
     if not ok then
         Tracers.drop(record)
         return false
     end
-    if #Tracers.list >= 64 then Tracers.drop(table.remove(Tracers.list, 1)) end
+    if #Tracers.list >= 40 then Tracers.drop(table.remove(Tracers.list, 1)) end
     Tracers.list[#Tracers.list + 1] = record
     return true
+end
+
+function Tracers.trajectory(origin, position, velocity, acceleration, life)
+    local flight = math.clamp(type(life) == "number" and life or 2, 0.1, 5)
+    local step = math.max(0.04, flight / 47)
+    local path = { origin }
+    local previous, hit = position, nil
+    local time = 0
+    while time < flight - 1e-6 do
+        time = math.min(time + step, flight)
+        local point = position + velocity * time + acceleration * (0.5 * time * time)
+        local result = Game.cast(previous, point - previous, Barrel.params)
+        if result then
+            path[#path + 1] = result.Position
+            hit = result.Position
+            break
+        end
+        path[#path + 1] = point
+        previous = point
+    end
+    return path, hit
 end
 
 function Tracers.hideBeam(bullet)
@@ -2760,12 +3027,19 @@ function Tracers.hideBeam(bullet)
     for _, beam in pairs(beams) do propSet(beam, "Enabled", false) end
 end
 
-function Tracers.isTeam(position)
+function Tracers.isTeam(info)
     local ok, list = pcall(Entities.update)
     if not (ok and type(list) == "table") then return false end
-    local best, nearest = nil, 40
+    local extra = type(info.extra) == "table" and info.extra
+    for _, key in ipairs({ "player", "owner", "shooter" }) do
+        local record = extra and typeof(extra[key]) == "Instance" and Entities.byPlayer[extra[key]]
+        if record then return record.enemy == false end
+    end
+    local at = typeof(info.visualorigin) == "Vector3" and info.visualorigin or info.position
+    local best, nearest = nil, 12
     for _, rec in ipairs(list) do
-        local distance = (rec.pos - position).Magnitude
+        local head = rec.head and rec.rendered and rec.head.Position or rec.pos
+        local distance = math.min((rec.pos - at).Magnitude, (head - at).Magnitude)
         if distance < nearest then best, nearest = rec, distance end
     end
     return best ~= nil and best.enemy == false
@@ -2791,20 +3065,20 @@ function Tracers.fromBullet(info, mine)
     if mine then
         if not flag("trace_on", false) then return false end
         color = flag("trace_color", Color3.fromRGB(255, 94, 94))
-    elseif Tracers.isTeam(position) then
+    elseif Tracers.isTeam(info) then
         if not flag("trace_team_on", false) then return false end
         color = flag("trace_team_color", Color3.fromRGB(90, 220, 130))
     else
         if not flag("trace_enemy_on", false) then return false end
         color = flag("trace_enemy_color", Color3.fromRGB(94, 160, 255))
     end
-    local direction = velocity.Unit
-    Barrel.refreshParams(os.clock())
-    local hit = Game.cast(position, direction * 1000, Barrel.params)
-    local target = hit and hit.Position or position + direction * 500
     local origin = Tracers.origin(info, mine)
-    if typeof(origin) ~= "Vector3" or (target - origin).Magnitude < 0.5 then return false end
-    return Tracers.spawn(origin, target, color)
+    if typeof(origin) ~= "Vector3" then return false end
+    local acceleration = typeof(info.acceleration) == "Vector3" and info.acceleration or Game.accel
+    Barrel.refreshParams(os.clock())
+    local path = Tracers.trajectory(origin, position, velocity, acceleration, info.life)
+    if #path < 2 or (path[#path] - origin).Magnitude < 0.5 then return false end
+    return Tracers.spawn(path, color)
 end
 
 function Tracers.step(now)
@@ -2817,7 +3091,8 @@ function Tracers.step(now)
             table.remove(Tracers.list, index)
         elseif age > life then
             local level = record.level + (1 - record.level) * ((age - life) / Tracers.fade)
-            propSet(record.beam, "Transparency", NumberSequence.new(level))
+            local sequence = NumberSequence.new(level)
+            for _, beam in ipairs(record.beams) do propSet(beam, "Transparency", sequence) end
         end
     end
 end
@@ -3949,7 +4224,8 @@ do
     local Pc = Fun:Toggle({ Name = "PhantomCam", Flag = "misc_phantomcam", Tooltip = "Body cam: the view follows where the weapon's barrel points" })
         :Keybind({ Name = "PhantomCam key", Flag = "misc_phantomcam_key", Default = "None", Mode = "Toggle", Sync = true })
         :Settings("PhantomCam", 230)
-    Pc:Slider({ Name = "Strength", Flag = "misc_phantomcam_strength", Min = 0, Max = 1.5, Default = 1, Decimals = 0.01, Tooltip = "0 leaves the view alone, 1 points it where the barrel points" })
+    Pc:Slider({ Name = "Strength", Flag = "misc_phantomcam_strength", Min = 0, Max = 5, Default = 2.5, Decimals = 0.01, Tooltip = "Barrel: 0 leaves the view alone, 1 points it where the barrel points, above 1 exaggerates it. World character: scales the head motion" })
+    Pc:Slider({ Name = "Sway", Flag = "misc_phantomcam_sway", Min = 0, Max = 5, Default = 1, Decimals = 0.01, Tooltip = "Tilts the view with the viewmodel's motion (walking, sprinting, reloading, recoil)" })
     Pc:Slider({ Name = "Smoothing", Flag = "misc_phantomcam_smooth", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
     Pc:Slider({ Name = "Position follow", Flag = "misc_phantomcam_position", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Tooltip = "Moves the camera toward the weapon's barrel" })
     Pc:Toggle({ Name = "Roll", Flag = "misc_phantomcam_roll", Tooltip = "Also follows the barrel's roll" })
@@ -3960,6 +4236,7 @@ do
     Pc:Toggle({ Name = "Hide hat/head", Flag = "misc_phantomcam_hat", Default = true, Tooltip = "World character mode: hides your character's head and hat so they do not block the view" })
     Pc:Slider({ Name = "Forward offset", Flag = "misc_phantomcam_forward", Min = 0, Max = 2, Default = 0.5, Decimals = 0.01, Suffix = " studs" })
     Pc:Slider({ Name = "Camera FOV", Flag = "misc_phantomcam_fov", Min = 0, Max = 120, Default = 0, Decimals = 1, Tooltip = "0 keeps the game's FOV" })
+    Pc:Toggle({ Name = "Debug", Flag = "misc_phantomcam_debug", Tooltip = "Prints a PhantomCam status line to the console once per second" })
 end
 
 do
@@ -4158,6 +4435,15 @@ do
     MapSurf:Slider({ Name = "Map transparency", Flag = "world_map_trans", Min = 0, Max = 0.9, Default = 0.3, Decimals = 0.01 })
     MapSurf:Toggle({ Name = "Reflectance", Flag = "world_map_refl_on" })
     MapSurf:Slider({ Name = "Map reflectance", Flag = "world_map_refl", Min = 0, Max = 1, Default = 0.3, Decimals = 0.01 })
+    local MapLamps = MapLight:Toggle({ Name = "Map lights", Flag = "world_lights", Tooltip = "Scales the map's own point, spot and surface lights; originals come back when off" }):Settings("Map lights", 240)
+    MapLamps:Slider({ Name = "Brightness", Flag = "world_lights_bright", Min = 0, Max = 2, Default = 1, Decimals = 0.01, Suffix = "x" })
+    MapLamps:Slider({ Name = "Range", Flag = "world_lights_range", Min = 0, Max = 2, Default = 1, Decimals = 0.01, Suffix = "x" })
+    MapLamps:Slider({ Name = "Spot angle", Flag = "world_lights_angle", Min = 0.1, Max = 1.5, Default = 1, Decimals = 0.01, Suffix = "x" })
+    MapLamps:Toggle({ Name = "Light colour", Flag = "world_lights_tint_on" })
+    pickColor(MapLamps, "Colour", "world_lights_tint", Color3.fromRGB(255, 170, 90))
+    MapLamps:Slider({ Name = "Colour strength", Flag = "world_lights_tint_k", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
+    MapLamps:Toggle({ Name = "No light shadows", Flag = "world_lights_noshadow" })
+    MapLamps:Toggle({ Name = "Disable lights", Flag = "world_lights_off" })
 
     local SkySub = Subs.Sky
     local Box = SkySub:Section({ Name = "Skybox", Side = 1, Icon = "moon" })
@@ -4275,7 +4561,7 @@ do
     Trace:Toggle({ Name = "Own bullets", Flag = "trace_on", Tooltip = "Draws a tracer from your barrel to where the shot lands" }):Colorpicker({ Name = "Tracer", Flag = "trace_color", Default = Color3.fromRGB(255, 94, 94) })
     Trace:Toggle({ Name = "Enemy bullets", Flag = "trace_enemy_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
     Trace:Toggle({ Name = "Team bullets", Flag = "trace_team_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_team_color", Default = Color3.fromRGB(90, 220, 130) })
-    Trace:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = { "Obelus", "Lightning", "DNA" }, Default = "Lightning" })
+    Trace:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = { "Obelus", "Lightning", "DNA", "Beam", "Bolt", "Trail", "Zigzag", "Heartrate", "Chain", "Glitch", "Swirl" }, Default = "Lightning" })
     Trace:Slider({ Name = "Tracer lifetime", Flag = "trace_time", Min = 0.5, Max = 10, Default = 4, Decimals = 0.1, Suffix = " s" })
     Trace:Slider({ Name = "Tracer width", Flag = "trace_width", Min = 0.2, Max = 3, Default = 1, Decimals = 0.1, Suffix = "x" })
     Trace:Toggle({ Name = "Hide the game's beam", Flag = "trace_hide_beam", Default = true, Tooltip = "Turns off the game's own tracer beam on bullets that get a custom tracer" })
@@ -4347,7 +4633,11 @@ local Workspace = game:GetService("Workspace")
 local MAX_TURN = 0.6
 local MAX_PITCH = 1.5
 local MAX_SHIFT = 1.5
+local MAX_BODY = 2.5
 local REST_RATE = 0.5
+local SWAY_MOVE = 0.35
+local STALE = 0.05
+local EYE = Vector3.new(0, 0.125, 0)
 
 for _, name in ipairs({ "PhantomCamApi", "PhantomCam" }) do
     local previous = getgenv()[name]
@@ -4357,24 +4647,35 @@ end
 
 local Cam = {
     settings = {
-        strength = 1, smoothing = 0, position = 0, roll = false, onlyAiming = false, noScope = false,
-        mode = "Barrel", hideViewmodel = true, hideHat = true, forward = 0.5, fov = 0,
+        strength = 2.5, smoothing = 0, position = 0, roll = false, onlyAiming = false, noScope = false,
+        mode = "Barrel", hideViewmodel = true, hideHat = true, forward = 0.5, fov = 0, sway = 1, debug = false,
     },
     mods = {},
+    fails = {},
+    why = {},
     hidden = { view = {}, hat = {} },
     scanAt = { view = 0, hat = 0 },
+    passes = { hook = 0, bind = 0, rs = 0 },
     amount = 0,
     running = false,
     warned = {},
     bindName = "pc" .. tostring(math.random(100000, 999999)),
     retryAt = 0,
+    attachAt = 0,
+    bodyAt = 0,
+    debugAt = 0,
+    token = 0,
+    kept = 0,
+    lost = 0,
+    frameDt = 1 / 60,
+    info = {},
     keys = {},
 }
 
 local function note(key, ...)
     if Cam.warned[key] then return end
     Cam.warned[key] = true
-    warn("[Aster]", ...)
+    warn("[PhantomCam]", ...)
 end
 
 local function wrap(angle)
@@ -4385,61 +4686,105 @@ local function same(a, b)
     return a.Position == b.Position and a.LookVector == b.LookVector and a.UpVector == b.UpVector
 end
 
+local function limit(vector, max)
+    local size = vector.Magnitude
+    if size > max then return vector * (max / size) end
+    return vector
+end
+
+local function vec(v)
+    return string.format("(%.1f,%.1f,%.1f)", v.X, v.Y, v.Z)
+end
+
 local function bind(name, priority, fn)
     local ok = pcall(function() RunService:BindToRenderStep(name, priority, fn) end)
     if ok then
-        return function() pcall(function() RunService:UnbindFromRenderStep(name) end) end
+        return function() pcall(function() RunService:UnbindFromRenderStep(name) end) end, true
     end
     local connection = RunService.RenderStepped:Connect(fn)
-    return function() connection:Disconnect() end
+    return function() connection:Disconnect() end, false
 end
 
-local function cameraPriority()
-    local ok, value = pcall(function() return Enum.RenderPriority.Camera.Value end)
-    return (ok and type(value) == "number" and value or 200) + 1
+local function lastPriority()
+    local ok, value = pcall(function() return Enum.RenderPriority.Last.Value end)
+    return ok and type(value) == "number" and value or 2000
 end
 
-function Cam.load()
-    if Cam.mods.CharacterInterface then return end
-    local now = os.clock()
-    if now < Cam.retryAt then return end
-    Cam.retryAt = now + 3
+local function debugOn()
+    return Cam.settings.debug == true or getgenv().PhantomCamDebug == true
+end
+
+function Cam.req(name)
     local requireFn
     pcall(function() requireFn = getrenv().shared.require end)
-    local ok, module = false, nil
-    if type(requireFn) == "function" then ok, module = pcall(requireFn, "CharacterInterface") end
-    if not (ok and type(module) == "table") and type(getloadedmodules) == "function" then
+    local why = "getrenv().shared.require missing (not inside the game's actor?)"
+    if type(requireFn) == "function" then
+        local ok, module = pcall(requireFn, name)
+        if ok and type(module) == "table" then return module end
+        why = ok and ("shared.require returned " .. type(module)) or tostring(module)
+    end
+    if type(getloadedmodules) == "function" then
+        local found
         pcall(function()
             for _, loaded in ipairs(getloadedmodules()) do
-                if loaded.Name == "CharacterInterface" then
+                if loaded.Name == name then
                     local okRequire, result = pcall(require, loaded)
-                    if okRequire and type(result) == "table" then ok, module = true, result break end
+                    if okRequire and type(result) == "table" then found = result return end
                 end
             end
         end)
+        if found then return found end
     end
-    if ok and type(module) == "table" then Cam.mods.CharacterInterface = module end
+    return nil, why
+end
+
+function Cam.load()
+    if Cam.mods.CharacterInterface and Cam.mods.CameraInterface then return end
+    local now = os.clock()
+    if now < Cam.retryAt then return end
+    Cam.retryAt = now + 3
+    for _, name in ipairs({ "CharacterInterface", "CameraInterface" }) do
+        if not Cam.mods[name] then
+            local module, why = Cam.req(name)
+            if module then
+                Cam.mods[name] = module
+            else
+                Cam.fails[name] = (Cam.fails[name] or 0) + 1
+                Cam.why[name] = why
+                if Cam.fails[name] >= 2 then
+                    note("load" .. name, "cannot load " .. name .. ": " .. tostring(why) .. (name == "CameraInterface" and " - no camera hook, render-step fallback only" or " - no weapon/barrel data"))
+                end
+            end
+        end
+    end
 end
 
 function Cam.weapon()
     local interface = Cam.mods.CharacterInterface
-    if not interface then return nil end
+    if not interface then return nil, "no CharacterInterface" end
+    local why
     local ok, weapon = pcall(function()
-        if not interface.isAlive() then return nil end
+        if not interface.isAlive() then why = "dead" return nil end
         local character = interface.getCharacterObject()
-        local controller = character and character:getWeaponController()
-        return controller and controller:getActiveWeapon()
+        if not character then why = "no character object" return nil end
+        local controller = character:getWeaponController()
+        if not controller then why = "no weapon controller" return nil end
+        local active = controller:getActiveWeapon()
+        if not active then why = "no active weapon" end
+        return active
     end)
-    if ok and type(weapon) == "table" then return weapon end
-    return nil
+    if not ok then return nil, "error: " .. tostring(weapon) end
+    if type(weapon) == "table" then return weapon end
+    return nil, why
 end
 
 function Cam.barrel(weapon)
-    if type(weapon.getBarrelCFrame) ~= "function" then return nil end
+    if type(weapon.getBarrelCFrame) ~= "function" then return nil, "weapon has no getBarrelCFrame" end
     local ok, frame = pcall(weapon.getBarrelCFrame, weapon)
-    if not (ok and typeof(frame) == "CFrame") then return nil end
+    if not ok then return nil, "getBarrelCFrame error: " .. tostring(frame) end
+    if typeof(frame) ~= "CFrame" then return nil, "getBarrelCFrame returned " .. typeof(frame) end
     local position, look = frame.Position, frame.LookVector
-    if position ~= position or look ~= look then return nil end
+    if position ~= position or look ~= look then return nil, "barrel is NaN" end
     return frame
 end
 
@@ -4476,6 +4821,137 @@ function Cam.head()
         return nil
     end)
     if ok and typeof(position) == "Vector3" and position == position then return position end
+    return nil
+end
+
+function Cam.isAlive()
+    local interface = Cam.mods.CharacterInterface
+    if interface then
+        local ok, alive = pcall(interface.isAlive)
+        if ok then return alive == true end
+    end
+    return Cam.head() ~= nil
+end
+
+function Cam.detach()
+    local object = Cam.hooked
+    Cam.hooked = nil
+    if object and rawget(object, "postStep") == Cam.hookFn then
+        pcall(function() object.postStep = Cam.hookPrev end)
+    end
+    Cam.hookFn, Cam.hookPrev = nil, nil
+end
+
+function Cam.attach(now)
+    if now < Cam.attachAt then return end
+    Cam.attachAt = now + 0.25
+    local interface = Cam.mods.CameraInterface
+    if not interface or type(interface.getActiveCamera) ~= "function" then return end
+    local ok, object = pcall(interface.getActiveCamera, "MainCamera", true)
+    if not (ok and type(object) == "table") then
+        Cam.hookWhy = ok and "no MainCamera active (menu/spectate)" or tostring(object)
+        return
+    end
+    if Cam.hooked == object then
+        if Cam.passes.hook == 0 and now - Cam.hookedAt > 3 and Cam.isAlive() then
+            note("hookdead", "camera hook installed but the game never called it - relying on render-step passes")
+        end
+        return
+    end
+    Cam.detach()
+    local token = Cam.token
+    local previous = rawget(object, "postStep")
+    local function hook(self, dt)
+        if previous then pcall(previous, self, dt) end
+        if Cam.running and Cam.token == token then Cam.run("hook", type(dt) == "number" and dt or nil) end
+    end
+    local set, problem = pcall(function() object.postStep = hook end)
+    if not set then
+        Cam.hookWhy = "cannot set postStep: " .. tostring(problem)
+        note("hookset", Cam.hookWhy)
+        return
+    end
+    Cam.hooked, Cam.hookFn, Cam.hookPrev, Cam.hookedAt, Cam.hookWhy = object, hook, previous, now, nil
+end
+
+function Cam.bodyDestroy()
+    local body = Cam.body
+    Cam.body, Cam.bodyPos, Cam.bodyVel, Cam.bodyAccel, Cam.bodyStance, Cam.bodySprint, Cam.bodyRest = nil, nil, nil, nil, nil, nil, nil
+    if not body then return end
+    pcall(function() body:unqueueWelds() end)
+    pcall(function() body:Destroy() end)
+end
+
+function Cam.bodyBuild(now)
+    if Cam.body or now < Cam.bodyAt then return end
+    Cam.bodyAt = now + 3
+    local class, why = Cam.req("ThirdPersonObject")
+    if not (class and type(class.new) == "function") then
+        Cam.bodyWhy = "ThirdPersonObject unavailable: " .. tostring(why)
+        note("bodyclass", Cam.bodyWhy .. " - using synthesized head motion")
+        return
+    end
+    local weapons = {}
+    local stub = {
+        getActiveWeaponIndex = function() return 1 end,
+        getWeaponObjects = function() return weapons end,
+        getWeaponObject = function() return nil end,
+        isEnemy = function() return false end,
+        _posspring = { p = Vector3.zero },
+    }
+    local player = game:GetService("Players").LocalPlayer
+    local ok, body = pcall(class.new, player, Vector3.zero, stub)
+    if not (ok and type(body) == "table") then
+        Cam.bodyWhy = "ThirdPersonObject.new failed: " .. tostring(body)
+        note("bodynew", Cam.bodyWhy .. " - using synthesized head motion")
+        return
+    end
+    pcall(function() body._rootPart.Parent = nil end)
+    pcall(function()
+        body._leftFoot.makesound = false
+        body._rightFoot.makesound = false
+        body._equipSpring.p, body._equipSpring.t = 1, 1
+    end)
+    Cam.body, Cam.bodyWhy = body, nil
+end
+
+function Cam.bodyHead(frame, dt, now)
+    local interface = Cam.mods.CharacterInterface
+    if not interface then return nil end
+    Cam.bodyBuild(now)
+    local body = Cam.body
+    if not body then return nil end
+    local ok, head = pcall(function()
+        local object = interface.getCharacterObject()
+        local position = object:getRealRootPart().Position
+        local velocity = Vector3.zero
+        local accel = Vector3.zero
+        if Cam.bodyPos then
+            local alpha = 1 - math.exp(-dt * 20)
+            local rawVelocity = limit((position - Cam.bodyPos) / dt, 60)
+            velocity = Cam.bodyVel + (rawVelocity - Cam.bodyVel) * alpha
+            accel = Cam.bodyAccel + (limit((velocity - Cam.bodyVel) / dt, 200) - Cam.bodyAccel) * (1 - math.exp(-dt * 10))
+        end
+        Cam.bodyPos, Cam.bodyVel, Cam.bodyAccel = position, velocity, accel
+        local mode = object:getMovementMode()
+        if mode ~= Cam.bodyStance then Cam.bodyStance = mode body:setStance(mode) end
+        local sprint = object:isSprinting() == true
+        if sprint ~= Cam.bodySprint then Cam.bodySprint = sprint body:setSprint(sprint) end
+        local pitch, yaw = frame:ToOrientation()
+        local camera = Cam.hooked
+        local angles = camera and camera:getAngles()
+        if typeof(angles) ~= "Vector3" then angles = Vector3.new(pitch, yaw, 0) end
+        local root = CFrame.new(position) * CFrame.Angles(0, body:getBaseAngle(), 0)
+        body:step(true, root, velocity, angles, angles, accel, dt)
+        local cframe = body._neckWeld:getCFrame()
+        if typeof(cframe) ~= "CFrame" then cframe = body._head.CFrame end
+        return cframe
+    end)
+    if ok and typeof(head) == "CFrame" and head.Position == head.Position then return head end
+    Cam.bodyWhy = "body step failed: " .. tostring(head)
+    note("bodystep", Cam.bodyWhy .. " - using synthesized head motion")
+    Cam.bodyDestroy()
+    Cam.bodyAt = now + 10
     return nil
 end
 
@@ -4549,33 +5025,98 @@ function Cam.applyFov(camera, value)
 end
 
 function Cam.reset()
-    Cam.amount, Cam.smoothed, Cam.smoothedPos, Cam.written, Cam.rest = 0, nil, nil, nil, nil
+    Cam.amount, Cam.smoothed, Cam.written, Cam.rest, Cam.swayRest, Cam.pending = 0, nil, nil, nil, nil, false
 end
 
-function Cam.step(dt)
+function Cam.clear()
+    Cam.smoothed, Cam.written, Cam.rest, Cam.swayRest, Cam.pending = nil, nil, nil, nil, false
+end
+
+function Cam.report(now)
+    if not debugOn() or now < Cam.debugAt then return end
+    Cam.debugAt = now + 1
+    local i = Cam.info
+    local hook
+    if Cam.hooked then
+        hook = "hooked calls=" .. Cam.passes.hook
+    elseif Cam.mods.CameraInterface then
+        hook = "none (" .. tostring(Cam.hookWhy or "pending") .. ")"
+    else
+        hook = "no CameraInterface (" .. tostring(Cam.why.CameraInterface) .. ")"
+    end
+    local body = i.world and (Cam.body and "thirdperson" or ("synth (" .. tostring(Cam.bodyWhy or "pending") .. ")")) or "n/a"
+    local readback = Cam.lost == 0 and "ok" or ("OVERWRITTEN " .. tostring(Cam.lostBy))
+    local camera = Workspace.CurrentCamera
+    warn("[PhantomCam]", string.format(
+        "mode=%s active=%s src=%s hook=[%s] passes h/b/r=%d/%d/%d prio=%s weapon=%s barrel=%s body=%s amount=%.2f offset=%.1fdeg/%.2fst game=%s final=%s readback=%s kept/lost=%d/%d fov=%.1f gamecam=%s",
+        i.world and "World" or "Barrel", tostring(Cam.running), tostring(i.source), hook,
+        Cam.passes.hook, Cam.passes.bind, Cam.passes.rs, tostring(Cam.prio),
+        i.weapon and "yes" or ("no: " .. tostring(i.weaponWhy)),
+        i.barrel and "yes" or ("no: " .. tostring(i.barrelWhy)),
+        body, Cam.amount, i.deg or 0, i.studs or 0,
+        i.game and vec(i.game.Position) or "-", i.final and vec(i.final.Position) or "-",
+        readback, Cam.kept, Cam.lost, camera and camera.FieldOfView or 0, tostring(i.gamecam or "-")))
+end
+
+function Cam.step(source, dt)
     local camera = Workspace.CurrentCamera
     if not camera then return end
-    dt = math.clamp(dt or 1 / 60, 1 / 240, 0.1)
+    local now = os.clock()
+    Cam.passes[source] = (Cam.passes[source] or 0) + 1
     local current = camera.CFrame
     local frame = current
-    if Cam.written and Cam.gameCFrame and same(current, Cam.written) then frame = Cam.gameCFrame end
+    if source ~= "hook" then Cam.attach(now) end
+    if Cam.written then
+        local untouched = same(current, Cam.written)
+        if Cam.pending and Cam.pendingSource ~= source and now - Cam.writtenAt < math.min(0.012, Cam.frameDt * 0.5) then
+            Cam.pending = false
+            if untouched then
+                Cam.kept = Cam.kept + 1
+            else
+                Cam.lost = Cam.lost + 1
+                Cam.lostBy = Cam.pendingSource .. " then " .. source
+                if Cam.lost >= 10 and Cam.lost > Cam.kept then
+                    note("lost", "the game overwrites the camera after PhantomCam writes it (" .. Cam.lost .. " of " .. (Cam.lost + Cam.kept) .. " frames, " .. Cam.lostBy .. ")")
+                end
+            end
+        end
+        if untouched then
+            frame = Cam.gameCFrame or current
+            if now - Cam.writtenAt < STALE then return end
+        end
+    end
     Cam.gameCFrame = frame
+    local elapsed = math.clamp(now - (Cam.clock or now), 1 / 240, 0.1)
+    dt = math.clamp(dt or elapsed, 1 / 240, 0.1)
+    Cam.clock = now
+    Cam.frameDt = Cam.frameDt + (elapsed - Cam.frameDt) * 0.1
 
     Cam.load()
     local s = Cam.settings
     local world = s.mode == "World character"
-    local now = os.clock()
+    local info = Cam.info
+    info.world, info.source, info.game = world, source, frame
+    local object = Cam.hooked
+    if source == "hook" and object and type(object.getCFrame) == "function" then
+        local okFrame, own = pcall(object.getCFrame, object)
+        if okFrame and typeof(own) == "CFrame" then info.gamecam = same(own, current) and "match" or "differs" end
+    end
     local function hiding(active)
         Cam.syncHidden("view", active and s.hideViewmodel, function() return Cam.collectView(camera) end, now)
         Cam.syncHidden("hat", active and s.hideHat, Cam.collectHat, now)
     end
     Cam.applyFov(camera, s.fov)
-    local weapon = Cam.weapon()
-    local barrel = weapon and Cam.barrel(weapon)
-    local alive = world and (Cam.head() ~= nil or weapon ~= nil)
+    local weapon, weaponWhy = Cam.weapon()
+    local barrel, barrelWhy
+    if weapon then barrel, barrelWhy = Cam.barrel(weapon) else barrelWhy = weaponWhy end
+    info.weapon, info.weaponWhy, info.barrel, info.barrelWhy = weapon ~= nil, weaponWhy, barrel ~= nil, barrelWhy
+    local alive = world and Cam.isAlive()
+    if not world and Cam.body then Cam.bodyDestroy() end
     if not barrel and not alive then
+        if Cam.body then Cam.bodyDestroy() end
         hiding(false)
         Cam.reset()
+        info.final, info.deg, info.studs = nil, 0, 0
         return
     end
     local target = 1
@@ -4584,29 +5125,48 @@ function Cam.step(dt)
     if s.noScope and aiming and Cam.zoom(weapon) > 1.2 then target = 0 end
     Cam.amount = Cam.amount + (target - Cam.amount) * (1 - math.exp(-dt * 12))
     hiding(world and Cam.amount > 0.05)
-    local idle = not world and s.strength <= 0 and s.position <= 0
+    local idle = not world and s.strength <= 0 and s.position <= 0 and s.sway <= 0
     if Cam.amount < 0.002 or idle then
-        Cam.smoothed, Cam.smoothedPos, Cam.written, Cam.rest = nil, nil, nil, nil
+        Cam.clear()
+        info.final, info.deg, info.studs = nil, 0, 0
         return
     end
-    if world and not barrel then note("world", "world character: no weapon/viewmodel motion source, view stays on the game camera") end
-    barrel = barrel or frame
+    local head = world and Cam.bodyHead(frame, dt, now) or nil
+    if world and not barrel and not head then note("world", "world character: no weapon/viewmodel or body motion source, view stays on the game camera") end
+    local ref = barrel or frame
 
     local gx, gy, gz = frame:ToOrientation()
-    local bx, by, bz = barrel:ToOrientation()
-    local dx, dy = bx - gx, wrap(by - gy)
+    local bx, by, bz = ref:ToOrientation()
+    local dx, dy, dz = bx - gx, wrap(by - gy), wrap(bz - gz)
     local size = math.sqrt(dx * dx + dy * dy)
-    if size > MAX_TURN then dx, dy = dx * MAX_TURN / size, dy * MAX_TURN / size end
-    local rawTurn = Vector3.new(dx, dy, (s.roll or world) and wrap(bz - gz) or 0)
+    local rawTurn = Vector3.new(dx, dy, (s.roll or world) and dz or 0)
+    if size > MAX_TURN then rawTurn = Vector3.new(dx * MAX_TURN / size, dy * MAX_TURN / size, rawTurn.Z) end
+    local cur = Vector3.new(dx, dy, dz)
+    local rel = frame:PointToObjectSpace(ref.Position)
+    local restAlpha = 1 - math.exp(-dt * REST_RATE)
+    Cam.rest = Cam.rest or rel
+    Cam.swayRest = Cam.swayRest or cur
+    local motion = Vector3.zero
+    local rawSway = Vector3.zero
+    if not aiming then
+        motion = limit(rel - Cam.rest, MAX_SHIFT)
+        local dev = cur - Cam.swayRest
+        rawSway = Vector3.new(wrap(dev.X), wrap(dev.Y), wrap(dev.Z))
+        rawSway = rawSway + Vector3.new(motion.Y * SWAY_MOVE, -motion.X * SWAY_MOVE, -motion.X * SWAY_MOVE * 0.6)
+        Cam.rest = Cam.rest + (rel - Cam.rest) * restAlpha
+        Cam.swayRest = Cam.swayRest + Vector3.new(wrap(cur.X - Cam.swayRest.X), wrap(cur.Y - Cam.swayRest.Y), wrap(cur.Z - Cam.swayRest.Z)) * restAlpha
+    end
     local rawPos = Vector3.zero
-    local rel = frame:PointToObjectSpace(barrel.Position)
     if world then
-        Cam.rest = Cam.rest or rel
-        if not aiming then
-            local motion = rel - Cam.rest
-            if motion.Magnitude > MAX_SHIFT then motion = motion.Unit * MAX_SHIFT end
+        if head then
+            if not aiming then
+                local delta = frame:VectorToObjectSpace(head.Position + EYE - frame.Position)
+                Cam.bodyRest = Cam.bodyRest or delta
+                rawPos = limit(delta * math.min(s.strength, 1) + (delta - Cam.bodyRest) * math.max(s.strength - 1, 0), MAX_BODY)
+                Cam.bodyRest = Cam.bodyRest + (delta - Cam.bodyRest) * restAlpha
+            end
+        else
             rawPos = motion * s.strength
-            Cam.rest = Cam.rest + (rel - Cam.rest) * (1 - math.exp(-dt * REST_RATE))
         end
     elseif s.position > 0 then
         rawPos = rel * s.position
@@ -4615,20 +5175,35 @@ function Cam.step(dt)
     if Cam.smoothed and s.smoothing > 0 then
         local rate = 1 + 59 * (1 - math.clamp(s.smoothing, 0, 1)) ^ 2
         local alpha = 1 - math.exp(-dt * rate)
-        Cam.smoothed = Cam.smoothed + (rawTurn - Cam.smoothed) * alpha
-        Cam.smoothedPos = Cam.smoothedPos + (rawPos - Cam.smoothedPos) * alpha
+        local old = Cam.smoothed
+        Cam.smoothed = { turn = old.turn + (rawTurn - old.turn) * alpha, pos = old.pos + (rawPos - old.pos) * alpha, sway = old.sway + (rawSway - old.sway) * alpha }
     else
-        Cam.smoothed, Cam.smoothedPos = rawTurn, rawPos
+        Cam.smoothed = { turn = rawTurn, pos = rawPos, sway = rawSway }
     end
 
-    local k = s.strength * Cam.amount
-    local turn = Cam.smoothed
-    local origin = frame:PointToWorldSpace(Cam.smoothedPos * Cam.amount)
-    local pitch = math.clamp(gx + turn.X * k, -MAX_PITCH, MAX_PITCH)
-    local rotation = CFrame.fromOrientation(pitch, gy + turn.Y * k, gz + turn.Z * k)
+    local gain = (world and math.min(s.strength, 1) or s.strength) * Cam.amount
+    local swayGain = s.sway * Cam.amount
+    local turn, sway = Cam.smoothed.turn, Cam.smoothed.sway
+    local devX, devY = turn.X * gain + sway.X * swayGain, turn.Y * gain + sway.Y * swayGain
+    local devSize = math.sqrt(devX * devX + devY * devY)
+    if devSize > MAX_TURN then devX, devY = devX * MAX_TURN / devSize, devY * MAX_TURN / devSize end
+    local pitch = math.clamp(gx + devX, -MAX_PITCH, MAX_PITCH)
+    local rotation = CFrame.fromOrientation(pitch, gy + devY, gz + turn.Z * gain + sway.Z * swayGain)
+    local origin = frame:PointToWorldSpace(Cam.smoothed.pos * Cam.amount)
     if world then origin = origin + rotation.LookVector * (s.forward * Cam.amount) end
     camera.CFrame = CFrame.new(origin) * rotation
     Cam.written = camera.CFrame
+    Cam.writtenAt, Cam.pending, Cam.pendingSource = now, true, source
+    info.final = Cam.written
+    info.studs = (Cam.written.Position - frame.Position).Magnitude
+    info.deg = math.deg(math.acos(math.clamp(frame.LookVector:Dot(Cam.written.LookVector), -1, 1)))
+end
+
+function Cam.run(source, dt)
+    if not Cam.running then return end
+    local ok, problem = pcall(Cam.step, source, dt)
+    if not ok then note("step" .. tostring(problem), "step error:", problem) end
+    if debugOn() then pcall(Cam.report, os.clock()) end
 end
 
 local API = {}
@@ -4636,19 +5211,34 @@ local API = {}
 function API.Start()
     if Cam.running then return true end
     Cam.reset()
-    Cam.unbind = bind(Cam.bindName, cameraPriority(), function(dt)
-        local ok, problem = pcall(Cam.step, dt)
-        if not ok then note("step" .. tostring(problem), "PhantomCam:", problem) end
-    end)
+    Cam.token = Cam.token + 1
+    Cam.prio = lastPriority()
+    Cam.passes = { hook = 0, bind = 0, rs = 0 }
+    Cam.kept, Cam.lost, Cam.lostBy = 0, 0, nil
     Cam.running = true
+    Cam.load()
+    Cam.attachAt = 0
+    Cam.attach(os.clock())
+    local unbind, native = bind(Cam.bindName, Cam.prio, function(dt) Cam.run("bind", dt) end)
+    Cam.unbind = unbind
+    if not native then note("bind", "BindToRenderStep failed, using RenderStepped only") end
+    local okSignal, connection = pcall(function()
+        return RunService.RenderStepped:Connect(function(dt) Cam.run("rs", dt) end)
+    end)
+    Cam.rsConn = okSignal and connection or nil
     return true
 end
 
 function API.Stop()
     if not Cam.running then return end
     Cam.running = false
+    Cam.token = Cam.token + 1
     if Cam.unbind then pcall(Cam.unbind) end
     Cam.unbind = nil
+    if Cam.rsConn then pcall(function() Cam.rsConn:Disconnect() end) end
+    Cam.rsConn = nil
+    Cam.detach()
+    Cam.bodyDestroy()
     local camera = Workspace.CurrentCamera
     if camera and Cam.written and Cam.gameCFrame then
         local ok, untouched = pcall(same, camera.CFrame, Cam.written)
@@ -4661,7 +5251,7 @@ function API.Stop()
     Cam.reset()
 end
 
-local LIMITS = { strength = 1.5, forward = 2, fov = 120 }
+local LIMITS = { strength = 5, sway = 5, forward = 2, fov = 120 }
 
 function API.Set(key, value)
     local s = Cam.settings
@@ -4679,7 +5269,7 @@ function API.Set(key, value)
 end
 
 function API.Sync(read)
-    API.Set("strength", read("strength", 1))
+    API.Set("strength", read("strength", 2.5))
     API.Set("smoothing", read("smooth", 0))
     API.Set("position", read("position", 0))
     API.Set("roll", read("roll", false))
@@ -4690,13 +5280,20 @@ function API.Sync(read)
     API.Set("hideHat", read("hat", true))
     API.Set("forward", read("forward", 0.5))
     API.Set("fov", read("fov", 0))
+    API.Set("sway", read("sway", 1))
+    API.Set("debug", read("debug", false))
     local on = read("on", false) == true
     if on and not Cam.running then API.Start() elseif not on and Cam.running then API.Stop() end
 end
 
 function API.GameCFrame()
-    if Cam.running then return Cam.gameCFrame end
-    return nil
+    if not Cam.running then return nil end
+    local camera = Workspace.CurrentCamera
+    if camera and Cam.written then
+        local current = camera.CFrame
+        if not same(current, Cam.written) then return current end
+    end
+    return Cam.gameCFrame
 end
 
 function API.Active()
@@ -4780,7 +5377,7 @@ local function standalone()
     local fields = {
         Mode = "mode", Strength = "strength", Smooth = "smoothing", Position = "position", Roll = "roll",
         Viewmodel = "hideViewmodel", Hat = "hideHat", Forward = "forward", FOV = "fov",
-        OnlyAiming = "onlyAiming", NoScope = "noScope",
+        OnlyAiming = "onlyAiming", NoScope = "noScope", Sway = "sway", Debug = "debug",
     }
     API.Set("mode", "World character")
     API.Set("smoothing", 0.25)

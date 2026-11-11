@@ -584,6 +584,159 @@ function Library:IsMouseOverFrame(Frame)
     end;
 end;
 
+-- Mouse / side-button binds. Roblox has no XButton input type, so MB4/MB5 are polled through an executor key-state function.
+Library.SideKeys = { MB4 = 0x05, MB5 = 0x06 };
+Library.SideState = { MB4 = false, MB5 = false };
+Library.SideBinders = {};
+Library.SideMouseSupported = false;
+local SidePollFn, SideConn;
+
+function Library:DetectSideMouse()
+    SidePollFn = nil;
+    local Candidates = {
+        function() return iskeypressed end,
+        function() return keyispressed end,
+        function() return getasynckeystate end,
+        function() return GetAsyncKeyState end,
+    };
+    for _, Get in ipairs(Candidates) do
+        local _, Fn = pcall(Get);
+        if type(Fn) == 'function' then
+            local Ok, Res = pcall(Fn, 0x05);
+            if Ok and (type(Res) == 'boolean' or type(Res) == 'number') then
+                SidePollFn = Fn;
+                break;
+            end;
+        end;
+    end;
+    Library.SideMouseSupported = SidePollFn ~= nil;
+    Library:UpdateSidePolling();
+    return Library.SideMouseSupported;
+end;
+
+function Library:SideDown(Key)
+    local Code = Library.SideKeys[Key];
+    if not SidePollFn or not Code then
+        return false;
+    end;
+    if type(isrbxactive) == 'function' then
+        local Ok, Active = pcall(isrbxactive);
+        if Ok and Active == false then
+            return false;
+        end;
+    end;
+    local Ok, Res = pcall(SidePollFn, Code);
+    if not Ok then
+        return false;
+    end;
+    if type(Res) == 'number' then
+        return Res < 0 or Res >= 32768;
+    end;
+    return Res == true;
+end;
+
+-- A mouse click inside the open menu should not fire a MB1/MB2 bind.
+function Library:IsMenuClick(Key)
+    if Key ~= 'MB1' and Key ~= 'MB2' and Key ~= 'Touch' then
+        return false;
+    end;
+    local Menu = Library.MenuOuter;
+    return Library.Toggled and Menu ~= nil and Library:IsMouseOverFrame(Menu) == true;
+end;
+
+function Library:KeyNameFromInput(Input)
+    local Type = Input.UserInputType;
+    if Type == Enum.UserInputType.Keyboard then
+        return Input.KeyCode.Name;
+    elseif Type == Enum.UserInputType.MouseButton1 then
+        return 'MB1';
+    elseif Type == Enum.UserInputType.MouseButton2 then
+        return 'MB2';
+    elseif Type == Enum.UserInputType.MouseButton3 then
+        return 'MB3';
+    elseif Type == Enum.UserInputType.Touch then
+        return 'Touch';
+    end;
+end;
+
+-- True if a held-key bind named Key is currently down (mouse buttons, side buttons and keys).
+function Library:IsBindDown(Key)
+    if Key == 'None' or Key == nil then
+        return false;
+    elseif Key == 'MB1' or Key == 'MB2' or Key == 'MB3' then
+        return InputService:IsMouseButtonPressed(Enum.UserInputType['MouseButton' .. Key:sub(3)]);
+    elseif Key == 'MB4' or Key == 'MB5' then
+        return Library:SideDown(Key);
+    elseif Key == 'Touch' then
+        return true;
+    end;
+    local Ok, Code = pcall(function() return Enum.KeyCode[Key] end);
+    return Ok and Code ~= nil and InputService:IsKeyDown(Code) or false;
+end;
+
+function Library:SideEdge(Key, Down)
+    Library.SideState[Key] = Down;
+    if Down then
+        for _, Binder in next, Library.SideBinders do
+            Binder(Key);
+        end;
+        if not Library.JustBound then
+            local TK = Library.ToggleKeybind;
+            if (type(TK) == 'table' and TK.Value == Key) or TK == Key then
+                task.spawn(Library.Toggle);
+            end;
+        end;
+    end;
+    for _, KP in ipairs(Library.KeyPickerList) do
+        if Down and KP.Value == Key and not Library.JustBound then
+            KP:HandleBindPress(Key);
+        end;
+    end;
+    Library:RefreshKeybinds();
+end;
+
+function Library:UpdateSidePolling()
+    local Need = false;
+    if SidePollFn and not Library.Unloaded then
+        if next(Library.SideBinders) ~= nil then
+            Need = true;
+        else
+            local TK = Library.ToggleKeybind;
+            if Library.SideKeys[type(TK) == 'table' and TK.Value or TK] then
+                Need = true;
+            end;
+            for _, KP in ipairs(Library.KeyPickerList) do
+                if Library.SideKeys[KP.Value] then
+                    Need = true;
+                    break;
+                end;
+            end;
+        end;
+    end;
+
+    if Need and not SideConn then
+        for Key in next, Library.SideKeys do
+            Library.SideState[Key] = Library:SideDown(Key);
+        end;
+        SideConn = RunService.Heartbeat:Connect(function()
+            for Key in next, Library.SideKeys do
+                local Down = Library:SideDown(Key);
+                if Down ~= Library.SideState[Key] then
+                    Library:SideEdge(Key, Down);
+                end;
+            end;
+        end);
+    elseif not Need and SideConn then
+        SideConn:Disconnect();
+        SideConn = nil;
+    end;
+end;
+
+table.insert(Library.Signals, function()
+    if SideConn then SideConn:Disconnect(); SideConn = nil end;
+end);
+Library:DetectSideMouse();
+
 function Library:UpdateDependencyBoxes()
     for _, Depbox in next, Library.DependencyBoxes do
         Depbox:Update();
@@ -2505,14 +2658,7 @@ do
                     return false;
                 end
 
-                local Key = KeyPicker.Value;
-                if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then
-                    return Key == 'MB1' and InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-                        or Key == 'MB2' and InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-                        or Key == 'Touch' and true
-                else
-                    return InputService:IsKeyDown(Enum.KeyCode[KeyPicker.Value]);
-                end;
+                return Library:IsBindDown(KeyPicker.Value);
             else
                 return KeyPicker.Toggled;
             end;
@@ -2523,7 +2669,27 @@ do
             DisplayLabel.Text = Key;
             KeyPicker.Value = Key;
             ModeButtons[Mode]:Select();
+            Library:UpdateSidePolling();
             KeyPicker:Update();
+        end;
+
+        -- Bind pressed (any source): flips Toggle-mode state.
+        function KeyPicker:HandleBindPress(Key)
+            if KeyPicker.Mode == 'Toggle' and not Library:IsMenuClick(Key) then
+                KeyPicker.Toggled = not KeyPicker.Toggled;
+                KeyPicker:DoClick();
+            end;
+            KeyPicker:Update();
+        end;
+
+        -- Applies a bind picked in binding mode.
+        function KeyPicker:SetKey(Key, Raw)
+            DisplayLabel.Text = Key;
+            KeyPicker.Value = Key;
+            Library:SafeCallback(KeyPicker.ChangedCallback, Raw or Key);
+            Library:SafeCallback(KeyPicker.Changed, Raw or Key);
+            Library:UpdateSidePolling();
+            Library:AttemptSave();
         end;
 
         function KeyPicker:OnClick(Callback)
@@ -2569,6 +2735,11 @@ do
             local Break;
             local Text = '';
 
+            if not Library.SideMouseSupported and not Library.SideNoticeShown then
+                Library.SideNoticeShown = true;
+                Library:Notify('Side mouse buttons need an executor with iskeypressed', 5);
+            end;
+
             task.spawn(function()
                 while (not Break) do
                     if Text == '...' then
@@ -2585,34 +2756,26 @@ do
             wait(0.2);
 
             local Event;
-            Event = InputService.InputBegan:Connect(function(Input)
-                local Key;
-
-                if Input.UserInputType == Enum.UserInputType.Keyboard then
-                    Key = Input.KeyCode.Name;
-                elseif Input.UserInputType == Enum.UserInputType.MouseButton1 then
-                    Key = 'MB1';
-                elseif Input.UserInputType == Enum.UserInputType.MouseButton2 then
-                    Key = 'MB2';
-                elseif Input.UserInputType == Enum.UserInputType.Touch then
-                    Key = 'Touch';
-                end;
-
-                if not Key then
-                    return;
-                end;
-
+            local function Finish(Key, Raw)
                 Break = true;
                 Picking = false;
+                Library.SideBinders[KeyPicker] = nil;
+                Library.JustBound = true;
+                task.delay(0, function() Library.JustBound = false end);
+                if Event then Event:Disconnect() end;
+                KeyPicker:SetKey(Key, Raw);
+            end;
 
-                DisplayLabel.Text = Key;
-                KeyPicker.Value = Key;
-                Library:SafeCallback(KeyPicker.ChangedCallback, Input.KeyCode or Input.UserInputType)
-                Library:SafeCallback(KeyPicker.Changed, Input.KeyCode or Input.UserInputType)
-
-                Library:AttemptSave();
-                Event:Disconnect();
+            Event = InputService.InputBegan:Connect(function(Input)
+                local Key = Library:KeyNameFromInput(Input);
+                if Key then
+                    Finish(Key, Input.KeyCode or Input.UserInputType);
+                end;
             end);
+            Library.SideBinders[KeyPicker] = function(Key)
+                Finish(Key, Key);
+            end;
+            Library:UpdateSidePolling();
         end;
 
         PickOuter.InputBegan:Connect(function(Input)
@@ -2680,25 +2843,12 @@ do
 
         Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
             if (not Picking) then
-                if KeyPicker.Mode == 'Toggle' then
-                    local Key = KeyPicker.Value;
-
-                    if Key == 'MB1' or Key == 'MB2' or Key == 'Touch' then
-                        if Key == 'MB1' and Input.UserInputType == Enum.UserInputType.MouseButton1
-                        or Key == 'MB2' and Input.UserInputType == Enum.UserInputType.MouseButton2 
-                        or Key == 'Touch' and Input.UserInputType == Enum.UserInputType.Touch then
-                            KeyPicker.Toggled = not KeyPicker.Toggled
-                            KeyPicker:DoClick()
-                        end;
-                    elseif Input.UserInputType == Enum.UserInputType.Keyboard then
-                        if Input.KeyCode.Name == Key then
-                            KeyPicker.Toggled = not KeyPicker.Toggled;
-                            KeyPicker:DoClick()
-                        end;
-                    end;
+                local Key = Library:KeyNameFromInput(Input);
+                if Key and Key == KeyPicker.Value and not Library.JustBound then
+                    KeyPicker:HandleBindPress(Key);
+                else
+                    KeyPicker:Update();
                 end;
-
-                KeyPicker:Update();
             end;
             if (Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch) then
                 local AbsPos, AbsSize = ModeSelectOuter.AbsolutePosition, ModeSelectOuter.AbsoluteSize;
@@ -2717,6 +2867,7 @@ do
         end))
 
         KeyPicker:Update();
+        Library:UpdateSidePolling();
         Options[Idx] = KeyPicker;
 
         return self;
@@ -5712,6 +5863,7 @@ function Library:CreateWindow(...)
         ZIndex = 1;
         Parent = ScreenGui;
     });
+    Library.MenuOuter = Outer;
     Library:MakeDraggable(Outer, HEADER_H, true);
 
     local WindowScale = Library:Create('UIScale', { Scale = Library.UIScale; Parent = Outer });
@@ -7033,12 +7185,13 @@ function Library:CreateWindow(...)
     end
 
     Library:GiveSignal(InputService.InputBegan:Connect(function(Input, Processed)
-        if type(Library.ToggleKeybind) == 'table' and Library.ToggleKeybind.Type == 'KeyPicker' then
-            if Input.UserInputType == Enum.UserInputType.Keyboard and Input.KeyCode.Name == Library.ToggleKeybind.Value then
+        local Bound = Library.ToggleKeybind;
+        if type(Bound) == 'table' and Bound.Type == 'KeyPicker' then
+            if not Library.JustBound and next(Library.SideBinders) == nil and Library:KeyNameFromInput(Input) == Bound.Value then
                 task.spawn(Library.Toggle)
             end
-        elseif type(Library.ToggleKeybind) == 'string' then
-            if Input.UserInputType == Enum.UserInputType.Keyboard and Input.KeyCode.Name == Library.ToggleKeybind then
+        elseif type(Bound) == 'string' then
+            if not Library.JustBound and next(Library.SideBinders) == nil and Library:KeyNameFromInput(Input) == Bound then
                 task.spawn(Library.Toggle)
             end
         elseif Input.KeyCode == Enum.KeyCode.RightControl or (Input.KeyCode == Enum.KeyCode.RightShift and (not Processed)) then

@@ -118,6 +118,10 @@ local Library = {
     UseDarken = true;
     DarkenAmount = 55;
 
+    MinWidth = 560;
+    MinHeight = 380;
+    ShowCustomCursor = true;
+
     KeybindMode = 'All';
 
     NotifyConfig = {
@@ -705,6 +709,8 @@ function Library:Unload()
         pcall(function() Library.MobileGui:Destroy() end)
     end
 
+    Library.CursorToken = (Library.CursorToken or 0) + 1;
+    if Library.CursorGui then pcall(function() Library.CursorGui:Destroy() end) end;
     pcall(function() InputService.MouseIconEnabled = true end)
     ScreenGui:Destroy()
 end
@@ -807,6 +813,7 @@ end;
 function Library:UpdateHovers(Force)
     local X, Y = Mouse.X, Mouse.Y;
     local Top = (not Force) and Library:TopObjectAt(X, Y) or nil;
+    local Any = false;
     for Entry in next, Library.Hovers do
         local Hit = Entry.Hit;
         local Want = false;
@@ -831,7 +838,9 @@ function Library:UpdateHovers(Force)
         elseif not Want and Entry.On then
             Entry.Exit(true);
         end;
+        if Entry.On then Any = true end;
     end;
+    Library.CursorHot = Any;
 end;
 Library.SweepHovers = Library.UpdateHovers;
 
@@ -898,6 +907,15 @@ function Library:ResolveColors()
     for _, Def in ipairs(Library.DerivedColors) do
         Library[Def[1]] = Library.ColorOverrides[Def[1]] or Def[2](Library);
     end;
+end;
+
+-- derived colours must exist before any UI or the intro is built
+Library:ResolveColors();
+
+function Library:SetMinSize(Width, Height)
+    Library.MinWidth = math.max(320, tonumber(Width) or Library.MinWidth);
+    Library.MinHeight = math.max(240, tonumber(Height) or Library.MinHeight);
+    if Library.ClampWindow then Library.ClampWindow() end;
 end;
 
 function Library:SetColorOverride(Key, Color)
@@ -1681,7 +1699,7 @@ do
             Position = UDim2.new(0, 5, 0, 0);
             Size = UDim2.new(1, -5, 1, 0);
             Font = Library.Font;
-            PlaceholderColor3 = Color3.fromRGB(190, 190, 190);
+            PlaceholderColor3 = Library.DimColor;
             PlaceholderText = 'Hex color',
             Text = '#FFFFFF',
             TextColor3 = Library.FontColor;
@@ -4296,10 +4314,11 @@ end;
 Library.PlayerPriorities = Library.PlayerPriorities or {};
 Library.PlayerLists = Library.PlayerLists or {};
 Library.PriorityList = { 'None', 'Friendly', 'Enemy', 'Priority' };
+-- theme keys, resolved at use so priorities follow the active theme
 Library.PriorityColors = {
-    Friendly = Color3.fromRGB(90, 220, 130);
-    Enemy = Color3.fromRGB(255, 85, 95);
-    Priority = Color3.fromRGB(170, 115, 255);
+    Friendly = 'AccentColor2';
+    Enemy = 'RiskColor';
+    Priority = 'AccentColor';
 };
 Library.AvatarCache = {};
 
@@ -4568,7 +4587,9 @@ function Library:CreatePlayerList(Parent, Config)
     end;
 
     local function PriorityColor(Priority)
-        return Library.PriorityColors[Priority] or Library:GetDimColor();
+        local Key = Library.PriorityColors[Priority];
+    if typeof(Key) == 'Color3' then return Key end;
+    return Key and Library[Key] or Library:GetDimColor();
     end;
 
     local function CellText(Col, Player)
@@ -4805,6 +4826,14 @@ function Library:PlayIntro(Config)
     local Accent = Config.AccentColor or Library.AccentColor;
     local Accent2 = Config.AccentColor2 or Library.AccentColor2;
     local Intro = { Playing = true; Progress = 0 };
+    -- registered so the intro repaints live if the theme changes mid-play
+    local Registered = {};
+    local function Reg(Obj, Props, IsAccent)
+        if IsAccent and Config.AccentColor then return Obj end;
+        table.insert(Registered, Obj);
+        Library:AddToRegistry(Obj, Props);
+        return Obj;
+    end;
 
     local Gui = Instance.new('ScreenGui');
     Gui.Name = 'AsterIntro';
@@ -4815,11 +4844,12 @@ function Library:PlayIntro(Config)
     Gui.Parent = GetGuiParent();
 
     local Backdrop = Library:Create('Frame', {
-        BackgroundColor3 = Color3.fromRGB(6, 6, 10);
+        BackgroundColor3 = Library.SidebarColor;
         BackgroundTransparency = 1;
         Size = UDim2.fromScale(1, 1);
         Parent = Gui;
     });
+    Reg(Backdrop, { BackgroundColor3 = 'SidebarColor' });
     local Blur;
     if Config.Blur ~= false then
         pcall(function()
@@ -4862,6 +4892,7 @@ function Library:PlayIntro(Config)
     end;
 
     local Glow = Circle(150, 62, { BackgroundColor3 = Accent; BackgroundTransparency = 1 });
+    Reg(Glow, { BackgroundColor3 = 'AccentColor' }, true);
     TweenDelayed(Glow, { BackgroundTransparency = 0.86 }, 0.7, 0.1);
     pcall(function()
         TweenService:Create(Glow, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true, 0.8), { Size = UDim2.fromOffset(176, 176) }):Play();
@@ -4869,6 +4900,7 @@ function Library:PlayIntro(Config)
     for Idx = 1, 2 do
         local Ring = Circle(70, 62, { BackgroundTransparency = 1 });
         local Stroke = Library:Create('UIStroke', { Color = Accent; Thickness = 2; Transparency = 0.1; Parent = Ring });
+        Reg(Stroke, { Color = 'AccentColor' }, true);
         TweenDelayed(Ring, { Size = UDim2.fromOffset(250, 250) }, 1.3, 0.1 + (Idx - 1) * 0.4, Enum.EasingStyle.Quint);
         TweenDelayed(Stroke, { Transparency = 1 }, 1.3, 0.1 + (Idx - 1) * 0.4);
     end;
@@ -4890,6 +4922,7 @@ function Library:PlayIntro(Config)
         Size = UDim2.fromOffset(0, 1);
         Parent = Center;
     });
+    Reg(Sweep, { BackgroundColor3 = 'AccentColor' }, true);
     TweenDelayed(Sweep, { Size = UDim2.fromOffset(320, 1) }, 0.6, 0.3, Enum.EasingStyle.Quint);
     TweenDelayed(Sweep, { BackgroundTransparency = 1 }, 0.5, 1.1);
 
@@ -4930,6 +4963,7 @@ function Library:PlayIntro(Config)
             TextTransparency = 1;
             Parent = Cell;
         });
+        Reg(Letter, { TextColor3 = 'FontColor' });
         local Delay = 0.45 + Index * 0.06;
         TweenDelayed(Letter, { Position = UDim2.fromOffset(0, 0); TextTransparency = 0 }, 0.45, Delay, Enum.EasingStyle.Back);
     end;
@@ -4946,6 +4980,7 @@ function Library:PlayIntro(Config)
         TextTransparency = 1;
         Parent = Center;
     });
+    Reg(SubLabel, { TextColor3 = 'DimColor' });
     TweenDelayed(SubLabel, { TextTransparency = 0 }, 0.5, 0.45 + Index * 0.06 + 0.1);
 
     local BarW = 300;
@@ -4963,6 +4998,7 @@ function Library:PlayIntro(Config)
         TextXAlignment = Enum.TextXAlignment.Left;
         Parent = Center;
     });
+    Reg(StepLabel, { TextColor3 = 'DimColor' });
     local Percent = Library:Create('TextLabel', {
         AnchorPoint = Vector2.new(0.5, 0);
         BackgroundTransparency = 1;
@@ -4976,14 +5012,20 @@ function Library:PlayIntro(Config)
         TextXAlignment = Enum.TextXAlignment.Right;
         Parent = Center;
     });
+    Reg(Percent, { TextColor3 = 'FontColor' });
+    local function BarSequence()
+        local A, B = Config.AccentColor or Library.AccentColor, Config.AccentColor2 or Library.AccentColor2;
+        return ColorSequence.new({ ColorSequenceKeypoint.new(0, A), ColorSequenceKeypoint.new(0.5, B), ColorSequenceKeypoint.new(1, A) });
+    end;
     local Track = Library:Create('Frame', {
         AnchorPoint = Vector2.new(0.5, 0);
-        BackgroundColor3 = Color3.new(1, 1, 1);
+        BackgroundColor3 = Library.FontColor;
         BackgroundTransparency = 1;
         Position = UDim2.new(0.5, 0, 0, 232 + Y0);
         Size = UDim2.fromOffset(BarW, 4);
         Parent = Center;
     });
+    Reg(Track, { BackgroundColor3 = 'FontColor' });
     Library:Create('UICorner', { CornerRadius = UDim.new(1, 0); Parent = Track });
     local Fill = Library:Create('Frame', {
         BackgroundColor3 = Color3.new(1, 1, 1);
@@ -4992,13 +5034,10 @@ function Library:PlayIntro(Config)
     });
     Library:Create('UICorner', { CornerRadius = UDim.new(1, 0); Parent = Fill });
     local Gradient = Library:Create('UIGradient', {
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Accent),
-            ColorSequenceKeypoint.new(0.5, Accent2),
-            ColorSequenceKeypoint.new(1, Accent),
-        });
+        Color = BarSequence();
         Parent = Fill;
     });
+    Reg(Gradient, { Color = BarSequence });
     local BarDelay = 0.6;
     TweenDelayed(Track, { BackgroundTransparency = 0.88 }, 0.4, BarDelay);
     TweenDelayed(StepLabel, { TextTransparency = 0 }, 0.4, BarDelay);
@@ -5027,6 +5066,9 @@ function Library:PlayIntro(Config)
             pcall(function() Connection:Disconnect() end);
         end;
         Connections = {};
+        for _, Obj in ipairs(Registered) do
+            Library:RemoveFromRegistry(Obj);
+        end;
         if Logo then
             for _, Descendant in ipairs(Logo:GetDescendants()) do
                 Library:RemoveFromRegistry(Descendant);
@@ -5912,8 +5954,31 @@ function Library:CreateWindow(...)
     });
 
     do
-        local MinW = 560;
-        local MinH = 380;
+        -- min size comes from Library.MinWidth/MinHeight (SetMinSize); max is the viewport
+        local function Limits(Left, Top)
+            local Scale = math.max(Library.UIScale or 1, 0.1);
+            local VP = Library.ScreenGui.AbsoluteSize;
+            local MaxW = math.max(VP.X / Scale - Left, 1);
+            local MaxH = math.max(VP.Y / Scale - Top, 1);
+            return math.min(Library.MinWidth, MaxW), math.min(Library.MinHeight, MaxH), MaxW, MaxH;
+        end;
+
+        local function ClampWindow()
+            if Library.Unloaded or Library.ScreenGui.AbsoluteSize.X <= 0 then return end;
+            local MinW, MinH, MaxW, MaxH = Limits(10, 10);
+            local W = math.clamp(Outer.Size.X.Offset, MinW, MaxW);
+            local H = math.clamp(Outer.Size.Y.Offset, MinH, MaxH);
+            if W ~= Outer.Size.X.Offset or H ~= Outer.Size.Y.Offset then
+                Outer.Size = UDim2.fromOffset(W, H);
+            end;
+        end;
+        Library.ClampWindow = ClampWindow;
+        function Window:SetSize(Size)
+            if typeof(Size) == 'UDim2' then Outer.Size = Size end;
+            ClampWindow();
+        end;
+        ClampWindow();
+        Library:GiveSignal(Library.ScreenGui:GetPropertyChangedSignal('AbsoluteSize'):Connect(ClampWindow));
 
         local Resizing = false;
         local ResizeConn, EndConn;
@@ -5949,8 +6014,10 @@ function Library:CreateWindow(...)
                 local TopLeft = Outer.AbsolutePosition;
                 local VPSize = Library.ScreenGui.AbsoluteSize;
 
-                local NewW = math.clamp(StartSize.X.Offset + Delta.X, MinW, VPSize.X - TopLeft.X);
-                local NewH = math.clamp(StartSize.Y.Offset + Delta.Y, MinH, VPSize.Y - TopLeft.Y);
+                local Scale = math.max(Library.UIScale or 1, 0.1);
+                local MinW, MinH, MaxW, MaxH = Limits(TopLeft.X / Scale, TopLeft.Y / Scale);
+                local NewW = math.clamp(StartSize.X.Offset + Delta.X / Scale, MinW, MaxW);
+                local NewH = math.clamp(StartSize.Y.Offset + Delta.Y / Scale, MinH, MaxH);
 
                 if Library.WireframeDrag then
                     if not HasMoved then
@@ -6741,6 +6808,80 @@ function Library:CreateWindow(...)
         Modal = false;
         Parent = ScreenGui;
     });
+    -- Themed cursor: accent diamond with a dark outline and a soft glow; reacts to hover and mouse down
+    function Library:StartCursor()
+        if Library.ShowCustomCursor == false then return end;
+        Library.CursorToken = (Library.CursorToken or 0) + 1;
+        local Token = Library.CursorToken;
+        if Library.CursorGui then pcall(function() Library.CursorGui:Destroy() end) end;
+
+        task.spawn(function()
+            if Library.SavedMouseIcon == nil then Library.SavedMouseIcon = InputService.MouseIconEnabled end;
+
+            local Gui = Instance.new('ScreenGui');
+            pcall(ProtectGui, Gui);
+            Gui.Name = 'AsterCursor';
+            Gui.ResetOnSpawn = false;
+            Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling;
+            pcall(function() Gui.IgnoreGuiInset = true; Gui.DisplayOrder = 2147483647 end);
+            Gui.Parent = GetGuiParent();
+            Library.CursorGui = Gui;
+
+            local Root = Library:Create('Frame', { BackgroundTransparency = 1; Size = UDim2.fromOffset(0, 0); Parent = Gui });
+            local function Part(Parent, Size, Z, Rotation, Round)
+                local Frame = Library:Create('Frame', {
+                    AnchorPoint = Vector2.new(0.5, 0.5);
+                    BorderSizePixel = 0;
+                    Position = UDim2.fromOffset(0, 0);
+                    Rotation = Rotation;
+                    Size = UDim2.fromOffset(Size, Size);
+                    ZIndex = Z;
+                    Parent = Parent;
+                });
+                Library:Create('UICorner', { CornerRadius = Round; Parent = Frame });
+                return Frame;
+            end;
+            local Glow = Part(Root, 26, 97, 0, UDim.new(1, 0));
+            local Body = Library:Create('Frame', { BackgroundTransparency = 1; Size = UDim2.fromOffset(0, 0); Parent = Root });
+            local BodyScale = Library:Create('UIScale', { Scale = 1; Parent = Body });
+            local Outline = Part(Body, 14, 98, 45, UDim.new(0, 3));
+            local Fill = Part(Body, 9, 99, 45, UDim.new(0, 2));
+            local Core = Part(Body, 3, 100, 0, UDim.new(1, 0));
+
+            local Scale, Time = 1, 0;
+            while Library.Toggled and not Library.Unloaded and Token == Library.CursorToken and ScreenGui.Parent do
+                InputService.MouseIconEnabled = false;
+                local Pos = InputService:GetMouseLocation();
+                Root.Position = UDim2.fromOffset(Pos.X, Pos.Y);
+
+                local Down = false;
+                pcall(function() Down = InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end);
+                local Hot = Library.CursorHot and true or false;
+                local Target = Down and 0.78 or (Hot and 1.3 or 1);
+                local Dt = RenderStepped:Wait();
+                Time = Time + Dt;
+                Scale = Scale + (Target - Scale) * math.min(1, Dt * 18);
+                BodyScale.Scale = Scale;
+
+                Fill.BackgroundColor3 = Library.AccentColor;
+                Outline.BackgroundColor3 = Library.BackgroundColor:Lerp(Library.Black, 0.6);
+                Core.BackgroundColor3 = Library.FontColor;
+                Glow.BackgroundColor3 = Library.AccentColor;
+                local Pulse = math.sin(Time * 3.2);
+                local GlowSize = (Hot and 34 or 26) + Pulse * 2.5 + (Down and -6 or 0);
+                Glow.Size = UDim2.fromOffset(GlowSize, GlowSize);
+                Glow.BackgroundTransparency = (Down and 0.68 or (Hot and 0.74 or 0.86)) + Pulse * 0.02;
+            end;
+
+            pcall(function() Gui:Destroy() end);
+            if Token == Library.CursorToken and not Library.Unloaded then
+                InputService.MouseIconEnabled = Library.SavedMouseIcon;
+                Library.SavedMouseIcon = nil;
+                Library.CursorGui = nil;
+            end;
+        end);
+    end;
+
     function Library:Toggle()
         Library.Toggled = not Library.Toggled;
         ModalElement.Modal = Library.Toggled;
@@ -6778,48 +6919,8 @@ function Library:CreateWindow(...)
         end;
 
         if Library.Toggled then
-            task.spawn(function()
-                local State = InputService.MouseIconEnabled;
-                local GuiService = game:GetService("GuiService");
-
-                local CursorGui = Instance.new("ScreenGui");
-                pcall(ProtectGui, CursorGui);
-                CursorGui.Name = "AsterCursor";
-                CursorGui.ResetOnSpawn = false;
-                CursorGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling;
-                pcall(function() CursorGui.IgnoreGuiInset = true; CursorGui.DisplayOrder = 2147483647 end);
-                CursorGui.Parent = GetGuiParent();
-
-                local Cursor = Instance.new("ImageLabel", CursorGui);
-                Cursor.Image = "http://www.roblox.com/asset/?id=4292970642";
-                Cursor.BackgroundTransparency = 1;
-                Cursor.ZIndex = 100;
-
-                local CursorOutline = Instance.new("ImageLabel", CursorGui);
-                CursorOutline.Image = "http://www.roblox.com/asset/?id=4292970642";
-                CursorOutline.ImageColor3 = Color3.new();
-                CursorOutline.BackgroundTransparency = 1;
-                CursorOutline.ZIndex = 99;
-
-                Cursor.Size, CursorOutline.Size = UDim2.fromOffset(17, 17), UDim2.fromOffset(19, 19);
-                Cursor.Rotation, CursorOutline.Rotation = -45, -45;
-
-                while Library.Toggled and ScreenGui.Parent do
-                    InputService.MouseIconEnabled = false;
-
-                    local mPos = InputService:GetMouseLocation();
-                    local udim = UDim2.fromOffset(mPos.X, mPos.Y - 1);
-
-                    Cursor.ImageColor3 = Library.AccentColor;
-                    Cursor.Position, CursorOutline.Position = udim, udim - UDim2.fromOffset(1, 1);
-
-                    RenderStepped:Wait();
-                end;
-
-                InputService.MouseIconEnabled = State;
-
-                CursorGui:Destroy();
-            end);
+            if Library.ClampWindow then Library.ClampWindow() end;
+            Library:StartCursor();
         end;
         Library:UpdateBlur();
     end
@@ -6895,13 +6996,14 @@ if InputService.TouchEnabled then
 
         local Inner = Library:Create('Frame', {
             Name             = name .. "Inner",
-            BackgroundColor3 = Color3.fromRGB(8, 8, 12),
+            BackgroundColor3 = Library.BackgroundColor,
             BorderSizePixel  = 0,
             Position         = UDim2.new(0, 1, 0, 1),
             Size             = UDim2.new(1, -2, 1, -2),
             ZIndex           = 302,
             Parent           = AccentFrame,
         })
+        Library:AddToRegistry(Inner, { BackgroundColor3 = 'BackgroundColor' })
 
         local GradientOverlay = Library:Create('Frame', {
             Name             = name .. "Gradient",
@@ -6926,7 +7028,7 @@ if InputService.TouchEnabled then
             Size                = UDim2.new(1, 0, 1, 0),
             Font                = Library.Font,
             Text                = text,
-            TextColor3          = Color3.fromRGB(255, 255, 255),
+            TextColor3          = Library.FontColor,
             TextSize            = Library.FontSize - 1,
             ZIndex              = 304,
             Parent              = Inner,
@@ -6995,7 +7097,7 @@ if InputService.TouchEnabled then
         LockBtn.Text = IsUnlocked and "Lock UI" or "Unlock UI"
         LockBtn.TextColor3 = IsUnlocked
             and Library.AccentColor
-            or  Color3.fromRGB(255, 255, 255)
+            or  Library.FontColor
     end)
 
     local _origUpdate = Library.UpdateColorsUsingRegistry

@@ -260,9 +260,6 @@ function Library:SetKeybindTransparency(Value)
         Inner.BackgroundTransparency = Value;
         Inner.BorderSizePixel = Value >= 1 and 0 or 1;
     end
-    if Library.KeybindColorFrame then
-        Library.KeybindColorFrame.BackgroundTransparency = Value;
-    end
 end
 
 -- Call this with any Groupbox to add a keybind frame transparency slider
@@ -1092,36 +1089,8 @@ function Library:UpdateGradients()
     Library.GradientDirty = true;
 end;
 
--- Accent bars on the watermark / keybind list: white frame tinted by its own gradient (Solid = flat accent)
-Library.WidgetBars = {};
-function Library:CreateWidgetBar(Parent, ZIndex)
-    local Bar = Library:Create('Frame', {
-        BackgroundColor3 = Color3.new(1, 1, 1);
-        BorderSizePixel = 0;
-        Position = UDim2.new(0, 8, 0, 0);
-        Size = UDim2.new(1, -16, 0, 2);
-        ZIndex = ZIndex;
-        Parent = Parent;
-    });
-    Library:Round(Bar, 1);
-    local G = Library:Create('UIGradient', { Parent = Bar });
-    Library:AddGradient(G, 'slide', true);
-    Library.GradientMap[G].Phase = 0;
-    table.insert(Library.WidgetBars, { Bar = Bar; Gradient = G });
-    Library:ApplyWidgetAccent();
-    return Bar;
-end;
-
-function Library:ApplyWidgetAccent()
-    local Flat = Library.WidgetAccentStyle ~= 'Gradient';
-    for _, Item in ipairs(Library.WidgetBars) do
-        pcall(function()
-            Item.Bar.Visible = Library.WidgetAccent;
-            Item.Gradient.Color = Library:GradientSequence('slide', Flat);
-            if Flat then Item.Gradient.Offset = Vector2.new(0, 0) end;
-        end);
-    end;
-end;
+-- Widget accent bars were removed; setters kept so existing callers do not error
+function Library:ApplyWidgetAccent() end;
 
 function Library:SetWidgetAccent(Bool)
     Library.WidgetAccent = not not Bool;
@@ -5471,7 +5440,6 @@ do
         Library.WatermarkStatLabels[Key] = Stat;
     end;
 
-    Library.WatermarkLine = Library:CreateWidgetBar(WatermarkOuter, 204);
 
     Library.Watermark = WatermarkOuter;
     Library.WatermarkText = WatermarkLabel;
@@ -5494,9 +5462,7 @@ do
         BackgroundColor3 = 'KeybindColor';
     }, true);
 
-    local ColorFrame = Library:CreateWidgetBar(KeybindOuter, 102);
     Library.KeybindInner = KeybindOuter;
-    Library.KeybindColorFrame = ColorFrame;
 
     local KeybindIcon = Library:Create('ImageLabel', {
         BackgroundTransparency = 1;

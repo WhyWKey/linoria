@@ -104,7 +104,10 @@ local Library = {
     PlayerPriorities = {};
     PlayerLists = {};
 
-    Font = Enum.Font.GothamMedium,
+    Font = Enum.Font.Gotham,
+    CardOutline = false;
+    TopAccentLine = false;
+    SliderShowMax = false;
     FontSize = 13,
 
     OpenedFrames = {};
@@ -1151,7 +1154,7 @@ function Library:ApplyOutline()
     local Mode = Library.OutlineMode;
     Outline.Stroke.Thickness = Library.OutlineThickness;
     Outline.Stroke.Transparency = Mode == 'None' and 1 or 0.3;
-    Outline.TopLine.Visible = Mode ~= 'None';
+    Outline.TopLine.Visible = Mode ~= 'None' and Library.TopAccentLine;
     Outline.TopLine.Size = UDim2.new(1, -40, 0, math.max(1, Library.OutlineThickness + 1));
 end;
 
@@ -3456,7 +3459,7 @@ do
 
         function Slider:Display(Instant)
             local Suffix = Info.Suffix or '';
-            if Info.HideMax then
+            if Info.HideMax or (Info.HideMax == nil and not Library.SliderShowMax) then
                 DisplayLabel.Text = tostring(Slider.Value) .. Suffix;
             else
                 DisplayLabel.Text = tostring(Slider.Value) .. Suffix .. ' / ' .. tostring(Slider.Max) .. Suffix;
@@ -6218,7 +6221,7 @@ function Library:CreateWindow(...)
         table.insert(Window.TabList, Tab);
 
         local TabButton = Library:Create('Frame', {
-            BackgroundColor3 = Library.HoverColor;
+            BackgroundColor3 = Library.AccentColor;
             BackgroundTransparency = 1;
             LayoutOrder = Tab.LayoutOrder;
             Size = UDim2.fromOffset(TAB_BTN, TAB_BTN);
@@ -6226,7 +6229,7 @@ function Library:CreateWindow(...)
             Parent = Tab.Bottom and BottomArea or TabArea;
         });
         Library:Round(TabButton, 8);
-        Library:AddToRegistry(TabButton, { BackgroundColor3 = 'HoverColor' });
+        Library:AddToRegistry(TabButton, { BackgroundColor3 = 'AccentColor' });
 
         local IconInst, IconProp = Library:CreateTabIcon(TabButton, Icon, Name, 6);
         local function IconColor()
@@ -6294,7 +6297,7 @@ function Library:CreateWindow(...)
             end;
 
             TabFrame.Visible = true;
-            Library:Tween(TabButton, { BackgroundTransparency = 0 }, 0.15);
+            Library:Tween(TabButton, { BackgroundTransparency = 0.86 }, 0.15);
             Library:Tween(IconInst, { [IconProp] = Library.AccentColor }, 0.15);
             MoveIndicator(Tab, First);
 
@@ -6336,7 +6339,7 @@ function Library:CreateWindow(...)
                 Parent = Info.Side == 1 and LeftSide or RightSide;
             });
             Library:Round(BoxOuter, 6);
-            Library:Stroke(BoxOuter, 'OutlineColor');
+            if Library.CardOutline then Library:Stroke(BoxOuter, 'OutlineColor'); end;
             Library:AddToRegistry(BoxOuter, {
                 BackgroundColor3 = 'GroupboxColor';
             });
@@ -6443,7 +6446,7 @@ function Library:CreateWindow(...)
                 Parent = Info.Side == 1 and LeftSide or RightSide;
             });
             Library:Round(BoxOuter, 6);
-            Library:Stroke(BoxOuter, 'OutlineColor');
+            if Library.CardOutline then Library:Stroke(BoxOuter, 'OutlineColor'); end;
             Library:AddToRegistry(BoxOuter, {
                 BackgroundColor3 = 'GroupboxColor';
             });
@@ -6694,7 +6697,7 @@ function Library:CreateWindow(...)
             local Sub = { Name = SubName; Tab = Tab; Active = false; Boxes = {}; Groupboxes = {}; IconOnly = IconOnly; Callback = Opts.Callback };
             local TextW = Library:GetTextBounds(SubName, Library.Font, Library.FontSize) or 40;
             local Button = Library:Create('Frame', {
-                BackgroundColor3 = Library.HoverColor;
+                BackgroundColor3 = Library.AccentColor;
                 BackgroundTransparency = 1;
                 LayoutOrder = #Tab.SubTabList + 1;
                 Size = UDim2.fromOffset(IconOnly and 32 or (TextW + (Icon and 38 or 24)), SUB_H - 4);
@@ -6702,7 +6705,7 @@ function Library:CreateWindow(...)
                 Parent = SubRow;
             });
             Library:Round(Button, 6);
-            Library:AddToRegistry(Button, { BackgroundColor3 = 'HoverColor' });
+            Library:AddToRegistry(Button, { BackgroundColor3 = 'AccentColor' });
             local Content = Library:Create('Frame', {
                 BackgroundTransparency = 1;
                 Size = UDim2.new(1, 0, 1, 0);
@@ -6769,7 +6772,7 @@ function Library:CreateWindow(...)
                     SubIcon.ImageColor3 = Sub.Active and Library.AccentColor or Library:GetDimColor();
                 end;
                 Underline.Visible = Sub.Active;
-                Library:Tween(Button, { BackgroundTransparency = (IconOnly and Sub.Active) and 0.45 or 1 }, 0.12);
+                Library:Tween(Button, { BackgroundTransparency = Sub.Active and 0.88 or 1 }, 0.12);
             end;
 
             function Sub:SetActive(Bool)
@@ -6816,7 +6819,7 @@ function Library:CreateWindow(...)
             end);
             Library:Hover(Button, function()
                 if not Sub.Active then
-                    Library:Tween(Button, { BackgroundTransparency = 0.7 }, 0.1);
+                    Library:Tween(Button, { BackgroundTransparency = 0.94 }, 0.1);
                 end;
             end, function()
                 if not Sub.Active then
@@ -6848,7 +6851,7 @@ function Library:CreateWindow(...)
         end);
         Library:Hover(TabButton, function()
             if not Tab.Active then
-                Library:Tween(TabButton, { BackgroundTransparency = 0.6 }, 0.12);
+                Library:Tween(TabButton, { BackgroundTransparency = 0.94 }, 0.12);
             end;
             local Pos = TabPosition(Tab);
             TabTipLabel.Text = Name;

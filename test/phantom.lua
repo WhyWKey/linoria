@@ -4214,7 +4214,7 @@ local POINT_OFFSETS = {
 local PURPLE = Color3.fromRGB(170, 80, 255)
 
 local Aim = { opts = {} }
-local Silent = { tickets = {}, rollAt = -1, pass = true, opts = {}, dots = {} }
+local Silent = { tickets = {}, rollAt = -1, pass = true, opts = {}, dots = {}, radius = 0, zoom = 1 }
 
 function Aim.depth(weapon, safety)
     local depth = Game.stat(weapon, "penetrationdepth")
@@ -4342,11 +4342,11 @@ function Silent.select(cam, origin, weapon)
     opts.visible, opts.parts, opts.choice = L.silentVisible, L.silentParts, L.silentChoice
     opts.multi, opts.scale, opts.max = L.silentMulti, L.silentMultiScale, L.silentMultiMax
     opts.depth = L.silentWallbang and Aim.depth(weapon, L.silentSafety) or nil
-    local center = cam.ViewportSize / 2
+    local center = Silent.fovCenter(cam.ViewportSize / 2)
     local bestRecord, bestCand
     for _, record in ipairs(Entities.list) do
         if record.rendered and (record.enemy or not L.silentTeam) and (record.torso.Position - origin).Magnitude <= L.silentDist then
-            local cand = Aim.select(record, cam, origin, center, L.silentFov, opts)
+            local cand = Aim.select(record, cam, origin, center, Silent.radius, opts)
             if cand and (not bestCand or cand.screen < bestCand.screen) then bestRecord, bestCand = record, cand end
         end
     end
@@ -4422,19 +4422,30 @@ function Silent.hook()
 end
 
 Silent.circle = Draw.new("Circle", { Thickness = 1, NumSides = 48, Filled = false, Visible = false, ZIndex = 5 })
+Silent.ring = Draw.new("Circle", { Thickness = 1, NumSides = 64, Filled = false, Visible = false, ZIndex = 5 })
+Silent.ringFill = Draw.new("Circle", { NumSides = 64, Filled = true, Visible = false, ZIndex = 4 })
 
-function Silent.step(cam)
+function Silent.fovCenter(screen)
+    local L = Legit.L
+    return L.silentFovBarrel and Barrel.point(L.silentFovAttach, screen) or screen
+end
+
+function Silent.step(dt, cam, weapon, screen)
     local L = Legit.L
     if L.silent then Silent.hook() end
-    local show = L.silent and L.silentDraw
+    local center = Silent.fovCenter(screen)
+    Legit.scaleRadius(Silent, dt, weapon, cam, L.silentFov, L.silentFovDynamic, L.silentFovZoom, L.silentFovSpeed)
+    local show = L.silent and L.silentDraw and not L.silentFovDraw
     Silent.circle.Visible = show
     if show then
-        Silent.circle.Position, Silent.circle.Radius, Silent.circle.Color = cam.ViewportSize / 2, L.silentFov, L.silentColor
+        Silent.circle.Position, Silent.circle.Radius, Silent.circle.Color = center, Silent.radius, L.silentColor
     end
-    local shown = 0
     local shot = Silent.shot
+    local locked = shot and os.clock() - shot.at < 0.35
+    Legit.paintFov(Silent.ring, Silent.ringFill, center, Silent.radius, L.silent and L.silentFovDraw, locked, "legit_silent_fov", Color3.fromRGB(255, 200, 80))
+    local shown = 0
     if L.silent and L.silentShowPoints and shot and os.clock() - shot.at < 1.5 and shot.record.rendered then
-        for _, point in ipairs(Aim.gather(shot.record, cam, cam.ViewportSize / 2, nil, Silent.opts) or {}) do
+        for _, point in ipairs(Aim.gather(shot.record, cam, center, nil, Silent.opts) or {}) do
             if shown >= 27 then break end
             shown = shown + 1
             local dot = Silent.dots[shown]
@@ -4481,6 +4492,8 @@ function Legit.read()
     L.silentShowPoints, L.silentPointColor = flag("legit_silent_multi_show", false), flag("legit_silent_multi_color", Color3.fromRGB(120, 255, 170))
     L.silentWallbang, L.silentSafety = flag("legit_silent_wallbang", false), flag("legit_silent_pen_safety", 90) / 100
     L.silentPred = flag("legit_silent_pred", false)
+    L.silentFovDraw, L.silentFovBarrel, L.silentFovAttach = flag("legit_silent_fov_draw", false), flag("legit_silent_fov_barrel", false), flag("legit_silent_fov_attach", "Aim hit")
+    L.silentFovDynamic, L.silentFovZoom, L.silentFovSpeed = flag("legit_silent_fov_dynamic", false), flag("legit_silent_fov_zoom", 1), flag("legit_silent_fov_speed", 10)
     local opts = Aim.opts
     opts.visible, opts.parts, opts.choice = L.visible, L.parts, L.choice
     opts.multi, opts.scale, opts.max = L.multi, L.multiScale, L.multiMax
@@ -4498,10 +4511,9 @@ function Legit.read()
     end
 end
 
-function Legit.stepRadius(dt, weapon, cam)
-    local L = Legit.L
+function Legit.scaleRadius(state, dt, weapon, cam, radius, dynamic, scale, speed)
     local ratio = 1
-    if L.fovDynamic and weapon then
+    if dynamic and weapon then
         ratio = Game.zoom(weapon) or Game.cameraZoom()
         if ratio <= 1.001 and Game.aiming(weapon) then
             local gameCam = Game.gameCamera()
@@ -4509,13 +4521,17 @@ function Legit.stepRadius(dt, weapon, cam)
             if type(base) == "number" and cam.FieldOfView > 1 then ratio = math.max(base / cam.FieldOfView, 1) end
         end
     end
-    Legit.zoom = Legit.zoom + (ratio - Legit.zoom) * (1 - math.exp(-dt * L.fovSpeed))
-    local radius = L.fovRadius
-    if L.fovDynamic then
+    state.zoom = state.zoom + (ratio - state.zoom) * (1 - math.exp(-dt * speed))
+    if dynamic then
         local limit = math.max(radius, cam.ViewportSize.Y * 0.5)
-        radius = math.min(radius * math.min(Legit.zoom ^ L.fovZoom, 4), limit)
+        radius = math.min(radius * math.min(state.zoom ^ scale, 4), limit)
     end
-    Legit.radius = radius
+    state.radius = radius
+end
+
+function Legit.stepRadius(dt, weapon, cam)
+    local L = Legit.L
+    Legit.scaleRadius(Legit, dt, weapon, cam, L.fovRadius, L.fovDynamic, L.fovZoom, L.fovSpeed)
 end
 
 function Legit.lead(origin, position, velocity, weapon)
@@ -4597,26 +4613,28 @@ function Legit.turn(gameCam, origin, aimPoint, dt, now, cam, barrelLook)
     return true
 end
 
-function Legit.drawFov(center)
-    local L = Legit.L
-    local show = flag("legit_fov_draw", true) and (L.aim or L.semi)
-    Legit.circle.Visible = show
+function Legit.paintFov(circle, fill, center, radius, show, locked, prefix, base)
+    circle.Visible = show
     if not show then
-        Legit.circleFill.Visible = false
+        fill.Visible = false
         return
     end
-    local radius = Legit.radius
-    local color = flag("legit_fov_color", WHITE)
-    if Legit.target and flag("legit_fov_lock", true) then color = flag("legit_fov_lock_color", color) end
-    Legit.circle.Position, Legit.circle.Radius, Legit.circle.Color = center, radius, color
-    Legit.circle.Thickness = flag("legit_fov_thick", 1)
-    local filled = flag("legit_fov_fill", false)
-    Legit.circleFill.Visible = filled
+    local color = flag(prefix .. "_color", base)
+    if locked and flag(prefix .. "_lock", true) then color = flag(prefix .. "_lock_color", color) end
+    circle.Position, circle.Radius, circle.Color = center, radius, color
+    circle.Thickness = flag(prefix .. "_thick", 1)
+    local filled = flag(prefix .. "_fill", false)
+    fill.Visible = filled
     if filled then
-        Legit.circleFill.Position, Legit.circleFill.Radius = center, radius
-        Legit.circleFill.Color = flag("legit_fov_fill_color", WHITE)
-        Legit.circleFill.Transparency = 1 - Util.alpha("legit_fov_fill_color", 0.9)
+        fill.Position, fill.Radius = center, radius
+        fill.Color = flag(prefix .. "_fill_color", base)
+        fill.Transparency = 1 - Util.alpha(prefix .. "_fill_color", 0.9)
     end
+end
+
+function Legit.drawFov(center)
+    local L = Legit.L
+    Legit.paintFov(Legit.circle, Legit.circleFill, center, Legit.radius, flag("legit_fov_draw", true) and (L.aim or L.semi), Legit.target, "legit_fov", WHITE)
 end
 
 Legit.slots, Legit.dots = {}, {}
@@ -4794,7 +4812,7 @@ function Legit.stepAim(dt, cam, now, records, screen)
     Legit.stepRadius(dt, weapon, cam)
     Legit.drawFov(center)
     Legit.snapline.Visible = false
-    Silent.step(cam)
+    Silent.step(dt, cam, weapon, screen)
     Aim.opts.depth = L.wallbang and weapon and Aim.depth(weapon, L.safety) or nil
     local useBarrel = L.barrel and Barrel.valid
     local origin = useBarrel and Barrel.fire or Game.eye(cam).Position
@@ -6031,7 +6049,7 @@ do
     local Quiet = SilBox:Toggle({ Name = "Enabled", Flag = "legit_silent", Tooltip = "Redirects your own bullets (client bullet and the newbullets packet) at the target without moving the camera or weapon. Risk: the server sees shots that do not match your view direction" }):Settings("Silent aim", 230)
     Quiet:Toggle({ Name = "Draw silent FOV", Flag = "legit_silent_draw", Default = true })
     pickColor(Quiet, "Silent circle", "legit_silent_color", Color3.fromRGB(255, 200, 80))
-    SilBox:Slider({ Name = "Silent FOV", Flag = "legit_silent_fov", Min = 5, Max = 600, Default = 90, Decimals = 1, Suffix = " px", Tooltip = "Radius around the screen centre where a target can be redirected to" })
+    SilBox:Slider({ Name = "Silent FOV", Flag = "legit_silent_fov", Min = 5, Max = 600, Default = 90, Decimals = 1, Suffix = " px", Tooltip = "Radius around the silent FOV centre (screen centre, or the barrel when attached) where a target can be redirected to" })
     SilBox:Slider({ Name = "Hit chance", Flag = "legit_silent_chance", Min = 1, Max = 100, Default = 100, Decimals = 1, Suffix = "%", Tooltip = "Chance that a shot is redirected" })
     SilBox:Toggle({ Name = "Team check", Flag = "legit_silent_team", Default = true, Tooltip = "Only enemies are targeted" })
     SilBox:Toggle({ Name = "Visible check", Flag = "legit_silent_visible", Default = true, Tooltip = "Only redirects to points with a clear line from the barrel, or walls the weapon can shoot through when wallbang is on" })
@@ -6047,6 +6065,16 @@ do
     local SilTarget = Sil:Section({ Name = "Silent targeting", Column = 2, Icon = "target" })
     SilTarget:Dropdown({ Name = "Hitbox priority", Flag = "legit_silent_priority", Items = { "Closest", "Head", "Torso" }, Default = "Closest", Tooltip = "Closest picks the part nearest the crosshair; Head/Torso prefer that part when it qualifies" })
     SilTarget:Dropdown({ Name = "Hitboxes", Flag = "legit_silent_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
+    local SilFov = Sil:Section({ Name = "Silent FOV", Column = 3, Icon = "scan" })
+    SilFov:Toggle({ Name = "Draw FOV circle", Flag = "legit_silent_fov_draw", Tooltip = "Styled silent FOV circle; replaces the simple silent circle while on" }):Colorpicker({ Name = "Circle", Flag = "legit_silent_fov_color", Default = Color3.fromRGB(255, 200, 80), Alpha = 0 })
+    SilFov:Toggle({ Name = "Filled", Flag = "legit_silent_fov_fill" }):Colorpicker({ Name = "Fill", Flag = "legit_silent_fov_fill_color", Default = Color3.fromRGB(255, 200, 80), Alpha = 0.92 })
+    SilFov:Toggle({ Name = "Locked colour", Flag = "legit_silent_fov_lock", Default = true, Tooltip = "The circle changes colour briefly after a redirected shot" }):Colorpicker({ Name = "Locked", Flag = "legit_silent_fov_lock_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
+    SilFov:Toggle({ Name = "Attach to barrel", Flag = "legit_silent_fov_barrel", Tooltip = "Centres the circle and the silent target search on the weapon barrel instead of the screen centre" })
+    SilFov:Dropdown({ Name = "Attach point", Flag = "legit_silent_fov_attach", Items = { "Aim hit", "Muzzle" }, Default = "Aim hit", Tooltip = "Aim hit is where the barrel is pointing (distance from Aim assist > FOV > Barrel distance); Muzzle is the barrel tip" })
+    SilFov:Slider({ Name = "Thickness", Flag = "legit_silent_fov_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
+    SilFov:Toggle({ Name = "Dynamic radius", Flag = "legit_silent_fov_dynamic", Tooltip = "The radius grows while scoped: Silent FOV x (unscoped FOV / current FOV) ^ scale, up to 4x or half the screen height" })
+    SilFov:Slider({ Name = "Zoom FOV scale", Flag = "legit_silent_fov_zoom", Min = 0, Max = 2, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Exponent on the zoom ratio; 1 keeps the angular coverage, 0 ignores zoom" })
+    SilFov:Slider({ Name = "Blend speed", Flag = "legit_silent_fov_speed", Min = 2, Max = 30, Default = 10, Decimals = 0.1 })
 
     local Trig = Subs["Trigger Bot"]
     local TriggerBox = Trig:Section({ Name = "Trigger bot", Column = 1, Icon = "zap" })
@@ -7573,6 +7601,7 @@ function Loop.step()
             end
         end
         Legit.circle.Visible, Legit.circleFill.Visible, Silent.circle.Visible = false, false, false
+        Silent.ring.Visible, Silent.ringFill.Visible = false, false
         ESP.clear()
         Util.guard("items", Items.step, cam, now)
         Util.guard("feedback", Feedback.step, cam, center, now)

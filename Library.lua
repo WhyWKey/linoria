@@ -6278,18 +6278,6 @@ function Library:CreateWindow(...)
         Parent = BottomArea;
     });
 
-    local Indicator = Library:Create('Frame', {
-        AnchorPoint = Vector2.new(0, 0.5);
-        BackgroundColor3 = Library.IndicatorColor;
-        Position = UDim2.new(0, 0, 0, TAB_TOP + TAB_BTN / 2);
-        Size = UDim2.fromOffset(3, 22);
-        Visible = false;
-        ZIndex = 8;
-        Parent = Inner;
-    });
-    Library:Round(Indicator, 2);
-    Library:AddToRegistry(Indicator, { BackgroundColor3 = 'IndicatorColor' });
-
     local TabTip = Library:Create('Frame', {
         AnchorPoint = Vector2.new(0, 0.5);
         BackgroundColor3 = Library.MainColor;
@@ -6661,16 +6649,6 @@ function Library:CreateWindow(...)
         return UDim2.new(0, 0, 0, TAB_TOP + TAB_BTN / 2 + (Idx - 1) * TAB_STEP);
     end;
 
-    local function MoveIndicator(Tab, Instant)
-        local Pos = TabPosition(Tab);
-        Indicator.Visible = true;
-        if Instant then
-            Indicator.Position = Pos;
-        else
-            Library:Tween(Indicator, { Position = Pos }, 0.28, Enum.EasingStyle.Quint);
-        end;
-    end;
-
     function Window:AddTab(Name, Icon, Opts)
         Opts = type(Opts) == 'table' and Opts or {};
         local Tab = {
@@ -6955,7 +6933,6 @@ function Library:CreateWindow(...)
             TabFrame.Visible = true;
             Library:Tween(TabButton, { BackgroundTransparency = 0.86 }, 0.15);
             Library:Tween(IconInst, { [IconProp] = Library.AccentColor }, 0.15);
-            MoveIndicator(Tab, First);
 
             if not First then
                 TabFrame.Position = UDim2.fromOffset(0, 12);
@@ -6980,9 +6957,6 @@ function Library:CreateWindow(...)
         function Tab:SetLayoutOrder(Position)
             Tab.LayoutOrder = Position;
             TabButton.LayoutOrder = Position;
-            if Window.ActiveTab then
-                MoveIndicator(Window.ActiveTab, true);
-            end;
         end;
 
         -- Tab:AddGroupbox(Name, Column?, Icon?) or the legacy Tab:AddGroupbox({ Name, Side | Column, Icon })
@@ -7425,17 +7399,6 @@ function Library:CreateWindow(...)
             Library.RegistryMap[SubLabel].Properties.TextColor3 = function()
                 return Sub.Active and Library.FontColor or Library:GetDimColor();
             end;
-            local Underline = Library:Create('Frame', {
-                AnchorPoint = Vector2.new(0.5, 1);
-                BackgroundColor3 = Library.AccentColor;
-                Position = UDim2.new(0.5, 0, 1, 1);
-                Size = UDim2.new(1, IconOnly and -10 or -8, 0, 2);
-                Visible = false;
-                ZIndex = 7;
-                Parent = Button;
-            });
-            Library:Round(Underline, 1);
-            Library:AddToRegistry(Underline, { BackgroundColor3 = 'AccentColor' });
             if IconOnly then
                 Library:AddToolTip(SubName, Button);
             end;
@@ -7445,7 +7408,6 @@ function Library:CreateWindow(...)
                 if SubIcon then
                     SubIcon.ImageColor3 = Sub.Active and Library.AccentColor or Library:GetDimColor();
                 end;
-                Underline.Visible = Sub.Active;
                 Library:Tween(Button, { BackgroundTransparency = Sub.Active and 0.88 or 1 }, 0.12);
             end;
 
@@ -7553,9 +7515,7 @@ function Library:CreateWindow(...)
         end);
 
         Window.Tabs[Name] = Tab;
-        if Window.ActiveTab then
-            MoveIndicator(Window.ActiveTab, true);
-        else
+        if not Window.ActiveTab then
             Tab:ShowTab();
         end;
         return Tab;

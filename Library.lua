@@ -874,7 +874,11 @@ function Library:Unload()
 
     Library.CursorToken = (Library.CursorToken or 0) + 1;
     if Library.CursorGui then pcall(function() Library.CursorGui:Destroy() end) end;
-    pcall(function() InputService.MouseIconEnabled = true end)
+    if Library.SavedMouseIcon ~= nil then
+        pcall(function() InputService.MouseIconEnabled = Library.SavedMouseIcon end)
+        Library.SavedMouseIcon = nil;
+        Library.CursorGui = nil;
+    end;
     ScreenGui:Destroy()
 end
 
@@ -5335,7 +5339,9 @@ local function TweenDelayed(Obj, Props, Time, Delay, Style, Dir)
 end;
 
 -- Config: { Title, Subtitle, Duration, Steps = {}, Blur = true, ShowMenu = true, Skippable = true,
---           Manual = false, OnFinish = fn }. Returns a handle with Skip / Cancel / SetStatus / SetProgress / Finish.
+--           Manual = false, WaitForStable = true, OnFinish = fn }. Returns a handle with Skip / Cancel / SetStatus / SetProgress / Finish.
+-- Never yields: the intro stays hidden until frames are smooth again, because the script that calls it
+-- usually freezes the client while it builds the UI and a wall-clock timeline would be over by then.
 function Library:PlayIntro(Config)
     Config = type(Config) == 'table' and Config or {};
     if Library.Unloaded then return nil end;
@@ -5351,7 +5357,12 @@ function Library:PlayIntro(Config)
     local Steps = type(Config.Steps) == 'table' and Config.Steps or {};
     local Accent = Config.AccentColor or Library.AccentColor;
     local Accent2 = Config.AccentColor2 or Library.AccentColor2;
-    local Intro = { Playing = true; Progress = 0 };
+    local Intro = { Playing = true; Started = false; Progress = 0 };
+    -- every timed tween waits on the intro's own clock so a hitch pauses the timeline instead of skipping it
+    local Queue = {};
+    local function Schedule(Obj, Props, Time, Delay, Style, Dir)
+        table.insert(Queue, { At = Delay or 0; Obj = Obj; Props = Props; Time = Time; Style = Style; Dir = Dir });
+    end;
     -- registered so the intro repaints live if the theme changes mid-play
     local Registered = {};
     local function Reg(Obj, Props, IsAccent)
@@ -5366,8 +5377,10 @@ function Library:PlayIntro(Config)
     pcall(ProtectGui, Gui);
     Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling;
     Gui.ResetOnSpawn = false;
+    Gui.Enabled = false;
     pcall(function() Gui.IgnoreGuiInset = true; Gui.DisplayOrder = 100 end);
     Gui.Parent = GetGuiParent();
+    Intro.Gui = Gui;
 
     local Backdrop = Library:Create('Frame', {
         BackgroundColor3 = Library.SidebarColor;
@@ -5385,8 +5398,8 @@ function Library:PlayIntro(Config)
             Blur.Parent = Lighting;
         end);
     end;
-    TweenDelayed(Backdrop, { BackgroundTransparency = Config.BackdropTransparency or 0.2 }, 0.4);
-    if Blur then TweenDelayed(Blur, { Size = 18 }, 0.5) end;
+    Schedule(Backdrop, { BackgroundTransparency = Config.BackdropTransparency or 0.2 }, 0.4);
+    if Blur then Schedule(Blur, { Size = 18 }, 0.5) end;
 
     local GroupOk, Group = pcall(Instance.new, 'CanvasGroup');
     local Center = Library:Create(GroupOk and Group or Instance.new('Frame'), {
@@ -5421,8 +5434,8 @@ function Library:PlayIntro(Config)
         local Ring = Circle(70, 62, { BackgroundTransparency = 1 });
         local Stroke = Library:Create('UIStroke', { Color = Accent; Thickness = 2; Transparency = 0.1; Parent = Ring });
         Reg(Stroke, { Color = 'AccentColor' }, true);
-        TweenDelayed(Ring, { Size = UDim2.fromOffset(250, 250) }, 1.3, 0.1 + (Idx - 1) * 0.4, Enum.EasingStyle.Quint);
-        TweenDelayed(Stroke, { Transparency = 1 }, 1.3, 0.1 + (Idx - 1) * 0.4);
+        Schedule(Ring, { Size = UDim2.fromOffset(250, 250) }, 1.3, 0.1 + (Idx - 1) * 0.4, Enum.EasingStyle.Quint);
+        Schedule(Stroke, { Transparency = 1 }, 1.3, 0.1 + (Idx - 1) * 0.4);
     end;
 
     local Logo;
@@ -5442,8 +5455,8 @@ function Library:PlayIntro(Config)
         Parent = Center;
     });
     Reg(Sweep, { BackgroundColor3 = 'AccentColor' }, true);
-    TweenDelayed(Sweep, { Size = UDim2.fromOffset(320, 1) }, 0.6, 0.3, Enum.EasingStyle.Quint);
-    TweenDelayed(Sweep, { BackgroundTransparency = 1 }, 0.5, 1.1);
+    Schedule(Sweep, { Size = UDim2.fromOffset(320, 1) }, 0.6, 0.3, Enum.EasingStyle.Quint);
+    Schedule(Sweep, { BackgroundTransparency = 1 }, 0.5, 1.1);
 
     -- title letters reveal one by one, sliding up
     local TitleRow = Library:Create('Frame', {
@@ -5484,7 +5497,7 @@ function Library:PlayIntro(Config)
         });
         Reg(Letter, { TextColor3 = 'FontColor' });
         local Delay = 0.45 + Index * 0.06;
-        TweenDelayed(Letter, { Position = UDim2.fromOffset(0, 0); TextTransparency = 0 }, 0.45, Delay, Enum.EasingStyle.Back);
+        Schedule(Letter, { Position = UDim2.fromOffset(0, 0); TextTransparency = 0 }, 0.45, Delay, Enum.EasingStyle.Back);
     end;
 
     local SubLabel = Library:Create('TextLabel', {
@@ -5500,7 +5513,7 @@ function Library:PlayIntro(Config)
         Parent = Center;
     });
     Reg(SubLabel, { TextColor3 = 'DimColor' });
-    TweenDelayed(SubLabel, { TextTransparency = 0 }, 0.5, 0.45 + Index * 0.06 + 0.1);
+    Schedule(SubLabel, { TextTransparency = 0 }, 0.5, 0.45 + Index * 0.06 + 0.1);
 
     local BarW = 300;
     local StepLabel = Library:Create('TextLabel', {
@@ -5558,9 +5571,9 @@ function Library:PlayIntro(Config)
     });
     Reg(Gradient, { Color = BarSequence });
     local BarDelay = 0.6;
-    TweenDelayed(Track, { BackgroundTransparency = 0.88 }, 0.4, BarDelay);
-    TweenDelayed(StepLabel, { TextTransparency = 0 }, 0.4, BarDelay);
-    TweenDelayed(Percent, { TextTransparency = 0 }, 0.4, BarDelay);
+    Schedule(Track, { BackgroundTransparency = 0.88 }, 0.4, BarDelay);
+    Schedule(StepLabel, { TextTransparency = 0 }, 0.4, BarDelay);
+    Schedule(Percent, { TextTransparency = 0 }, 0.4, BarDelay);
 
     local StepShown = 0;
     function Intro:SetStatus(Text)
@@ -5580,7 +5593,10 @@ function Library:PlayIntro(Config)
     end;
 
     local Connections = {};
+    local Cleaned = false;
     local function Cleanup()
+        if Cleaned then return end;
+        Cleaned = true;
         for _, Connection in ipairs(Connections) do
             pcall(function() Connection:Disconnect() end);
         end;
@@ -5600,10 +5616,15 @@ function Library:PlayIntro(Config)
 
     local Ended = false;
     function Intro:Cancel()
-        if Ended then return end;
         Ended = true;
         Intro.Playing = false;
         Cleanup();
+    end;
+
+    local function ShowMenu()
+        if Config.ShowMenu ~= false and not Library.Unloaded and not Library.Toggled then
+            Library:Toggle();
+        end;
     end;
 
     -- Quick collapse: bar completes, content scales out, backdrop and blur fade, menu fades in
@@ -5611,6 +5632,13 @@ function Library:PlayIntro(Config)
         if Ended then return end;
         Ended = true;
         Intro.Playing = false;
+        if not Intro.Started then
+            -- nothing on screen yet, so there is nothing to animate out
+            Cleanup();
+            ShowMenu();
+            if not Library.Unloaded then Library:SafeCallback(Config.OnFinish) end;
+            return;
+        end;
         Intro:SetProgress(1);
         StepLabel.Text = Config.DoneText or 'Ready';
         for _, Connection in ipairs(Connections) do
@@ -5623,46 +5651,76 @@ function Library:PlayIntro(Config)
         end);
         TweenDelayed(Backdrop, { BackgroundTransparency = 1 }, 0.5, 0.15);
         if Blur then TweenDelayed(Blur, { Size = 0 }, 0.5, 0.15) end;
-        if Config.ShowMenu ~= false then
-            task.delay(0.2, function()
-                if not Library.Unloaded and not Library.Toggled then
-                    Library:Toggle();
-                end;
-            end);
-        end;
+        task.delay(0.2, ShowMenu);
         task.delay(0.7, function()
             Cleanup();
-            Library:SafeCallback(Config.OnFinish);
+            if not Library.Unloaded then Library:SafeCallback(Config.OnFinish) end;
         end);
     end;
     function Intro:Skip()
         Intro:Finish();
     end;
 
-    local Started = os.clock();
+    local T = 0;
     local Lead = 0.6;
-    if not Config.Manual then
-        table.insert(Connections, RunService.Heartbeat:Connect(function()
-            local T = os.clock() - Started;
-            Gradient.Offset = Vector2.new(-1 + (T * 0.9) % 2, 0);
+    local function RunQueue()
+        local Index = 1;
+        while Index <= #Queue do
+            local Item = Queue[Index];
+            if Item.At <= T then
+                table.remove(Queue, Index);
+                TweenDelayed(Item.Obj, Item.Props, Item.Time, 0, Item.Style, Item.Dir);
+            else
+                Index = Index + 1;
+            end;
+        end;
+    end;
+    local function Begin()
+        if Ended or Intro.Started then return end;
+        Intro.Started = true;
+        Gui.Enabled = true;
+        RunQueue();
+        if Config.Skippable ~= false then
+            table.insert(Connections, InputService.InputBegan:Connect(function(Input)
+                if Input.KeyCode == Enum.KeyCode.Escape or Input.KeyCode == Enum.KeyCode.Space then
+                    Intro:Skip();
+                end;
+            end));
+        end;
+    end;
+
+    local StableFrames = math.max(1, tonumber(Config.StableFrames) or 10);
+    local StableTimeout = tonumber(Config.StableTimeout) or 10;
+    local StartDelay = math.max(0, tonumber(Config.StartDelay) or 0.2);
+    local Waited, Smooth, Settle = 0, 0, nil;
+    table.insert(Connections, RunService.Heartbeat:Connect(function(Dt)
+        Dt = tonumber(Dt) or 1 / 60;
+        if not Intro.Started then
+            Waited = Waited + Dt;
+            if Settle then
+                Settle = Settle + math.min(Dt, 1 / 30);
+                if Settle >= StartDelay then Begin() end;
+            elseif Dt < 1 / 20 then
+                Smooth = Smooth + 1;
+                if Smooth >= StableFrames then Settle = 0 end;
+            else
+                Smooth = 0;
+            end;
+            if not Intro.Started and Waited >= StableTimeout then Begin() end;
+            return;
+        end;
+        T = T + math.min(Dt, 1 / 30);
+        RunQueue();
+        Gradient.Offset = Vector2.new(-1 + (T * 0.9) % 2, 0);
+        if not Config.Manual then
             local Alpha = math.clamp((T - Lead) / math.max(0.1, Duration - Lead - 0.2), 0, 1);
             Intro:SetProgress(Alpha * Alpha * (3 - 2 * Alpha));
             if T >= Duration then
                 Intro:Finish();
             end;
-        end));
-    else
-        table.insert(Connections, RunService.Heartbeat:Connect(function()
-            Gradient.Offset = Vector2.new(-1 + ((os.clock() - Started) * 0.9) % 2, 0);
-        end));
-    end;
-    if Config.Skippable ~= false then
-        table.insert(Connections, InputService.InputBegan:Connect(function(Input)
-            if Input.KeyCode == Enum.KeyCode.Escape or Input.KeyCode == Enum.KeyCode.Space then
-                Intro:Skip();
-            end;
-        end));
-    end;
+        end;
+    end));
+    if Config.WaitForStable == false then Begin() end;
 
     Library:OnUnload(function() Intro:Cancel() end);
     Library.ActiveIntro = Intro;
@@ -7511,7 +7569,7 @@ function Library:CreateWindow(...)
         Modal = false;
         Parent = ScreenGui;
     });
-    -- Themed cursor: pixel-exact accent crosshair with a dark outline and centre pixel; the gap widens on hover and closes on mouse down
+    -- Linoria cursor: accent arrow over a black outline; the game cursor is only hidden while it shows and HideGameCursor is on
     function Library:StartCursor()
         if Library.ShowCustomCursor == false then return end;
         Library.CursorToken = (Library.CursorToken or 0) + 1;
@@ -7530,44 +7588,26 @@ function Library:CreateWindow(...)
             Gui.Parent = GetGuiParent();
             Library.CursorGui = Gui;
 
-            local Root = Library:Create('Frame', { BackgroundTransparency = 1; Size = UDim2.fromOffset(0, 0); Parent = Gui });
-            local function Box(Name, Z)
-                local Frame = Library:Create('Frame', {
-                    Name = Name;
-                    AnchorPoint = Vector2.new(0, 0);
-                    BorderSizePixel = 0;
-                    ZIndex = Z;
-                    Parent = Root;
-                });
-                return Frame;
-            end;
-            local function Rect(Frame, X, Y, W, H)
-                Frame.Position = UDim2.fromOffset(X, Y);
-                Frame.Size = UDim2.fromOffset(W, H);
-            end;
-            -- Odd, whole-pixel layout: the centre pixel is [0,1); arms are 3 thick ([-1,2)) and mirror exactly about it
-            local LEN, THICK = 6, 3;
-            local Arms = {};
-            for _, Name in ipairs({ 'Left', 'Right', 'Up', 'Down' }) do
-                Arms[Name] = { Outline = Box('Outline' .. Name, 98); Fill = Box('Arm' .. Name, 99) };
-            end;
-            local Core = Box('Dot', 100);
-            local function Layout(G)
-                local O = -(THICK - 1) / 2;
-                local Spans = {
-                    Left = { -(G + LEN), O, LEN, THICK };
-                    Right = { 1 + G, O, LEN, THICK };
-                    Up = { O, -(G + LEN), THICK, LEN };
-                    Down = { O, 1 + G, THICK, LEN };
-                };
-                for Name, R in next, Spans do
-                    Rect(Arms[Name].Fill, R[1], R[2], R[3], R[4]);
-                    Rect(Arms[Name].Outline, R[1] - 1, R[2] - 1, R[3] + 2, R[4] + 2);
-                end;
-                Rect(Core, 0, 0, 1, 1);
-            end;
+            local Cursor = Library:Create('ImageLabel', {
+                Name = 'Cursor';
+                Image = 'http://www.roblox.com/asset/?id=4292970642';
+                BackgroundTransparency = 1;
+                Size = UDim2.fromOffset(17, 17);
+                Rotation = -45;
+                ZIndex = 100;
+                Parent = Gui;
+            });
+            local CursorOutline = Library:Create('ImageLabel', {
+                Name = 'CursorOutline';
+                Image = 'http://www.roblox.com/asset/?id=4292970642';
+                ImageColor3 = Color3.new();
+                BackgroundTransparency = 1;
+                Size = UDim2.fromOffset(19, 19);
+                Rotation = -45;
+                ZIndex = 99;
+                Parent = Gui;
+            });
 
-            local Gap = 3;
             local Hidden = false;
             while Library.Toggled and not Library.Unloaded and Token == Library.CursorToken and ScreenGui.Parent do
                 if Library.HideGameCursor ~= false then
@@ -7577,23 +7617,13 @@ function Library:CreateWindow(...)
                     InputService.MouseIconEnabled = Library.SavedMouseIcon;
                     Hidden = false;
                 end;
+                -- the gui ignores the inset, so the mouse location maps straight onto it
                 local Pos = InputService:GetMouseLocation();
-                Root.Position = UDim2.fromOffset(math.floor(Pos.X), math.floor(Pos.Y));
+                local At = UDim2.fromOffset(Pos.X, Pos.Y - 1);
+                Cursor.ImageColor3 = Library.AccentColor;
+                Cursor.Position, CursorOutline.Position = At, At - UDim2.fromOffset(1, 1);
 
-                local Down = false;
-                pcall(function() Down = InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end);
-                local Hot = Library.CursorHot and true or false;
-                local Target = Down and 2 or (Hot and 4 or 3);
                 RenderStepped:Wait();
-                Gap = Gap + (Target - Gap) * 0.5;
-                Layout(math.floor(Gap + 0.5));
-
-                local Dark = Library.BackgroundColor:Lerp(Library.Black, 0.6);
-                for _, Arm in next, Arms do
-                    Arm.Fill.BackgroundColor3 = Library.AccentColor;
-                    Arm.Outline.BackgroundColor3 = Dark;
-                end;
-                Core.BackgroundColor3 = Library.FontColor;
             end;
 
             pcall(function() Gui:Destroy() end);
@@ -7608,7 +7638,7 @@ function Library:CreateWindow(...)
     function Library:SetHideGameCursor(Bool)
         Library.HideGameCursor = Bool and true or false;
         if Library.CursorGui and Library.Toggled and Library.SavedMouseIcon ~= nil then
-            InputService.MouseIconEnabled = Library.HideGameCursor and false or Library.SavedMouseIcon;
+            InputService.MouseIconEnabled = (not Library.HideGameCursor) and Library.SavedMouseIcon;
         end;
     end;
 

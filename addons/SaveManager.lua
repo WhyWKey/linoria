@@ -149,6 +149,10 @@ local SaveManager = {} do
 			data.priorities = self.Library:GetPlayerPriorities()
 		end
 
+		if self.Library and self.Library.GetLayout then
+			data.layout = self.Library:GetLayout()
+		end
+
 		local success, encoded = pcall(httpService.JSONEncode, httpService, data)
 		if not success then
 			return false, 'failed to encode data'
@@ -177,6 +181,10 @@ local SaveManager = {} do
 
 		if type(decoded.priorities) == 'table' and self.Library and self.Library.SetPlayerPriorities then
 			self.Library:SetPlayerPriorities(decoded.priorities)
+		end
+
+		if type(decoded.layout) == 'table' and self.Library and self.Library.SetLayout then
+			self.Library:SetLayout(decoded.layout)
 		end
 
 		for _, option in next, decoded.objects do

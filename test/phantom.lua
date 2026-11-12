@@ -443,7 +443,8 @@ print("[Aster] build " .. BUILD)
 local Game = { ready = false, mods = {}, via = {}, missing = {}, frame = 0, accel = Vector3.new(0, -196.2, 0), hooked = {} }
 
 local REQUIRED = { "ReplicationInterface", "CharacterInterface", "CameraInterface" }
-local OPTIONAL = { "PublicSettings", "NetworkClient", "HudCrosshairsInterface", "HudDamageInterface", "BulletInterface", "PlayerStatusEvents", "ContentInterface" }
+local OPTIONAL = { "PublicSettings", "NetworkClient", "HudCrosshairsInterface", "HudDamageInterface", "BulletInterface", "PlayerStatusEvents", "ContentInterface",
+    "CharacterObject", "ActiveLoadoutUtils", "PlayerDataClientInterface", "PlayerDataUtils", "SkinCaseUtils", "FirearmObject", "MeleeObject", "GrenadeObject" }
 
 function Game.load()
     Game.ready, Game.mods, Game.via, Game.missing = false, {}, {}, {}
@@ -719,6 +720,7 @@ function Game.hookNetwork()
     Game.hooked.network = Util.hook(network, "send", function(original)
         return function(self, method, ...)
             if method == "debug" or method == "flaguser" then return nil end
+            if Game.filterSend and Game.filterSend(method, ...) then return nil end
             if method == "newbullets" and Game.onNewBullets then
                 local _, packet = ...
                 pcall(Game.onNewBullets, packet)
@@ -2713,18 +2715,46 @@ function World.dropWeather()
     state.cells, state.preset, state.sig, state.mode = {}, nil, nil, nil
 end
 
+function World.scanBounds(map)
+    local ok, list = pcall(function() return map:GetDescendants() end)
+    if not (ok and type(list) == "table") then return nil end
+    local minX, minZ, maxX, maxZ, top = math.huge, math.huge, -math.huge, -math.huge, -math.huge
+    for _, object in ipairs(list) do
+        local okPart, isPart = pcall(function() return object:IsA("BasePart") end)
+        if okPart and isPart then
+            local okRead, position, size = pcall(function() return object.Position, object.Size end)
+            if okRead and typeof(position) == "Vector3" and typeof(size) == "Vector3" then
+                local reach = math.max(size.X, size.Z) / 2
+                minX, maxX = math.min(minX, position.X - reach), math.max(maxX, position.X + reach)
+                minZ, maxZ = math.min(minZ, position.Z - reach), math.max(maxZ, position.Z + reach)
+                top = math.max(top, position.Y + size.Y / 2)
+            end
+        end
+    end
+    if maxX - minX <= 1 or maxZ - minZ <= 1 then return nil end
+    return { x = minX, z = minZ, w = maxX - minX, d = maxZ - minZ, top = top }
+end
+
 function World.mapBounds(now)
     local state = World.weather
     if state.boundsAt and now < state.boundsAt then return state.bounds end
     state.boundsAt = now + 3
-    state.bounds = nil
     local map = Workspace:FindFirstChild("Map")
-    if map and type(map.GetBoundingBox) == "function" then
+    if not map then
+        state.bounds, state.scanned = nil, nil
+        return nil
+    end
+    if type(map.GetBoundingBox) == "function" then
         local ok, frame, size = pcall(map.GetBoundingBox, map)
         if ok and typeof(frame) == "CFrame" and typeof(size) == "Vector3" and size.X > 1 and size.Z > 1 then
             local center = frame.Position
             state.bounds = { x = center.X - size.X / 2, z = center.Z - size.Z / 2, w = size.X, d = size.Z, top = center.Y + size.Y / 2 }
+            return state.bounds
         end
+    end
+    if state.scanned ~= map then
+        state.bounds = World.scanBounds(map)
+        state.scanned = state.bounds and map or nil
     end
     return state.bounds
 end
@@ -2832,7 +2862,12 @@ function World.stepWeather(cam, now)
     local sig = table.concat({ cfg.density, cfg.speed, cfg.size, cfg.wind, cfg.windDir, cfg.height, tostring(cfg.custom), tostring(cfg.color) }, "|")
     local position = cam.CFrame.Position
     local plan, mode = {}, "near"
-    local bounds = on("world_weather_map") and World.mapBounds(now)
+    local cover = on("world_weather_map") == true
+    local bounds = cover and World.mapBounds(now)
+    if cover and not bounds then
+        if next(state.cells) then World.dropWeather() end
+        return
+    end
     if bounds then
         local cap = math.clamp(math.floor(val("world_weather_map_cap") or 100), 16, 400)
         local size = math.max(CELL, math.sqrt(bounds.w * bounds.d / cap))
@@ -2997,32 +3032,32 @@ function Tracers.presets()
     if Tracers.table then return Tracers.table end
     local mode = Enum.TextureMode
     local function sequence(value) return NumberSequence.new(value) end
-    local function thinStyle(id, wrap)
+    local function thinStyle(id)
         return {
-            Texture = id, Brightness = 1.5, Transparency = sequence(0), LightEmission = 1, LightInfluence = 0,
-            Segments = 1, TextureLength = wrap and 3 or 5, TextureMode = wrap and mode.Wrap or mode.Stretch, TextureSpeed = wrap and 1 or 0,
+            Alpha = 0, Texture = id, Brightness = 1.5, Transparency = sequence(0), LightEmission = 1, LightInfluence = 0,
+            Segments = 1, TextureLength = 3, TextureMode = mode.Wrap, TextureSpeed = 1,
             Width0 = 0.12, Width1 = 0.12, FaceCamera = true,
         }
     end
     Tracers.table = {
-        Beam = thinStyle("rbxassetid://12781852245", false),
-        Bolt = thinStyle("rbxassetid://446111271", false),
-        Trail = thinStyle("rbxassetid://6419989824", false),
-        Zigzag = thinStyle("rbxassetid://1274380363", true),
-        Heartrate = thinStyle("rbxassetid://5830549480", true),
-        Chain = thinStyle("rbxassetid://9632168658", true),
-        Glitch = thinStyle("rbxassetid://8089467613", true),
-        Swirl = thinStyle("rbxassetid://5638168605", true),
+        Beam = thinStyle("rbxassetid://12781852245"),
+        Bolt = thinStyle("rbxassetid://446111271"),
+        Trail = thinStyle("rbxassetid://6419989824"),
+        Zigzag = thinStyle("rbxassetid://1274380363"),
+        Heartrate = thinStyle("rbxassetid://5830549480"),
+        Chain = thinStyle("rbxassetid://9632168658"),
+        Glitch = thinStyle("rbxassetid://8089467613"),
+        Swirl = thinStyle("rbxassetid://5638168605"),
         Obelus = {
-            Texture = "rbxassetid://2382169232", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
+            Alpha = 0.45, Texture = "rbxassetid://2382169232", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
             Segments = 1, TextureLength = 5, TextureMode = mode.Stretch, TextureSpeed = 0, Width0 = 0.3, Width1 = 0.3, FaceCamera = true,
         },
         Lightning = {
-            Texture = "rbxassetid://7151778302", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
+            Alpha = 0.45, Texture = "rbxassetid://7151778302", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
             Segments = 10, TextureLength = 1, TextureMode = mode.Stretch, TextureSpeed = 1, Width0 = 1.2, Width1 = 1.2, FaceCamera = true,
         },
         DNA = {
-            Texture = "rbxassetid://7071778278", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
+            Alpha = 0.45, Texture = "rbxassetid://7071778278", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
             Segments = 1, TextureLength = 12, TextureMode = mode.Wrap, TextureSpeed = 1, Width0 = 0.6, Width1 = 0.6, FaceCamera = true,
         },
     }
@@ -3034,39 +3069,144 @@ function Tracers.drop(record)
     for _, point in ipairs(record.points) do pcall(function() point:Destroy() end) end
 end
 
+function Tracers.measure(path)
+    local cumulative, total = { 0 }, 0
+    for index = 2, #path do
+        total = total + (path[index] - path[index - 1]).Magnitude
+        cumulative[index] = total
+    end
+    local chord = path[#path] - path[1]
+    local deviation = 0
+    if chord.Magnitude > 1e-3 then
+        local direction = chord.Unit
+        for index = 2, #path - 1 do
+            local relative = path[index] - path[1]
+            deviation = math.max(deviation, (relative - direction * relative:Dot(direction)).Magnitude)
+        end
+    end
+    return cumulative, total, deviation
+end
+
+function Tracers.nodes(path, cumulative, total, count)
+    local nodes, cursor = { path[1] }, 2
+    for step = 1, count - 1 do
+        local length = total * step / count
+        while cursor < #path and cumulative[cursor] < length do cursor = cursor + 1 end
+        local span = cumulative[cursor] - cumulative[cursor - 1]
+        local k = span > 1e-6 and math.clamp((length - cumulative[cursor - 1]) / span, 0, 1) or 0
+        nodes[#nodes + 1] = path[cursor - 1] + (path[cursor] - path[cursor - 1]) * k
+    end
+    nodes[#nodes + 1] = path[#path]
+    return nodes
+end
+
 function Tracers.spawn(path, color)
     local presets = Tracers.presets()
     local name = flag("trace_texture", "Lightning")
     local preset = presets[name] or presets.Lightning
     local scale = flag("trace_width", 1)
     local terrain = Workspace.Terrain
-    local record = { beams = {}, points = {}, path = path, born = os.clock(), base = preset.Transparency, level = 0.45 }
+    local stretch = preset.TextureMode == Enum.TextureMode.Stretch
+    local cumulative, total, deviation = Tracers.measure(path)
+    local count = 1
+    if deviation > (stretch and 2 or 0.6) then count = math.clamp(math.ceil(total / 25), 6, 12) end
+    local nodes = Tracers.nodes(path, cumulative, total, count)
+
+    local glow = flag("trace_glow", false)
+    local strength = glow and math.clamp(flag("trace_glow_strength", 4), 0, 10) or 0
+    local layer = glow and strength > 0
+    local gradient = flag("trace_gradient", false)
+    local rainbow = gradient and flag("trace_rainbow", false)
+    local start = flag("trace_grad_start", Color3.fromRGB(255, 94, 94))
+    local finish = flag("trace_grad_end", Color3.fromRGB(94, 160, 255))
+    local fade = gradient and math.clamp(flag("trace_grad_fade", 0), 0, 1) or 0
+    local glowColor = flag("trace_glow_color", Color3.fromRGB(255, 255, 255))
+    local glowSame = flag("trace_glow_same", true)
+
+    local function colorAt(t)
+        if rainbow then return Color3.fromHSV((t * 0.8) % 1, 0.85, 1) end
+        return Color3.new(start.R + (finish.R - start.R) * t, start.G + (finish.G - start.G) * t, start.B + (finish.B - start.B) * t)
+    end
+    local function colorRange(t0, t1)
+        if not gradient then return ColorSequence.new(color) end
+        if not rainbow then return ColorSequence.new(colorAt(t0), colorAt(t1)) end
+        local steps = count == 1 and 8 or 3
+        local keys = {}
+        for step = 0, steps do keys[#keys + 1] = ColorSequenceKeypoint.new(step / steps, colorAt(t0 + (t1 - t0) * step / steps)) end
+        return ColorSequence.new(keys)
+    end
+
+    local segment = total / count
+    local record = { beams = {}, points = {}, parts = {}, born = os.clock() }
     local ok = pcall(function()
-        for index, position in ipairs(path) do
+        for index, position in ipairs(nodes) do
             local point = Instance.new("Attachment")
             point.Name = Util.randomName()
             point.Parent = terrain
-            point.WorldCFrame = CFrame.new(position)
+            local frame = CFrame.new(position)
+            if count > 1 then
+                local ahead = nodes[math.min(index + 1, #nodes)] - nodes[math.max(index - 1, 1)]
+                if ahead.Magnitude > 1e-4 then frame = CFrame.new(position, position + ahead) * CFrame.Angles(0, math.pi / 2, 0) end
+            end
+            point.WorldCFrame = frame
             record.points[index] = point
         end
-        for index = 1, #path - 1 do
+        local tiles = math.max(1, math.floor(segment / preset.TextureLength + 0.5))
+        for index = 1, count do
+            local t0, t1 = (index - 1) / count, index / count
+            local reach = (nodes[index + 1] - nodes[index]).Magnitude / 3
+            local function place(beam)
+                beam.Attachment0, beam.Attachment1 = record.points[index], record.points[index + 1]
+                if count > 1 then
+                    beam.CurveSize0, beam.CurveSize1 = reach, -reach
+                    beam.Segments = math.max(preset.Segments, 4)
+                end
+                beam.Parent = terrain
+                record.beams[#record.beams + 1] = beam
+            end
+            local a0 = preset.Alpha + (1 - preset.Alpha) * fade * t0
+            local a1 = preset.Alpha + (1 - preset.Alpha) * fade * t1
+            local sequence = colorRange(t0, t1)
+            if layer then
+                local base = 0.9 - 0.06 * strength
+                local g0, g1 = base + (1 - base) * fade * t0, base + (1 - base) * fade * t1
+                local halo = Instance.new("Beam")
+                halo.Name = Util.randomName()
+                halo.LightEmission, halo.LightInfluence, halo.FaceCamera = 1, 0, true
+                halo.Segments = preset.Segments
+                halo.Width0, halo.Width1 = preset.Width0 * scale * (1.5 + 0.15 * strength), preset.Width1 * scale * (1.5 + 0.15 * strength)
+                halo.Transparency = NumberSequence.new(g0, g1)
+                halo.Color = glowSame and sequence or ColorSequence.new(glowColor)
+                propSet(halo, "Brightness", preset.Brightness)
+                propSet(halo, "ZOffset", -0.05)
+                place(halo)
+                record.parts[#record.parts + 1] = { beam = halo, a0 = g0, a1 = g1 }
+            end
             local beam = Instance.new("Beam")
             beam.Name = Util.randomName()
             for prop, value in pairs(preset) do
                 if prop == "Width0" or prop == "Width1" then value = value * scale end
-                beam[prop] = value
+                if prop == "Brightness" and glow then value = value * (1 + 0.2 * strength) end
+                if prop ~= "Alpha" and prop ~= "Transparency" then beam[prop] = value end
             end
-            beam.Color = ColorSequence.new(color)
-            beam.Attachment0, beam.Attachment1 = record.points[index], record.points[index + 1]
-            beam.Parent = terrain
-            record.beams[index] = beam
+            if count > 1 and not stretch then beam.TextureLength = segment / tiles end
+            beam.Transparency = NumberSequence.new(a0, a1)
+            beam.Color = sequence
+            place(beam)
+            record.parts[#record.parts + 1] = { beam = beam, a0 = a0, a1 = a1 }
         end
     end)
     if not ok then
         Tracers.drop(record)
         return false
     end
-    if #Tracers.list >= 40 then Tracers.drop(table.remove(Tracers.list, 1)) end
+    local used = #record.beams
+    for _, other in ipairs(Tracers.list) do used = used + #other.beams end
+    while #Tracers.list > 0 and (#Tracers.list >= 40 or used > 360) do
+        local oldest = table.remove(Tracers.list, 1)
+        used = used - #oldest.beams
+        Tracers.drop(oldest)
+    end
     Tracers.list[#Tracers.list + 1] = record
     return true
 end
@@ -3161,9 +3301,10 @@ function Tracers.step(now)
             Tracers.drop(record)
             table.remove(Tracers.list, index)
         elseif age > life then
-            local level = record.level + (1 - record.level) * ((age - life) / Tracers.fade)
-            local sequence = NumberSequence.new(level)
-            for _, beam in ipairs(record.beams) do propSet(beam, "Transparency", sequence) end
+            local k = (age - life) / Tracers.fade
+            for _, part in ipairs(record.parts) do
+                propSet(part.beam, "Transparency", NumberSequence.new(part.a0 + (1 - part.a0) * k, part.a1 + (1 - part.a1) * k))
+            end
         end
     end
 end
@@ -3929,7 +4070,7 @@ function Silent.acquire(origin, weapon)
     if not cam then return nil end
     Visible.budget = 48
     local opts = Silent.opts
-    opts.visible, opts.parts, opts.choice = L.silentVisible, L.parts, L.choice
+    opts.visible, opts.parts, opts.choice = L.silentVisible, L.silentParts, L.silentChoice
     opts.multi, opts.scale, opts.max = L.multi, L.multiScale, L.multiMax
     opts.depth = L.wallbang and Aim.depth(weapon, L.safety) or nil
     local center = cam.ViewportSize / 2
@@ -4042,6 +4183,8 @@ function Legit.read()
     L.predColor, L.predOutline = flag("legit_pred_color", Color3.fromRGB(255, 40, 40)), flag("legit_pred_outline", true)
     L.silent, L.silentFov, L.silentChance = flag("legit_silent", false), flag("legit_silent_fov", 90), flag("legit_silent_chance", 100)
     L.silentVisible, L.silentDraw, L.silentColor = flag("legit_silent_visible", true), flag("legit_silent_draw", true), flag("legit_silent_color", Color3.fromRGB(255, 200, 80))
+    L.silentParts = Util.set("legit_silent_parts", { Head = true, Torso = true })
+    L.silentChoice = flag("legit_silent_priority", "Closest")
     local opts = Aim.opts
     opts.visible, opts.parts, opts.choice = L.visible, L.parts, L.choice
     opts.multi, opts.scale, opts.max = L.multi, L.multiScale, L.multiMax
@@ -4472,17 +4615,464 @@ function Legit.stepTrigger(cam, now, records)
     pcall(mouse1press)
 end
 
+local Knife = { classes = { "ONE HAND BLADE", "TWO HAND BLADE", "ONE HAND BLUNT", "TWO HAND BLUNT" } }
+
+function Knife.list()
+    local content = Game.mods.ContentInterface
+    if not (content and type(content.getWeaponListFromClass) == "function") then return {} end
+    local seen, names = {}, {}
+    for _, class in ipairs(Knife.classes) do
+        local ok, list = pcall(content.getWeaponListFromClass, class)
+        if ok and type(list) == "table" then
+            for _, name in ipairs(list) do
+                if type(name) == "string" and not seen[name] then
+                    seen[name] = true
+                    names[#names + 1] = name
+                end
+            end
+        end
+    end
+    table.sort(names)
+    if #names > 0 then Knife.set = seen end
+    return names
+end
+
+function Knife.isKnife(name)
+    if not Knife.set then Knife.list() end
+    return Knife.set ~= nil and Knife.set[name] == true
+end
+
+function Knife.valid(name)
+    local content = Game.mods.ContentInterface
+    if not (content and type(name) == "string") then return false end
+    local okModel, model = pcall(content.getWeaponModel, name)
+    local okData, data = pcall(content.getWeaponData, name)
+    return okModel and typeof(model) == "Instance" and okData and type(data) == "table"
+end
+
+function Knife.skinNames()
+    local names = {}
+    local ok, database = pcall(function()
+        local storage = game:GetService("ReplicatedStorage")
+        local content = storage:FindFirstChild("Content")
+        local production = content and content:FindFirstChild("ProductionContent")
+        local module = production and production:FindFirstChild("CamoDatabase")
+        return module and require(module)
+    end)
+    if ok and type(database) == "table" then
+        for name in pairs(database) do
+            if type(name) == "string" then names[#names + 1] = name end
+        end
+    end
+    table.sort(names)
+    return names
+end
+
+function Knife.items()
+    local items = { "Default" }
+    for _, name in ipairs(Knife.list()) do items[#items + 1] = name end
+    return items
+end
+
+function Knife.skinItems()
+    local items = { "Default", "None" }
+    for _, name in ipairs(Knife.skinNames()) do items[#items + 1] = name end
+    return items
+end
+
+function Knife.camo(name, skin)
+    if skin == "None" then return {} end
+    local sets = Game.mods.SkinCaseUtils
+    if sets and type(sets.getSkinDataset) == "function" then
+        local ok, data = pcall(sets.getSkinDataset, skin)
+        if not (ok and type(data) == "table") then return nil end
+    end
+    local content = Game.mods.ContentInterface
+    local okSlots, slots = pcall(content.getCamoSlots, name)
+    if not (okSlots and type(slots) == "table") then return nil end
+    local camo = {}
+    for _, tag in pairs(slots) do camo[tag] = { Name = skin } end
+    return camo
+end
+
+function Knife.ownLoadout(loadout)
+    local utils, data = Game.mods.ActiveLoadoutUtils, Game.mods.PlayerDataClientInterface
+    if not (utils and data) then return true end
+    local ok, current = pcall(function() return utils.getActiveLoadoutData(data.getPlayerData()) end)
+    return not ok or current == loadout
+end
+
+function Knife.swap(loadout)
+    if not flag("misc_knife_on", false) or type(loadout) ~= "table" then return nil end
+    local choice, skin = flag("misc_knife", "Default"), flag("misc_knife_skin", "Default")
+    if choice == "Default" and skin == "Default" then return nil end
+    if not Knife.ownLoadout(loadout) then return nil end
+    local real = type(loadout.Knife) == "table" and loadout.Knife or nil
+    local name = choice ~= "Default" and choice or (real and real.Name)
+    if not Knife.valid(name) then return nil end
+    local knife = {}
+    if real then
+        for key, value in pairs(real) do knife[key] = value end
+    end
+    knife.Name = name
+    if choice ~= "Default" then knife.Attachments = {} end
+    if skin ~= "Default" then
+        local camo = Knife.camo(name, skin)
+        if camo then knife.Camo = camo end
+    end
+    local copy = {}
+    for key, value in pairs(loadout) do copy[key] = value end
+    copy.Knife = knife
+    return copy
+end
+
+function Knife.filterSend(method, slot, name)
+    if method ~= "changeWeapon" and method ~= "equipWeaponLoadout" then return false end
+    if not flag("misc_knife_unlock", false) or not Knife.isKnife(name) then return false end
+    local interface, owns = Game.mods.PlayerDataClientInterface, Knife.realOwns
+    if not (interface and owns) then return false end
+    local ok, owned = pcall(function() return owns(interface.getPlayerData(), name) end)
+    return ok and not owned
+end
+
+Game.filterSend = Knife.filterSend
+
+function Knife.syncUI()
+    local names = Knife.list()
+    if #names == 0 then return false end
+    for flagName, items in pairs({ misc_knife = Knife.items(), misc_knife_skin = Knife.skinItems() }) do
+        local option = Options[flagName]
+        if option and type(option.SetValues) == "function" then
+            local current = option.Value
+            pcall(option.SetValues, option, items)
+            if current and table.find(items, current) then pcall(option.SetValue, option, current) end
+        end
+    end
+    Knife.synced = true
+    return true
+end
+
+function Knife.hook()
+    local spawner = Game.mods.CharacterObject
+    if not Game.hooked.knifeSpawn and type(spawner) == "table" then
+        Game.hooked.knifeSpawn = Util.hook(spawner, "new", function(original)
+            return function(root, direction, loadout, ...)
+                local ok, swapped = pcall(Knife.swap, loadout)
+                if ok and swapped then loadout = swapped end
+                return original(root, direction, loadout, ...)
+            end
+        end)
+    end
+    local data = Game.mods.PlayerDataUtils
+    if not Game.hooked.knifeOwn and type(data) == "table" then
+        Game.hooked.knifeOwn = Util.hook(data, "ownsWeapon", function(original)
+            Knife.realOwns = original
+            return function(playerData, name, ...)
+                if flag("misc_knife_unlock", false) and Knife.isKnife(name) then return true end
+                return original(playerData, name, ...)
+            end
+        end)
+    end
+    if not Knife.synced then Knife.syncUI() end
+end
+
+local Local = { recs = setmetatable({}, { __mode = "k" }), textures = {}, names = {}, idle = { specs = {}, rm = {} }, cats = { "arm", "glove", "cloth", "gun" } }
+
+Local.materials = { "ForceField", "Plastic", "SmoothPlastic", "Neon", "Glass", "Metal", "Foil", "DiamondPlate", "CorrodedMetal", "Ice", "Glacier", "Marble", "Granite", "Wood", "Fabric", "Leather", "Rubber", "Sand", "Concrete", "Slate" }
+
+for _, entry in ipairs({
+    { "None", "" }, { "Webbed", "rbxassetid://2179243880" }, { "Pixelated", "rbxassetid://140652787" }, { "Swirl", "rbxassetid://8133639623" },
+    { "Shield", "rbxassetid://361073795" }, { "Bubbles", "rbxassetid://1461576423" }, { "Matrix", "rbxassetid://10713189068" },
+    { "Honeycomb", "rbxassetid://179898251" }, { "Clouds", "rbxassetid://5176277457" }, { "Galaxy", "rbxassetid://1120738433" },
+    { "Stars", "rbxassetid://598201818" }, { "Wires", "rbxassetid://14127933" }, { "Camo", "rbxassetid://3280937154" },
+    { "Hexagon", "rbxassetid://6175083785" }, { "Particles", "rbxassetid://1133822388" }, { "Triangular", "rbxassetid://4504368932" },
+    { "Wall", "rbxassetid://4271279" }, { "Scanning", "rbxassetid://5843010904" },
+}) do
+    Local.names[#Local.names + 1] = entry[1]
+    Local.textures[entry[1]] = entry[2]
+end
+
+function Local.kindOf(object)
+    local function is(class)
+        local ok, result = pcall(function() return object:IsA(class) end)
+        return ok and result == true
+    end
+    if is("MeshPart") then return "mesh" end
+    if is("UnionOperation") then return "union" end
+    if is("BasePart") then return "part" end
+    if is("SpecialMesh") then return "smesh" end
+    if is("Texture") or is("Decal") then return "decal" end
+    return nil
+end
+
+function Local.armCategory(object, model)
+    local node = object
+    for _ = 1, 12 do
+        if not node or node == model then break end
+        local name = propGet(node, "Name")
+        if name == "Sleeves" then return "cloth" end
+        if name == "SkinTone" then return "arm" end
+        node = propGet(node, "Parent")
+    end
+    return "glove"
+end
+
+function Local.build(model, kind)
+    local items = {}
+    local ok, list = pcall(function() return model:GetDescendants() end)
+    if not (ok and type(list) == "table") then return items end
+    for _, object in ipairs(list) do
+        local class = Local.kindOf(object)
+        if class then
+            local item = { inst = object, kind = class, cat = kind == "weapon" and "gun" or Local.armCategory(object, model) }
+            if class == "decal" and item.cat == "gun" then
+                local parentName = propGet(propGet(object, "Parent"), "Name")
+                item.keep = type(parentName) == "string" and string.find(string.lower(parentName), "sight", 1, true) ~= nil
+            end
+            items[#items + 1] = item
+        end
+    end
+    return items
+end
+
+function Local.snapshot(item)
+    local object, orig = item.inst, {}
+    if item.kind == "smesh" then
+        orig.TextureId, orig.VertexColor = propGet(object, "TextureId"), propGet(object, "VertexColor")
+        return orig
+    end
+    orig.Transparency = propGet(object, "Transparency")
+    if type(orig.Transparency) ~= "number" then return nil end
+    if item.kind == "decal" then return orig end
+    orig.Material, orig.Color, orig.Reflectance = propGet(object, "Material"), propGet(object, "Color"), propGet(object, "Reflectance")
+    if orig.Color == nil then return nil end
+    if item.kind == "mesh" then orig.TextureID = propGet(object, "TextureID") end
+    if item.kind == "union" then orig.UsePartColor = propGet(object, "UsePartColor") end
+    return orig
+end
+
+function Local.setIf(object, prop, value)
+    if value ~= nil and propGet(object, prop) ~= value then propSet(object, prop, value) end
+end
+
+function Local.writeTransparency(item, want, current)
+    if want == nil or current == want then return end
+    if want >= 1 or current < 1 or item.wrote == 1 then
+        propSet(item.inst, "Transparency", want)
+        item.wrote = want
+    end
+end
+
+function Local.restoreItem(item)
+    local object, orig = item.inst, item.orig
+    item.orig = nil
+    if not orig then return end
+    if item.kind == "smesh" then
+        Local.setIf(object, "TextureId", orig.TextureId)
+        Local.setIf(object, "VertexColor", orig.VertexColor)
+    else
+        if item.wrote ~= nil and propGet(object, "Transparency") == item.wrote then propSet(object, "Transparency", orig.Transparency) end
+        if item.kind ~= "decal" then
+            Local.setIf(object, "Material", orig.Material)
+            Local.setIf(object, "Color", orig.Color)
+            Local.setIf(object, "Reflectance", orig.Reflectance)
+            Local.setIf(object, "TextureID", orig.TextureID)
+            Local.setIf(object, "UsePartColor", orig.UsePartColor)
+        end
+    end
+    item.wrote = nil
+end
+
+function Local.applyItem(item, spec, hide)
+    if not (hide or spec) then
+        if item.orig then Local.restoreItem(item) end
+        return
+    end
+    if item.orig == nil then item.orig = Local.snapshot(item) or false end
+    local orig, object = item.orig, item.inst
+    if not orig then return end
+    if item.kind == "smesh" then
+        if spec then
+            Local.setIf(object, "TextureId", spec.texture)
+            Local.setIf(object, "VertexColor", spec.vertex)
+        end
+        return
+    end
+    local current = propGet(object, "Transparency")
+    if type(current) ~= "number" then return end
+    if orig.Transparency >= 1 and current < 1 and item.wrote == nil then orig.Transparency = current end
+    if item.kind == "decal" then
+        if hide or not item.keep then Local.writeTransparency(item, 1, current) end
+        return
+    end
+    if hide then
+        Local.writeTransparency(item, 1, current)
+        return
+    end
+    Local.setIf(object, "Material", spec.material)
+    Local.setIf(object, "Color", spec.color)
+    Local.setIf(object, "Reflectance", spec.refl)
+    if item.kind == "mesh" then Local.setIf(object, "TextureID", spec.texture) end
+    if item.kind == "union" then Local.setIf(object, "UsePartColor", true) end
+    Local.writeTransparency(item, orig.Transparency < 1 and spec.alpha or nil, current)
+end
+
+function Local.spec(cat)
+    local base = "local_" .. cat
+    if not on(base) then return nil end
+    local color = val(base .. "_color") or WHITE
+    local materialName = val(base .. "_mat") or "ForceField"
+    local okMaterial, material = pcall(function() return Enum.Material[materialName] end)
+    if not (okMaterial and material) then return nil end
+    local texture = ""
+    if materialName == "ForceField" then texture = Local.textures[val(base .. "_tex") or "None"] or "" end
+    return {
+        color = color, alpha = Util.alpha(base .. "_color", 0), material = material, texture = texture,
+        refl = val(base .. "_refl") or 0, vertex = Vector3.new(color.R, color.G, color.B),
+    }
+end
+
+function Local.settings()
+    local state = { specs = {}, any = false, rm = {
+        armLeft = on("local_rm_larm") == true, armRight = on("local_rm_rarm") == true,
+        clothLeft = on("local_rm_lsleeve") == true, clothRight = on("local_rm_rsleeve") == true,
+        glove = on("local_rm_gloves") == true, gun = on("local_rm_gun") == true,
+    } }
+    for _, cat in ipairs(Local.cats) do
+        local spec = Local.spec(cat)
+        state.specs[cat] = spec
+        if spec then state.any = true end
+    end
+    for _, hidden in pairs(state.rm) do
+        if hidden then state.any = true end
+    end
+    return state
+end
+
+function Local.styleRec(rec, state)
+    for _, item in ipairs(rec.items) do
+        local cat = item.cat
+        local hide = state.rm[(cat == "glove" or cat == "gun") and cat or cat .. (rec.side or "")]
+        Local.applyItem(item, state.specs[cat], hide)
+    end
+end
+
+function Local.track(model, kind, side, now)
+    if not model then return end
+    local rec = Local.recs[model]
+    if not rec then
+        rec = { kind = kind, side = side, items = Local.build(model, kind) }
+        Local.recs[model] = rec
+    end
+    rec.seen = now
+end
+
+function Local.collect(now)
+    local interface = Game.mods.CharacterInterface
+    if not (interface and Game.localAlive()) then return end
+    local ok, character = pcall(interface.getCharacterObject)
+    if not (ok and type(character) == "table") then return end
+    if type(character.getArmModels) == "function" then
+        local okArms, left, right = pcall(character.getArmModels, character)
+        if okArms then
+            Local.track(left, "arm", "Left", now)
+            Local.track(right, "arm", "Right", now)
+        end
+    end
+    local weapon = Game.weapon()
+    if weapon then
+        local okModel, model = pcall(function() return weapon._weaponModel or weapon:getWeaponModel() end)
+        if okModel then Local.track(model, "weapon", nil, now) end
+    end
+end
+
+function Local.refresh(now)
+    local state = Local.settings()
+    if not state.any and next(Local.recs) == nil then return end
+    if state.any then Local.collect(now) end
+    for model, rec in pairs(Local.recs) do
+        if not state.any or now - rec.seen > 20 then
+            Local.styleRec(rec, Local.idle)
+            Local.recs[model] = nil
+        else
+            Local.styleRec(rec, state)
+        end
+    end
+end
+
+function Local.offset(weapon)
+    if not on("local_vm") then return end
+    local x, y, z = flag("local_vm_x", 0), flag("local_vm_y", 0), flag("local_vm_z", 0)
+    local pitch, yaw, roll = flag("local_vm_pitch", 0), flag("local_vm_yaw", 0), flag("local_vm_roll", 0)
+    if x == 0 and y == 0 and z == 0 and pitch == 0 and yaw == 0 and roll == 0 then return end
+    local main, character = weapon._mainWeld, weapon._characterObject
+    local cam = Game.camera()
+    if not (main and character and cam) then return end
+    local scale = 1
+    if flag("local_vm_aim", false) and type(weapon._aimArmSpring) == "table" and type(weapon._aimArmSpring.p) == "number" then
+        scale = 1 - math.clamp(weapon._aimArmSpring.p, 0, 1)
+    end
+    local base = main.C0
+    local relative = character:getRootPart().CFrame:Inverse() * cam.CFrame
+    local axes = CFrame.new(relative.Position):Inverse() * relative
+    local spin = axes * CFrame.Angles(math.rad(pitch) * scale, math.rad(yaw) * scale, math.rad(roll) * scale) * axes:Inverse()
+    local pivot = CFrame.new(base.Position)
+    local shift = CFrame.new(axes * Vector3.new(x * scale, y * scale, -z * scale))
+    local change = shift * pivot * spin * pivot:Inverse()
+    main.C0 = change * base
+    local left, right = character:getArmWelds()
+    if left then left.C0 = change * left.C0 end
+    if right then right.C0 = change * right.C0 end
+end
+
+function Local.afterStep(weapon)
+    Local.hooked = true
+    pcall(Local.offset, weapon)
+    Local.refresh(os.clock())
+end
+
+function Local.hook()
+    for _, name in ipairs({ "FirearmObject", "MeleeObject", "GrenadeObject" }) do
+        local key, owner = "step" .. name, Game.mods[name]
+        if owner and not Game.hooked[key] then
+            Game.hooked[key] = Util.hook(owner, "step", function(original)
+                return function(self, ...)
+                    local a, b = original(self, ...)
+                    Util.guard("localvis", Local.afterStep, self)
+                    return a, b
+                end
+            end)
+        end
+    end
+end
+
+function Local.step(now)
+    if Local.hooked then
+        Local.hooked = false
+        return
+    end
+    Local.refresh(now)
+end
+
+Util.onUnload(function()
+    for model, rec in pairs(Local.recs) do
+        Local.styleRec(rec, Local.idle)
+        Local.recs[model] = nil
+    end
+end)
+
 local Pages = {
     Legit = UI.page("Legit", "crosshair"),
     Rage = UI.page("Rage", "swords"),
     ESP = UI.page("ESP", "eye"),
     World = UI.page("World", "globe"),
+    Local = UI.page("Local", "user"),
     Misc = UI.page("Misc", "shapes"),
 }
 local Status = {}
 
 do
-    local Subs = Pages.Legit:SubTabs({ { "Aim Assist", "crosshair" }, { "Trigger Bot", "zap" }, { "Recoil", "target" } })
+    local Subs = Pages.Legit:SubTabs({ { "Aim Assist", "crosshair" }, { "Silent Aim", "scan" }, { "Trigger Bot", "zap" }, { "Recoil", "target" } })
 
     local Aim = Subs["Aim Assist"]
     local function pickColor(popup, label, flagName, default, alpha)
@@ -4507,12 +5097,6 @@ do
     Pred:Toggle({ Name = "Dot outline", Flag = "legit_pred_outline", Default = true })
     Pred:Toggle({ Name = "All enemies in FOV", Flag = "legit_pred_all", Tooltip = "Draws the dot for every enemy inside the FOV instead of only the aim target" })
     Pred:Toggle({ Name = "Aim at prediction", Flag = "legit_pred_aim", Tooltip = "Aims at the solved intercept point (full lead and drop) instead of the strength-limited lead below" })
-    local Quiet = Master:Toggle({ Name = "Silent aim", Flag = "legit_silent", Tooltip = "Redirects your own bullets (client bullet and the newbullets packet) at the target without moving the camera or weapon. Risk: the server sees shots that do not match your view direction" }):Settings("Silent aim", 230)
-    Quiet:Slider({ Name = "Silent FOV", Flag = "legit_silent_fov", Min = 5, Max = 600, Default = 90, Decimals = 1, Suffix = " px", Tooltip = "Radius around the screen centre where a target can be redirected to" })
-    Quiet:Toggle({ Name = "Draw silent FOV", Flag = "legit_silent_draw", Default = true })
-    pickColor(Quiet, "Silent circle", "legit_silent_color", Color3.fromRGB(255, 200, 80))
-    Quiet:Slider({ Name = "Hit chance", Flag = "legit_silent_chance", Min = 1, Max = 100, Default = 100, Decimals = 1, Suffix = "%", Tooltip = "Chance that a shot is redirected" })
-    Quiet:Toggle({ Name = "Only visible or penetrable", Flag = "legit_silent_visible", Default = true })
     Master:Toggle({ Name = "Only while aiming down sights", Flag = "legit_ads" })
     Master:Toggle({ Name = "Only while shooting", Flag = "legit_shooting" })
     Master:Toggle({ Name = "Aim from barrel", Flag = "legit_barrel", Default = true, Tooltip = "Uses the weapon's bullet origin and direction (as the game computes them) for visibility, prediction and aiming; the camera is still the only thing that moves" })
@@ -4563,6 +5147,19 @@ do
         pcall(function() Library:Notify("Core " .. tostring(Game.summary), 4) end)
     end })
 
+    local Sil = Subs["Silent Aim"]
+    local SilBox = Sil:Section({ Name = "Silent aim", Side = 1, Icon = "crosshair" })
+    local Quiet = SilBox:Toggle({ Name = "Enabled", Flag = "legit_silent", Tooltip = "Redirects your own bullets (client bullet and the newbullets packet) at the target without moving the camera or weapon. Risk: the server sees shots that do not match your view direction" }):Settings("Silent aim", 230)
+    Quiet:Toggle({ Name = "Draw silent FOV", Flag = "legit_silent_draw", Default = true })
+    pickColor(Quiet, "Silent circle", "legit_silent_color", Color3.fromRGB(255, 200, 80))
+    SilBox:Slider({ Name = "Silent FOV", Flag = "legit_silent_fov", Min = 5, Max = 600, Default = 90, Decimals = 1, Suffix = " px", Tooltip = "Radius around the screen centre where a target can be redirected to" })
+    SilBox:Slider({ Name = "Hit chance", Flag = "legit_silent_chance", Min = 1, Max = 100, Default = 100, Decimals = 1, Suffix = "%", Tooltip = "Chance that a shot is redirected" })
+    SilBox:Toggle({ Name = "Only visible or penetrable", Flag = "legit_silent_visible", Default = true })
+    local SilTarget = Sil:Section({ Name = "Silent targeting", Side = 2, Icon = "target" })
+    SilTarget:Dropdown({ Name = "Hitbox priority", Flag = "legit_silent_priority", Items = { "Closest", "Head", "Torso" }, Default = "Closest", Tooltip = "Closest picks the part nearest the crosshair; Head/Torso prefer that part when it qualifies" })
+    SilTarget:Dropdown({ Name = "Hitboxes", Flag = "legit_silent_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
+    SilTarget:Label({ Name = "Uses Aimbot's Multipoint, Wallbang, Prediction, Team check and Max distance" })
+
     local Trig = Subs["Trigger Bot"]
     local TriggerBox = Trig:Section({ Name = "Trigger bot", Side = 1, Icon = "zap" })
     TriggerBox:Toggle({ Name = "Enabled", Flag = "trig_on", Tooltip = "Fires when the crosshair is on an enemy hitbox" }):Keybind({ Name = "Trigger key", Flag = "trig_key", Default = "None", Mode = "Always" })
@@ -4605,6 +5202,55 @@ do
     Pc:Slider({ Name = "Forward offset", Flag = "misc_phantomcam_forward", Min = 0, Max = 2, Default = 0.5, Decimals = 0.01, Suffix = " studs" })
     Pc:Slider({ Name = "Camera FOV", Flag = "misc_phantomcam_fov", Min = 0, Max = 120, Default = 0, Decimals = 1, Tooltip = "0 keeps the game's FOV" })
     Pc:Toggle({ Name = "Debug", Flag = "misc_phantomcam_debug", Tooltip = "Prints a PhantomCam status line to the console once per second" })
+
+    local Kn = Pages.Misc:Section({ Name = "Knife unlock", Side = 2, Icon = "swords" })
+    Kn:Toggle({ Name = "Use selected knife", Flag = "misc_knife_on", Tooltip = "Spawns you with the knife and skin below. Client side only: the server still has your real knife, no loadout packet is sent" })
+    Kn:Dropdown({ Name = "Knife", Flag = "misc_knife", Items = Knife.items(), Default = "Default", Tooltip = "Every melee weapon in the game's content; Default keeps your equipped knife" })
+    Kn:Dropdown({ Name = "Knife skin", Flag = "misc_knife_skin", Items = Knife.skinItems(), Default = "Default", Tooltip = "Default keeps your knife's own skin, None strips it" })
+    Kn:Toggle({ Name = "Unlock all knives", Flag = "misc_knife_unlock", Tooltip = "The loadout menu treats every knife as owned. Equipping an unowned knife there stays local: the packet that would tell the server is dropped" })
+    Kn:Button({ Name = "Refresh knife list", Callback = function()
+        Knife.synced = false
+        Knife.syncUI()
+    end })
+    Kn:Label({ Name = "Applies on your next spawn" })
+end
+
+do
+    local function pickColor(popup, label, flagName, default, alpha)
+        popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
+    end
+
+    local Chams = Pages.Local:Section({ Name = "Viewmodel chams", Side = 1, Icon = "palette" })
+    local function chams(label, cat, tooltip, tint)
+        local base = "local_" .. cat
+        local popup = Chams:Toggle({ Name = label, Flag = base, Tooltip = tooltip }):Settings(label, 230)
+        pickColor(popup, "Colour", base .. "_color", tint)
+        popup:Dropdown({ Name = "Material", Flag = base .. "_mat", Items = Local.materials, Default = "ForceField" })
+        popup:Dropdown({ Name = "Texture", Flag = base .. "_tex", Items = Local.names, Default = "None", Tooltip = "Pattern drawn by the ForceField material" })
+        popup:Slider({ Name = "Reflectance", Flag = base .. "_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
+    end
+    chams("Arm chams", "arm", "First-person skin parts of your arms (SkinTone)", Color3.fromRGB(255, 120, 160))
+    chams("Glove chams", "glove", "First-person arm parts that are neither sleeve nor skin: gloves and accessories", Color3.fromRGB(120, 200, 255))
+    chams("Clothes chams", "cloth", "First-person sleeves", Color3.fromRGB(170, 120, 255))
+    chams("Gun chams", "gun", "The weapon in your hands: every part of the viewmodel weapon", Color3.fromRGB(120, 255, 170))
+
+    local Remove = Pages.Local:Section({ Name = "Remove parts", Side = 2, Icon = "eye" })
+    Remove:Toggle({ Name = "Remove left arm", Flag = "local_rm_larm", Tooltip = "Hides the left arm's skin; sleeve and glove stay" })
+    Remove:Toggle({ Name = "Remove right arm", Flag = "local_rm_rarm", Tooltip = "Hides the right arm's skin; sleeve and glove stay" })
+    Remove:Toggle({ Name = "Remove left sleeve", Flag = "local_rm_lsleeve" })
+    Remove:Toggle({ Name = "Remove right sleeve", Flag = "local_rm_rsleeve" })
+    Remove:Toggle({ Name = "Remove gloves", Flag = "local_rm_gloves", Tooltip = "Both hands' gloves and accessories" })
+    Remove:Toggle({ Name = "Remove gun", Flag = "local_rm_gun", Tooltip = "Hides the viewmodel weapon" })
+
+    local Changer = Pages.Local:Section({ Name = "Viewmodel changer", Side = 2, Icon = "camera" })
+    local Offset = Changer:Toggle({ Name = "Viewmodel offset", Flag = "local_vm", Tooltip = "Moves and tilts the weapon and arms after the game positions them; bullets and your aim are not affected" }):Settings("Viewmodel offset", 230)
+    Offset:Slider({ Name = "X (right)", Flag = "local_vm_x", Min = -2, Max = 2, Default = 0, Decimals = 0.01, Suffix = " studs" })
+    Offset:Slider({ Name = "Y (up)", Flag = "local_vm_y", Min = -2, Max = 2, Default = 0, Decimals = 0.01, Suffix = " studs" })
+    Offset:Slider({ Name = "Z (forward)", Flag = "local_vm_z", Min = -2, Max = 2, Default = 0, Decimals = 0.01, Suffix = " studs" })
+    Offset:Slider({ Name = "Pitch", Flag = "local_vm_pitch", Min = -180, Max = 180, Default = 0, Decimals = 1, Suffix = " deg" })
+    Offset:Slider({ Name = "Yaw", Flag = "local_vm_yaw", Min = -180, Max = 180, Default = 0, Decimals = 1, Suffix = " deg" })
+    Offset:Slider({ Name = "Roll", Flag = "local_vm_roll", Min = -180, Max = 180, Default = 0, Decimals = 1, Suffix = " deg" })
+    Offset:Toggle({ Name = "Fade out while aiming", Flag = "local_vm_aim", Tooltip = "The offset shrinks to nothing as you aim down sights" })
 end
 
 do
@@ -4833,15 +5479,15 @@ do
     Clouds:Slider({ Name = "Density", Flag = "world_clouds_density", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
 
     local Wx = Subs.Weather:Section({ Name = "Weather", Side = 1, Icon = "cloud" })
-    Wx:Toggle({ Name = "Enabled", Flag = "world_weather", Tooltip = "Particles follow you in map-anchored cells and only fall where the sky is open above" })
+    Wx:Toggle({ Name = "Enabled", Flag = "world_weather", Tooltip = "Particles follow you in map-anchored cells and only fall where the sky is open above; Cover whole map replaces that with cells over the whole map" })
     Wx:Dropdown({ Name = "Type", Flag = "world_weather_preset", Items = WEATHER_NAMES, Default = "Snow" })
     Wx:Slider({ Name = "Density", Flag = "world_weather_amount", Min = 0.1, Max = 3, Default = 1, Decimals = 0.05 })
     Wx:Slider({ Name = "Speed", Flag = "world_weather_speed", Min = 0.2, Max = 3, Default = 1, Decimals = 0.05 })
     Wx:Slider({ Name = "Particle size", Flag = "world_weather_size", Min = 0.3, Max = 3, Default = 1, Decimals = 0.05 })
-    local mapGear = Wx:Toggle({ Name = "Cover whole map", Flag = "world_weather_map", Tooltip = "Spreads the cells over the whole map instead of around you; cells grow so the count stays under the cap" }):Settings("Whole map", 200)
+    local mapGear = Wx:Toggle({ Name = "Cover whole map", Flag = "world_weather_map", Tooltip = "Weather over the whole map only; the cells that follow you are switched off and come back when this is off. Cells grow so the count stays under the cap" }):Settings("Whole map", 200)
     mapGear:Slider({ Name = "Max cells", Flag = "world_weather_map_cap", Min = 16, Max = 400, Default = 100, Decimals = 1, Tooltip = "More cells = finer roof detection but more emitters" })
     mapGear:Slider({ Name = "Clear radius around player", Flag = "world_weather_clear_radius", Min = 0, Max = 150, Default = 40, Decimals = 1, Suffix = " studs", Tooltip = "Cells this close to you stay empty so nothing falls on or above you; 0 = off" })
-    Wx:Slider({ Name = "Range", Flag = "world_weather_range", Min = 1, Max = 3, Default = 2, Decimals = 1, Suffix = " cells", Tooltip = "Rings of 28 stud cells around you" })
+    Wx:Slider({ Name = "Range", Flag = "world_weather_range", Min = 1, Max = 3, Default = 2, Decimals = 1, Suffix = " cells", Tooltip = "Rings of 28 stud cells around you; unused while Cover whole map is on" })
     Wx:Slider({ Name = "Spawn height", Flag = "world_weather_height", Min = 10, Max = 80, Default = 35, Decimals = 1, Suffix = " studs" })
     local Wind = Subs.Weather:Section({ Name = "Wind and colour", Side = 2, Icon = "cloud" })
     Wind:Slider({ Name = "Wind strength", Flag = "world_weather_wind", Min = 0, Max = 30, Default = 4, Decimals = 0.1 })
@@ -4932,6 +5578,15 @@ do
     Trace:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = { "Obelus", "Lightning", "DNA", "Beam", "Bolt", "Trail", "Zigzag", "Heartrate", "Chain", "Glitch", "Swirl" }, Default = "Lightning" })
     Trace:Slider({ Name = "Tracer lifetime", Flag = "trace_time", Min = 0.5, Max = 10, Default = 4, Decimals = 0.1, Suffix = " s" })
     Trace:Slider({ Name = "Tracer width", Flag = "trace_width", Min = 0.2, Max = 3, Default = 1, Decimals = 0.1, Suffix = "x" })
+    local Glow = Trace:Toggle({ Name = "Tracer glow", Flag = "trace_glow", Tooltip = "Full-bright beam plus a wider additive halo behind it" }):Settings("Tracer glow", 230)
+    Glow:Slider({ Name = "Glow strength", Flag = "trace_glow_strength", Min = 0, Max = 10, Default = 4, Decimals = 0.1 })
+    Glow:Toggle({ Name = "Glow uses tracer colour", Flag = "trace_glow_same", Default = true })
+    Glow:Label({ Name = "Glow colour" }):Colorpicker({ Name = "Glow colour", Flag = "trace_glow_color", Default = Color3.fromRGB(255, 255, 255) })
+    local Grad = Trace:Toggle({ Name = "Tracer gradient", Flag = "trace_gradient", Tooltip = "Colours the tracer from start to end along its whole length, replacing the single tracer colour" }):Settings("Tracer gradient", 230)
+    Grad:Label({ Name = "Gradient start" }):Colorpicker({ Name = "Gradient start", Flag = "trace_grad_start", Default = Color3.fromRGB(255, 94, 94) })
+    Grad:Label({ Name = "Gradient end" }):Colorpicker({ Name = "Gradient end", Flag = "trace_grad_end", Default = Color3.fromRGB(94, 160, 255) })
+    Grad:Slider({ Name = "Gradient fade", Flag = "trace_grad_fade", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Tooltip = "Fades the tracer toward its far end" })
+    Grad:Toggle({ Name = "Rainbow", Flag = "trace_rainbow", Tooltip = "Cycles hue along the tracer instead of the two colours" })
     Trace:Toggle({ Name = "Hide the game's beam", Flag = "trace_hide_beam", Default = true, Tooltip = "Turns off the game's own tracer beam on bullets that get a custom tracer" })
 end
 
@@ -5868,6 +6523,8 @@ function Loop.step()
         Loop.hookAt = now
         Util.guard("hooks", Feedback.hook)
         Util.guard("nadehook", Nades.hook)
+        Util.guard("knifehook", Knife.hook)
+        Util.guard("localhook", Local.hook)
     end
 
     local records = Entities.update()
@@ -5886,6 +6543,7 @@ function Loop.step()
     Util.guard("feedback", Feedback.step, cam, center, now)
     Util.guard("tracers", Tracers.step, now)
     Util.guard("nades", Nades.step, cam, now)
+    Util.guard("localvis", Local.step, now)
 
     if now - Loop.labelAt > 0.2 then
         Loop.labelAt = now

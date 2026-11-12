@@ -3180,8 +3180,9 @@ end
 function World.stepFov(dt)
     local state = World.fov
     local camera = Game.gameCamera()
-    if flag("world_fov", false) and camera and type(camera._baseFov) == "number" then
-        if state.object ~= camera then state.object, state.orig, state.blend = camera, camera._baseFov, 0 end
+    if flag("world_fov", false) and camera then
+        local numeric = type(camera._baseFov) == "number"
+        if state.object ~= camera then state.object, state.orig, state.blend = camera, numeric and camera._baseFov or nil, 0 end
         local tanHalf = math.tan(math.rad(flag("world_fov_v", 90)) / 2)
         if flag("world_fov_dyn", false) then
             local weapon = Game.weapon()
@@ -3192,11 +3193,16 @@ function World.stepFov(dt)
         end
         local magnify = camera._magSpring
         local zoom = type(magnify) == "table" and magnify.p
-        if type(zoom) == "number" then tanHalf = tanHalf * math.exp(zoom * (1 - flag("world_fov_mult", 1))) end
-        camera._baseFov = math.clamp(math.deg(2 * math.atan(tanHalf)), 5, 150)
-    elseif state.object then
-        if state.orig and type(state.object._baseFov) == "number" then state.object._baseFov = state.orig end
-        state.object, state.orig = nil, nil
+        local mult = flag("world_fov_mult", 1)
+        state.final = math.clamp(math.deg(2 * math.atan(tanHalf * math.exp(-(type(zoom) == "number" and zoom or 0) * mult))), 5, 150)
+        if type(zoom) == "number" then tanHalf = tanHalf * math.exp(zoom * (1 - mult)) end
+        if numeric then camera._baseFov = math.clamp(math.deg(2 * math.atan(tanHalf)), 5, 150) end
+    else
+        state.final = nil
+        if state.object then
+            if state.orig and type(state.object._baseFov) == "number" then state.object._baseFov = state.orig end
+            state.object, state.orig = nil, nil
+        end
     end
 end
 
@@ -5395,7 +5401,7 @@ end
 function Corpse.state()
     local state = { materialName = val("chams_dead_mat") or "ForceField", texture = val("chams_dead_tex") or "None", refl = val("chams_dead_refl") or 0,
         hide = on("chams_dead_hide") == true, fade = val("chams_dead_fade") or 0, kinds = {} }
-    local parts = { state.materialName, state.texture, state.refl, tostring(state.hide) }
+    local parts = { state.materialName, state.texture, state.refl, tostring(state.hide), state.fade }
     for _, kind in ipairs({ "enemy", "team", "local" }) do
         local flagName = "chams_dead_" .. kind .. "_color"
         local entry = { enabled = on("chams_dead_" .. kind) == true, color = val(flagName) or WHITE, alpha = Util.alpha(flagName, 0) }
@@ -6160,6 +6166,53 @@ for _, name in ipairs({ "PhantomCamApi", "PhantomCam" }) do
     getgenv()[name] = nil
 end
 
+local HookChain = {}
+
+function HookChain.add(object, id, priority, fn)
+    local chain = rawget(object, "__hookchain")
+    if not chain then
+        chain = { list = {}, orig = rawget(object, "postStep") }
+        chain.wrapper = function(self, dt)
+            local orig = chain.orig
+            local a, b = nil, nil
+            if orig then a, b = orig(self, dt) end
+            local snapshot = table.move(chain.list, 1, #chain.list, 1, {})
+            for _, entry in ipairs(snapshot) do pcall(entry.fn, self, dt) end
+            return a, b
+        end
+        local set, problem = pcall(function() object.postStep = chain.wrapper end)
+        if not set then return false, problem end
+        rawset(object, "__hookchain", chain)
+    end
+    for index, entry in ipairs(chain.list) do
+        if entry.id == id then table.remove(chain.list, index) break end
+    end
+    table.insert(chain.list, { id = id, priority = priority, fn = fn })
+    table.sort(chain.list, function(a, b) return a.priority < b.priority end)
+    return true
+end
+
+function HookChain.has(object, id)
+    local chain = rawget(object, "__hookchain")
+    if not chain then return false end
+    for _, entry in ipairs(chain.list) do
+        if entry.id == id then return true end
+    end
+    return false
+end
+
+function HookChain.remove(object, id)
+    local chain = rawget(object, "__hookchain")
+    if not chain then return end
+    for index, entry in ipairs(chain.list) do
+        if entry.id == id then table.remove(chain.list, index) break end
+    end
+    if #chain.list == 0 and rawget(object, "postStep") == chain.wrapper then
+        pcall(function() object.postStep = chain.orig end)
+        rawset(object, "__hookchain", nil)
+    end
+end
+
 local Cam = {
     settings = {
         strength = 2.5, smoothing = 0, position = 0, roll = false, onlyAiming = false, noScope = false,
@@ -6351,10 +6404,7 @@ end
 function Cam.detach()
     local object = Cam.hooked
     Cam.hooked = nil
-    if object and rawget(object, "postStep") == Cam.hookFn then
-        pcall(function() object.postStep = Cam.hookPrev end)
-    end
-    Cam.hookFn, Cam.hookPrev = nil, nil
+    if object then HookChain.remove(object, "phantomcam") end
 end
 
 function Cam.attach(now)
@@ -6367,7 +6417,7 @@ function Cam.attach(now)
         Cam.hookWhy = ok and "no MainCamera active (menu/spectate)" or tostring(object)
         return
     end
-    if Cam.hooked == object then
+    if Cam.hooked == object and HookChain.has(object, "phantomcam") then
         if Cam.passes.hook == 0 and now - Cam.hookedAt > 3 and Cam.isAlive() then
             note("hookdead", "camera hook installed but the game never called it - relying on render-step passes")
         end
@@ -6375,18 +6425,16 @@ function Cam.attach(now)
     end
     Cam.detach()
     local token = Cam.token
-    local previous = rawget(object, "postStep")
     local function hook(self, dt)
-        if previous then pcall(previous, self, dt) end
         if Cam.running and Cam.token == token then Cam.run("hook", type(dt) == "number" and dt or nil) end
     end
-    local set, problem = pcall(function() object.postStep = hook end)
+    local set, problem = HookChain.add(object, "phantomcam", 10, hook)
     if not set then
         Cam.hookWhy = "cannot set postStep: " .. tostring(problem)
         note("hookset", Cam.hookWhy)
         return
     end
-    Cam.hooked, Cam.hookFn, Cam.hookPrev, Cam.hookedAt, Cam.hookWhy = object, hook, previous, now, nil
+    Cam.hooked, Cam.hookedAt, Cam.hookWhy = object, now, nil
 end
 
 function Cam.bodyDestroy()
@@ -7064,6 +7112,154 @@ local function loopFrame()
     Stretch.restore(Game.camera())
 end
 
+local HookChain = {}
+
+function HookChain.add(object, id, priority, fn)
+    local chain = rawget(object, "__hookchain")
+    if not chain then
+        chain = { list = {}, orig = rawget(object, "postStep") }
+        chain.wrapper = function(self, dt)
+            local orig = chain.orig
+            local a, b = nil, nil
+            if orig then a, b = orig(self, dt) end
+            local snapshot = table.move(chain.list, 1, #chain.list, 1, {})
+            for _, entry in ipairs(snapshot) do pcall(entry.fn, self, dt) end
+            return a, b
+        end
+        local set, problem = pcall(function() object.postStep = chain.wrapper end)
+        if not set then return false, problem end
+        rawset(object, "__hookchain", chain)
+    end
+    for index, entry in ipairs(chain.list) do
+        if entry.id == id then table.remove(chain.list, index) break end
+    end
+    table.insert(chain.list, { id = id, priority = priority, fn = fn })
+    table.sort(chain.list, function(a, b) return a.priority < b.priority end)
+    return true
+end
+
+function HookChain.has(object, id)
+    local chain = rawget(object, "__hookchain")
+    if not chain then return false end
+    for _, entry in ipairs(chain.list) do
+        if entry.id == id then return true end
+    end
+    return false
+end
+
+function HookChain.remove(object, id)
+    local chain = rawget(object, "__hookchain")
+    if not chain then return end
+    for index, entry in ipairs(chain.list) do
+        if entry.id == id then table.remove(chain.list, index) break end
+    end
+    if #chain.list == 0 and rawget(object, "postStep") == chain.wrapper then
+        pcall(function() object.postStep = chain.orig end)
+        rawset(object, "__hookchain", nil)
+    end
+end
+
+local LateCam = { object = nil, gen = 0, calls = 0, hookedAt = 0, fovWritten = nil, fovGame = nil, sigCam = nil, sigConn = nil, writing = false }
+
+function LateCam.wanted()
+    return World.fov.final ~= nil or flag("world_stretch", false)
+end
+
+function LateCam.fovTarget()
+    local want = World.fov.final
+    if want and flag("misc_phantomcam", false) and PhantomCam.read("fov", 0) >= 20 then return nil end
+    return want
+end
+
+function LateCam.unwatch()
+    local conn = LateCam.sigConn
+    LateCam.sigCam, LateCam.sigConn = nil, nil
+    if conn then pcall(function() conn:Disconnect() end) end
+end
+
+function LateCam.watch(cam)
+    if LateCam.sigCam == cam and LateCam.sigConn then return end
+    LateCam.unwatch()
+    if not cam then return end
+    local ok, conn = pcall(function()
+        return cam:GetPropertyChangedSignal("FieldOfView"):Connect(function()
+            if LateCam.writing or LateCam.sigCam ~= cam then return end
+            local want = LateCam.fovTarget()
+            if not want or math.abs(cam.FieldOfView - want) <= 0.01 then return end
+            LateCam.fovGame = cam.FieldOfView
+            LateCam.writing = true
+            pcall(function() cam.FieldOfView = want end)
+            LateCam.writing = false
+            LateCam.fovWritten = want
+        end)
+    end)
+    if ok and conn then LateCam.sigCam, LateCam.sigConn = cam, conn end
+end
+
+function LateCam.pass()
+    local cam = Game.camera()
+    if not cam then return end
+    local want = LateCam.fovTarget()
+    if want then LateCam.watch(cam) else LateCam.unwatch() end
+    if want then
+        if cam.FieldOfView ~= LateCam.fovWritten then LateCam.fovGame = cam.FieldOfView end
+        if cam.FieldOfView ~= want then
+            LateCam.writing = true
+            cam.FieldOfView = want
+            LateCam.writing = false
+        end
+        LateCam.fovWritten = want
+    elseif LateCam.fovWritten then
+        if not World.fov.final and LateCam.fovGame and cam.FieldOfView == LateCam.fovWritten then cam.FieldOfView = LateCam.fovGame end
+        LateCam.fovWritten = nil
+    end
+    if Stretch.written and Stretch.base and flag("world_stretch", false) and sameFrame(cam.CFrame, Stretch.written) then return end
+    Stretch.apply(cam)
+end
+
+function LateCam.detach()
+    LateCam.gen = LateCam.gen + 1
+    local object = LateCam.object
+    LateCam.object = nil
+    if object then HookChain.remove(object, "latecam") end
+end
+
+function LateCam.attach(now)
+    if not Game.mods.CameraInterface then
+        Util.note("camera-interface", "camera: CameraInterface unavailable, FOV/stretch use render-step fallback only")
+        return
+    end
+    local object = Game.gameCamera()
+    if not object then return end
+    if LateCam.object == object and HookChain.has(object, "latecam") then
+        if LateCam.calls == 0 and LateCam.wanted() and now - LateCam.hookedAt > 3 and Game.localAlive() then
+            Util.note("camera-hookdead", "camera: postStep hook never called by the game, using render-step fallback")
+        end
+        return
+    end
+    if LateCam.object and LateCam.object ~= object then HookChain.remove(LateCam.object, "latecam") end
+    local gen = LateCam.gen + 1
+    LateCam.gen = gen
+    local function hook()
+        if LateCam.gen == gen then
+            LateCam.calls = LateCam.calls + 1
+            Util.guard("latecam", LateCam.pass)
+        end
+    end
+    local set, problem = HookChain.add(object, "latecam", 20, hook)
+    if not set then
+        Util.note("camera-set", "camera: cannot hook postStep (" .. tostring(problem) .. "), using render-step fallback")
+        return
+    end
+    if LateCam.object ~= object then LateCam.calls, LateCam.hookedAt = 0, now end
+    LateCam.object = object
+end
+
+function LateCam.fallback()
+    if LateCam.wanted() then LateCam.attach(os.clock()) elseif LateCam.object then LateCam.detach() end
+    Util.guard("latecam", LateCam.pass)
+end
+
 local LOOP_BIND = Util.randomName()
 local okCameraPriority, cameraPriority = pcall(function() return Enum.RenderPriority.Camera.Value end)
 if okCameraPriority and type(cameraPriority) == "number" and pcall(function() RunService:BindToRenderStep(LOOP_BIND, cameraPriority + 2, loopFrame) end) then
@@ -7073,7 +7269,7 @@ else
 end
 
 do
-    local function late() Stretch.apply(Game.camera()) end
+    local late = LateCam.fallback
     local function early() Stretch.restore(Game.camera()) end
     local lateName, earlyName = Util.randomName(), Util.randomName()
     local okLast, last = pcall(function() return Enum.RenderPriority.Last.Value end)
@@ -7086,8 +7282,14 @@ do
     if okFirst and type(first) == "number" and pcall(function() RunService:BindToRenderStep(earlyName, first, early) end) then
         Util.onUnload(function() pcall(function() RunService:UnbindFromRenderStep(earlyName) end) end)
     end
-    Util.track(RunService.RenderStepped:Connect(early))
-    Util.onUnload(function() Stretch.restore(Game.camera()) end)
+    Util.onUnload(function()
+        LateCam.detach()
+        LateCam.unwatch()
+        local cam = Game.camera()
+        if cam and LateCam.fovWritten and LateCam.fovGame and cam.FieldOfView == LateCam.fovWritten then pcall(function() cam.FieldOfView = LateCam.fovGame end) end
+        LateCam.fovWritten = nil
+        Stretch.restore(cam)
+    end)
 end
 
 pcall(function() SaveManager:LoadAutoloadConfig() end)

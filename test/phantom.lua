@@ -352,6 +352,16 @@ function wrapGroup(group, page, side)
             Finished = false, Callback = info.Callback,
         })
     end
+    function wrapped:Viewport(info)
+        if type(group.AddViewport) ~= "function" then return nil end
+        bump()
+        return group:AddViewport(info.Flag, info)
+    end
+    function wrapped:Gallery(info)
+        if type(group.AddGallery) ~= "function" then return nil end
+        bump()
+        return group:AddGallery(info.Flag, info)
+    end
     return wrapped
 end
 
@@ -462,7 +472,7 @@ local Game = { ready = false, mods = {}, via = {}, missing = {}, frame = 0, acce
 local REQUIRED = { "ReplicationInterface", "CharacterInterface", "CameraInterface" }
 local OPTIONAL = { "PublicSettings", "NetworkClient", "HudCrosshairsInterface", "HudDamageInterface", "BulletInterface", "PlayerStatusEvents", "ContentInterface",
     "CharacterObject", "ActiveLoadoutUtils", "PlayerDataClientInterface", "PlayerDataUtils", "SkinCaseUtils", "FirearmObject", "MeleeObject", "GrenadeObject",
-    "HudScreenGui", "PlayerSettingsInterface" }
+    "HudScreenGui", "PlayerSettingsInterface", "WeaponUtils", "ContentUtils" }
 
 function Game.load()
     Game.ready, Game.mods, Game.via, Game.missing = false, {}, {}, {}
@@ -4273,7 +4283,6 @@ local POINT_OFFSETS = {
     Torso = { { 0, 0, 0 }, { 1, 1, 0 }, { -1, 1, 0 }, { 1, -1, 0 }, { -1, -1, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 1, 0, 0 }, { -1, 0, 0 } },
     Limb = { { 0, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 } },
 }
-local PURPLE = Color3.fromRGB(170, 80, 255)
 
 local Aim = { opts = {} }
 local Silent = { tickets = {}, rollAt = -1, pass = true, opts = {}, dots = {}, radius = 0, zoom = 1 }
@@ -4539,6 +4548,8 @@ function Legit.read()
     L.wallbang, L.safety = flag("legit_wallbang", false), flag("legit_pen_safety", 90) / 100
     L.pred, L.predShow, L.predAim, L.predAll = flag("legit_pred", false), flag("legit_pred_show", true), flag("legit_pred_aim", false), flag("legit_pred_all", false)
     L.predColor, L.predOutline = flag("legit_pred_color", Color3.fromRGB(255, 40, 40)), flag("legit_pred_outline", true)
+    L.predAlpha, L.predOutlineColor, L.predOutlineAlpha = Util.opacity("legit_pred_color"), flag("legit_pred_outline_color", BLACK), Util.opacity("legit_pred_outline_color")
+    L.predSize, L.predDrop = flag("legit_pred_size", 6), flag("legit_pred_drop", true)
     L.silent, L.silentFov, L.silentChance = flag("legit_silent", false), flag("legit_silent_fov", 90), flag("legit_silent_chance", 100)
     L.silentVisible = flag("legit_silent_visible", true)
     L.silentParts = Util.set("legit_silent_parts", { Head = true, Torso = true })
@@ -4701,56 +4712,28 @@ function Legit.slot(index)
     slot = {
         outline = Draw.new("Circle", { NumSides = 24, Filled = true, Color = BLACK, ZIndex = 20, Visible = false }),
         dot = Draw.new("Circle", { NumSides = 24, Filled = true, ZIndex = 21, Visible = false }),
-        aim = Draw.new("Circle", { NumSides = 16, Filled = true, Color = PURPLE, ZIndex = 22, Visible = false }),
-        label = Draw.text(13, 22),
-        brackets = {},
     }
-    for corner = 1, 8 do
-        slot.brackets[corner] = Draw.new("Line", { Thickness = 1.5, Color = PURPLE, ZIndex = 22, Visible = false })
-    end
     Legit.slots[index] = slot
     return slot
 end
 
 function Legit.hideSlot(slot)
-    slot.outline.Visible, slot.dot.Visible, slot.aim.Visible, slot.label.Visible = false, false, false, false
-    for _, line in ipairs(slot.brackets) do line.Visible = false end
+    slot.outline.Visible, slot.dot.Visible = false, false
 end
 
 function Legit.drawSlot(slot, cam, record, cand, speed, weapon)
     local L = Legit.L
-    local hit = Aim.intercept(Legit.origin, cand.pos, Aim.velocity(record), speed, weapon)
-    local point, front = Draw.project(cam, hit)
+    local hit, aim = Aim.intercept(Legit.origin, cand.pos, Aim.velocity(record), speed, weapon)
+    local point, front = Draw.project(cam, L.predDrop and aim or hit)
     if not front then
         Legit.hideSlot(slot)
         return
     end
-    slot.outline.Position, slot.outline.Radius, slot.outline.Visible = point, 7.5, L.predOutline
-    slot.dot.Position, slot.dot.Radius, slot.dot.Color, slot.dot.Visible = point, 6, L.predColor, true
-    local aimPoint, aimFront = Draw.project(cam, cand.pos)
-    slot.aim.Position, slot.aim.Radius, slot.aim.Visible = aimPoint, 2.5, aimFront
-
-    local head = record.hash.Head
-    local headPoint, headFront = nil, false
-    if head and head.Parent then headPoint, headFront = Draw.project(cam, head.Position) end
-    for _, line in ipairs(slot.brackets) do line.Visible = headFront end
-    slot.label.Visible = headFront
-    if not headFront then return end
-    local top = Draw.project(cam, head.Position + Stretch.cf(cam).UpVector * 0.9)
-    local half = math.max((top - headPoint).Magnitude, 8)
-    local arm = half * 0.45
-    local index = 0
-    for _, sx in ipairs({ -1, 1 }) do
-        for _, sy in ipairs({ -1, 1 }) do
-            local corner = headPoint + Vector2.new(sx * half, sy * half)
-            local horizontal, vertical = slot.brackets[index * 2 + 1], slot.brackets[index * 2 + 2]
-            horizontal.From, horizontal.To = corner, corner - Vector2.new(sx * arm, 0)
-            vertical.From, vertical.To = corner, corner - Vector2.new(0, sy * arm)
-            index = index + 1
-        end
-    end
-    slot.label.Text, slot.label.Color = record.name, WHITE
-    slot.label.Position = Vector2.new(headPoint.X, headPoint.Y - half - 16)
+    local size = L.predSize
+    local outline = slot.outline
+    outline.Position, outline.Radius, outline.Visible = point, size + 1.5, L.predOutline
+    outline.Color, outline.Transparency = L.predOutlineColor, L.predOutlineAlpha * L.predAlpha
+    slot.dot.Position, slot.dot.Radius, slot.dot.Color, slot.dot.Transparency, slot.dot.Visible = point, size, L.predColor, L.predAlpha, true
 end
 
 function Legit.stepPredict(cam, center, records)
@@ -5020,6 +5003,19 @@ function Legit.stepTrigger(cam, now, records)
     pcall(mouse1press)
 end
 
+function Game.camoDatabase()
+    if Game.camoDb then return Game.camoDb end
+    local ok, database = pcall(function()
+        local storage = game:GetService("ReplicatedStorage")
+        local content = storage:FindFirstChild("Content")
+        local production = content and content:FindFirstChild("ProductionContent")
+        local module = production and production:FindFirstChild("CamoDatabase")
+        return module and require(module)
+    end)
+    if ok and type(database) == "table" and next(database) ~= nil then Game.camoDb = database end
+    return Game.camoDb
+end
+
 local Knife = { classes = { "ONE HAND BLADE", "TWO HAND BLADE", "ONE HAND BLUNT", "TWO HAND BLUNT" } }
 
 function Knife.list()
@@ -5057,14 +5053,8 @@ end
 
 function Knife.skinNames()
     local names = {}
-    local ok, database = pcall(function()
-        local storage = game:GetService("ReplicatedStorage")
-        local content = storage:FindFirstChild("Content")
-        local production = content and content:FindFirstChild("ProductionContent")
-        local module = production and production:FindFirstChild("CamoDatabase")
-        return module and require(module)
-    end)
-    if ok and type(database) == "table" then
+    local database = Game.camoDatabase()
+    if database then
         for name in pairs(database) do
             if type(name) == "string" then names[#names + 1] = name end
         end
@@ -5121,7 +5111,10 @@ function Knife.swap(loadout)
     end
     knife.Name = name
     if choice ~= "Default" then knife.Attachments = {} end
-    if skin ~= "Default" then
+    local own = Knife.override and Knife.override(name, knife.Camo)
+    if own then
+        knife.Camo = own
+    elseif skin ~= "Default" then
         local camo = Knife.camo(name, skin)
         if camo then knife.Camo = camo end
     end
@@ -5516,6 +5509,767 @@ Util.onUnload(function()
         Local.styleRec(rec, Local.idle)
         Local.recs[model] = nil
     end
+end)
+
+local Skins = {
+    store = { weapons = {}, presets = {} }, file = "Aster/PhantomForces/skins.json", slots = { "Slot1", "Slot2" },
+    list = {}, classOf = {}, slot = "Slot1", syncing = false, dirty = false, keepView = false, buildAt = 0, hintAt = -math.huge, ready = false, sigs = {},
+}
+
+Skins.classes = { "ASSAULT RIFLE", "BATTLE RIFLE", "CARBINE", "DMR", "LMG", "PDW", "SHOTGUN", "SNIPER RIFLE", "PISTOLS", "REVOLVERS", "MACHINE PISTOLS", "OTHER",
+    "ONE HAND BLADE", "ONE HAND BLUNT", "TWO HAND BLADE", "TWO HAND BLUNT" }
+
+Skins.ranges = {
+    TextureProperties = { Transparency = { 0, 1 }, Emissivity = { 0, 100 }, Rotation = { 0, 360 }, StudsPerTileU = { 0.1, 10 }, StudsPerTileV = { 0.1, 10 }, OffsetStudsU = { 0, 30 }, OffsetStudsV = { 0, 30 } },
+    BrickProperties = { Reflectance = { 0, 1 } },
+}
+
+Skins.rarity = {
+    [0] = { "Default", Color3.fromRGB(85, 85, 85) }, { "Common", Color3.fromRGB(25, 50, 100) }, { "Uncommon", Color3.fromRGB(75, 50, 100) },
+    { "Rare", Color3.fromRGB(150, 50, 150) }, { "Very Rare", Color3.fromRGB(150, 25, 25) }, { "Legendary", Color3.fromRGB(200, 150, 25) },
+}
+
+Skins.sliders = {
+    { flag = "skin_emissivity", group = "TextureProperties", key = "Emissivity", name = "Emissivity", default = 1, decimals = 0.1, tip = "Multiplies the texture colour; above 1 makes it glow" },
+    { flag = "skin_rotation", group = "TextureProperties", key = "Rotation", name = "Rotation", default = 0, decimals = 1, suffix = " deg" },
+    { flag = "skin_studs_u", group = "TextureProperties", key = "StudsPerTileU", name = "Studs per tile U", default = 1, decimals = 0.01 },
+    { flag = "skin_studs_v", group = "TextureProperties", key = "StudsPerTileV", name = "Studs per tile V", default = 1, decimals = 0.01 },
+    { flag = "skin_offset_u", group = "TextureProperties", key = "OffsetStudsU", name = "Offset U", default = 0, decimals = 0.01 },
+    { flag = "skin_offset_v", group = "TextureProperties", key = "OffsetStudsV", name = "Offset V", default = 0, decimals = 0.01 },
+    { flag = "skin_reflectance", group = "BrickProperties", key = "Reflectance", name = "Reflectance", default = 0, decimals = 0.01 },
+}
+
+Skins.community = {
+    { "Easy Neon Snowflakes", { Name = "Snowflakes*", BrickProperties = { Material = "Neon", Color = { 0, 170, 255 } } } },
+    { "Colour-changing (Japan*)", { Name = "Waves 1*", TextureProperties = { Transparency = 0.2 }, BrickProperties = { Material = "Neon", Color = { 255, 0, 0 } } },
+        { Name = "Waves 1*", TextureProperties = { Transparency = 0.2 }, BrickProperties = { Material = "Neon", Color = { 0, 255, 255 } } } },
+    { "Groza Labyrinth 1.25", { Name = "Labyrinth", TextureProperties = { StudsPerTileU = 1.25, StudsPerTileV = 1.25 } } },
+    { "Forcefield minimal tile", { Name = "Gold*", TextureProperties = { Color = { 0, 255, 255 }, StudsPerTileU = 0.1, StudsPerTileV = 0.1, Transparency = 1 }, BrickProperties = { Material = "ForceField", Color = { 0, 255, 255 } } } },
+    { "Translucent forcefield 0.8", { Name = "Gold*", TextureProperties = { Transparency = 0.8 }, BrickProperties = { Material = "ForceField", Color = { 255, 255, 255 } } } },
+    { "Glowing neon", { Name = "Gold*", TextureProperties = { Transparency = 1 }, BrickProperties = { Material = "Neon", Color = { 255, 0, 191 } } } },
+    { "Forcefield black/green", { Name = "Gold*", BrickProperties = { Material = "ForceField", Color = { 0, 0, 0 } } }, { Name = "Gold*", BrickProperties = { Material = "ForceField", Color = { 0, 255, 0 } } } },
+    { "Forcefield black/red", { Name = "Gold*", BrickProperties = { Material = "ForceField", Color = { 0, 0, 0 } } }, { Name = "Gold*", BrickProperties = { Material = "ForceField", Color = { 255, 0, 0 } } } },
+    { "Sniper pink/toothpaste", { Name = "Gold*", BrickProperties = { Material = "ForceField", Color = { 255, 102, 204 } } }, { Name = "Gold*", BrickProperties = { Material = "ForceField", Color = { 0, 255, 255 } } } },
+    { "Black and purple", { Name = "Gold*", BrickProperties = { Material = "SmoothPlastic", Color = { 17, 17, 17 } } }, { Name = "Gold*", BrickProperties = { Material = "Neon", Color = { 98, 37, 209 } } } },
+    { "Dimensionless tint", { Name = "Dimensionless*", TextureProperties = { Color = { 255, 80, 80 } } } },
+    { "Black glass", { Name = "Gold*", TextureProperties = { Transparency = 1 }, BrickProperties = { Material = "Glass", Color = { 0, 0, 0 } } } },
+    { "Reflective chrome", { Name = "Gold*", BrickProperties = { Material = "SmoothPlastic", Color = { 200, 200, 200 }, Reflectance = 0.6 } },
+        { Name = "Gold*", BrickProperties = { Material = "SmoothPlastic", Color = { 60, 60, 60 }, Reflectance = 0.6 } } },
+}
+
+function Skins.copy(value)
+    if type(value) ~= "table" then return value end
+    local out = {}
+    for key, item in pairs(value) do out[key] = Skins.copy(item) end
+    return out
+end
+
+function Skins.dataset(name)
+    if type(name) ~= "string" or name == "" then return nil end
+    local sets = Game.mods.SkinCaseUtils
+    if sets and type(sets.getSkinDataset) == "function" then
+        local ok, data = pcall(sets.getSkinDataset, name)
+        return ok and type(data) == "table" and data or nil
+    end
+    local database = Game.camoDatabase()
+    local data = database and database[name]
+    return type(data) == "table" and data or nil
+end
+
+function Skins.toRGB(color)
+    if typeof(color) == "Color3" then
+        return { math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5) }
+    end
+    if type(color) ~= "table" then return nil end
+    local r, g, b = tonumber(color[1] or color.r or color.R), tonumber(color[2] or color.g or color.G), tonumber(color[3] or color.b or color.B)
+    if not (r and g and b) then return nil end
+    local function byte(value) return math.clamp(math.floor(value + 0.5), 0, 255) end
+    return { byte(r), byte(g), byte(b) }
+end
+
+function Skins.toColor3(rgb)
+    return Color3.fromRGB(rgb[1], rgb[2], rgb[3])
+end
+
+function Skins.materials()
+    if Skins.materialList then return Skins.materialList end
+    local list = {}
+    pcall(function()
+        for _, item in ipairs(Enum.Material:GetEnumItems()) do
+            if item.Name ~= "Air" and item.Name ~= "Water" then list[#list + 1] = item.Name end
+        end
+    end)
+    if #list == 0 then
+        for index, name in ipairs(Local.materials) do list[index] = name end
+    end
+    table.sort(list)
+    Skins.materialList, Skins.materialSet = list, Util.toSet(list)
+    return list
+end
+
+function Skins.materialName(value)
+    if typeof(value) == "EnumItem" then value = value.Name end
+    if type(value) ~= "string" then return nil end
+    Skins.materials()
+    return Skins.materialSet[value] and value or nil
+end
+
+function Skins.cleanSlot(raw)
+    if type(raw) ~= "table" or type(raw.Name) ~= "string" or raw.Name == "" then return nil end
+    local slot = { Name = raw.Name }
+    for group, ranges in pairs(Skins.ranges) do
+        local source, out = raw[group], {}
+        if type(source) == "table" then
+            for key, range in pairs(ranges) do
+                local value = tonumber(source[key])
+                if value and value == value then out[key] = math.clamp(value, range[1], range[2]) end
+            end
+            out.Color = Skins.toRGB(source.Color)
+            if group == "BrickProperties" then out.Material = Skins.materialName(source.Material) end
+        end
+        if next(out) ~= nil then slot[group] = out end
+    end
+    return slot
+end
+
+function Skins.cleanCamo(raw)
+    if type(raw) ~= "table" then return nil end
+    local camo, any = {}, false
+    for _, tag in ipairs(Skins.slots) do
+        local slot = Skins.cleanSlot(raw[tag])
+        if slot then camo[tag], any = slot, true end
+    end
+    return any and camo or nil
+end
+
+function Skins.cleanEntries(map)
+    local out = {}
+    if type(map) ~= "table" then return out end
+    for name, camo in pairs(map) do
+        if type(name) == "string" then out[name] = Skins.cleanCamo(camo) end
+    end
+    return out
+end
+
+function Skins.toCamoSlot(slot)
+    if type(slot) ~= "table" or not Skins.dataset(slot.Name) then return nil end
+    local out = { Name = slot.Name }
+    for group in pairs(Skins.ranges) do
+        local source = slot[group]
+        if type(source) == "table" then
+            local copy = {}
+            for key, value in pairs(source) do copy[key] = value end
+            if type(source.Color) == "table" then copy.Color = Skins.toColor3(source.Color) end
+            out[group] = copy
+        end
+    end
+    return out
+end
+
+function Skins.merge(name, camo)
+    local entry = type(name) == "string" and Skins.store.weapons[name]
+    if type(entry) ~= "table" then return nil end
+    local merged, changed = {}, false
+    if type(camo) == "table" then
+        for tag, slot in pairs(camo) do merged[tag] = slot end
+    end
+    for _, tag in ipairs(Skins.slots) do
+        local slot = Skins.toCamoSlot(entry[tag])
+        if slot then merged[tag], changed = slot, true end
+    end
+    return changed and merged or nil
+end
+
+function Skins.camoFor(name, camo)
+    if not flag("skin_on", true) then return nil end
+    return Skins.merge(name, camo)
+end
+
+Knife.override = Skins.camoFor
+
+function Skins.playerData()
+    local data = Game.mods.PlayerDataClientInterface
+    if not (data and type(data.getPlayerData) == "function") then return nil end
+    local ok, pd = pcall(data.getPlayerData)
+    return ok and type(pd) == "table" and pd or nil
+end
+
+function Skins.loadout(pd)
+    local utils = Game.mods.ActiveLoadoutUtils
+    if not (pd and utils and type(utils.getActiveLoadoutData) == "function") then return nil end
+    local ok, loadout = pcall(utils.getActiveLoadoutData, pd)
+    return ok and type(loadout) == "table" and loadout or nil
+end
+
+function Skins.owns(pd, name, equipped, owns)
+    if equipped[name] then return true end
+    if Knife.isKnife(name) then
+        if flag("misc_knife_unlock", false) then return true end
+        if flag("misc_knife_on", false) and flag("misc_knife", "Default") == name then return true end
+    end
+    if not owns then return false end
+    local ok, owned = pcall(owns, pd, name)
+    return ok and owned == true
+end
+
+function Skins.scan()
+    local content = Game.mods.ContentInterface
+    if not (content and type(content.getWeaponListFromClass) == "function") then return false end
+    local pd = Skins.playerData()
+    local utils = Game.mods.PlayerDataUtils
+    local owns = Knife.realOwns or (utils and utils.ownsWeapon)
+    if not (pd and type(owns) == "function") then owns = nil end
+    local equipped = {}
+    for _, slot in pairs(Skins.loadout(pd) or {}) do
+        if type(slot) == "table" and type(slot.Name) == "string" then equipped[slot.Name] = true end
+    end
+    local list, classOf = {}, {}
+    for _, class in ipairs(Skins.classes) do
+        local ok, names = pcall(content.getWeaponListFromClass, class)
+        if ok and type(names) == "table" then
+            for _, name in ipairs(names) do
+                if type(name) == "string" and not classOf[name] and Skins.owns(pd, name, equipped, owns) then
+                    classOf[name] = class
+                    list[#list + 1] = name
+                end
+            end
+        end
+    end
+    table.sort(list)
+    Skins.list, Skins.classOf, Skins.ready = list, classOf, owns ~= nil
+    return Skins.ready
+end
+
+function Skins.filtered()
+    local class = flag("skin_class", "All")
+    local query = string.lower(tostring(flag("skin_search", "") or ""))
+    local out = {}
+    for _, name in ipairs(Skins.list) do
+        local inClass = class == "All" or Skins.classOf[name] == class or (class == "Skinned" and Skins.store.weapons[name] ~= nil)
+        if inClass and (query == "" or string.find(string.lower(name), query, 1, true)) then out[#out + 1] = name end
+    end
+    return out
+end
+
+function Skins.setValues(option, list)
+    local sig = table.concat(list, "\0")
+    if Skins.sigs[option] == sig then return false end
+    Skins.sigs[option] = sig
+    pcall(option.SetValues, option, list)
+    return true
+end
+
+function Skins.weaponItems()
+    local items = Skins.filtered()
+    if #items == 0 then items[1] = Skins.ready and "None" or "Loading..." end
+    return items
+end
+
+function Skins.syncWeapons()
+    Skins.scan()
+    local option = Options.skin_weapon
+    if not (option and type(option.SetValues) == "function") then return end
+    local items = Skins.weaponItems()
+    Skins.setValues(option, items)
+    if Skins.selected == nil and Skins.classOf[items[1]] then pcall(option.SetValue, option, items[1]) end
+end
+
+function Skins.image(id)
+    if id == nil or id == "" then return nil end
+    id = tostring(id)
+    if id:match("^%d+$") then return "rbxassetid://" .. id end
+    return id
+end
+
+function Skins.galleryItems()
+    local database = Game.camoDatabase()
+    if not database then return {} end
+    local byCase, order = {}, {}
+    for name in pairs(database) do
+        local data = type(name) == "string" and Skins.dataset(name)
+        if data then
+            local case = type(data.Case) == "string" and data.Case or "Other"
+            if not byCase[case] then
+                byCase[case] = {}
+                order[#order + 1] = case
+            end
+            local rarity = Skins.rarity[tonumber(data.Rarity) or 0] or Skins.rarity[0]
+            table.insert(byCase[case], {
+                Id = name, Name = type(data.DisplayName) == "string" and data.DisplayName or name, Image = Skins.image(data.TextureId),
+                Color = rarity[2], Subtitle = rarity[1] .. " / " .. case, rank = tonumber(data.Rarity) or 0,
+            })
+        end
+    end
+    table.sort(order)
+    local sets, items = Game.mods.SkinCaseUtils, {}
+    for _, case in ipairs(order) do
+        local skins = byCase[case]
+        table.sort(skins, function(a, b)
+            if a.rank ~= b.rank then return a.rank > b.rank end
+            return a.Name < b.Name
+        end)
+        local info
+        if sets and type(sets.getCaseDataset) == "function" then
+            local ok, data = pcall(sets.getCaseDataset, case)
+            if ok and type(data) == "table" then info = data end
+        end
+        local tier = info and tonumber(info.Tier)
+        items[#items + 1] = {
+            Id = "case:" .. case, Name = case, Children = skins, Image = Skins.image(info and info.CaseImg) or skins[1].Image,
+            Color = tier and Skins.rarity[tier] and Skins.rarity[tier][2] or nil, Subtitle = (tier and "Tier " .. tier .. " / " or "") .. #skins .. " skins",
+        }
+    end
+    return items
+end
+
+function Skins.syncCases()
+    local items = Skins.galleryItems()
+    Skins.cases = items
+    if Skins.gallery then
+        local parts = {}
+        for _, case in ipairs(items) do
+            parts[#parts + 1] = case.Id .. "|" .. tostring(case.Image) .. "|" .. tostring(case.Subtitle)
+            for _, skin in ipairs(case.Children) do parts[#parts + 1] = skin.Id .. "|" .. tostring(skin.Image) .. "|" .. skin.Subtitle end
+        end
+        local sig = table.concat(parts, "\0")
+        if Skins.casesSig ~= sig then
+            Skins.casesSig = sig
+            pcall(Skins.gallery.SetItems, Skins.gallery, items)
+        end
+    elseif Options.skin_case and type(Options.skin_case.SetValues) == "function" then
+        local names = {}
+        for _, case in ipairs(items) do names[#names + 1] = case.Name end
+        if #names == 0 then names[1] = "None" end
+        Skins.setValues(Options.skin_case, names)
+        Skins.syncCaseSkins()
+    end
+    return #items > 0
+end
+
+function Skins.syncCaseSkins()
+    local option = Options.skin_pick
+    if not (option and type(option.SetValues) == "function") then return end
+    local names, case = { "None" }, flag("skin_case", nil)
+    for _, folder in ipairs(Skins.cases or {}) do
+        if folder.Name == case then
+            for _, skin in ipairs(folder.Children) do names[#names + 1] = skin.Id end
+        end
+    end
+    Skins.setValues(option, names)
+end
+
+function Skins.base(name)
+    local pd = Skins.playerData()
+    local base, loadout = { Attachments = {} }, Skins.loadout(pd) or {}
+    for _, key in ipairs({ "Primary", "Secondary", "Knife" }) do
+        local slot = loadout[key]
+        if type(slot) == "table" and slot.Name == name then
+            if type(slot.Attachments) == "table" then base.Attachments = slot.Attachments end
+            if type(slot.Camo) == "table" then base.Camo = slot.Camo end
+            break
+        end
+    end
+    pcall(function()
+        local settings = pd.settings
+        if not base.Camo then
+            for _, byWeapon in pairs(settings.gunloadoutdata or {}) do
+                local past = type(byWeapon) == "table" and byWeapon[name]
+                if type(past) == "table" then
+                    if type(past.Attachments) == "table" then base.Attachments = past.Attachments end
+                    if type(past.Camo) == "table" then base.Camo = past.Camo end
+                    break
+                end
+            end
+        end
+        local att = settings.attloadoutdata and settings.attloadoutdata[name]
+        if type(att) == "table" then base.AttData = att end
+    end)
+    return base
+end
+
+function Skins.buildModel(name)
+    local content, utils = Game.mods.ContentInterface, Game.mods.WeaponUtils
+    if not (content and type(name) == "string") then return nil end
+    local base = Skins.base(name)
+    local camo = Skins.merge(name, base.Camo) or base.Camo
+    local model
+    if utils and type(utils.constructWeapon) == "function" and not Knife.isKnife(name) then
+        local compiler = Game.mods.ContentUtils
+        local okData, data = pcall(function()
+            if compiler and type(compiler.compileWeaponData) == "function" then
+                return compiler.compileWeaponData({ weaponName = name, weaponAttachments = base.Attachments })
+            end
+            return content.getWeaponData(name)
+        end)
+        if okData and type(data) == "table" then
+            local ok, built = pcall(utils.constructWeapon, name, data, base.Attachments, camo, base.AttData)
+            if ok and typeof(built) == "Instance" then model = built end
+        end
+    end
+    if not model then
+        local ok, copy = pcall(function() return content.getWeaponModel(name):Clone() end)
+        if not (ok and typeof(copy) == "Instance") then return nil end
+        model = copy
+        pcall(function()
+            local nodes = model:FindFirstChild("MenuNodes")
+            if nodes then nodes:Destroy() end
+        end)
+        if camo and utils and type(utils.textureModel) == "function" then pcall(utils.textureModel, model, camo) end
+    end
+    local okList, list = pcall(function() return model:GetDescendants() end)
+    for _, object in ipairs(okList and list or {}) do
+        pcall(function()
+            if object:IsA("BasePart") then
+                object.Anchored = true
+                if object.Transparency == 1 and object.Name ~= "Trigger" then object:Destroy() end
+            end
+        end)
+    end
+    return model
+end
+
+function Skins.step(now)
+    if Skins.saveAt and now >= Skins.saveAt then
+        Skins.saveAt = nil
+        Skins.save()
+    end
+    if not Skins.dirty or now < Skins.buildAt then return end
+    Skins.dirty = false
+    if not Skins.viewport then return end
+    Skins.buildAt = now + 0.15
+    local model = Skins.selected and Skins.buildModel(Skins.selected) or nil
+    local old = Skins.shown
+    Skins.shown = model
+    pcall(Skins.viewport.SetModel, Skins.viewport, model, Skins.keepView)
+    Skins.keepView = true
+    if old and old ~= model then pcall(function() old:Destroy() end) end
+end
+
+function Skins.entry(create)
+    local name = Skins.selected
+    if not name then return nil end
+    local entry = Skins.store.weapons[name]
+    if not entry and create then
+        entry = {}
+        Skins.store.weapons[name] = entry
+    end
+    return entry
+end
+
+function Skins.current()
+    local entry = Skins.entry(false)
+    return entry and entry[Skins.slot] or nil
+end
+
+function Skins.changed()
+    Skins.dirty = true
+    Skins.saveAt = os.clock() + 1
+    local entry = Skins.entry(false)
+    if entry and next(entry) == nil then Skins.store.weapons[Skins.selected] = nil end
+end
+
+function Skins.select(name)
+    if type(name) ~= "string" or not Skins.classOf[name] then name = nil end
+    if name ~= Skins.selected then Skins.keepView = false end
+    Skins.selected = name
+    Skins.dirty = true
+    Skins.syncControls()
+end
+
+function Skins.setSlot(label)
+    Skins.slot = label == "Slot 2" and "Slot2" or "Slot1"
+    Skins.syncControls()
+end
+
+function Skins.hint(text)
+    local now = os.clock()
+    if now - Skins.hintAt < 3 then return end
+    Skins.hintAt = now
+    World.notify(text)
+end
+
+function Skins.setSkin(skin, on)
+    if not Skins.selected then
+        Skins.hint("Skin changer: pick a weapon first")
+    elseif on and not Skins.dataset(skin) then
+        Skins.hint("Skin changer: unknown skin " .. tostring(skin))
+    elseif on then
+        Skins.entry(true)[Skins.slot] = { Name = skin }
+        Skins.changed()
+    else
+        local entry = Skins.entry(false)
+        if entry and entry[Skins.slot] and entry[Skins.slot].Name == skin then
+            entry[Skins.slot] = nil
+            Skins.changed()
+        end
+    end
+    Skins.syncControls()
+end
+
+function Skins.edit(group, key, value)
+    if Skins.syncing then return end
+    local slot = Skins.current()
+    if not slot then
+        Skins.hint("Skin changer: pick a skin for this slot in Cases first")
+        return
+    end
+    slot[group] = slot[group] or {}
+    slot[group][key] = value
+    Skins.entry(false)[Skins.slot] = Skins.cleanSlot(slot)
+    Skins.changed()
+    Skins.status()
+end
+
+function Skins.effective()
+    local slot = Skins.current() or {}
+    local data = Skins.dataset(slot.Name) or {}
+    local tex, brick = slot.TextureProperties or {}, slot.BrickProperties or {}
+    local texPreset = type(data.TexturePreset) == "table" and data.TexturePreset or {}
+    local brickPreset = type(data.BrickPreset) == "table" and data.BrickPreset or {}
+    local values = {}
+    for _, spec in ipairs(Skins.sliders) do
+        local preset = spec.group == "TextureProperties" and texPreset or brickPreset
+        local fallback = spec.key == "StudsPerTileV" and texPreset.StudsPerTileU or preset[spec.key]
+        local custom = (spec.group == "TextureProperties" and tex or brick)[spec.key]
+        local range = Skins.ranges[spec.group][spec.key]
+        values[spec.flag] = math.clamp(tonumber(custom) or tonumber(fallback) or spec.default, range[1], range[2])
+    end
+    values.texColor = tex.Color and Skins.toColor3(tex.Color) or (typeof(texPreset.Color) == "Color3" and texPreset.Color) or WHITE
+    values.texAlpha = math.clamp(tonumber(tex.Transparency) or tonumber(texPreset.Transparency) or 0, 0, 1)
+    values.brickColor = brick.Color and Skins.toColor3(brick.Color) or (typeof(brickPreset.Color) == "Color3" and brickPreset.Color) or Color3.fromRGB(163, 162, 165)
+    values.material = brick.Material or Skins.materialName(brickPreset.Material) or "SmoothPlastic"
+    return values
+end
+
+function Skins.status()
+    if not Skins.label then return end
+    local slot = Skins.current()
+    local text = (Skins.slot == "Slot2" and "Slot 2: " or "Slot 1: ") .. (slot and slot.Name or "no skin")
+    if slot and (slot.TextureProperties or slot.BrickProperties) then text = text .. " (customised)" end
+    Skins.label:SetText(text)
+end
+
+function Skins.syncControls()
+    Skins.syncing = true
+    pcall(function()
+        local values = Skins.effective()
+        for _, spec in ipairs(Skins.sliders) do
+            local option = Options[spec.flag]
+            if option then option:SetValue(values[spec.flag]) end
+        end
+        if Options.skin_tex_color then Options.skin_tex_color:SetValueRGB(values.texColor, values.texAlpha) end
+        if Options.skin_brick_color then Options.skin_brick_color:SetValueRGB(values.brickColor) end
+        if Options.skin_material then Options.skin_material:SetValue(values.material) end
+        local slot = Skins.current()
+        if Skins.gallery then
+            Skins.gallery:SetValue(slot and slot.Name or nil)
+        elseif Options.skin_pick then
+            local name = slot and slot.Name
+            local case = name and (Skins.dataset(name) or {}).Case
+            if type(case) == "string" and Options.skin_case then
+                Options.skin_case:SetValue(case)
+                Skins.syncCaseSkins()
+            end
+            Options.skin_pick:SetValue(name or "None")
+        end
+    end)
+    Skins.syncing = false
+    Skins.status()
+end
+
+function Skins.resetWeapon()
+    if not Skins.selected then return end
+    Skins.store.weapons[Skins.selected] = nil
+    Skins.dirty, Skins.saveAt = true, os.clock() + 1
+    Skins.syncControls()
+end
+
+function Skins.resetSlot()
+    local slot = Skins.current()
+    if not slot then return end
+    Skins.entry(false)[Skins.slot] = { Name = slot.Name }
+    Skins.changed()
+    Skins.syncControls()
+end
+
+function Skins.copySlot()
+    local slot = Skins.current()
+    if not slot then return end
+    Skins.entry(false)[Skins.slot == "Slot1" and "Slot2" or "Slot1"] = Skins.copy(slot)
+    Skins.changed()
+    World.notify("Skin changer: copied to " .. (Skins.slot == "Slot1" and "Slot 2" or "Slot 1"))
+end
+
+function Skins.blueprints()
+    if Skins.bp then return Skins.bp end
+    local content = Game.mods.ContentInterface
+    local found = { list = {}, byName = {} }
+    if content and type(content.getAllBlueprints) == "function" and type(content.getBlueprintData) == "function" then
+        local ok, ids = pcall(content.getAllBlueprints)
+        for _, id in ipairs(ok and type(ids) == "table" and ids or {}) do
+            local okData, blueprint = pcall(content.getBlueprintData, id)
+            local camo = okData and type(blueprint) == "table" and Skins.cleanCamo(blueprint.weaponCamo)
+            if camo then
+                local label = tostring(blueprint.itemName or id) .. " (" .. tostring(blueprint.weaponName or "?") .. ")"
+                if not found.byName[label] then
+                    found.byName[label] = camo
+                    found.list[#found.list + 1] = label
+                end
+            end
+        end
+    end
+    table.sort(found.list)
+    if #found.list > 0 then Skins.bp = found end
+    return found
+end
+
+function Skins.presets(source)
+    if source == "Blueprints" then return Skins.blueprints() end
+    local found = { list = {}, byName = {} }
+    if source == "Community" then
+        for _, preset in ipairs(Skins.community) do
+            local camo = Skins.cleanCamo({ Slot1 = preset[2], Slot2 = preset[3] or preset[2] })
+            if camo then
+                found.byName[preset[1]] = camo
+                found.list[#found.list + 1] = preset[1]
+            end
+        end
+        return found
+    end
+    for name, camo in pairs(Skins.store.presets) do
+        found.byName[name] = camo
+        found.list[#found.list + 1] = name
+    end
+    table.sort(found.list)
+    return found
+end
+
+function Skins.syncPresets()
+    local option = Options.skin_preset
+    if not (option and type(option.SetValues) == "function") then return end
+    local items = Skins.presets(flag("skin_preset_src", "Community")).list
+    local list = {}
+    for index, name in ipairs(items) do list[index] = name end
+    if #list == 0 then list[1] = "None" end
+    Skins.setValues(option, list)
+    if not table.find(list, option.Value) then pcall(option.SetValue, option, list[1]) end
+end
+
+function Skins.applyPreset()
+    if not Skins.selected then return Skins.hint("Skin changer: pick a weapon first") end
+    local name = flag("skin_preset", nil)
+    local camo = Skins.presets(flag("skin_preset_src", "Community")).byName[name]
+    if not camo then return Skins.hint("Skin changer: pick a preset first") end
+    local entry, applied, skipped = Skins.entry(true), 0, {}
+    for _, tag in ipairs(Skins.slots) do
+        local slot = camo[tag]
+        if slot and Skins.dataset(slot.Name) then
+            entry[tag] = Skins.copy(slot)
+            applied = applied + 1
+        elseif slot then
+            skipped[#skipped + 1] = slot.Name
+        end
+    end
+    if applied > 0 then
+        for _, tag in ipairs(Skins.slots) do
+            if not camo[tag] then entry[tag] = nil end
+        end
+    end
+    Skins.changed()
+    Skins.syncControls()
+    if #skipped > 0 then World.notify("Skin changer: skipped unknown skin " .. table.concat(skipped, ", ")) end
+    return applied
+end
+
+function Skins.savePreset()
+    local name = tostring(flag("skin_preset_name", "") or ""):match("^%s*(.-)%s*$")
+    local entry = Skins.entry(false)
+    if name == "" then return Skins.hint("Skin changer: type a preset name first") end
+    if not entry then return Skins.hint("Skin changer: this weapon has no skin to save") end
+    Skins.store.presets[name] = Skins.copy(entry)
+    Skins.save()
+    if Options.skin_preset_src then Options.skin_preset_src:SetValue("Saved") end
+    Skins.syncPresets()
+    pcall(function() Options.skin_preset:SetValue(name) end)
+    World.notify("Skin changer: saved preset " .. name)
+end
+
+function Skins.deletePreset()
+    if flag("skin_preset_src", "Community") ~= "Saved" then return Skins.hint("Skin changer: only saved presets can be deleted") end
+    local name = flag("skin_preset", nil)
+    if not Skins.store.presets[name] then return end
+    Skins.store.presets[name] = nil
+    Skins.save()
+    Skins.syncPresets()
+end
+
+function Skins.canSave()
+    if Skins.writable == nil then
+        Skins.writable = type(writefile) == "function"
+        if not Skins.writable then Util.note("skins-nosave", "skin changer: no writefile in this executor, skins are not saved") end
+    end
+    return Skins.writable
+end
+
+function Skins.save()
+    if not Skins.canSave() then return end
+    local ok, text = pcall(function()
+        return game:GetService("HttpService"):JSONEncode({ version = 1, weapons = Skins.store.weapons, presets = Skins.store.presets })
+    end)
+    if ok and type(text) == "string" then Util.guard("skins-save", writefile, Skins.file, text) end
+end
+
+function Skins.load()
+    if type(readfile) ~= "function" then return false end
+    if type(isfile) == "function" then
+        local okHas, has = pcall(isfile, Skins.file)
+        if not (okHas and has) then return false end
+    end
+    local ok, data = pcall(function() return game:GetService("HttpService"):JSONDecode(readfile(Skins.file)) end)
+    if not (ok and type(data) == "table") then return false end
+    Skins.store.weapons = Skins.cleanEntries(data.weapons)
+    Skins.store.presets = Skins.cleanEntries(data.presets)
+    return true
+end
+
+function Skins.refresh()
+    local cases = Skins.syncCases()
+    Skins.syncWeapons()
+    Skins.syncPresets()
+    Skins.synced = cases and Skins.ready
+    return Skins.synced
+end
+
+function Skins.hook()
+    for _, spec in ipairs({ { "FirearmObject", "skinFire" }, { "MeleeObject", "skinMelee" } }) do
+        local owner, key = Game.mods[spec[1]], spec[2]
+        if type(owner) == "table" and not Game.hooked[key] then
+            Game.hooked[key] = Util.hook(owner, "new", function(original)
+                if key == "skinFire" then
+                    return function(character, index, name, attachments, camo, ...)
+                        local ok, swapped = pcall(Skins.camoFor, name, camo)
+                        if ok and swapped then camo = swapped end
+                        return original(character, index, name, attachments, camo, ...)
+                    end
+                end
+                return function(character, index, name, camo, ...)
+                    local ok, swapped = pcall(Skins.camoFor, name, camo)
+                    if ok and swapped then camo = swapped end
+                    return original(character, index, name, camo, ...)
+                end
+            end)
+        end
+    end
+    if not Skins.synced then Skins.refresh() end
+end
+
+Skins.load()
+
+Util.onUnload(function()
+    if Skins.saveAt then Skins.save() end
+    Skins.saveAt = nil
+    if Skins.shown then pcall(function() Skins.shown:Destroy() end) end
+    Skins.shown = nil
 end)
 
 local Corpse = { recs = setmetatable({}, { __mode = "k" }), owned = setmetatable({}, { __mode = "k" }), held = setmetatable({}, { __mode = "k" }), bodyNames = {}, lifetime = 30, matchRange = 10, scanAt = 0 }
@@ -6135,8 +6889,10 @@ do
     Wall:Slider({ Name = "Penetration safety", Flag = "legit_pen_safety", Min = 50, Max = 100, Default = 90, Decimals = 1, Suffix = "%", Tooltip = "Share of the weapon's penetration depth the walls may use" })
     local Pred = Master:Toggle({ Name = "Bullet prediction", Flag = "legit_pred", Tooltip = "Solves where the bullet meets the target from its speed, drop and the target's tracked velocity" }):Settings("Bullet prediction", 230)
     Pred:Toggle({ Name = "Show prediction dot", Flag = "legit_pred_show", Default = true })
+    Pred:Toggle({ Name = "Drop compensation", Flag = "legit_pred_drop", Default = true, Tooltip = "Like the game's Ballistics Tracker: the dot sits where to aim so the bullet's fall lands it on the target; off shows only the lead" })
     pickColor(Pred, "Dot", "legit_pred_color", Color3.fromRGB(255, 40, 40))
-    Pred:Toggle({ Name = "Dot outline", Flag = "legit_pred_outline", Default = true })
+    Pred:Slider({ Name = "Dot size", Flag = "legit_pred_size", Min = 1, Max = 12, Default = 6, Decimals = 0.1, Suffix = " px" })
+    Pred:Toggle({ Name = "Dot outline", Flag = "legit_pred_outline", Default = true }):Colorpicker({ Name = "Outline", Flag = "legit_pred_outline_color", Default = BLACK, Alpha = 0 })
     Pred:Toggle({ Name = "All enemies in FOV", Flag = "legit_pred_all", Tooltip = "Draws the dot for every enemy inside the FOV instead of only the aim target" })
     Pred:Toggle({ Name = "Aim at prediction", Flag = "legit_pred_aim", Tooltip = "Aims at the solved intercept point (full lead and drop) instead of the strength-limited lead below" })
     Master:Toggle({ Name = "Only while aiming down sights", Flag = "legit_ads" })
@@ -6244,7 +7000,9 @@ end
 
 do
     Pages.Rage:Section({ Name = "Rage", Column = 1, Icon = "swords" }):Label({ Name = "Coming soon" })
-    local Fun = Pages.Misc:Section({ Name = "Fun", Column = 1, Icon = "shapes" })
+    local MiscSubs = Pages.Misc:SubTabs({ { "General", "shapes" }, { "Skin changer", "palette" } })
+    local General = MiscSubs.General
+    local Fun = General:Section({ Name = "Fun", Column = 1, Icon = "shapes" })
     local Pc = Fun:Toggle({ Name = "PhantomCam", Flag = "misc_phantomcam", Tooltip = "Body cam: the view follows where the weapon's barrel points" })
         :Keybind({ Name = "PhantomCam key", Flag = "misc_phantomcam_key", Default = "None", Mode = "Toggle", Sync = true })
         :Settings("PhantomCam", 230)
@@ -6262,16 +7020,90 @@ do
     Pc:Slider({ Name = "Camera FOV", Flag = "misc_phantomcam_fov", Min = 0, Max = 120, Default = 0, Decimals = 1, Tooltip = "0 keeps the game's FOV" })
     Pc:Toggle({ Name = "Debug", Flag = "misc_phantomcam_debug", Tooltip = "Prints a PhantomCam status line to the console once per second" })
 
-    local Kn = Pages.Misc:Section({ Name = "Knife unlock", Column = 2, Icon = "swords" })
-    Kn:Toggle({ Name = "Use selected knife", Flag = "misc_knife_on", Tooltip = "Spawns you with the knife and skin below. Client side only: the server still has your real knife, no loadout packet is sent" })
-    Kn:Dropdown({ Name = "Knife", Flag = "misc_knife", Items = Knife.items(), Default = "Default", Tooltip = "Every melee weapon in the game's content; Default keeps your equipped knife" })
+    local Kn = General:Section({ Name = "Knife unlock", Column = 2, Icon = "swords" })
+    Kn:Toggle({ Name = "Use selected knife", Flag = "misc_knife_on", Tooltip = "Spawns you with the knife and skin below. Client side only: the server still has your real knife, no loadout packet is sent", Callback = function() Skins.syncWeapons() end })
+    Kn:Dropdown({ Name = "Knife", Flag = "misc_knife", Items = Knife.items(), Default = "Default", Tooltip = "Every melee weapon in the game's content; Default keeps your equipped knife", Callback = function() Skins.syncWeapons() end })
     Kn:Dropdown({ Name = "Knife skin", Flag = "misc_knife_skin", Items = Knife.skinItems(), Default = "Default", Tooltip = "Default keeps your knife's own skin, None strips it" })
-    Kn:Toggle({ Name = "Unlock all knives", Flag = "misc_knife_unlock", Tooltip = "The loadout menu treats every knife as owned. Equipping an unowned knife there stays local: the packet that would tell the server is dropped" })
+    Kn:Toggle({ Name = "Unlock all knives", Flag = "misc_knife_unlock", Tooltip = "The loadout menu treats every knife as owned. Equipping an unowned knife there stays local: the packet that would tell the server is dropped", Callback = function() Skins.syncWeapons() end })
     Kn:Button({ Name = "Refresh knife list", Callback = function()
         Knife.synced = false
         Knife.syncUI()
     end })
     Kn:Label({ Name = "Applies on your next spawn" })
+
+    local SkinSub = MiscSubs["Skin changer"]
+    local Pick = SkinSub:Section({ Name = "Weapon", Column = 1, Icon = "swords" })
+    Skins.scan()
+    local classItems = { "All", "Skinned" }
+    for _, class in ipairs(Skins.classes) do classItems[#classItems + 1] = class end
+    Pick:Toggle({ Name = "Enabled", Flag = "skin_on", Default = true, Tooltip = "Builds your own first-person weapons with the skins set here. Client side only: nothing is sent, other players see your real skins" })
+    Pick:Dropdown({ Name = "Class", Flag = "skin_class", Items = classItems, Default = "All", Callback = function() Skins.syncWeapons() end })
+    Pick:Input({ Name = "Search weapon", Flag = "skin_search", Placeholder = "name filter", Callback = function() Skins.syncWeapons() end })
+    local weapons = Skins.weaponItems()
+    Pick:Dropdown({ Name = "Weapon", Flag = "skin_weapon", Items = weapons, Default = weapons[1], Tooltip = "Weapons you own, plus knives from Knife unlock", Callback = function(value) Skins.select(value) end })
+    Skins.viewport = Pick:Viewport({ Flag = "skin_view", Height = 210, Clone = false, FOV = 40, AutoRotate = true, Hint = "Drag to rotate, wheel to zoom", EmptyText = "Pick a weapon" })
+    if not Skins.viewport then Pick:Label({ Name = "Update Library.lua for the 3D preview" }) end
+    Pick:Dropdown({ Name = "Slot", Flag = "skin_slot", Items = { "Slot 1", "Slot 2" }, Default = "Slot 1", Callback = function(value) Skins.setSlot(value) end })
+    Pick:Button({ Name = "Reset weapon", Callback = function() Skins.resetWeapon() end })
+    Pick:Button({ Name = "Refresh weapons and skins", Callback = function()
+        Skins.synced, Skins.bp = false, nil
+        Skins.refresh()
+    end })
+    Pick:Label({ Name = "Applies on your next spawn; needs First Person Camo on in the game's settings" })
+
+    local Edit = SkinSub:Section({ Name = "Customize", Column = 2, Icon = "palette" })
+    Skins.label = Edit:Label({ Name = "Slot 1: no skin" })
+    Edit:Label({ Name = "Texture colour" }):Colorpicker({ Name = "Texture colour", Flag = "skin_tex_color", Default = WHITE, Alpha = 0 })
+    for _, spec in ipairs(Skins.sliders) do
+        local range = Skins.ranges[spec.group][spec.key]
+        if spec.group == "BrickProperties" then
+            Edit:Label({ Name = "Brick colour" }):Colorpicker({ Name = "Brick colour", Flag = "skin_brick_color", Default = Color3.fromRGB(163, 162, 165) })
+            Edit:Dropdown({ Name = "Material", Flag = "skin_material", Items = Skins.materials(), Default = "SmoothPlastic", Callback = function(value) Skins.edit("BrickProperties", "Material", value) end })
+        end
+        Edit:Slider({ Name = spec.name, Flag = spec.flag, Min = range[1], Max = range[2], Default = spec.default, Decimals = spec.decimals, Suffix = spec.suffix, Tooltip = spec.tip,
+            Callback = function(value) Skins.edit(spec.group, spec.key, value) end })
+    end
+    Edit:Button({ Name = "Reset slot settings", Callback = function() Skins.resetSlot() end })
+    Edit:Button({ Name = "Copy to other slot", Callback = function() Skins.copySlot() end })
+    Skins.syncing = true
+    for flagName, group in pairs({ skin_tex_color = "TextureProperties", skin_brick_color = "BrickProperties" }) do
+        local option = Options[flagName]
+        if option then
+            option:OnChanged(function()
+                Skins.edit(group, "Color", Skins.toRGB(option.Value))
+                if group == "TextureProperties" then Skins.edit(group, "Transparency", Util.alpha(flagName, 0)) end
+            end)
+        end
+    end
+    Skins.syncing = false
+
+    local Presets = SkinSub:Section({ Name = "Presets", Column = 2, Icon = "layers" })
+    Presets:Dropdown({ Name = "Source", Flag = "skin_preset_src", Items = { "Community", "Blueprints", "Saved" }, Default = "Community", Tooltip = "Community: reddit looks. Blueprints: the game's weapon blueprints (skin only, no attachments). Saved: your own", Callback = function() Skins.syncPresets() end })
+    Presets:Dropdown({ Name = "Preset", Flag = "skin_preset", Items = { "None" }, Default = "None" })
+    Presets:Button({ Name = "Apply preset", Callback = function() Skins.applyPreset() end })
+    Presets:Input({ Name = "Preset name", Flag = "skin_preset_name", Placeholder = "name for this weapon's skin" })
+    Presets:Button({ Name = "Save as preset", Callback = function() Skins.savePreset() end })
+    Presets:Button({ Name = "Delete preset", Callback = function() Skins.deletePreset() end })
+
+    local Cases = SkinSub:Section({ Name = "Cases", Column = 3, Icon = "package" })
+    Skins.gallery = Cases:Gallery({ Flag = "skin_cases", Height = 430, TileSize = 64, Search = true, Placeholder = "Search cases / skins...", Title = "Cases", Items = Skins.galleryItems(),
+        Callback = function(item, _, selected) Skins.setSkin(item.Id, selected) end })
+    if not Skins.gallery then
+        Cases:Label({ Name = "Update Library.lua for the case gallery" })
+        Cases:Dropdown({ Name = "Case", Flag = "skin_case", Items = { "None" }, Default = "None", Callback = function() Skins.syncCaseSkins() end })
+        Cases:Dropdown({ Name = "Skin", Flag = "skin_pick", Items = { "None" }, Default = "None", Callback = function(value)
+            if Skins.syncing then return end
+            local slot = Skins.current()
+            if value == "None" or value == nil then
+                if slot then Skins.setSkin(slot.Name, false) end
+            else
+                Skins.setSkin(value, true)
+            end
+        end })
+    end
+    Cases:Label({ Name = "Click a skin to apply it to the slot, click it again to remove it" })
+    Skins.refresh()
+    Skins.select(Options.skin_weapon and Options.skin_weapon.Value)
 end
 
 do
@@ -6785,7 +7617,11 @@ do
         Library:Notify("Outdated ThemeManager: upload addons/ThemeManager.lua from the latest release", 10)
     end
     SaveManager:IgnoreThemeSettings()
-    SaveManager:SetIgnoreIndexes({ "MenuKeybind", "menu_notify_corner", "ui_view_Legit", "ui_view_ESP", "ui_view_World" })
+    SaveManager:SetIgnoreIndexes({ "MenuKeybind", "menu_notify_corner", "ui_view_Legit", "ui_view_ESP", "ui_view_World", "ui_view_Misc" })
+    local skinIndexes = { "skin_class", "skin_search", "skin_weapon", "skin_slot", "skin_tex_color", "skin_brick_color", "skin_material",
+        "skin_preset_src", "skin_preset", "skin_preset_name", "skin_case", "skin_pick", "skin_view", "skin_cases" }
+    for _, spec in ipairs(Skins.sliders) do skinIndexes[#skinIndexes + 1] = spec.flag end
+    SaveManager:SetIgnoreIndexes(skinIndexes)
     SaveManager:BuildConfigSection(ConfigSub)
 
     if type(Library.GetLayout) == "function" and type(Library.SetLayout) == "function" then
@@ -7757,6 +8593,7 @@ function Loop.step()
         Util.guard("nadehook", Nades.hook)
         Util.guard("knifehook", Knife.hook)
         Util.guard("localhook", Local.hook)
+        Util.guard("skinhook", Skins.hook)
     end
 
     local records = Entities.update()
@@ -7778,6 +8615,7 @@ function Loop.step()
     Util.guard("localvis", Local.step, now)
     Util.guard("corpse", Corpse.step, now)
     Util.guard("killfx", KillFx.step, now)
+    Util.guard("skins", Skins.step, now)
 
     if now - Loop.labelAt > 0.2 then
         Loop.labelAt = now

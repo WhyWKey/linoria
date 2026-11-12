@@ -527,7 +527,43 @@ end
 
 local PhantomCam = { api = nil, failed = false, retryAt = 0 }
 
+local Stretch = { base = nil, written = nil, eye = nil }
+
+local function sameFrame(a, b)
+    return a.Position == b.Position and a.LookVector == b.LookVector and a.UpVector == b.UpVector and a.RightVector == b.RightVector
+end
+
+function Stretch.cf(cam)
+    return Stretch.base or cam.CFrame
+end
+
+function Stretch.restore(cam)
+    local base, written = Stretch.base, Stretch.written
+    Stretch.base, Stretch.written, Stretch.eye = nil, nil, nil
+    if base and written and cam then
+        pcall(function()
+            if sameFrame(cam.CFrame, written) then cam.CFrame = base end
+        end)
+    end
+end
+
+function Stretch.apply(cam)
+    Stretch.restore(cam)
+    if not cam or not flag("world_stretch", false) then return end
+    pcall(function()
+        local sx, sy = flag("world_stretch_x", 0.75), flag("world_stretch_y", 1)
+        if math.abs(sx - 1) < 1e-3 and math.abs(sy - 1) < 1e-3 then return end
+        local base = cam.CFrame
+        local api = PhantomCam.api
+        local frame = api and api.GameCFrame()
+        cam.CFrame = base * CFrame.new(0, 0, 0, sx, 0, 0, 0, sy, 0, 0, 0, 1)
+        Stretch.base, Stretch.written = base, cam.CFrame
+        Stretch.eye = typeof(frame) == "CFrame" and frame or base
+    end)
+end
+
 function Game.eye(cam)
+    if Stretch.eye then return Stretch.eye end
     local api = PhantomCam.api
     local frame = api and api.GameCFrame()
     if typeof(frame) == "CFrame" then return frame end
@@ -650,6 +686,20 @@ end
 
 function Game.isFirearm(weapon)
     return type(Game.stat(weapon, "bulletspeed")) == "number"
+end
+
+function Game.fireMode(weapon)
+    if type(weapon) ~= "table" then return nil end
+    local ok, mode = pcall(function()
+        if type(weapon.getFiremode) == "function" then return weapon:getFiremode() end
+        local modes = Game.stat(weapon, "firemodes")
+        return type(modes) == "table" and modes[weapon._firemodeIndex or 1] or nil
+    end)
+    if not ok or mode == nil then return nil end
+    if mode == true then return "auto" end
+    if mode == 1 or mode == "SINGLE" or mode == "DOUBLE" or mode == "BINARY" then return "semi" end
+    if mode == "SWITCH" or (type(mode) == "number" and mode > 1) then return "burst" end
+    return nil
 end
 
 local CLASS_BY_TYPE = {
@@ -1367,7 +1417,7 @@ function ESP.bonePoints(hash)
 end
 
 function ESP.clip(cam, a, b)
-    local frame = cam.CFrame
+    local frame = Stretch.cf(cam)
     local da, db = -frame:PointToObjectSpace(a).Z, -frame:PointToObjectSpace(b).Z
     if da < NEAR_PLANE and db < NEAR_PLANE then return nil end
     if da < NEAR_PLANE then a = a + (b - a) * ((NEAR_PLANE - da) / (db - da))
@@ -1790,7 +1840,7 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
         local showArrow = cfg.oov
         if showArrow then
             o.hidden = false
-            local rel = cam.CFrame:PointToObjectSpace(rec.pos)
+            local rel = Stretch.cf(cam):PointToObjectSpace(rec.pos)
             local flat = Vector2.new(rel.X, rel.Z)
             if flat.Magnitude < 0.001 then flat = Vector2.new(0, 1) end
             local direction = flat.Unit
@@ -2179,7 +2229,7 @@ local SKY_PRESETS = {
 local SKY_ORDER = { "Afternoon", "Aesthetic Mountains", "Better Night", "Blue Space", "Cloudy", "Dawn", "Dusk", "Earth", "Ethereal", "Galaxy", "Heaven", "Hell", "Jungle", "Lunar Night", "Milkyway", "Mountains", "Nebula", "Night", "Ocean Sky", "Pink Clouds", "Purple Night", "Red Dusk", "Redshift", "Saturn", "Solid Black", "Space", "Storm", "Sunset", "Underworld", "Winter" }
 local SKY_CHOICES = {}
 for index, name in ipairs(SKY_ORDER) do SKY_CHOICES[index] = name end
-SKY_CHOICES[#SKY_CHOICES + 1] = "Custom"
+for _, name in ipairs({ "Custom", "Custom faces", "Single image", "Saved set" }) do SKY_CHOICES[#SKY_CHOICES + 1] = name end
 
 local CELL = 28
 local SMOKE = "rbxasset://textures/particles/smoke_main.dds"
@@ -2262,48 +2312,234 @@ local function tune(key, class, flagName, set)
     if object and enabled then set(object) end
 end
 
+local SKY_FIELDS = { "world_sky_f_up", "world_sky_f_dn", "world_sky_f_ft", "world_sky_f_bk", "world_sky_f_lf", "world_sky_f_rt" }
+World.skyTex, World.hidden, World.skyFail = {}, {}, {}
+
+function World.parseAsset(text)
+    local s = tostring(text or ""):match("^%s*(.-)%s*$")
+    if s == "" then return nil end
+    local lower = s:lower()
+    local number = lower:match("^rbxassetid://(%d+)")
+    if number then return "rbxassetid://" .. number end
+    if lower:match("^rbx%a*://") then return s end
+    if lower:match("^https?://") then
+        number = lower:match("[?&]id=(%d+)") or lower:match("/library/(%d+)") or lower:match("/catalog/(%d+)") or lower:match("/asset/(%d+)") or lower:match("/(%d%d%d+)")
+    else
+        number = lower:match("^%D*(%d+)%D*$")
+    end
+    if number then return "rbxassetid://" .. number end
+    return nil
+end
+
+function World.expandIds(text)
+    local ids, count = {}, 0
+    for token in string.gmatch(tostring(text or ""), "[^%s,;|]+") do
+        count = count + 1
+        ids[count] = World.parseAsset(token) or false
+    end
+    if count == 1 then
+        if not ids[1] then return nil end
+        return { ids[1], ids[1], ids[1], ids[1], ids[1], ids[1] }
+    end
+    if count ~= 6 then return nil end
+    for index = 1, 6 do if not ids[index] then ids[index] = nil end end
+    return ids
+end
+
+function World.savedSets()
+    local sets, names = {}, {}
+    for entry in string.gmatch(tostring(val("world_sky_saved") or ""), "[^;]+") do
+        local name, list = entry:match("^([^|]+)|(.+)$")
+        local ids = name and World.expandIds(list)
+        if ids and not sets[name] then
+            sets[name] = ids
+            names[#names + 1] = name
+        end
+    end
+    return sets, names
+end
+
 function World.skyIds()
     local choice = val("world_sky_box")
     if choice == "Custom" then
-        local ids = {}
-        for number in string.gmatch(tostring(val("world_sky_custom") or ""), "%d+") do ids[#ids + 1] = number end
-        if #ids == 1 then return { ids[1], ids[1], ids[1], ids[1], ids[1], ids[1] } end
-        if #ids == 6 then return ids end
-        return nil
+        return World.expandIds(val("world_sky_custom")), true
+    elseif choice == "Custom faces" then
+        local ids, any = {}, false
+        for index, flagName in ipairs(SKY_FIELDS) do
+            ids[index] = World.parseAsset(val(flagName))
+            any = any or ids[index] ~= nil
+        end
+        return any and ids or nil, true
+    elseif choice == "Single image" then
+        local id = World.parseAsset(val("world_sky_single"))
+        return id and { id, id, id, id, id, id } or nil, true
+    elseif choice == "Saved set" then
+        local sets = World.savedSets()
+        return sets[val("world_sky_saved_pick")], true
     end
-    return SKY_PRESETS[choice]
+    local preset = SKY_PRESETS[choice]
+    if not preset then return nil end
+    local ids = {}
+    for index = 1, 6 do ids[index] = "rbxassetid://" .. preset[index] end
+    return ids, false
+end
+
+function World.notify(text)
+    pcall(function() Library:Notify(text, 6) end)
+end
+
+function World.skyJob(url)
+    local final = url
+    World.skyFail[url] = nil
+    if on("world_sky_resolve") ~= false and url:match("^rbxassetid://%d+$") then
+        local ok, objects = pcall(function() return game:GetObjects(url) end)
+        local first = ok and type(objects) == "table" and objects[1]
+        if not first then World.skyFail[url] = os.clock() + 10 end
+        if first then
+            local class = propGet(first, "ClassName")
+            local texture = (class == "Decal" or class == "Texture") and propGet(first, "Texture")
+            if type(texture) == "string" and texture ~= "" then final = texture end
+            pcall(function() first:Destroy() end)
+        end
+    end
+    World.skyTex[url] = final
+    local failed = false
+    local ok, service = pcall(game.GetService, game, "ContentProvider")
+    if ok and service then
+        pcall(function()
+            service:PreloadAsync({ final }, function(_, status)
+                local text = tostring(status)
+                if text:find("Failure", 1, true) or text:find("TimedOut", 1, true) then failed = true end
+            end)
+        end)
+    end
+    if failed then World.notify("Skybox: failed to load " .. url .. (final ~= url and " (decal " .. final .. ")" or "")) end
+end
+
+function World.skyTexture(url)
+    local entry = World.skyTex[url]
+    local retry = World.skyFail[url]
+    if retry and os.clock() >= retry then
+        World.skyFail[url] = nil
+        entry = nil
+    end
+    if entry == nil then
+        World.skyTex[url] = false
+        task.spawn(World.skyJob, url)
+        entry = World.skyTex[url]
+    end
+    return entry or url
+end
+
+function World.refreshSaved()
+    local option = Options.world_sky_saved_pick
+    if not (option and type(option.SetValues) == "function") then return end
+    local _, names = World.savedSets()
+    if #names == 0 then names[1] = "None" end
+    local current = option.Value
+    pcall(option.SetValues, option, names)
+    if current and table.find(names, current) then pcall(option.SetValue, option, current) end
+end
+
+function World.saveSky()
+    local name = tostring(val("world_sky_save_name") or ""):gsub("[|;,]", "_"):match("^%s*(.-)%s*$")
+    local ids = World.skyIds()
+    local list = {}
+    for index = 1, 6 do list[index] = ids and ids[index] end
+    if name == "" or #list ~= 6 then
+        World.notify(name == "" and "Skybox: type a name first" or "Skybox: all six faces need an id to save")
+        return
+    end
+    local sets, names = World.savedSets()
+    sets[name] = list
+    if not table.find(names, name) then names[#names + 1] = name end
+    local parts = {}
+    for _, entry in ipairs(names) do parts[#parts + 1] = entry .. "|" .. table.concat(sets[entry], ",") end
+    Options.world_sky_saved:SetValue(table.concat(parts, ";"))
+    World.refreshSaved()
+    pcall(function() Options.world_sky_saved_pick:SetValue(name) end)
+    World.notify("Skybox: saved " .. name)
+end
+
+function World.deleteSky()
+    local name = val("world_sky_saved_pick")
+    local sets, names = World.savedSets()
+    if not sets[name] then return end
+    local parts = {}
+    for _, entry in ipairs(names) do
+        if entry ~= name then parts[#parts + 1] = entry .. "|" .. table.concat(sets[entry], ",") end
+    end
+    Options.world_sky_saved:SetValue(table.concat(parts, ";"))
+    World.refreshSaved()
+end
+
+function World.showHidden()
+    for child in pairs(World.hidden) do
+        if propGet(child, "Parent") == nil then propSet(child, "Parent", Lighting) end
+    end
+    World.hidden = {}
 end
 
 function World.stepSky(dt)
     local skyOn = on("world_skybox") == true
-    local sky = Lighting:FindFirstChildOfClass("Sky")
-    if on("world_nosky") and not skyOn then
-        if sky and sky ~= World.ownSky then
-            World.sky = sky
-            pcall(function() sky.Parent = nil end)
-        end
-        sky = nil
-    elseif World.sky and not World.sky.Parent then
-        pcall(function() World.sky.Parent = Lighting end)
-        sky = World.sky
+    local raw = val("world_sky_saved") or ""
+    if raw ~= World.savedRaw then
+        World.savedRaw = raw
+        World.refreshSaved()
     end
+    local own = World.ownSky
+    if own and (not skyOn or own.Parent ~= Lighting) then
+        want[own], World.orig[own] = nil, nil
+        pcall(function() own:Destroy() end)
+        World.ownSky, own = nil, nil
+    end
+    local sky
     if skyOn then
-        if not sky then
+        if not own then
             local ok, created = pcall(Instance.new, "Sky")
             if ok and created then
                 created.Name = Util.randomName()
                 pcall(function() created.Parent = Lighting end)
-                World.ownSky, sky = created, created
+                World.ownSky, own = created, created
             end
         end
-        local ids = sky and World.skyIds()
-        if ids then
-            for index, face in ipairs(SKY_FACES) do put(sky, face, "rbxassetid://" .. ids[index]) end
+        sky = own
+        if not World.skyWatch then
+            World.skyWatch = true
+            pcall(function() Util.track(Lighting.ChildAdded:Connect(function() World.skyDirty = true end)) end)
         end
-    elseif World.ownSky then
-        want[World.ownSky], World.orig[World.ownSky] = nil, nil
-        pcall(function() World.ownSky:Destroy() end)
-        World.ownSky = nil
+        local clock = os.clock()
+        if World.skyDirty ~= false or clock >= (World.skyScanAt or 0) then
+            World.skyDirty, World.skyScanAt = false, clock + 1
+            for _, child in ipairs(Lighting:GetChildren()) do
+                if child ~= own and propGet(child, "ClassName") == "Sky" then World.hidden[child] = true end
+            end
+        end
+        for child in pairs(World.hidden) do
+            if propGet(child, "Parent") ~= nil then propSet(child, "Parent", nil) end
+        end
+        local ids, custom = World.skyIds()
+        if sky and ids then
+            for index, face in ipairs(SKY_FACES) do
+                local url = ids[index]
+                if url then put(sky, face, custom and World.skyTexture(url) or url) end
+            end
+        end
+    else
+        World.showHidden()
+        local found = Lighting:FindFirstChildOfClass("Sky")
+        if on("world_nosky") then
+            if found then
+                World.sky = found
+                pcall(function() found.Parent = nil end)
+            end
+        else
+            if World.sky and not World.sky.Parent then
+                pcall(function() World.sky.Parent = Lighting end)
+                found = World.sky
+            end
+            sky = found
+        end
     end
     if not sky then return end
     if on("world_sky_objects") then
@@ -3017,6 +3253,7 @@ Util.onUnload(function()
     World.orig = {}
     World.dropMap()
     World.dropLights()
+    World.showHidden()
     if World.sky and not World.sky.Parent then pcall(function() World.sky.Parent = Lighting end) end
     if World.ownSky then pcall(function() World.ownSky:Destroy() end) end
     World.cloudObject(false)
@@ -3954,7 +4191,7 @@ local POINT_OFFSETS = {
 local PURPLE = Color3.fromRGB(170, 80, 255)
 
 local Aim = { opts = {} }
-local Silent = { tickets = {}, rollAt = -1, pass = true, opts = {} }
+local Silent = { tickets = {}, rollAt = -1, pass = true, opts = {}, dots = {} }
 
 function Aim.depth(weapon, safety)
     local depth = Game.stat(weapon, "penetrationdepth")
@@ -4065,18 +4302,27 @@ function Aim.select(record, cam, origin, center, radius, opts)
 end
 
 function Silent.acquire(origin, weapon)
-    local L = Legit.L
     local cam = Game.camera()
     if not cam then return nil end
+    local temporary = Stretch.base == nil
+    if temporary then Stretch.apply(cam) end
+    local ok, record, cand = pcall(Silent.select, cam, origin, weapon)
+    if temporary then Stretch.restore(cam) end
+    if not ok then Util.note("silentacq", "acquire:", record); return nil end
+    return record, cand
+end
+
+function Silent.select(cam, origin, weapon)
+    local L = Legit.L
     Visible.budget = 48
     local opts = Silent.opts
     opts.visible, opts.parts, opts.choice = L.silentVisible, L.silentParts, L.silentChoice
-    opts.multi, opts.scale, opts.max = L.multi, L.multiScale, L.multiMax
-    opts.depth = L.wallbang and Aim.depth(weapon, L.safety) or nil
+    opts.multi, opts.scale, opts.max = L.silentMulti, L.silentMultiScale, L.silentMultiMax
+    opts.depth = L.silentWallbang and Aim.depth(weapon, L.silentSafety) or nil
     local center = cam.ViewportSize / 2
     local bestRecord, bestCand
     for _, record in ipairs(Entities.list) do
-        if record.rendered and (record.enemy or not L.teamCheck) and (record.torso.Position - origin).Magnitude <= L.maxdist then
+        if record.rendered and (record.enemy or not L.silentTeam) and (record.torso.Position - origin).Magnitude <= L.silentDist then
             local cand = Aim.select(record, cam, origin, center, L.silentFov, opts)
             if cand and (not bestCand or cand.screen < bestCand.screen) then bestRecord, bestCand = record, cand end
         end
@@ -4102,7 +4348,12 @@ function Silent.rewrite(info)
     local weapon = extra.firearmObject
     local record, cand = Silent.acquire(origin, weapon)
     if not record then return end
-    local _, aim, time = Aim.intercept(origin, cand.pos, Aim.velocity(record), speed, weapon)
+    Silent.shot = { record = record, cand = cand, at = now }
+    local aim, time = cand.pos, (cand.pos - origin).Magnitude / speed
+    if L.silentPred then
+        local _
+        _, aim, time = Aim.intercept(origin, cand.pos, Aim.velocity(record), speed, weapon)
+    end
     local settings = Game.mods.PublicSettings
     if time > (settings and settings.bulletLifeTime or 2) then return end
     local vector = aim - origin
@@ -4157,6 +4408,23 @@ function Silent.step(cam)
     if show then
         Silent.circle.Position, Silent.circle.Radius, Silent.circle.Color = cam.ViewportSize / 2, L.silentFov, L.silentColor
     end
+    local shown = 0
+    local shot = Silent.shot
+    if L.silent and L.silentShowPoints and shot and os.clock() - shot.at < 1.5 and shot.record.rendered then
+        for _, point in ipairs(Aim.gather(shot.record, cam, cam.ViewportSize / 2, nil, Silent.opts) or {}) do
+            if shown >= 27 then break end
+            shown = shown + 1
+            local dot = Silent.dots[shown]
+            if not dot then
+                dot = Draw.new("Circle", { NumSides = 10, Radius = 2, Filled = true, ZIndex = 23, Visible = false })
+                Silent.dots[shown] = dot
+            end
+            dot.Position = Draw.project(cam, point.pos)
+            dot.Color = point.pos == shot.cand.pos and L.silentPointColor or WHITE
+            dot.Visible = true
+        end
+    end
+    for index = shown + 1, #Silent.dots do Silent.dots[index].Visible = false end
 end
 
 function Legit.read()
@@ -4185,9 +4453,26 @@ function Legit.read()
     L.silentVisible, L.silentDraw, L.silentColor = flag("legit_silent_visible", true), flag("legit_silent_draw", true), flag("legit_silent_color", Color3.fromRGB(255, 200, 80))
     L.silentParts = Util.set("legit_silent_parts", { Head = true, Torso = true })
     L.silentChoice = flag("legit_silent_priority", "Closest")
+    L.silentTeam, L.silentDist = flag("legit_silent_team", true), flag("legit_silent_dist", 600)
+    L.silentMulti, L.silentMultiScale, L.silentMultiMax = flag("legit_silent_multi", false), flag("legit_silent_multi_scale", 60) / 100, math.floor(flag("legit_silent_multi_max", 5))
+    L.silentShowPoints, L.silentPointColor = flag("legit_silent_multi_show", false), flag("legit_silent_multi_color", Color3.fromRGB(120, 255, 170))
+    L.silentWallbang, L.silentSafety = flag("legit_silent_wallbang", false), flag("legit_silent_pen_safety", 90) / 100
+    L.silentPred = flag("legit_silent_pred", false)
     local opts = Aim.opts
     opts.visible, opts.parts, opts.choice = L.visible, L.parts, L.choice
     opts.multi, opts.scale, opts.max = L.multi, L.multiScale, L.multiMax
+
+    L.semi = false
+    if flag("legit_semi", false) and Util.keyActive("legit_semi_key") and not Util.menuOpen() and not Util.typing() then
+        local weapon = Game.weapon()
+        if weapon and Game.isFirearm(weapon) and Game.fireMode(weapon) == "semi" then
+            L.semi = true
+            L.smooth, L.fovRadius = flag("legit_semi_smooth", 6), flag("legit_semi_fov", 90)
+            L.parts, L.choice = Util.set("legit_semi_parts", { Head = true }), flag("legit_semi_priority", "Head")
+            L.onfire = flag("legit_semi_onfire", false)
+            opts.parts, opts.choice = L.parts, L.choice
+        end
+    end
 end
 
 function Legit.stepRadius(dt, weapon, cam)
@@ -4291,7 +4576,7 @@ end
 
 function Legit.drawFov(center)
     local L = Legit.L
-    local show = flag("legit_fov_draw", true) and L.aim
+    local show = flag("legit_fov_draw", true) and (L.aim or L.semi)
     Legit.circle.Visible = show
     if not show then
         Legit.circleFill.Visible = false
@@ -4354,7 +4639,7 @@ function Legit.drawSlot(slot, cam, record, cand, speed, weapon)
     for _, line in ipairs(slot.brackets) do line.Visible = headFront end
     slot.label.Visible = headFront
     if not headFront then return end
-    local top = Draw.project(cam, head.Position + cam.CFrame.UpVector * 0.9)
+    local top = Draw.project(cam, head.Position + Stretch.cf(cam).UpVector * 0.9)
     local half = math.max((top - headPoint).Magnitude, 8)
     local arm = half * 0.45
     local index = 0
@@ -4425,10 +4710,11 @@ end
 
 function Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
     local L = Legit.L
-    local active = L.aim and Util.keyActive("legit_aim_key") and not Util.menuOpen() and not Util.typing()
+    local active = L.semi or (L.aim and Util.keyActive("legit_aim_key") and not Util.menuOpen() and not Util.typing())
     if not (active and weapon and Game.isFirearm(weapon)) then Legit.target = nil return end
     if L.ads and not Game.aiming(weapon) then Legit.target = nil return end
-    if L.shooting and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then Legit.target = nil return end
+    local fire = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+    if (L.shooting or (L.semi and L.onfire)) and not fire then Legit.target = nil return end
 
     local gameCam = Game.gameCamera()
     if not gameCam then return end
@@ -5013,7 +5299,7 @@ function Local.offset(weapon)
         scale = 1 - math.clamp(weapon._aimArmSpring.p, 0, 1)
     end
     local base = main.C0
-    local relative = character:getRootPart().CFrame:Inverse() * cam.CFrame
+    local relative = character:getRootPart().CFrame:Inverse() * Stretch.cf(cam)
     local axes = CFrame.new(relative.Position):Inverse() * relative
     local spin = axes * CFrame.Angles(math.rad(pitch) * scale, math.rad(yaw) * scale, math.rad(roll) * scale) * axes:Inverse()
     local pivot = CFrame.new(base.Position)
@@ -5061,15 +5347,137 @@ Util.onUnload(function()
     end
 end)
 
+local Corpse = { recs = setmetatable({}, { __mode = "k" }), bodyNames = {}, lifetime = 30, matchRange = 10, scanAt = 0 }
+
+for _, name in ipairs(PART_NAMES) do Corpse.bodyNames[name] = true end
+
+function Corpse.container()
+    local cached = Corpse.folder
+    if cached and propGet(cached, "Parent") then return cached end
+    Corpse.folder, Corpse.connected = nil, nil
+    local ignore = Workspace:FindFirstChild("Ignore")
+    local folder = ignore and ignore:FindFirstChild("DeadBody")
+    if not folder then return nil end
+    Corpse.folder = folder
+    return folder
+end
+
+function Corpse.kindOf(model)
+    local torso = model:FindFirstChild("Torso")
+    local position = torso and propGet(torso, "Position")
+    if typeof(position) ~= "Vector3" then return "enemy" end
+    local best, kind = Corpse.matchRange, "enemy"
+    for _, record in pairs(Entities.byPlayer) do
+        if typeof(record.pos) == "Vector3" then
+            local distance = (record.pos - position).Magnitude
+            if distance < best then best, kind = distance, record.enemy == false and "team" or "enemy" end
+        end
+    end
+    if typeof(Corpse.localPos) == "Vector3" and (Corpse.localPos - position).Magnitude < best then kind = "local" end
+    return kind
+end
+
+function Corpse.add(model, now)
+    if Corpse.recs[model] or not on("chams_dead") or propGet(model, "Parent") == nil then return end
+    local items = Local.build(model, "weapon")
+    for _, item in ipairs(items) do
+        local node = item.inst
+        for _ = 1, 12 do
+            local parent = propGet(node, "Parent")
+            if not parent or parent == model then break end
+            node = parent
+        end
+        item.extra = not Corpse.bodyNames[propGet(node, "Name")]
+    end
+    Corpse.recs[model] = { items = items, kind = Corpse.kindOf(model), born = now, sig = nil }
+end
+
+function Corpse.state()
+    local state = { materialName = val("chams_dead_mat") or "ForceField", texture = val("chams_dead_tex") or "None", refl = val("chams_dead_refl") or 0,
+        hide = on("chams_dead_hide") == true, fade = val("chams_dead_fade") or 0, kinds = {} }
+    local parts = { state.materialName, state.texture, state.refl, tostring(state.hide) }
+    for _, kind in ipairs({ "enemy", "team", "local" }) do
+        local flagName = "chams_dead_" .. kind .. "_color"
+        local entry = { enabled = on("chams_dead_" .. kind) == true, color = val(flagName) or WHITE, alpha = Util.alpha(flagName, 0) }
+        state.kinds[kind] = entry
+        parts[#parts + 1] = tostring(entry.enabled) .. tostring(entry.color) .. entry.alpha
+    end
+    state.sig = table.concat(parts, "|")
+    local okMaterial, material = pcall(function() return Enum.Material[state.materialName] end)
+    state.material = okMaterial and material or nil
+    state.textureId = state.materialName == "ForceField" and Local.textures[state.texture] or ""
+    return state
+end
+
+function Corpse.style(rec, state, now)
+    local entry = state.kinds[rec.kind]
+    local spec
+    if entry.enabled and state.material then
+        local alpha = entry.alpha
+        if state.fade > 0 then
+            local fadeStart = Corpse.lifetime - state.fade
+            local age = now - rec.born
+            if age > fadeStart then alpha = alpha + (1 - alpha) * math.clamp((age - fadeStart) / state.fade, 0, 1) end
+        end
+        spec = { color = entry.color, alpha = alpha, material = state.material, texture = state.textureId, refl = state.refl,
+            vertex = Vector3.new(entry.color.R, entry.color.G, entry.color.B) }
+    end
+    for _, item in ipairs(rec.items) do
+        Local.applyItem(item, spec, spec and state.hide and item.extra)
+    end
+end
+
+function Corpse.restoreAll()
+    for model, rec in pairs(Corpse.recs) do
+        for _, item in ipairs(rec.items) do Local.applyItem(item, nil, nil) end
+        Corpse.recs[model] = nil
+    end
+end
+
+function Corpse.step(now)
+    if not on("chams_dead") then
+        if next(Corpse.recs) then Corpse.restoreAll() end
+        return
+    end
+    local root = Game.rootPart()
+    if root then Corpse.localPos = propGet(root, "Position") end
+    local folder = Corpse.container()
+    if folder and not Corpse.connected then
+        Corpse.connected = true
+        pcall(function()
+            Util.track(folder.ChildAdded:Connect(function(child) Util.guard("corpseadd", Corpse.add, child, os.clock()) end))
+        end)
+    end
+    if folder and now >= Corpse.scanAt then
+        Corpse.scanAt = now + 1
+        local ok, children = pcall(folder.GetChildren, folder)
+        if ok and type(children) == "table" then
+            for _, child in ipairs(children) do Corpse.add(child, now) end
+        end
+    end
+    if next(Corpse.recs) == nil then return end
+    local state = Corpse.state()
+    for model, rec in pairs(Corpse.recs) do
+        if propGet(model, "Parent") == nil then
+            Corpse.recs[model] = nil
+        elseif rec.sig ~= state.sig or (state.fade > 0 and now - rec.born > Corpse.lifetime - state.fade) then
+            rec.sig = state.sig
+            Corpse.style(rec, state, now)
+        end
+    end
+end
+
+Util.onUnload(Corpse.restoreAll)
+
 local Pages = {
     Legit = UI.page("Legit", "crosshair"),
     Rage = UI.page("Rage", "swords"),
     ESP = UI.page("ESP", "eye"),
     World = UI.page("World", "globe"),
-    Local = UI.page("Local", "user"),
     Misc = UI.page("Misc", "shapes"),
 }
 local Status = {}
+local ESPSubs = Pages.ESP:SubTabs({ { "Enemies", "swords" }, { "Teammates", "shield" }, { "Other", "package" }, { "Local", "user" } })
 
 do
     local Subs = Pages.Legit:SubTabs({ { "Aim Assist", "crosshair" }, { "Silent Aim", "scan" }, { "Trigger Bot", "zap" }, { "Recoil", "target" } })
@@ -5080,6 +5488,12 @@ do
     end
     local Master = Aim:Section({ Name = "Aim assist", Side = 1, Icon = "crosshair" })
     Master:Toggle({ Name = "Enabled", Flag = "legit_aim", Tooltip = "Turns your view toward the target through the game's camera while the key is held" }):Keybind({ Name = "Aim key", Flag = "legit_aim_key", Default = "MB2", Mode = "Hold" })
+    local Semi = Master:Toggle({ Name = "Semi-auto aim", Flag = "legit_semi", Tooltip = "A second aim key that only works while the equipped weapon is set to semi (single shot); it uses its own FOV, smoothing and hitboxes and overrides the normal key. Other aim settings are shared" }):Keybind({ Name = "Semi-auto key", Flag = "legit_semi_key", Default = "MB2", Mode = "Hold" }):Settings("Semi-auto aim", 230)
+    Semi:Slider({ Name = "Semi FOV", Flag = "legit_semi_fov", Min = 10, Max = 800, Default = 90, Decimals = 1, Suffix = " px" })
+    Semi:Slider({ Name = "Semi smoothing", Flag = "legit_semi_smooth", Min = 1, Max = 60, Default = 6, Decimals = 1 })
+    Semi:Dropdown({ Name = "Semi hitbox priority", Flag = "legit_semi_priority", Items = { "Closest", "Head", "Torso" }, Default = "Head" })
+    Semi:Dropdown({ Name = "Semi hitboxes", Flag = "legit_semi_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head" } })
+    Semi:Toggle({ Name = "Snap on shot", Flag = "legit_semi_onfire", Tooltip = "Only aims while mouse 1 is held" })
     Master:Toggle({ Name = "Team check", Flag = "legit_team_check", Default = true, Tooltip = "Only enemies are targeted (shared with the triggerbot)" })
     local VisibleCheck = Master:Toggle({ Name = "Visible check", Flag = "legit_visible", Default = true, Tooltip = "Only aims at points with a clear line from the barrel, multi-ray, ignoring glass, non-solid parts and other players" }):Settings("Visible check", 230)
     VisibleCheck:Slider({ Name = "ESP rays per player", Flag = "vis_rays", Min = 1, Max = 6, Default = 3, Decimals = 1, Tooltip = "Body parts traced for ESP visible/hidden colours; stops at the first clear one" })
@@ -5154,11 +5568,20 @@ do
     pickColor(Quiet, "Silent circle", "legit_silent_color", Color3.fromRGB(255, 200, 80))
     SilBox:Slider({ Name = "Silent FOV", Flag = "legit_silent_fov", Min = 5, Max = 600, Default = 90, Decimals = 1, Suffix = " px", Tooltip = "Radius around the screen centre where a target can be redirected to" })
     SilBox:Slider({ Name = "Hit chance", Flag = "legit_silent_chance", Min = 1, Max = 100, Default = 100, Decimals = 1, Suffix = "%", Tooltip = "Chance that a shot is redirected" })
-    SilBox:Toggle({ Name = "Only visible or penetrable", Flag = "legit_silent_visible", Default = true })
+    SilBox:Toggle({ Name = "Team check", Flag = "legit_silent_team", Default = true, Tooltip = "Only enemies are targeted" })
+    SilBox:Toggle({ Name = "Visible check", Flag = "legit_silent_visible", Default = true, Tooltip = "Only redirects to points with a clear line from the barrel, or walls the weapon can shoot through when wallbang is on" })
+    local SilMulti = SilBox:Toggle({ Name = "Multipoint", Flag = "legit_silent_multi", Tooltip = "Tests several points per hitbox and redirects to the best visible one nearest the crosshair" }):Settings("Multipoint", 230)
+    SilMulti:Slider({ Name = "Multipoint scale", Flag = "legit_silent_multi_scale", Min = 10, Max = 100, Default = 60, Decimals = 1, Suffix = "%", Tooltip = "How far from the hitbox centre the extra points sit" })
+    SilMulti:Slider({ Name = "Max points", Flag = "legit_silent_multi_max", Min = 1, Max = 9, Default = 5, Decimals = 1, Tooltip = "Points tested per body part (head up to 7, torso up to 9, limbs up to 3)" })
+    SilMulti:Toggle({ Name = "Show points", Flag = "legit_silent_multi_show", Tooltip = "Small dots on the points tested for your last redirected shot" })
+    pickColor(SilMulti, "Chosen point", "legit_silent_multi_color", Color3.fromRGB(120, 255, 170))
+    local SilWall = SilBox:Toggle({ Name = "Wallbang", Flag = "legit_silent_wallbang", Tooltip = "Also redirects to players behind walls that the equipped weapon can shoot through" }):Settings("Wallbang", 230)
+    SilWall:Slider({ Name = "Penetration safety", Flag = "legit_silent_pen_safety", Min = 50, Max = 100, Default = 90, Decimals = 1, Suffix = "%", Tooltip = "Share of the weapon's penetration depth the walls may use" })
+    SilBox:Toggle({ Name = "Bullet prediction", Flag = "legit_silent_pred", Tooltip = "Leads the target and compensates drop from bullet speed and the target's tracked velocity; off aims straight at the point" })
+    SilBox:Slider({ Name = "Max distance", Flag = "legit_silent_dist", Min = 50, Max = 1500, Default = 600, Decimals = 1, Suffix = " studs" })
     local SilTarget = Sil:Section({ Name = "Silent targeting", Side = 2, Icon = "target" })
     SilTarget:Dropdown({ Name = "Hitbox priority", Flag = "legit_silent_priority", Items = { "Closest", "Head", "Torso" }, Default = "Closest", Tooltip = "Closest picks the part nearest the crosshair; Head/Torso prefer that part when it qualifies" })
     SilTarget:Dropdown({ Name = "Hitboxes", Flag = "legit_silent_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
-    SilTarget:Label({ Name = "Uses Aimbot's Multipoint, Wallbang, Prediction, Team check and Max distance" })
 
     local Trig = Subs["Trigger Bot"]
     local TriggerBox = Trig:Section({ Name = "Trigger bot", Side = 1, Icon = "zap" })
@@ -5220,7 +5643,8 @@ do
         popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
     end
 
-    local Chams = Pages.Local:Section({ Name = "Viewmodel chams", Side = 1, Icon = "palette" })
+    local LocalSub = ESPSubs.Local
+    local Chams = LocalSub:Section({ Name = "Viewmodel chams", Side = 1, Icon = "palette" })
     local function chams(label, cat, tooltip, tint)
         local base = "local_" .. cat
         local popup = Chams:Toggle({ Name = label, Flag = base, Tooltip = tooltip }):Settings(label, 230)
@@ -5234,7 +5658,7 @@ do
     chams("Clothes chams", "cloth", "First-person sleeves", Color3.fromRGB(170, 120, 255))
     chams("Gun chams", "gun", "The weapon in your hands: every part of the viewmodel weapon", Color3.fromRGB(120, 255, 170))
 
-    local Remove = Pages.Local:Section({ Name = "Remove parts", Side = 2, Icon = "eye" })
+    local Remove = LocalSub:Section({ Name = "Remove parts", Side = 2, Icon = "eye" })
     Remove:Toggle({ Name = "Remove left arm", Flag = "local_rm_larm", Tooltip = "Hides the left arm's skin; sleeve and glove stay" })
     Remove:Toggle({ Name = "Remove right arm", Flag = "local_rm_rarm", Tooltip = "Hides the right arm's skin; sleeve and glove stay" })
     Remove:Toggle({ Name = "Remove left sleeve", Flag = "local_rm_lsleeve" })
@@ -5242,7 +5666,7 @@ do
     Remove:Toggle({ Name = "Remove gloves", Flag = "local_rm_gloves", Tooltip = "Both hands' gloves and accessories" })
     Remove:Toggle({ Name = "Remove gun", Flag = "local_rm_gun", Tooltip = "Hides the viewmodel weapon" })
 
-    local Changer = Pages.Local:Section({ Name = "Viewmodel changer", Side = 2, Icon = "camera" })
+    local Changer = LocalSub:Section({ Name = "Viewmodel changer", Side = 2, Icon = "camera" })
     local Offset = Changer:Toggle({ Name = "Viewmodel offset", Flag = "local_vm", Tooltip = "Moves and tilts the weapon and arms after the game positions them; bullets and your aim are not affected" }):Settings("Viewmodel offset", 230)
     Offset:Slider({ Name = "X (right)", Flag = "local_vm_x", Min = -2, Max = 2, Default = 0, Decimals = 0.01, Suffix = " studs" })
     Offset:Slider({ Name = "Y (up)", Flag = "local_vm_y", Min = -2, Max = 2, Default = 0, Decimals = 0.01, Suffix = " studs" })
@@ -5251,10 +5675,46 @@ do
     Offset:Slider({ Name = "Yaw", Flag = "local_vm_yaw", Min = -180, Max = 180, Default = 0, Decimals = 1, Suffix = " deg" })
     Offset:Slider({ Name = "Roll", Flag = "local_vm_roll", Min = -180, Max = 180, Default = 0, Decimals = 1, Suffix = " deg" })
     Offset:Toggle({ Name = "Fade out while aiming", Flag = "local_vm_aim", Tooltip = "The offset shrinks to nothing as you aim down sights" })
+
+    local Assets = LocalSub:Section({ Name = "Viewmodel assets", Side = 2, Icon = "list" })
+    Assets:Button({ Name = "Print arm assets to console", Callback = function()
+        local lines, cap = {}, 200
+        local function add(text)
+            if #lines < cap then lines[#lines + 1] = text elseif #lines == cap then lines[cap + 1] = "... (truncated)" end
+        end
+        local function tree(object, depth, maxDepth)
+            local okKids, kids = pcall(function() return object:GetChildren() end)
+            if not (okKids and type(kids) == "table") then return end
+            for _, child in ipairs(kids) do
+                local okName, text = pcall(function() return string.rep("  ", depth) .. tostring(child.Name) .. " [" .. tostring(child.ClassName) .. "]" end)
+                add(okName and text or string.rep("  ", depth) .. "?")
+                if depth < maxDepth then tree(child, depth + 1, maxDepth) end
+            end
+        end
+        add("== ReplicatedStorage.Character (depth 3) ==")
+        pcall(function()
+            local folder = game:GetService("ReplicatedStorage"):FindFirstChild("Character")
+            if folder then tree(folder, 1, 3) else add("  (not found)") end
+        end)
+        add("== Current viewmodel arms ==")
+        pcall(function()
+            local interface = Game.mods.CharacterInterface
+            local character = interface and interface.getCharacterObject()
+            local left, right = character.getArmModels(character)
+            for label, model in pairs({ Left = left, Right = right }) do
+                if model then
+                    add(label .. ": " .. tostring(model.Name) .. " [" .. tostring(model.ClassName) .. "]")
+                    for _, object in ipairs(model:GetDescendants()) do add("  " .. tostring(object.Name) .. " [" .. tostring(object.ClassName) .. "]") end
+                end
+            end
+            if not (left or right) then add("  (no arm models)") end
+        end)
+        print(table.concat(lines, "\n"))
+    end })
 end
 
 do
-    local Subs = Pages.ESP:SubTabs({ { "Enemies", "swords" }, { "Teammates", "shield" }, { "Other", "package" } })
+    local Subs = ESPSubs
 
     local function pickColor(popup, label, flagName, default, alpha)
         popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
@@ -5385,6 +5845,20 @@ do
     pickColor(Pred, "Path", "nade_predict_color", Color3.fromRGB(120, 200, 255))
     Pred:Toggle({ Name = "Show before pin pull", Flag = "nade_predict_pre", Tooltip = "Dimmer preview while the pin is still in" })
     Pred:Toggle({ Name = "Bounce markers", Flag = "nade_predict_bounce", Default = true })
+
+    local Dead = Other:Section({ Name = "Corpses", Side = 2, Icon = "user" })
+    local Cham = Dead:Toggle({ Name = "Corpse chams", Flag = "chams_dead", Tooltip = "Restyles the ragdoll left behind when a player dies by changing its material, colour and transparency. The game removes corpses after about 30 seconds" }):Settings("Corpse chams", 260)
+    Cham:Toggle({ Name = "Enemy corpses", Flag = "chams_dead_enemy", Default = true, Tooltip = "Corpses whose owner could not be matched count as enemy" })
+    pickColor(Cham, "Enemy", "chams_dead_enemy_color", Color3.fromRGB(255, 70, 90))
+    Cham:Toggle({ Name = "Team corpses", Flag = "chams_dead_team" })
+    pickColor(Cham, "Team", "chams_dead_team_color", Color3.fromRGB(90, 220, 130))
+    Cham:Toggle({ Name = "My corpse", Flag = "chams_dead_local" })
+    pickColor(Cham, "Mine", "chams_dead_local_color", Color3.fromRGB(120, 200, 255))
+    Cham:Dropdown({ Name = "Material", Flag = "chams_dead_mat", Items = Local.materials, Default = "ForceField" })
+    Cham:Dropdown({ Name = "Texture", Flag = "chams_dead_tex", Items = Local.names, Default = "None", Tooltip = "Pattern drawn by the ForceField material" })
+    Cham:Slider({ Name = "Reflectance", Flag = "chams_dead_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
+    Cham:Toggle({ Name = "Hide clothing/accessories", Flag = "chams_dead_hide", Tooltip = "Hides everything on the corpse except the six body parts" })
+    Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 15, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the corpse out over the last seconds before the game removes it; 0 is off" })
 end
 
 do
@@ -5463,9 +5937,24 @@ do
     local Box = SkySub:Section({ Name = "Skybox", Side = 1, Icon = "moon" })
     local Skybox = Box:Toggle({ Name = "Custom skybox", Flag = "world_skybox", Tooltip = "Replaces the sky textures; the original sky comes back when this is off" }):Settings("Custom skybox", 230)
     Skybox:Dropdown({ Name = "Skybox", Flag = "world_sky_box", Items = SKY_CHOICES, Default = SKY_CHOICES[1] })
-    Skybox:Input({ Name = "Custom ids", Flag = "world_sky_custom", Placeholder = "1 image id, or 6: up down front back left right" })
     Skybox:Toggle({ Name = "Rotate skybox", Flag = "world_sky_spin" })
     Skybox:Slider({ Name = "Rotation speed", Flag = "world_sky_spin_speed", Min = -60, Max = 60, Default = 6, Decimals = 0.1, Suffix = " deg/s" })
+    local Own = SkySub:Section({ Name = "Custom skybox ids", Side = 1, Icon = "moon" })
+    Own:Toggle({ Name = "Resolve decal ids", Flag = "world_sky_resolve", Default = true, Tooltip = "Decal ids are not image ids; this looks up the image inside the decal (needs GetObjects)" })
+    Own:Input({ Name = "Custom ids (1 or 6)", Flag = "world_sky_custom", Placeholder = "1 or 6 ids: up down front back left right" })
+    Own:Input({ Name = "Single image (all faces)", Flag = "world_sky_single", Placeholder = "id, rbxassetid:// or roblox.com link" })
+    Own:Input({ Name = "Custom sky: Back", Flag = "world_sky_f_bk", Placeholder = "id or link" })
+    Own:Input({ Name = "Custom sky: Down", Flag = "world_sky_f_dn", Placeholder = "id or link" })
+    Own:Input({ Name = "Custom sky: Front", Flag = "world_sky_f_ft", Placeholder = "id or link" })
+    Own:Input({ Name = "Custom sky: Left", Flag = "world_sky_f_lf", Placeholder = "id or link" })
+    Own:Input({ Name = "Custom sky: Right", Flag = "world_sky_f_rt", Placeholder = "id or link" })
+    Own:Input({ Name = "Custom sky: Up", Flag = "world_sky_f_up", Placeholder = "id or link" })
+    local Saved = SkySub:Section({ Name = "Saved skyboxes", Side = 1, Icon = "layers" })
+    Saved:Input({ Name = "Name", Flag = "world_sky_save_name", Placeholder = "name for the current skybox" })
+    Saved:Button({ Name = "Save current skybox", Callback = function() Util.guard("sky-save", World.saveSky) end })
+    Saved:Dropdown({ Name = "Saved set", Flag = "world_sky_saved_pick", Items = { "None" }, Default = "None" })
+    Saved:Button({ Name = "Delete selected", Callback = function() Util.guard("sky-delete", World.deleteSky) end })
+    Saved:Input({ Name = "Stored sets", Flag = "world_sky_saved", Placeholder = "name|6 ids; ..." })
     local Bodies = SkySub:Section({ Name = "Sun, moon and stars", Side = 2, Icon = "sun" })
     local Sky = Bodies:Toggle({ Name = "Override", Flag = "world_sky_objects" }):Settings("Sun, moon and stars", 230)
     Sky:Slider({ Name = "Stars", Flag = "world_sky_stars", Min = 0, Max = 5000, Default = 3000, Decimals = 1 })
@@ -5530,6 +6019,9 @@ do
     FovSet:Slider({ Name = "Scoped FOV", Flag = "world_fov_ads", Min = 20, Max = 120, Default = 60, Decimals = 1, Suffix = " deg" })
     FovSet:Slider({ Name = "Blend speed", Flag = "world_fov_speed", Min = 2, Max = 30, Default = 10, Decimals = 0.1 })
     FovSet:Slider({ Name = "Scope zoom multiplier", Flag = "world_fov_mult", Min = 0.5, Max = 3, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Scales the game's own scope zoom; 1 leaves it unchanged" })
+    local StretchSet = Fov:Toggle({ Name = "Stretch resolution", Flag = "world_stretch", Tooltip = "Scales the rendered image sideways or vertically; aim maths keep using the real camera" }):Settings("Stretch resolution", 230)
+    StretchSet:Slider({ Name = "Stretch X", Flag = "world_stretch_x", Min = 0.3, Max = 1.5, Default = 0.75, Decimals = 0.01, Suffix = "x", Tooltip = "Below 1 gives the classic 4:3 stretched look" })
+    StretchSet:Slider({ Name = "Stretch Y", Flag = "world_stretch_y", Min = 0.3, Max = 1.5, Default = 1, Decimals = 0.01, Suffix = "x" })
     local Cross = Cam:Section({ Name = "Crosshair", Side = 2, Icon = "crosshair" })
     local Ch = Cross:Toggle({ Name = "Custom crosshair", Flag = "cross_on" }):Settings("Crosshair", 230)
     pickColor(Ch, "Crosshair", "cross_color", Color3.fromRGB(120, 255, 170))
@@ -6544,6 +7036,7 @@ function Loop.step()
     Util.guard("tracers", Tracers.step, now)
     Util.guard("nades", Nades.step, cam, now)
     Util.guard("localvis", Local.step, now)
+    Util.guard("corpse", Corpse.step, now)
 
     if now - Loop.labelAt > 0.2 then
         Loop.labelAt = now
@@ -6565,8 +7058,10 @@ end
 Nades.hook()
 
 local function loopFrame()
+    Stretch.apply(Game.camera())
     local ok, problem = pcall(Loop.step)
     if not ok then Util.note("loop" .. tostring(problem), "frame:", problem) end
+    Stretch.restore(Game.camera())
 end
 
 local LOOP_BIND = Util.randomName()
@@ -6575,6 +7070,24 @@ if okCameraPriority and type(cameraPriority) == "number" and pcall(function() Ru
     Util.onUnload(function() pcall(function() RunService:UnbindFromRenderStep(LOOP_BIND) end) end)
 else
     Util.track(RunService.RenderStepped:Connect(loopFrame))
+end
+
+do
+    local function late() Stretch.apply(Game.camera()) end
+    local function early() Stretch.restore(Game.camera()) end
+    local lateName, earlyName = Util.randomName(), Util.randomName()
+    local okLast, last = pcall(function() return Enum.RenderPriority.Last.Value end)
+    local okFirst, first = pcall(function() return Enum.RenderPriority.First.Value end)
+    if okLast and type(last) == "number" and pcall(function() RunService:BindToRenderStep(lateName, last + 10, late) end) then
+        Util.onUnload(function() pcall(function() RunService:UnbindFromRenderStep(lateName) end) end)
+    else
+        Util.track(RunService.RenderStepped:Connect(late))
+    end
+    if okFirst and type(first) == "number" and pcall(function() RunService:BindToRenderStep(earlyName, first, early) end) then
+        Util.onUnload(function() pcall(function() RunService:UnbindFromRenderStep(earlyName) end) end)
+    end
+    Util.track(RunService.RenderStepped:Connect(early))
+    Util.onUnload(function() Stretch.restore(Game.camera()) end)
 end
 
 pcall(function() SaveManager:LoadAutoloadConfig() end)

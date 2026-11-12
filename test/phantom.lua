@@ -461,7 +461,8 @@ local Game = { ready = false, mods = {}, via = {}, missing = {}, frame = 0, acce
 
 local REQUIRED = { "ReplicationInterface", "CharacterInterface", "CameraInterface" }
 local OPTIONAL = { "PublicSettings", "NetworkClient", "HudCrosshairsInterface", "HudDamageInterface", "BulletInterface", "PlayerStatusEvents", "ContentInterface",
-    "CharacterObject", "ActiveLoadoutUtils", "PlayerDataClientInterface", "PlayerDataUtils", "SkinCaseUtils", "FirearmObject", "MeleeObject", "GrenadeObject" }
+    "CharacterObject", "ActiveLoadoutUtils", "PlayerDataClientInterface", "PlayerDataUtils", "SkinCaseUtils", "FirearmObject", "MeleeObject", "GrenadeObject",
+    "HudScreenGui", "PlayerSettingsInterface" }
 
 function Game.load()
     Game.ready, Game.mods, Game.via, Game.missing = false, {}, {}, {}
@@ -3229,36 +3230,76 @@ for index = 1, 4 do
     World.cross.lines[index] = Draw.new("Line", { ZIndex = 10, Visible = false })
 end
 
+World.gameCross = {}
+
+function World.gameCrossFrame()
+    local state = World.gameCross
+    if state.frame and propGet(state.frame, "Parent") then return state.frame end
+    local hud = Game.mods.HudScreenGui
+    local ok, frame = pcall(function()
+        local gui = (hud and hud.getScreenGui()) or LocalPlayer:FindFirstChildOfClass("PlayerGui"):FindFirstChild("HudScreenGui")
+        return gui:FindFirstChild("Main"):FindFirstChild("DisplayCrosshairs")
+    end)
+    state.frame = (ok and typeof(frame) == "Instance") and frame or nil
+    return state.frame
+end
+
+function World.showGameCross()
+    local frame = World.gameCross.hidden
+    World.gameCross.hidden = nil
+    if not frame then return end
+    local enabled = true
+    local settings = Game.mods.PlayerSettingsInterface
+    if settings and type(settings.getValue) == "function" then
+        local ok, value = pcall(settings.getValue, "togglecrosshairs")
+        enabled = not (ok and value == false)
+    end
+    propSet(frame, "Visible", enabled and (not Game.mods.CharacterInterface or Game.localAlive()))
+end
+
+function World.hideGameCross(active)
+    if not active then return World.showGameCross() end
+    local frame = World.gameCrossFrame()
+    if frame and propGet(frame, "Visible") then
+        World.gameCross.hidden = frame
+        propSet(frame, "Visible", false)
+    end
+end
+
 function World.stepCrosshair(center, now, dt)
     local cross = World.cross
     local shown = flag("cross_on", false)
+    Util.guard("gamecross", World.hideGameCross, shown and flag("cross_hide_game", false))
     for index = 1, 4 do cross.lines[index].Visible, cross.edges[index].Visible = false, false end
     cross.dot.Visible = false
     if not shown then return end
     local color, alpha = flag("cross_color", WHITE), Util.opacity("cross_color")
     local length, thick, gap = flag("cross_len", 8), flag("cross_thick", 2), flag("cross_gap", 5)
     local outline = flag("cross_outline", true)
-    local whole = math.floor(thick + 0.5)
+    local whole = math.max(1, math.floor(thick + 0.5))
     local shift = whole % 2 == 1 and 0.5 or 0
     center = Vector2.new(math.floor(center.X + 0.5) + shift, math.floor(center.Y + 0.5) + shift)
     if flag("cross_pulse", false) then gap = gap + flag("cross_pulse_range", 8) * (math.sin(now * flag("cross_pulse_speed", 3)) + 1) * 0.5 end
+    local near = math.floor(gap + 0.5) - shift
+    local far = near + math.max(1, math.floor(length + 0.5))
     if flag("cross_spin", false) then
         cross.angle = (cross.angle + math.rad(flag("cross_spin_speed", 90)) * dt) % (math.pi * 2)
     else
         cross.angle = 0
     end
+    local cos, sin = math.cos(cross.angle), math.sin(cross.angle)
+    local directions = { Vector2.new(cos, sin), Vector2.new(-sin, cos), Vector2.new(-cos, -sin), Vector2.new(sin, -cos) }
     for index = 1, 4 do
         if not (flag("cross_t", false) and index == 4) then
-            local angle = cross.angle + (index - 1) * math.pi / 2
-            local direction = Vector2.new(math.cos(angle), math.sin(angle))
+            local direction = directions[index]
             if outline then
                 local edge = cross.edges[index]
-                edge.From, edge.To = center + direction * (gap - 1), center + direction * (gap + length + 1)
-                edge.Thickness, edge.Visible = thick + 2, true
+                edge.From, edge.To = center + direction * (near - 1), center + direction * (far + 1)
+                edge.Thickness, edge.Visible = whole + 2, true
             end
             local line = cross.lines[index]
-            line.From, line.To = center + direction * gap, center + direction * (gap + length)
-            line.Color, line.Transparency, line.Thickness, line.Visible = color, alpha, thick, true
+            line.From, line.To = center + direction * near, center + direction * far
+            line.Color, line.Transparency, line.Thickness, line.Visible = color, alpha, whole, true
         end
     end
     if flag("cross_dot", false) then
@@ -3274,6 +3315,7 @@ Util.onUnload(function()
         for prop, old in pairs(saved) do propSet(object, prop, old) end
     end
     World.orig = {}
+    World.showGameCross()
     World.dropMap()
     World.dropLights()
     World.showHidden()
@@ -4072,8 +4114,28 @@ function Feedback.onHit(isHead)
     end
 end
 
+Feedback.kills = {}
+
+function Feedback.noteKill(victim, now)
+    local record = Entities.byPlayer[victim]
+    local kill = { victim = victim, at = now, model = record and record.model, pos = record and record.pos }
+    pcall(function()
+        local entry = Game.mods.ReplicationInterface.getEntry(victim)
+        local object = entry and entry._thirdPersonObject
+        local model = object and object._characterModel
+        if typeof(model) == "Instance" then kill.model = model end
+        if typeof(kill.pos) ~= "Vector3" and entry then
+            local position = entry:getPosition()
+            if typeof(position) == "Vector3" then kill.pos = position end
+        end
+    end)
+    if #Feedback.kills >= 12 then table.remove(Feedback.kills, 1) end
+    Feedback.kills[#Feedback.kills + 1] = kill
+end
+
 function Feedback.onKill(info)
-    if type(info) ~= "table" or info.attacker ~= LocalPlayer or info.victim == LocalPlayer then return end
+    if type(info) ~= "table" or info.attacker ~= LocalPlayer or info.victim == nil or info.victim == LocalPlayer then return end
+    Feedback.noteKill(info.victim, os.clock())
     if not flag("kill_snd", false) then return end
     Feedback.play(flag("kill_snd_id", "Alt Killshot"), flag("kill_snd_vol", 1.5), flag("kill_snd_pitch", 1))
 end
@@ -4197,7 +4259,7 @@ function Feedback.step(cam, center, now)
     for index = used + 1, #Feedback.texts do Feedback.texts[index].Visible = false end
 end
 
-local Legit = { target = nil, record = nil, part = nil, switchAt = 0, reactUntil = 0, moved = false, radius = 0, zoom = 1, L = {} }
+local Legit = { target = nil, record = nil, part = nil, switchAt = 0, reactUntil = 0, moved = false, radius = 0, zoom = 1, L = {}, pressAt = -1e9, snapTime = 0.12, last = {} }
 local GROUPS = { Head = { "Head" }, Torso = { "Torso" }, Arms = { "Left Arm", "Right Arm" }, Legs = { "Left Leg", "Right Leg" } }
 local GROUP_ORDER = { "Head", "Torso", "Arms", "Legs" }
 
@@ -4421,7 +4483,6 @@ function Silent.hook()
     end)
 end
 
-Silent.circle = Draw.new("Circle", { Thickness = 1, NumSides = 48, Filled = false, Visible = false, ZIndex = 5 })
 Silent.ring = Draw.new("Circle", { Thickness = 1, NumSides = 64, Filled = false, Visible = false, ZIndex = 5 })
 Silent.ringFill = Draw.new("Circle", { NumSides = 64, Filled = true, Visible = false, ZIndex = 4 })
 
@@ -4435,11 +4496,6 @@ function Silent.step(dt, cam, weapon, screen)
     if L.silent then Silent.hook() end
     local center = Silent.fovCenter(screen)
     Legit.scaleRadius(Silent, dt, weapon, cam, L.silentFov, L.silentFovDynamic, L.silentFovZoom, L.silentFovSpeed)
-    local show = L.silent and L.silentDraw and not L.silentFovDraw
-    Silent.circle.Visible = show
-    if show then
-        Silent.circle.Position, Silent.circle.Radius, Silent.circle.Color = center, Silent.radius, L.silentColor
-    end
     local shot = Silent.shot
     local locked = shot and os.clock() - shot.at < 0.35
     Legit.paintFov(Silent.ring, Silent.ringFill, center, Silent.radius, L.silent and L.silentFovDraw, locked, "legit_silent_fov", Color3.fromRGB(255, 200, 80))
@@ -4484,7 +4540,7 @@ function Legit.read()
     L.pred, L.predShow, L.predAim, L.predAll = flag("legit_pred", false), flag("legit_pred_show", true), flag("legit_pred_aim", false), flag("legit_pred_all", false)
     L.predColor, L.predOutline = flag("legit_pred_color", Color3.fromRGB(255, 40, 40)), flag("legit_pred_outline", true)
     L.silent, L.silentFov, L.silentChance = flag("legit_silent", false), flag("legit_silent_fov", 90), flag("legit_silent_chance", 100)
-    L.silentVisible, L.silentDraw, L.silentColor = flag("legit_silent_visible", true), flag("legit_silent_draw", true), flag("legit_silent_color", Color3.fromRGB(255, 200, 80))
+    L.silentVisible = flag("legit_silent_visible", true)
     L.silentParts = Util.set("legit_silent_parts", { Head = true, Torso = true })
     L.silentChoice = flag("legit_silent_priority", "Closest")
     L.silentTeam, L.silentDist = flag("legit_silent_team", true), flag("legit_silent_dist", 600)
@@ -4492,7 +4548,7 @@ function Legit.read()
     L.silentShowPoints, L.silentPointColor = flag("legit_silent_multi_show", false), flag("legit_silent_multi_color", Color3.fromRGB(120, 255, 170))
     L.silentWallbang, L.silentSafety = flag("legit_silent_wallbang", false), flag("legit_silent_pen_safety", 90) / 100
     L.silentPred = flag("legit_silent_pred", false)
-    L.silentFovDraw, L.silentFovBarrel, L.silentFovAttach = flag("legit_silent_fov_draw", false), flag("legit_silent_fov_barrel", false), flag("legit_silent_fov_attach", "Aim hit")
+    L.silentFovDraw, L.silentFovBarrel, L.silentFovAttach = flag("legit_silent_fov_draw", true), flag("legit_silent_fov_barrel", false), flag("legit_silent_fov_attach", "Aim hit")
     L.silentFovDynamic, L.silentFovZoom, L.silentFovSpeed = flag("legit_silent_fov_dynamic", false), flag("legit_silent_fov_zoom", 1), flag("legit_silent_fov_speed", 10)
     local opts = Aim.opts
     opts.visible, opts.parts, opts.choice = L.visible, L.parts, L.choice
@@ -4574,7 +4630,7 @@ function Legit.choose(records, cam, origin, center, now)
     return bestRecord, bestCand
 end
 
-function Legit.turn(gameCam, origin, aimPoint, dt, now, cam, barrelLook)
+function Legit.turn(gameCam, origin, aimPoint, dt, now, cam, barrelLook, instant)
     local L = Legit.L
     local direction = aimPoint - origin
     if direction.Magnitude < 0.01 then return false end
@@ -4597,11 +4653,11 @@ function Legit.turn(gameCam, origin, aimPoint, dt, now, cam, barrelLook)
     local pixels = (cam.ViewportSize.Y / 2) / math.tan(math.rad(cam.FieldOfView) / 2)
     if math.sqrt(deltaPitch * deltaPitch + deltaYaw * deltaYaw) * pixels < L.deadzone then return false end
 
-    local alpha = 1 - math.exp(-dt * 60 / math.max(L.smooth, 1))
+    local alpha = instant and 1 or 1 - math.exp(-dt * 60 / math.max(L.smooth, 1))
     local stepPitch, stepYaw = deltaPitch * alpha, deltaYaw * alpha
     local cap = math.rad(L.speed) * dt
     local size = math.sqrt(stepPitch * stepPitch + stepYaw * stepYaw)
-    if size > cap and size > 0 then
+    if not instant and size > cap and size > 0 then
         stepPitch, stepYaw = stepPitch * cap / size, stepYaw * cap / size
     end
 
@@ -4754,8 +4810,14 @@ function Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
     local active = L.semi or (L.aim and Util.keyActive("legit_aim_key") and not Util.menuOpen() and not Util.typing())
     if not (active and weapon and Game.isFirearm(weapon)) then Legit.target = nil return end
     if L.ads and not Game.aiming(weapon) then Legit.target = nil return end
-    local fire = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-    if (L.shooting or (L.semi and L.onfire)) and not fire then Legit.target = nil return end
+    local snap = L.semi and L.onfire
+    if snap then
+        if now - Legit.pressAt > Legit.snapTime then Legit.target = nil return end
+        if Legit.snapDone then return end
+    elseif L.shooting and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+        Legit.target = nil
+        return
+    end
 
     local gameCam = Game.gameCamera()
     if not gameCam then return end
@@ -4793,7 +4855,7 @@ function Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
             Legit.snapline.Visible = true
         end
     end
-    if now < Legit.reactUntil then return end
+    if now < Legit.reactUntil and not snap then return end
     local aimPoint
     local speed = Game.stat(weapon, "bulletspeed")
     if L.pred and L.predAim and type(speed) == "number" and speed > 1 then
@@ -4801,8 +4863,22 @@ function Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
         aimPoint = compensated
     end
     aimPoint = aimPoint or Legit.lead(origin, cand.pos, Aim.velocity(record), weapon)
-    Legit.moved = Legit.turn(gameCam, origin, aimPoint, dt, now, cam, useBarrel and Barrel.look or nil)
+    if snap then Legit.snapDone = true end
+    Legit.moved = Legit.turn(gameCam, origin, aimPoint, dt, now, cam, useBarrel and Barrel.look or nil, snap)
 end
+
+function Legit.onPress()
+    if Util.menuOpen() or Util.typing() then return end
+    local L, last = Legit.L, Legit.last
+    Legit.pressAt, Legit.snapDone = os.clock(), false
+    if not (L.semi and L.onfire and last.cam) then return end
+    Legit.target = nil
+    Legit.runAim(0, last.cam, Legit.pressAt, last.records, last.center, last.weapon, last.origin, last.useBarrel)
+end
+
+Util.track(UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then Util.guard("snap", Legit.onPress) end
+end))
 
 function Legit.stepAim(dt, cam, now, records, screen)
     local L = Legit.L
@@ -4817,6 +4893,8 @@ function Legit.stepAim(dt, cam, now, records, screen)
     local useBarrel = L.barrel and Barrel.valid
     local origin = useBarrel and Barrel.fire or Game.eye(cam).Position
     Legit.origin = origin
+    local last = Legit.last
+    last.cam, last.records, last.center, last.weapon, last.origin, last.useBarrel = cam, records, center, weapon, origin, useBarrel
     Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
     Legit.stepPredict(cam, center, records)
     Legit.stepPoints(cam, center)
@@ -5440,7 +5518,7 @@ Util.onUnload(function()
     end
 end)
 
-local Corpse = { recs = setmetatable({}, { __mode = "k" }), owned = setmetatable({}, { __mode = "k" }), bodyNames = {}, lifetime = 30, matchRange = 10, scanAt = 0 }
+local Corpse = { recs = setmetatable({}, { __mode = "k" }), owned = setmetatable({}, { __mode = "k" }), held = setmetatable({}, { __mode = "k" }), bodyNames = {}, lifetime = 30, matchRange = 10, scanAt = 0 }
 
 for _, name in ipairs(PART_NAMES) do Corpse.bodyNames[name] = true end
 
@@ -5522,9 +5600,23 @@ end
 
 function Corpse.restoreAll()
     for model, rec in pairs(Corpse.recs) do
-        for _, item in ipairs(rec.items) do Local.applyItem(item, nil, nil) end
+        if Corpse.owned[model] then
+            Corpse.held[model] = rec
+        else
+            for _, item in ipairs(rec.items) do Local.applyItem(item, nil, nil) end
+        end
         Corpse.recs[model] = nil
     end
+end
+
+function Corpse.release(model)
+    Corpse.owned[model] = nil
+    local held, rec = Corpse.held[model], Corpse.recs[model]
+    Corpse.held[model] = nil
+    if held then
+        for _, item in ipairs(held.items) do Local.applyItem(item, nil, nil) end
+    end
+    if rec then rec.sig = nil end
 end
 
 function Corpse.step(now)
@@ -5565,7 +5657,7 @@ end
 Util.onUnload(Corpse.restoreAll)
 
 local KillFx = {
-    events = {}, pending = {}, fired = setmetatable({}, { __mode = "k" }), maxEvents = 6, fx = {},
+    events = {}, pending = {}, fired = setmetatable({}, { __mode = "k" }), maxEvents = 6, fx = {}, window = 2, near = 6,
     names = { "Dissolve", "Lightning", "Shockwave", "Sparks", "Pillar", "Screen flash" },
     glow = "rbxasset://textures/particles/sparkles_main.dds",
 }
@@ -5682,7 +5774,7 @@ KillFx.fx.Dissolve = {
                 elseif kind then
                     local at = propGet(object, "Position")
                     if base < 1 and typeof(at) == "Vector3" then
-                        local item = { inst = object, base = base, y = at.Y, alpha = -1 }
+                        local item = { inst = object, base = base, y = at.Y, alpha = -1, material = propGet(object, "Material"), color = propGet(object, "Color") }
                         parts[#parts + 1], byPart[object] = item, item
                         low, high = math.min(low, at.Y), math.max(high, at.Y)
                     end
@@ -5698,8 +5790,24 @@ KillFx.fx.Dissolve = {
             item.key = owner and owner.key or 0.4
         end
         local rate = math.max(2, math.floor(10 * opts.int))
+        local finished = false
+        ev.undo[#ev.undo + 1] = function()
+            if finished then return end
+            finished = true
+            for _, item in ipairs(parts) do
+                Local.setIf(item.inst, "Material", item.material)
+                Local.setIf(item.inst, "Color", item.color)
+                Local.setIf(item.inst, "Transparency", item.base)
+            end
+            for _, item in ipairs(decals) do Local.setIf(item.inst, "Transparency", item.base) end
+            Corpse.release(corpse)
+        end
         ev.ticks[#ev.ticks + 1] = function(t)
-            if propGet(corpse, "Parent") == nil then return true end
+            if finished then return true end
+            if propGet(corpse, "Parent") == nil then
+                finished = true
+                return true
+            end
             local progress = t / opts.dur
             for _, item in ipairs(parts) do
                 local alpha = math.clamp((progress - item.key) / 0.2, 0, 1)
@@ -5725,7 +5833,8 @@ KillFx.fx.Dissolve = {
             for _, item in ipairs(decals) do
                 propSet(item.inst, "Transparency", item.base + (1 - item.base) * math.clamp((progress - item.key) / 0.2, 0, 1))
             end
-            return progress >= 1.05
+            if progress >= 1.05 then finished = true end
+            return finished
         end
     end,
 }
@@ -5845,8 +5954,9 @@ function KillFx.free(group)
 end
 
 function KillFx.destroy(ev)
+    for _, undo in ipairs(ev.undo) do Util.guard("killfx undo", undo) end
     for _, group in ipairs(ev.groups) do KillFx.free(group) end
-    ev.groups, ev.ticks = {}, {}
+    ev.groups, ev.ticks, ev.undo = {}, {}, {}
 end
 
 function KillFx.run(ev, name, fn, ...)
@@ -5877,14 +5987,49 @@ function KillFx.anchorOf(model)
     return nil
 end
 
+function KillFx.modelKill(model)
+    for index, kill in ipairs(Feedback.kills) do
+        if kill.model ~= nil and kill.model == model then return index end
+    end
+    return nil
+end
+
+function KillFx.closest(kill, model, distance)
+    for other in pairs(KillFx.pending) do
+        if other ~= model and not KillFx.modelKill(other) then
+            local at = KillFx.anchorOf(other)
+            if at and (kill.pos - at).Magnitude < distance then return false end
+        end
+    end
+    return true
+end
+
+function KillFx.claim(model, pos, now)
+    local kills = Feedback.kills
+    for index = #kills, 1, -1 do
+        if now - kills[index].at > KillFx.window then table.remove(kills, index) end
+    end
+    local best = KillFx.modelKill(model)
+    if not best and pos then
+        local bestDistance = KillFx.near
+        for index, kill in ipairs(kills) do
+            if kill.model == nil and typeof(kill.pos) == "Vector3" then
+                local distance = (kill.pos - pos).Magnitude
+                if distance < bestDistance and KillFx.closest(kill, model, distance) then best, bestDistance = index, distance end
+            end
+        end
+    end
+    if not best then return false end
+    table.remove(kills, best)
+    return true
+end
+
 function KillFx.launch(model, pos, now)
-    local kind = Corpse.kindOf(model)
-    if not on("kill_fx_" .. kind) then return end
     local opts = KillFx.settings()
     local root = propGet(Workspace, "CurrentCamera")
     if not root then return end
     while #KillFx.events >= KillFx.maxEvents do KillFx.destroy(table.remove(KillFx.events, 1)) end
-    local ev = { born = now, groups = {}, ticks = {}, root = root, limit = opts.dur + 4 }
+    local ev = { born = now, groups = {}, ticks = {}, undo = {}, root = root, limit = opts.dur + 4 }
     KillFx.events[#KillFx.events + 1] = ev
     for _, name in ipairs(KillFx.names) do
         if opts.list[name] then KillFx.run(ev, name, KillFx.fx[name].start, model, pos, opts) end
@@ -5923,9 +6068,9 @@ function KillFx.step(now)
     end
     for model, born in pairs(KillFx.pending) do
         local pos = KillFx.anchorOf(model)
-        if propGet(model, "Parent") == nil or now - born > 1 then
+        if propGet(model, "Parent") == nil or now - born > KillFx.window then
             KillFx.pending[model] = nil
-        elseif pos then
+        elseif pos and KillFx.claim(model, pos, now) then
             KillFx.pending[model] = nil
             Util.guard("killfx launch", KillFx.launch, model, pos, now)
         end
@@ -5976,7 +6121,7 @@ do
     Semi:Slider({ Name = "Semi smoothing", Flag = "legit_semi_smooth", Min = 1, Max = 60, Default = 6, Decimals = 1 })
     Semi:Dropdown({ Name = "Semi hitbox priority", Flag = "legit_semi_priority", Items = { "Closest", "Head", "Torso" }, Default = "Head" })
     Semi:Dropdown({ Name = "Semi hitboxes", Flag = "legit_semi_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head" } })
-    Semi:Toggle({ Name = "Snap on shot", Flag = "legit_semi_onfire", Tooltip = "Only aims while mouse 1 is held" })
+    Semi:Toggle({ Name = "Snap on shot", Flag = "legit_semi_onfire", Tooltip = "Does nothing until you press mouse 1, then snaps onto the target once for that shot (no smoothing or reaction delay)" })
     Master:Toggle({ Name = "Team check", Flag = "legit_team_check", Default = true, Tooltip = "Only enemies are targeted (shared with the triggerbot)" })
     local VisibleCheck = Master:Toggle({ Name = "Visible check", Flag = "legit_visible", Default = true, Tooltip = "Only aims at points with a clear line from the barrel, multi-ray, ignoring glass, non-solid parts and other players" }):Settings("Visible check", 230)
     VisibleCheck:Slider({ Name = "ESP rays per player", Flag = "vis_rays", Min = 1, Max = 6, Default = 3, Decimals = 1, Tooltip = "Body parts traced for ESP visible/hidden colours; stops at the first clear one" })
@@ -6046,10 +6191,7 @@ do
 
     local Sil = Subs["Silent Aim"]
     local SilBox = Sil:Section({ Name = "Silent aim", Column = 1, Icon = "crosshair" })
-    local Quiet = SilBox:Toggle({ Name = "Enabled", Flag = "legit_silent", Tooltip = "Redirects your own bullets (client bullet and the newbullets packet) at the target without moving the camera or weapon. Risk: the server sees shots that do not match your view direction" }):Settings("Silent aim", 230)
-    Quiet:Toggle({ Name = "Draw silent FOV", Flag = "legit_silent_draw", Default = true })
-    pickColor(Quiet, "Silent circle", "legit_silent_color", Color3.fromRGB(255, 200, 80))
-    SilBox:Slider({ Name = "Silent FOV", Flag = "legit_silent_fov", Min = 5, Max = 600, Default = 90, Decimals = 1, Suffix = " px", Tooltip = "Radius around the silent FOV centre (screen centre, or the barrel when attached) where a target can be redirected to" })
+    SilBox:Toggle({ Name = "Enabled", Flag = "legit_silent", Tooltip = "Redirects your own bullets (client bullet and the newbullets packet) at the target without moving the camera or weapon. Risk: the server sees shots that do not match your view direction" })
     SilBox:Slider({ Name = "Hit chance", Flag = "legit_silent_chance", Min = 1, Max = 100, Default = 100, Decimals = 1, Suffix = "%", Tooltip = "Chance that a shot is redirected" })
     SilBox:Toggle({ Name = "Team check", Flag = "legit_silent_team", Default = true, Tooltip = "Only enemies are targeted" })
     SilBox:Toggle({ Name = "Visible check", Flag = "legit_silent_visible", Default = true, Tooltip = "Only redirects to points with a clear line from the barrel, or walls the weapon can shoot through when wallbang is on" })
@@ -6066,7 +6208,8 @@ do
     SilTarget:Dropdown({ Name = "Hitbox priority", Flag = "legit_silent_priority", Items = { "Closest", "Head", "Torso" }, Default = "Closest", Tooltip = "Closest picks the part nearest the crosshair; Head/Torso prefer that part when it qualifies" })
     SilTarget:Dropdown({ Name = "Hitboxes", Flag = "legit_silent_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
     local SilFov = Sil:Section({ Name = "Silent FOV", Column = 3, Icon = "scan" })
-    SilFov:Toggle({ Name = "Draw FOV circle", Flag = "legit_silent_fov_draw", Tooltip = "Styled silent FOV circle; replaces the simple silent circle while on" }):Colorpicker({ Name = "Circle", Flag = "legit_silent_fov_color", Default = Color3.fromRGB(255, 200, 80), Alpha = 0 })
+    SilFov:Slider({ Name = "Radius", Flag = "legit_silent_fov", Min = 5, Max = 600, Default = 90, Decimals = 1, Suffix = " px", Tooltip = "Radius around the silent FOV centre (screen centre, or the barrel when attached) where a target can be redirected to" })
+    SilFov:Toggle({ Name = "Draw FOV circle", Flag = "legit_silent_fov_draw", Default = true }):Colorpicker({ Name = "Circle", Flag = "legit_silent_fov_color", Default = Color3.fromRGB(255, 200, 80), Alpha = 0 })
     SilFov:Toggle({ Name = "Filled", Flag = "legit_silent_fov_fill" }):Colorpicker({ Name = "Fill", Flag = "legit_silent_fov_fill_color", Default = Color3.fromRGB(255, 200, 80), Alpha = 0.92 })
     SilFov:Toggle({ Name = "Locked colour", Flag = "legit_silent_fov_lock", Default = true, Tooltip = "The circle changes colour briefly after a redirected shot" }):Colorpicker({ Name = "Locked", Flag = "legit_silent_fov_lock_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
     SilFov:Toggle({ Name = "Attach to barrel", Flag = "legit_silent_fov_barrel", Tooltip = "Centres the circle and the silent target search on the weapon barrel instead of the screen centre" })
@@ -6357,15 +6500,12 @@ do
     Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 15, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the corpse out over the last seconds before the game removes it; 0 is off" })
 
     local Kill = Other:Section({ Name = "Kill effects", Column = 3, Icon = "flame" })
-    local Fx = Kill:Toggle({ Name = "Kill effects", Flag = "kill_fx", Tooltip = "Plays local effects on the corpse when a player dies. Visual only, nothing is sent to the server" }):Settings("Kill effects", 260)
+    local Fx = Kill:Toggle({ Name = "Kill effects", Flag = "kill_fx", Tooltip = "Plays local effects on the corpse of players you kill (from the game's death event). Visual only, nothing is sent to the server" }):Settings("Kill effects", 260)
     Fx:Dropdown({ Name = "Effects", Flag = "kill_fx_list", Items = KillFx.names, Multi = true, Default = { "Dissolve", "Lightning" } })
     pickColor(Fx, "Colour", "kill_fx_color", Color3.fromRGB(102, 204, 255))
     pickColor(Fx, "Secondary", "kill_fx_color2", Color3.fromRGB(235, 248, 255))
     Fx:Slider({ Name = "Intensity", Flag = "kill_fx_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
     Fx:Slider({ Name = "Duration", Flag = "kill_fx_dur", Min = 0.5, Max = 6, Default = 2.5, Decimals = 0.1, Suffix = " s", Tooltip = "Length of Dissolve and Pillar" })
-    Fx:Toggle({ Name = "Enemies", Flag = "kill_fx_enemy", Default = true, Tooltip = "Corpses whose owner could not be matched count as enemy" })
-    Fx:Toggle({ Name = "Teammates", Flag = "kill_fx_team" })
-    Fx:Toggle({ Name = "Local player", Flag = "kill_fx_local" })
     Fx:Slider({ Name = "Screen flash only near", Flag = "kill_fx_flash_dist", Min = 20, Max = 500, Default = 150, Decimals = 1, Suffix = " studs" })
     Fx:Toggle({ Name = "Play sound", Flag = "kill_fx_sound" })
     Fx:Input({ Name = "Sound id", Flag = "kill_fx_sound_id", Placeholder = "rbxassetid or number" })
@@ -6535,6 +6675,7 @@ do
     local Cross = Cam:Section({ Name = "Crosshair", Column = 2, Icon = "crosshair" })
     local Ch = Cross:Toggle({ Name = "Custom crosshair", Flag = "cross_on" }):Settings("Crosshair", 230)
     pickColor(Ch, "Crosshair", "cross_color", Color3.fromRGB(120, 255, 170))
+    Ch:Toggle({ Name = "Hide game crosshair", Flag = "cross_hide_game", Tooltip = "Hides Phantom Forces' own hipfire crosshair while Custom crosshair is on; it comes back when either is turned off" })
     Ch:Toggle({ Name = "Attach to barrel", Flag = "cross_barrel", Tooltip = "Draws the crosshair at the weapon barrel instead of the screen centre" })
     Ch:Dropdown({ Name = "Attach point", Flag = "cross_barrel_pt", Items = { "Aim hit", "Muzzle" }, Default = "Aim hit", Tooltip = "Aim hit is where the barrel is pointing; Muzzle is the barrel tip" })
     Ch:Slider({ Name = "Length", Flag = "cross_len", Min = 1, Max = 40, Default = 8, Decimals = 1, Suffix = " px" })
@@ -7600,7 +7741,7 @@ function Loop.step()
                 pcall(function() Library:Notify("Core " .. tostring(Game.summary), 4) end)
             end
         end
-        Legit.circle.Visible, Legit.circleFill.Visible, Silent.circle.Visible = false, false, false
+        Legit.circle.Visible, Legit.circleFill.Visible = false, false
         Silent.ring.Visible, Silent.ringFill.Visible = false, false
         ESP.clear()
         Util.guard("items", Items.step, cam, now)

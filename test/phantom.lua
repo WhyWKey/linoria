@@ -361,25 +361,42 @@ local function tabIcon(name)
     return ICON_FALLBACK
 end
 
+local function addBox(owner, column, name, icon)
+    if column == 2 and type(owner.AddMiddleGroupbox) == "function" then return owner:AddMiddleGroupbox(name, icon) end
+    if column == 3 then return owner:AddRightGroupbox(name, icon) end
+    return owner:AddLeftGroupbox(name, icon)
+end
+
 local function surface(tab, onBox)
-    local state = { load = { 0, 0 } }
-    local function pick(side)
-        if side == 1 or side == 2 then return side end
-        return state.load[1] <= state.load[2] and 1 or 2
+    local state = { load = { 0, 0, 0 } }
+    local middle = type(tab.AddMiddleGroupbox) == "function"
+    local function pick(column)
+        if column == 1 or column == 3 or (column == 2 and middle) then return column end
+        if column == nil and middle and state.load[2] < math.min(state.load[1], state.load[3]) then return 2 end
+        return state.load[1] <= state.load[3] and 1 or 3
     end
     function state:Section(info)
-        local side = pick(info.Side)
-        local group = side == 1 and tab:AddLeftGroupbox(info.Name, info.Icon) or tab:AddRightGroupbox(info.Name, info.Icon)
+        local column = pick(info.Column)
+        local group = addBox(tab, column, info.Name, info.Icon)
         if onBox then onBox(group.Outer) end
-        return wrapGroup(group, state, side)
+        return wrapGroup(group, state, column)
     end
     function state:MultiSection(info)
-        local side = pick(info.Side)
-        local box = side == 1 and tab:AddLeftTabbox() or tab:AddRightTabbox()
-        if onBox then onBox(box.Outer) end
+        local column = pick(info.Column)
         local sections = {}
+        if column == 2 and type(tab.AddMiddleTabbox) ~= "function" then
+            for index, name in ipairs(info.Sections) do
+                local group = addBox(tab, 2, name, info.Icons and info.Icons[index])
+                if onBox then onBox(group.Outer) end
+                sections[index] = wrapGroup(group, state, 2)
+            end
+            return table.unpack(sections)
+        end
+        local box
+        if column == 2 then box = tab:AddMiddleTabbox(info.Name) elseif column == 1 then box = tab:AddLeftTabbox(info.Name) else box = tab:AddRightTabbox(info.Name) end
+        if onBox then onBox(box.Outer) end
         for index, name in ipairs(info.Sections) do
-            sections[index] = wrapGroup(box:AddTab(name), state, side)
+            sections[index] = wrapGroup(box:AddTab(name), state, column)
         end
         return table.unpack(sections)
     end
@@ -5934,7 +5951,7 @@ do
     local function pickColor(popup, label, flagName, default, alpha)
         popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
     end
-    local Master = Aim:Section({ Name = "Aim assist", Side = 1, Icon = "crosshair" })
+    local Master = Aim:Section({ Name = "Aim assist", Column = 1, Icon = "crosshair" })
     Master:Toggle({ Name = "Enabled", Flag = "legit_aim", Tooltip = "Turns your view toward the target through the game's camera while the key is held" }):Keybind({ Name = "Aim key", Flag = "legit_aim_key", Default = "MB2", Mode = "Hold" })
     local Semi = Master:Toggle({ Name = "Semi-auto aim", Flag = "legit_semi", Tooltip = "A second aim key that only works while the equipped weapon is set to semi (single shot); it uses its own FOV, smoothing and hitboxes and overrides the normal key. Other aim settings are shared" }):Keybind({ Name = "Semi-auto key", Flag = "legit_semi_key", Default = "MB2", Mode = "Hold" }):Settings("Semi-auto aim", 230)
     Semi:Slider({ Name = "Semi FOV", Flag = "legit_semi_fov", Min = 10, Max = 800, Default = 90, Decimals = 1, Suffix = " px" })
@@ -5966,7 +5983,7 @@ do
     Master:Dropdown({ Name = "Hitboxes", Flag = "legit_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
     Master:Dropdown({ Name = "Target by", Flag = "legit_target_by", Items = { "Crosshair", "Distance", "Lowest health" }, Default = "Crosshair" })
 
-    local Smooth, Target, Predict = Aim:MultiSection({ Sections = { "Smoothing", "Target", "Prediction" }, Side = 1 })
+    local Smooth, Target, Predict = Aim:MultiSection({ Name = "Aim tuning", Sections = { "Smoothing", "Target", "Prediction" }, Icons = { "clock", "target", "zap" }, Column = 2 })
     Smooth:Slider({ Name = "Smoothing", Flag = "legit_smooth", Min = 1, Max = 60, Default = 12, Decimals = 1, Tooltip = "Higher is slower and looks more natural" })
     Smooth:Slider({ Name = "Max turn speed", Flag = "legit_speed", Min = 30, Max = 1440, Default = 420, Decimals = 1, Suffix = " deg/s" })
     Smooth:Slider({ Name = "Deadzone", Flag = "legit_deadzone", Min = 0, Max = 30, Default = 2, Decimals = 1, Suffix = " px", Tooltip = "No movement when the target is this close to the crosshair" })
@@ -5981,7 +5998,7 @@ do
     Predict:Slider({ Name = "Strength", Flag = "legit_strength", Min = 0, Max = 1.5, Default = 1, Decimals = 0.01 })
     Predict:Slider({ Name = "Max lead", Flag = "legit_maxlead", Min = 0, Max = 40, Default = 14, Decimals = 0.1, Suffix = " studs" })
 
-    local Fov = Aim:Section({ Name = "FOV", Side = 2, Icon = "scan" })
+    local Fov = Aim:Section({ Name = "FOV", Column = 3, Icon = "scan" })
     Fov:Toggle({ Name = "Draw FOV circle", Flag = "legit_fov_draw", Default = true }):Colorpicker({ Name = "Circle", Flag = "legit_fov_color", Default = WHITE, Alpha = 0 })
     Fov:Toggle({ Name = "Filled", Flag = "legit_fov_fill" }):Colorpicker({ Name = "Fill", Flag = "legit_fov_fill_color", Default = WHITE, Alpha = 0.92 })
     Fov:Toggle({ Name = "Locked colour", Flag = "legit_fov_lock", Default = true, Tooltip = "The circle changes colour while a target is held" }):Colorpicker({ Name = "Locked", Flag = "legit_fov_lock_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
@@ -5995,7 +6012,7 @@ do
     Fov:Slider({ Name = "Blend speed", Flag = "legit_fov_speed", Min = 2, Max = 30, Default = 10, Decimals = 0.1 })
     Fov:Toggle({ Name = "Target line", Flag = "legit_snapline", Tooltip = "A line from the crosshair to the aimed body part" }):Colorpicker({ Name = "Line", Flag = "legit_snapline_color", Default = Color3.fromRGB(255, 80, 80), Alpha = 0 })
 
-    local Info = Aim:Section({ Name = "Status", Side = 2, Icon = "info" })
+    local Info = Aim:Section({ Name = "Status", Column = 3, Icon = "info" })
     Status.core = Info:Label({ Name = "Core: " .. tostring(Game.summary) })
     Status.weapon = Info:Label({ Name = "Weapon: none" })
     Status.target = Info:Label({ Name = "Target: none" })
@@ -6010,7 +6027,7 @@ do
     end })
 
     local Sil = Subs["Silent Aim"]
-    local SilBox = Sil:Section({ Name = "Silent aim", Side = 1, Icon = "crosshair" })
+    local SilBox = Sil:Section({ Name = "Silent aim", Column = 1, Icon = "crosshair" })
     local Quiet = SilBox:Toggle({ Name = "Enabled", Flag = "legit_silent", Tooltip = "Redirects your own bullets (client bullet and the newbullets packet) at the target without moving the camera or weapon. Risk: the server sees shots that do not match your view direction" }):Settings("Silent aim", 230)
     Quiet:Toggle({ Name = "Draw silent FOV", Flag = "legit_silent_draw", Default = true })
     pickColor(Quiet, "Silent circle", "legit_silent_color", Color3.fromRGB(255, 200, 80))
@@ -6027,25 +6044,25 @@ do
     SilWall:Slider({ Name = "Penetration safety", Flag = "legit_silent_pen_safety", Min = 50, Max = 100, Default = 90, Decimals = 1, Suffix = "%", Tooltip = "Share of the weapon's penetration depth the walls may use" })
     SilBox:Toggle({ Name = "Bullet prediction", Flag = "legit_silent_pred", Tooltip = "Leads the target and compensates drop from bullet speed and the target's tracked velocity; off aims straight at the point" })
     SilBox:Slider({ Name = "Max distance", Flag = "legit_silent_dist", Min = 50, Max = 1500, Default = 600, Decimals = 1, Suffix = " studs" })
-    local SilTarget = Sil:Section({ Name = "Silent targeting", Side = 2, Icon = "target" })
+    local SilTarget = Sil:Section({ Name = "Silent targeting", Column = 2, Icon = "target" })
     SilTarget:Dropdown({ Name = "Hitbox priority", Flag = "legit_silent_priority", Items = { "Closest", "Head", "Torso" }, Default = "Closest", Tooltip = "Closest picks the part nearest the crosshair; Head/Torso prefer that part when it qualifies" })
     SilTarget:Dropdown({ Name = "Hitboxes", Flag = "legit_silent_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
 
     local Trig = Subs["Trigger Bot"]
-    local TriggerBox = Trig:Section({ Name = "Trigger bot", Side = 1, Icon = "zap" })
+    local TriggerBox = Trig:Section({ Name = "Trigger bot", Column = 1, Icon = "zap" })
     TriggerBox:Toggle({ Name = "Enabled", Flag = "trig_on", Tooltip = "Fires when the crosshair is on an enemy hitbox" }):Keybind({ Name = "Trigger key", Flag = "trig_key", Default = "None", Mode = "Always" })
     TriggerBox:Toggle({ Name = "Visible only", Flag = "trig_visible", Default = true })
     TriggerBox:Toggle({ Name = "Only while aiming down sights", Flag = "trig_ads" })
     TriggerBox:Dropdown({ Name = "Hitboxes", Flag = "trig_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
     TriggerBox:Slider({ Name = "Hitbox size", Flag = "trig_scale", Min = 0.4, Max = 1.6, Default = 1, Decimals = 0.01, Suffix = "x" })
-    local Timing = Trig:Section({ Name = "Timing", Side = 2, Icon = "clock" })
+    local Timing = Trig:Section({ Name = "Timing", Column = 2, Icon = "clock" })
     Timing:Slider({ Name = "Max distance", Flag = "trig_dist", Min = 50, Max = 1500, Default = 400, Decimals = 1, Suffix = " studs" })
     Timing:Slider({ Name = "Delay", Flag = "trig_delay", Min = 0, Max = 300, Default = 40, Decimals = 1, Suffix = " ms", Tooltip = "How long the crosshair must stay on the target before firing" })
     Timing:Slider({ Name = "Hold", Flag = "trig_hold", Min = 20, Max = 500, Default = 70, Decimals = 1, Suffix = " ms", Tooltip = "How long the button stays down; longer holds fire more shots on automatics" })
     Timing:Slider({ Name = "Cooldown", Flag = "trig_cool", Min = 0, Max = 500, Default = 90, Decimals = 1, Suffix = " ms" })
 
     local Rcs = Subs["Recoil"]
-    local RcsBox = Rcs:Section({ Name = "Recoil control", Side = 1, Icon = "target" })
+    local RcsBox = Rcs:Section({ Name = "Recoil control", Column = 1, Icon = "target" })
     RcsBox:Toggle({ Name = "Enabled", Flag = "rcs_on", Tooltip = "Cancels the recoil of each shot by tracking where the barrel points relative to your view" }):Keybind({ Name = "Recoil key", Flag = "rcs_key", Default = "None", Mode = "Always" })
     RcsBox:Toggle({ Name = "Use barrel direction", Flag = "rcs_barrel", Default = true, Tooltip = "Compensates the barrel's own recoil, shake and sway; off falls back to the camera recoil springs only" })
     RcsBox:Slider({ Name = "Vertical control", Flag = "rcs_v", Min = 0, Max = 100, Default = 70, Decimals = 1, Suffix = "%" })
@@ -6055,8 +6072,8 @@ do
 end
 
 do
-    Pages.Rage:Section({ Name = "Rage", Side = 1, Icon = "swords" }):Label({ Name = "Coming soon" })
-    local Fun = Pages.Misc:Section({ Name = "Fun", Side = 1, Icon = "shapes" })
+    Pages.Rage:Section({ Name = "Rage", Column = 1, Icon = "swords" }):Label({ Name = "Coming soon" })
+    local Fun = Pages.Misc:Section({ Name = "Fun", Column = 1, Icon = "shapes" })
     local Pc = Fun:Toggle({ Name = "PhantomCam", Flag = "misc_phantomcam", Tooltip = "Body cam: the view follows where the weapon's barrel points" })
         :Keybind({ Name = "PhantomCam key", Flag = "misc_phantomcam_key", Default = "None", Mode = "Toggle", Sync = true })
         :Settings("PhantomCam", 230)
@@ -6074,7 +6091,7 @@ do
     Pc:Slider({ Name = "Camera FOV", Flag = "misc_phantomcam_fov", Min = 0, Max = 120, Default = 0, Decimals = 1, Tooltip = "0 keeps the game's FOV" })
     Pc:Toggle({ Name = "Debug", Flag = "misc_phantomcam_debug", Tooltip = "Prints a PhantomCam status line to the console once per second" })
 
-    local Kn = Pages.Misc:Section({ Name = "Knife unlock", Side = 2, Icon = "swords" })
+    local Kn = Pages.Misc:Section({ Name = "Knife unlock", Column = 2, Icon = "swords" })
     Kn:Toggle({ Name = "Use selected knife", Flag = "misc_knife_on", Tooltip = "Spawns you with the knife and skin below. Client side only: the server still has your real knife, no loadout packet is sent" })
     Kn:Dropdown({ Name = "Knife", Flag = "misc_knife", Items = Knife.items(), Default = "Default", Tooltip = "Every melee weapon in the game's content; Default keeps your equipped knife" })
     Kn:Dropdown({ Name = "Knife skin", Flag = "misc_knife_skin", Items = Knife.skinItems(), Default = "Default", Tooltip = "Default keeps your knife's own skin, None strips it" })
@@ -6092,7 +6109,7 @@ do
     end
 
     local LocalSub = ESPSubs.Local
-    local Chams = LocalSub:Section({ Name = "Viewmodel chams", Side = 1, Icon = "palette" })
+    local Chams = LocalSub:Section({ Name = "Viewmodel chams", Column = 1, Icon = "palette" })
     local function chams(label, cat, tooltip, tint)
         local base = "local_" .. cat
         local popup = Chams:Toggle({ Name = label, Flag = base, Tooltip = tooltip }):Settings(label, 230)
@@ -6107,7 +6124,7 @@ do
     chams("Clothes chams", "cloth", "First-person sleeves", Color3.fromRGB(170, 120, 255))
     chams("Gun chams", "gun", "The weapon in your hands: every part of the viewmodel weapon", Color3.fromRGB(120, 255, 170))
 
-    local Remove = LocalSub:Section({ Name = "Remove parts", Side = 2, Icon = "eye" })
+    local Remove = LocalSub:Section({ Name = "Remove parts", Column = 2, Icon = "eye" })
     Remove:Toggle({ Name = "Remove left arm", Flag = "local_rm_larm", Tooltip = "Hides the left arm's skin; sleeve and glove stay" })
     Remove:Toggle({ Name = "Remove right arm", Flag = "local_rm_rarm", Tooltip = "Hides the right arm's skin; sleeve and glove stay" })
     Remove:Toggle({ Name = "Remove left sleeve", Flag = "local_rm_lsleeve" })
@@ -6115,7 +6132,7 @@ do
     Remove:Toggle({ Name = "Remove gloves", Flag = "local_rm_gloves", Tooltip = "Both hands' gloves and accessories" })
     Remove:Toggle({ Name = "Remove gun", Flag = "local_rm_gun", Tooltip = "Hides the viewmodel weapon" })
 
-    local Changer = LocalSub:Section({ Name = "Viewmodel changer", Side = 2, Icon = "camera" })
+    local Changer = LocalSub:Section({ Name = "Viewmodel changer", Column = 3, Icon = "camera" })
     local Offset = Changer:Toggle({ Name = "Viewmodel offset", Flag = "local_vm", Tooltip = "Moves and tilts the weapon and arms after the game positions them; bullets and your aim are not affected" }):Settings("Viewmodel offset", 230)
     Offset:Slider({ Name = "X (right)", Flag = "local_vm_x", Min = -2, Max = 2, Default = 0, Decimals = 0.01, Suffix = " studs" })
     Offset:Slider({ Name = "Y (up)", Flag = "local_vm_y", Min = -2, Max = 2, Default = 0, Decimals = 0.01, Suffix = " studs" })
@@ -6125,7 +6142,7 @@ do
     Offset:Slider({ Name = "Roll", Flag = "local_vm_roll", Min = -180, Max = 180, Default = 0, Decimals = 1, Suffix = " deg" })
     Offset:Toggle({ Name = "Fade out while aiming", Flag = "local_vm_aim", Tooltip = "The offset shrinks to nothing as you aim down sights" })
 
-    local Assets = LocalSub:Section({ Name = "Viewmodel assets", Side = 2, Icon = "list" })
+    local Assets = LocalSub:Section({ Name = "Viewmodel assets", Column = 3, Icon = "list" })
     Assets:Button({ Name = "Print arm assets to console", Callback = function()
         local lines, cap = {}, 200
         local function add(text)
@@ -6171,7 +6188,9 @@ do
 
     local function buildTeam(sub, prefix, label, tint, hidden, shared)
         local function key(name) return prefix .. name end
-        local Main = sub:Section({ Name = label .. " ESP", Side = 1, Icon = "eye" })
+        local Main = sub:Section({ Name = label .. " ESP", Column = 1, Icon = "eye" })
+        local Body = sub:Section({ Name = label .. " body", Column = 2, Icon = "user" })
+        local Marks = sub:Section({ Name = label .. " indicators", Column = 3, Icon = "target" })
         local On = Main:Toggle({ Name = "Enabled", Flag = key("on"), Tooltip = "Master switch for this tab" }):Settings("Range", 230)
         On:Slider({ Name = "Max distance", Flag = key("dist"), Min = 50, Max = 3000, Default = 1500, Decimals = 1, Suffix = " studs", Tooltip = "Players further away are not drawn" })
 
@@ -6212,7 +6231,7 @@ do
         pickColor(Weapon, "Weapon", key("weapon_color"), Color3.fromRGB(205, 205, 215))
         if shared then Weapon:Dropdown({ Name = "Weapon display", Flag = "esp_weapon_display", Items = { "Text", "Icon", "Both" }, Default = "Text", Tooltip = "Icon draws the weapon's silhouette (downloaded on first use) and falls back to text until it loads" }) end
 
-        local Skel = Main:Toggle({ Name = "Skeleton", Flag = key("skeleton") }):Settings("Skeleton", 200)
+        local Skel = Body:Toggle({ Name = "Skeleton", Flag = key("skeleton") }):Settings("Skeleton", 200)
         pickColor(Skel, "Skeleton", key("skeleton_color"), WHITE)
         if shared then
             Skel:Slider({ Name = "Skeleton thickness", Flag = "esp_skel_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
@@ -6220,28 +6239,28 @@ do
             Skel:Toggle({ Name = "Joint dots", Flag = "esp_skeleton_joints", Tooltip = "Dots at the shoulders, elbows, hands, hips, knees and feet" })
         end
 
-        local Dot = Main:Toggle({ Name = "Head dot", Flag = key("dot") }):Settings("Head dot", 200)
+        local Dot = Body:Toggle({ Name = "Head dot", Flag = key("dot") }):Settings("Head dot", 200)
         pickColor(Dot, "Head dot", key("dot_color"), tint)
 
-        local Trace = Main:Toggle({ Name = "Snaplines", Flag = key("tracer"), Tooltip = "Line from the screen to the player's feet" }):Settings("Snaplines", 200)
+        local Trace = Marks:Toggle({ Name = "Snaplines", Flag = key("tracer"), Tooltip = "Line from the screen to the player's feet" }):Settings("Snaplines", 200)
         pickColor(Trace, "Snapline", key("tracer_color"), tint)
         if shared then
             Trace:Dropdown({ Name = "Snapline origin", Flag = "esp_tracer_origin", Items = { "Bottom", "Center", "Top", "Mouse" }, Default = "Bottom" })
             Trace:Slider({ Name = "Snapline thickness", Flag = "esp_tracer_thick", Min = 1, Max = 4, Default = 1, Decimals = 0.1, Suffix = " px" })
         end
 
-        local View = Main:Toggle({ Name = "View direction", Flag = key("view"), Tooltip = "Where the player is looking, drawn from the head" }):Settings("View direction", 200)
+        local View = Marks:Toggle({ Name = "View direction", Flag = key("view"), Tooltip = "Where the player is looking, drawn from the head" }):Settings("View direction", 200)
         pickColor(View, "View", key("view_color"), Color3.fromRGB(255, 220, 60))
         if shared then View:Slider({ Name = "View line length", Flag = "esp_view_len", Min = 2, Max = 30, Default = 8, Decimals = 0.1, Suffix = " studs" }) end
 
-        local Arrow = Main:Toggle({ Name = "Arrows", Flag = key("oov"), Tooltip = "Arrows pointing at players you cannot see on screen" }):Settings("Arrows", 230)
+        local Arrow = Marks:Toggle({ Name = "Arrows", Flag = key("oov"), Tooltip = "Arrows pointing at players you cannot see on screen" }):Settings("Arrows", 230)
         pickColor(Arrow, "Arrow", key("oov_color"), tint)
         if shared then
             Arrow:Slider({ Name = "Arrow size", Flag = "oov_size", Min = 8, Max = 32, Default = 14, Decimals = 1, Suffix = " px" })
             Arrow:Slider({ Name = "Arrow distance", Flag = "oov_radius", Min = 5, Max = 100, Default = 40, Decimals = 1, Suffix = " %", Tooltip = "Distance from the screen centre; 100 is the edge" })
         end
 
-        local Cham = Main:Toggle({ Name = "Chams", Flag = key("chams"), Tooltip = "Adornment chams on each body part" }):Settings("Chams", 230)
+        local Cham = Body:Toggle({ Name = "Chams", Flag = key("chams"), Tooltip = "Adornment chams on each body part" }):Settings("Chams", 230)
         pickColor(Cham, "Visible", key("cham_vis"), tint, 0.5)
         pickColor(Cham, "Behind walls", key("cham_hid"), hidden, 0.5)
         if shared then
@@ -6258,17 +6277,17 @@ do
             Cham:Toggle({ Name = "Remove armor/gear", Flag = "chams_remove_gear", Default = true, Tooltip = "Hides helmets, armor and other cosmetics on players with chams so the body is covered cleanly; restored when chams stop" })
         end
         if shared then
-            local Vis = Main:Toggle({ Name = "Colour by visibility", Flag = "esp_vis", Tooltip = "Box, skeleton, snapline, dot, view line and arrows use the popup colours" }):Settings("Visibility colours", 200)
+            local Vis = Body:Toggle({ Name = "Colour by visibility", Flag = "esp_vis", Tooltip = "Box, skeleton, snapline, dot, view line and arrows use the popup colours" }):Settings("Visibility colours", 200)
             pickColor(Vis, "Visible", "esp_vis_color", Color3.fromRGB(80, 255, 120))
             pickColor(Vis, "Behind walls", "esp_occ_color", Color3.fromRGB(255, 80, 80))
-            Main:Toggle({ Name = "Ignore glass", Flag = "vis_ignore_glass", Default = true, Tooltip = "Bullets pass through glass, so visibility checks, aimbot, triggerbot and grenade prediction see through it" })
+            Body:Toggle({ Name = "Ignore glass", Flag = "vis_ignore_glass", Default = true, Tooltip = "Bullets pass through glass, so visibility checks, aimbot, triggerbot and grenade prediction see through it" })
         end
     end
     buildTeam(Subs.Enemies, "esp_enemy_", "Enemy", Color3.fromRGB(255, 70, 90), Color3.fromRGB(170, 60, 255), true)
     buildTeam(Subs.Teammates, "esp_team_", "Teammate", Color3.fromRGB(90, 220, 130), Color3.fromRGB(60, 150, 255))
 
     local Other = Subs.Other
-    local World = Other:Section({ Name = "Items and grenades", Side = 1, Icon = "package" })
+    local World = Other:Section({ Name = "Items and grenades", Column = 1, Icon = "package" })
     local Item = World:Toggle({ Name = "Dropped items", Flag = "item_drops" }):Settings("Dropped items", 230)
     pickColor(Item, "Weapons", "item_drops_color", Color3.fromRGB(255, 190, 60))
     Item:Dropdown({ Name = "Display", Flag = "item_drops_display", Items = { "Text", "Icon", "Both" }, Default = "Text", Tooltip = "Icon draws the weapon silhouette, with the distance under it" })
@@ -6295,7 +6314,7 @@ do
     Pred:Toggle({ Name = "Show before pin pull", Flag = "nade_predict_pre", Tooltip = "Dimmer preview while the pin is still in" })
     Pred:Toggle({ Name = "Bounce markers", Flag = "nade_predict_bounce", Default = true })
 
-    local Dead = Other:Section({ Name = "Corpses", Side = 2, Icon = "user" })
+    local Dead = Other:Section({ Name = "Corpses", Column = 2, Icon = "user" })
     local Cham = Dead:Toggle({ Name = "Corpse chams", Flag = "chams_dead", Tooltip = "Restyles the ragdoll left behind when a player dies by changing its material, colour and transparency. The game removes corpses after about 30 seconds" }):Settings("Corpse chams", 260)
     Cham:Toggle({ Name = "Enemy corpses", Flag = "chams_dead_enemy", Default = true, Tooltip = "Corpses whose owner could not be matched count as enemy" })
     pickColor(Cham, "Enemy", "chams_dead_enemy_color", Color3.fromRGB(255, 70, 90))
@@ -6309,7 +6328,7 @@ do
     Cham:Toggle({ Name = "Hide clothing/accessories", Flag = "chams_dead_hide", Tooltip = "Hides everything on the corpse except the six body parts" })
     Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 15, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the corpse out over the last seconds before the game removes it; 0 is off" })
 
-    local Kill = Other:Section({ Name = "Kill effects", Side = 2, Icon = "flame" })
+    local Kill = Other:Section({ Name = "Kill effects", Column = 3, Icon = "flame" })
     local Fx = Kill:Toggle({ Name = "Kill effects", Flag = "kill_fx", Tooltip = "Plays local effects on the corpse when a player dies. Visual only, nothing is sent to the server" }):Settings("Kill effects", 260)
     Fx:Dropdown({ Name = "Effects", Flag = "kill_fx_list", Items = KillFx.names, Multi = true, Default = { "Dissolve", "Lightning" } })
     pickColor(Fx, "Colour", "kill_fx_color", Color3.fromRGB(102, 204, 255))
@@ -6332,7 +6351,7 @@ do
         popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
     end
 
-    local Light = Env:Section({ Name = "Lighting", Side = 1, Icon = "sun" })
+    local Light = Env:Section({ Name = "Lighting", Column = 1, Icon = "sun" })
     local Time = Light:Toggle({ Name = "Time of day", Flag = "world_time" }):Settings("Time of day", 230)
     Time:Slider({ Name = "Clock time", Flag = "world_time_v", Min = 0, Max = 24, Default = 14, Decimals = 0.1, Suffix = " h" })
     Time:Toggle({ Name = "Day / night cycle", Flag = "world_cycle", Tooltip = "Runs the clock continuously from the current time" })
@@ -6350,13 +6369,13 @@ do
     EnvLight:Slider({ Name = "Diffuse", Flag = "world_env_diffuse", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
     EnvLight:Slider({ Name = "Specular", Flag = "world_env_specular", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
 
-    local Quick = Env:Section({ Name = "Quick toggles", Side = 1, Icon = "zap" })
+    local Quick = Env:Section({ Name = "Quick toggles", Column = 1, Icon = "zap" })
     Quick:Toggle({ Name = "Full bright", Flag = "world_fullbright", Tooltip = "Overrides lighting values while on" })
     Quick:Toggle({ Name = "No shadows", Flag = "world_noshadow" })
     Quick:Toggle({ Name = "No fog", Flag = "world_nofog" })
     Quick:Toggle({ Name = "Remove sky", Flag = "world_nosky" })
 
-    local Atmo = Env:Section({ Name = "Fog and atmosphere", Side = 2, Icon = "cloud" })
+    local Atmo = Env:Section({ Name = "Fog and atmosphere", Column = 2, Icon = "cloud" })
     local Fog = Atmo:Toggle({ Name = "Custom fog", Flag = "world_fog" }):Settings("Custom fog", 230)
     pickColor(Fog, "Fog", "world_fog_color", Color3.fromRGB(180, 190, 210))
     Fog:Slider({ Name = "Fog start", Flag = "world_fog_start", Min = 0, Max = 2000, Default = 0, Decimals = 1, Suffix = " studs" })
@@ -6372,7 +6391,7 @@ do
     Atmos:Slider({ Name = "Haze", Flag = "world_atmos_haze", Min = 0, Max = 10, Default = 0, Decimals = 0.01 })
     Atmo:Toggle({ Name = "Mood preset", Flag = "world_sky", Tooltip = "Sets the time of day and atmosphere colours together" }):Settings("Mood preset", 200):Dropdown({ Name = "Preset", Flag = "world_sky_preset", Items = { "Night", "Sunset", "Overcast", "Dusk" }, Default = "Night" })
 
-    local MapLight = Env:Section({ Name = "Map lighting", Side = 2, Icon = "palette" })
+    local MapLight = Env:Section({ Name = "Map lighting", Column = 3, Icon = "palette" })
     local MapShadow = MapLight:Toggle({ Name = "Map shadows", Flag = "world_map_shadow", Tooltip = "Global shadows and how soft they are; No shadows / Full bright still win" }):Settings("Map shadows", 230)
     MapShadow:Toggle({ Name = "Shadows enabled", Flag = "world_map_shadow_on", Default = true })
     MapShadow:Slider({ Name = "Shadow softness", Flag = "world_map_soft", Min = 0, Max = 1, Default = 0.2, Decimals = 0.01 })
@@ -6397,12 +6416,12 @@ do
     MapLamps:Toggle({ Name = "Disable lights", Flag = "world_lights_off" })
 
     local SkySub = Subs.Sky
-    local Box = SkySub:Section({ Name = "Skybox", Side = 1, Icon = "moon" })
+    local Box = SkySub:Section({ Name = "Skybox", Column = 1, Icon = "moon" })
     local Skybox = Box:Toggle({ Name = "Custom skybox", Flag = "world_skybox", Tooltip = "Replaces the sky textures; the original sky comes back when this is off" }):Settings("Custom skybox", 230)
     Skybox:Dropdown({ Name = "Skybox", Flag = "world_sky_box", Items = SKY_CHOICES, Default = SKY_CHOICES[1] })
     Skybox:Toggle({ Name = "Rotate skybox", Flag = "world_sky_spin" })
     Skybox:Slider({ Name = "Rotation speed", Flag = "world_sky_spin_speed", Min = -60, Max = 60, Default = 6, Decimals = 0.1, Suffix = " deg/s" })
-    local Own = SkySub:Section({ Name = "Custom skybox ids", Side = 1, Icon = "moon" })
+    local Own = SkySub:Section({ Name = "Custom skybox ids", Column = 2, Icon = "moon" })
     Own:Toggle({ Name = "Resolve decal ids", Flag = "world_sky_resolve", Default = true, Tooltip = "Decal ids are not image ids; this looks up the image inside the decal (needs GetObjects)" })
     Own:Input({ Name = "Custom ids (1 or 6)", Flag = "world_sky_custom", Placeholder = "1 or 6 ids: up down front back left right" })
     Own:Input({ Name = "Single image (all faces)", Flag = "world_sky_single", Placeholder = "id, rbxassetid:// or roblox.com link" })
@@ -6412,25 +6431,25 @@ do
     Own:Input({ Name = "Custom sky: Left", Flag = "world_sky_f_lf", Placeholder = "id or link" })
     Own:Input({ Name = "Custom sky: Right", Flag = "world_sky_f_rt", Placeholder = "id or link" })
     Own:Input({ Name = "Custom sky: Up", Flag = "world_sky_f_up", Placeholder = "id or link" })
-    local Saved = SkySub:Section({ Name = "Saved skyboxes", Side = 1, Icon = "layers" })
+    local Saved = SkySub:Section({ Name = "Saved skyboxes", Column = 1, Icon = "layers" })
     Saved:Input({ Name = "Name", Flag = "world_sky_save_name", Placeholder = "name for the current skybox" })
     Saved:Button({ Name = "Save current skybox", Callback = function() Util.guard("sky-save", World.saveSky) end })
     Saved:Dropdown({ Name = "Saved set", Flag = "world_sky_saved_pick", Items = { "None" }, Default = "None" })
     Saved:Button({ Name = "Delete selected", Callback = function() Util.guard("sky-delete", World.deleteSky) end })
     Saved:Input({ Name = "Stored sets", Flag = "world_sky_saved", Placeholder = "name|6 ids; ..." })
-    local Bodies = SkySub:Section({ Name = "Sun, moon and stars", Side = 2, Icon = "sun" })
+    local Bodies = SkySub:Section({ Name = "Sun, moon and stars", Column = 3, Icon = "sun" })
     local Sky = Bodies:Toggle({ Name = "Override", Flag = "world_sky_objects" }):Settings("Sun, moon and stars", 230)
     Sky:Slider({ Name = "Stars", Flag = "world_sky_stars", Min = 0, Max = 5000, Default = 3000, Decimals = 1 })
     Sky:Slider({ Name = "Sun size", Flag = "world_sky_sun", Min = 0, Max = 60, Default = 21, Decimals = 1, Suffix = " deg" })
     Sky:Slider({ Name = "Moon size", Flag = "world_sky_moon", Min = 0, Max = 60, Default = 11, Decimals = 1, Suffix = " deg" })
     Sky:Toggle({ Name = "Show sun and moon", Flag = "world_sky_bodies", Default = true })
-    local Cloud = SkySub:Section({ Name = "Clouds", Side = 2, Icon = "cloud" })
+    local Cloud = SkySub:Section({ Name = "Clouds", Column = 3, Icon = "cloud" })
     local Clouds = Cloud:Toggle({ Name = "Clouds", Flag = "world_clouds" }):Settings("Clouds", 230)
     pickColor(Clouds, "Clouds", "world_clouds_color", WHITE)
     Clouds:Slider({ Name = "Cover", Flag = "world_clouds_cover", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
     Clouds:Slider({ Name = "Density", Flag = "world_clouds_density", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
 
-    local Wx = Subs.Weather:Section({ Name = "Weather", Side = 1, Icon = "cloud" })
+    local Wx = Subs.Weather:Section({ Name = "Weather", Column = 1, Icon = "cloud" })
     Wx:Toggle({ Name = "Enabled", Flag = "world_weather", Tooltip = "Particles follow you in map-anchored cells and only fall where the sky is open above; Cover whole map replaces that with cells over the whole map" })
     Wx:Dropdown({ Name = "Type", Flag = "world_weather_preset", Items = WEATHER_NAMES, Default = "Snow" })
     Wx:Slider({ Name = "Density", Flag = "world_weather_amount", Min = 0.1, Max = 3, Default = 1, Decimals = 0.05 })
@@ -6441,19 +6460,19 @@ do
     mapGear:Slider({ Name = "Clear radius around player", Flag = "world_weather_clear_radius", Min = 0, Max = 150, Default = 40, Decimals = 1, Suffix = " studs", Tooltip = "Cells this close to you stay empty so nothing falls on or above you; 0 = off" })
     Wx:Slider({ Name = "Range", Flag = "world_weather_range", Min = 1, Max = 3, Default = 2, Decimals = 1, Suffix = " cells", Tooltip = "Rings of 28 stud cells around you; unused while Cover whole map is on" })
     Wx:Slider({ Name = "Spawn height", Flag = "world_weather_height", Min = 10, Max = 80, Default = 35, Decimals = 1, Suffix = " studs" })
-    local Wind = Subs.Weather:Section({ Name = "Wind and colour", Side = 2, Icon = "cloud" })
+    local Wind = Subs.Weather:Section({ Name = "Wind and colour", Column = 2, Icon = "cloud" })
     Wind:Slider({ Name = "Wind strength", Flag = "world_weather_wind", Min = 0, Max = 30, Default = 4, Decimals = 0.1 })
     Wind:Slider({ Name = "Wind direction", Flag = "world_weather_wind_dir", Min = 0, Max = 360, Default = 0, Decimals = 1, Suffix = " deg" })
     Wind:Toggle({ Name = "Custom colour", Flag = "world_weather_custom", Tooltip = "Overrides the colour each weather type comes with" }):Colorpicker({ Name = "Weather", Flag = "world_weather_color", Default = WHITE })
 
     local Fx = Subs.Effects
-    local Screen = Fx:Section({ Name = "Colour correction", Side = 1, Icon = "palette" })
+    local Screen = Fx:Section({ Name = "Colour correction", Column = 1, Icon = "palette" })
     local Cc = Screen:Toggle({ Name = "Enabled", Flag = "world_cc" }):Settings("Colour correction", 230)
     pickColor(Cc, "Tint", "world_cc_tint", WHITE)
     Cc:Slider({ Name = "Saturation", Flag = "world_cc_sat", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
     Cc:Slider({ Name = "Contrast", Flag = "world_cc_con", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
     Cc:Slider({ Name = "Brightness", Flag = "world_cc_bri", Min = -1, Max = 1, Default = 0, Decimals = 0.01 })
-    local Bloom = Fx:Section({ Name = "Bloom and sun rays", Side = 2, Icon = "sun" })
+    local Bloom = Fx:Section({ Name = "Bloom and sun rays", Column = 2, Icon = "sun" })
     local Bl = Bloom:Toggle({ Name = "Bloom", Flag = "world_bloom" }):Settings("Bloom", 230)
     Bl:Slider({ Name = "Intensity", Flag = "world_bloom_i", Min = 0, Max = 3, Default = 0.4, Decimals = 0.01 })
     Bl:Slider({ Name = "Size", Flag = "world_bloom_s", Min = 0, Max = 56, Default = 24, Decimals = 0.1 })
@@ -6461,21 +6480,21 @@ do
     local Rays = Bloom:Toggle({ Name = "Sun rays", Flag = "world_rays" }):Settings("Sun rays", 230)
     Rays:Slider({ Name = "Ray intensity", Flag = "world_rays_i", Min = 0, Max = 1, Default = 0.25, Decimals = 0.01 })
     Rays:Slider({ Name = "Ray spread", Flag = "world_rays_s", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
-    local Blur = Fx:Section({ Name = "Depth of field and blur", Side = 1, Icon = "scan" })
+    local Blur = Fx:Section({ Name = "Depth of field and blur", Column = 3, Icon = "scan" })
     local Dof = Blur:Toggle({ Name = "Depth of field", Flag = "world_dof" }):Settings("Depth of field", 230)
     Dof:Slider({ Name = "Focus distance", Flag = "world_dof_focus", Min = 0, Max = 500, Default = 50, Decimals = 1, Suffix = " studs" })
     Dof:Slider({ Name = "In focus radius", Flag = "world_dof_radius", Min = 0, Max = 200, Default = 30, Decimals = 1, Suffix = " studs" })
     Dof:Slider({ Name = "Near blur", Flag = "world_dof_near", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
     Dof:Slider({ Name = "Far blur", Flag = "world_dof_far", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
     Blur:Toggle({ Name = "Screen blur", Flag = "world_blur" }):Settings("Screen blur", 200):Slider({ Name = "Blur size", Flag = "world_blur_size", Min = 0, Max = 56, Default = 8, Decimals = 0.1 })
-    local Rainbow = Env:Section({ Name = "Colour cycle", Side = 2, Icon = "palette" })
+    local Rainbow = Env:Section({ Name = "Colour cycle", Column = 2, Icon = "palette" })
     local Rb = Rainbow:Toggle({ Name = "Rainbow", Flag = "world_rainbow", Tooltip = "Cycles the chosen colours through the rainbow" }):Settings("Rainbow", 230)
     Rb:Dropdown({ Name = "Applies to", Flag = "world_rainbow_targets", Items = { "Ambient", "Fog", "Colour shift", "Atmosphere" }, Multi = true, Default = { "Ambient" } })
     Rb:Slider({ Name = "Speed", Flag = "world_rainbow_speed", Min = 0.01, Max = 1, Default = 0.1, Decimals = 0.01 })
     Rb:Slider({ Name = "Saturation", Flag = "world_rainbow_sat", Min = 0, Max = 1, Default = 0.7, Decimals = 0.01 })
 
     local Cam = Subs.Camera
-    local Fov = Cam:Section({ Name = "Camera", Side = 1, Icon = "camera" })
+    local Fov = Cam:Section({ Name = "Camera", Column = 1, Icon = "camera" })
     local FovSet = Fov:Toggle({ Name = "Field of view", Flag = "world_fov", Tooltip = "Sets the game camera's base FOV; aiming zoom stays relative to it" }):Settings("Field of view", 230)
     FovSet:Slider({ Name = "FOV", Flag = "world_fov_v", Min = 60, Max = 120, Default = 90, Decimals = 1, Suffix = " deg" })
     FovSet:Toggle({ Name = "Dynamic scope FOV", Flag = "world_fov_dyn", Tooltip = "Blends smoothly from the FOV above to the scoped FOV below while you aim" })
@@ -6485,7 +6504,7 @@ do
     local StretchSet = Fov:Toggle({ Name = "Stretch resolution", Flag = "world_stretch", Tooltip = "Scales the rendered image sideways or vertically; aim maths keep using the real camera" }):Settings("Stretch resolution", 230)
     StretchSet:Slider({ Name = "Stretch X", Flag = "world_stretch_x", Min = 0.3, Max = 1.27, Default = 0.75, Decimals = 0.01, Suffix = "x", Tooltip = "Below 1 gives the classic 4:3 stretched look" })
     StretchSet:Slider({ Name = "Stretch Y", Flag = "world_stretch_y", Min = 0.3, Max = 1.2, Default = 1, Decimals = 0.01, Suffix = "x" })
-    local Cross = Cam:Section({ Name = "Crosshair", Side = 2, Icon = "crosshair" })
+    local Cross = Cam:Section({ Name = "Crosshair", Column = 2, Icon = "crosshair" })
     local Ch = Cross:Toggle({ Name = "Custom crosshair", Flag = "cross_on" }):Settings("Crosshair", 230)
     pickColor(Ch, "Crosshair", "cross_color", Color3.fromRGB(120, 255, 170))
     Ch:Toggle({ Name = "Attach to barrel", Flag = "cross_barrel", Tooltip = "Draws the crosshair at the weapon barrel instead of the screen centre" })
@@ -6503,7 +6522,7 @@ do
     Pulse:Slider({ Name = "Pulse speed", Flag = "cross_pulse_speed", Min = 0.2, Max = 10, Default = 3, Decimals = 0.1 })
 
     local Fb = Subs.Feedback
-    local Marker, HitSnd, KillSnd = Fb:MultiSection({ Sections = { "Hit marker", "Hit sound", "Kill sound" }, Side = 1 })
+    local Marker, HitSnd, KillSnd = Fb:MultiSection({ Name = "Hits and kills", Sections = { "Hit marker", "Hit sound", "Kill sound" }, Icons = { "crosshair", "zap", "flame" }, Column = 1 })
     Marker:Toggle({ Name = "Hit marker", Flag = "hit_marker", Tooltip = "Drawn at the crosshair whenever the game registers one of your hits" }):Colorpicker({ Name = "Marker", Flag = "hit_marker_color", Default = WHITE, Alpha = 0 }):Colorpicker({ Name = "Headshot", Flag = "hit_marker_head", Default = Color3.fromRGB(255, 70, 70), Alpha = 0 })
     Marker:Slider({ Name = "Size", Flag = "hit_marker_size", Min = 4, Max = 24, Default = 9, Decimals = 1, Suffix = " px" })
     Marker:Slider({ Name = "Duration", Flag = "hit_marker_time", Min = 0.1, Max = 1.2, Default = 0.4, Decimals = 0.01, Suffix = " s" })
@@ -6519,7 +6538,8 @@ do
     KillSnd:Slider({ Name = "Volume", Flag = "kill_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
     KillSnd:Slider({ Name = "Pitch", Flag = "kill_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
 
-    local Dmg, Trace = Fb:MultiSection({ Sections = { "Damage numbers", "Bullet tracers" }, Side = 2 })
+    local Dmg = Fb:Section({ Name = "Damage numbers", Column = 2, Icon = "target" })
+    local Trace = Fb:Section({ Name = "Bullet tracers", Column = 3, Icon = "zap" })
     Dmg:Toggle({ Name = "Custom damage numbers", Flag = "dmg_on", Tooltip = "Replaces the game's floating numbers; the game's Damage Numbers setting must be on" })
     Dmg:Label({ Name = "Head" }):Colorpicker({ Name = "Head", Flag = "dmg_head", Default = Color3.fromRGB(255, 102, 102) })
     Dmg:Label({ Name = "Torso" }):Colorpicker({ Name = "Torso", Flag = "dmg_torso", Default = Color3.fromRGB(255, 150, 0) })
@@ -6587,8 +6607,8 @@ do
     ThemeManager.HudToggles = false
     if native and ThemeManager.CreateColors then
         ThemeManager:CreateColors(ThemeSub:AddLeftGroupbox("Colors", "palette"))
-        ThemeManager:CreatePresets(ThemeSub:AddLeftGroupbox("Presets", "folder"))
-        ThemeManager:CreateAppearance(ThemeSub:AddRightGroupbox("Appearance", "monitor"))
+        ThemeManager:CreatePresets(addBox(ThemeSub, 2, "Presets", "folder"))
+        ThemeManager:CreateAppearance(addBox(ThemeSub, 3, "Appearance", "monitor"))
         ThemeManager:Finalize()
     elseif ThemeManager.ApplyToTab then
         ThemeManager:ApplyToTab(ThemeSub)
@@ -6598,6 +6618,49 @@ do
     SaveManager:IgnoreThemeSettings()
     SaveManager:SetIgnoreIndexes({ "MenuKeybind", "menu_notify_corner", "ui_view_Legit", "ui_view_ESP", "ui_view_World" })
     SaveManager:BuildConfigSection(ConfigSub)
+
+    if type(Library.GetLayout) == "function" and type(Library.SetLayout) == "function" then
+        local Http = game:GetService("HttpService")
+        local function withConfig(manager, name, apply)
+            local path = tostring(manager.Folder) .. "/settings/" .. tostring(name) .. ".json"
+            local data = Http:JSONDecode(readfile(path))
+            if type(data) == "table" then apply(data, path) end
+        end
+        local function watch(key, run)
+            local real, used = Library[key], false
+            Library[key] = function(...) used = true return real(...) end
+            local ran, ok, problem = pcall(run)
+            Library[key] = real
+            if not ran then error(ok, 0) end
+            return used, ok, problem
+        end
+        Util.hook(SaveManager, "Save", function(original)
+            return function(self, name)
+                local native, ok, problem = watch("GetLayout", function() return original(self, name) end)
+                if ok and not native then
+                    Util.guard("layout-save", withConfig, self, name, function(data, path)
+                        local layout = Library:GetLayout()
+                        if type(layout) == "table" then
+                            data.layout = layout
+                            writefile(path, Http:JSONEncode(data))
+                        end
+                    end)
+                end
+                return ok, problem
+            end
+        end)
+        Util.hook(SaveManager, "Load", function(original)
+            return function(self, name)
+                local native, ok, problem = watch("SetLayout", function() return original(self, name) end)
+                if ok and not native then
+                    Util.guard("layout-load", withConfig, self, name, function(data)
+                        if type(data.layout) == "table" then Library:SetLayout(data.layout) end
+                    end)
+                end
+                return ok, problem
+            end
+        end)
+    end
 end
 
 local PHANTOMCAM_SOURCE = [==[

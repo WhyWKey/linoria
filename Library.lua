@@ -126,6 +126,7 @@ local Library = {
     MinWidth = 560;
     MinHeight = 380;
     ShowCustomCursor = true;
+    HideGameCursor = true;
 
     KeybindMode = 'All';
 
@@ -829,11 +830,17 @@ end
 
 Library.UnloadCallbacks = {};
 
+function Library:CloseSliderEditor()
+    local Editor = Library.SliderEditor;
+    if Editor then Editor.Close(); end;
+end;
+
 function Library:Unload()
     if Library.Unloaded then
         return;
     end;
     Library.Unloaded = true;
+    Library:CloseSliderEditor();
 
     for Idx = #Library.Signals, 1, -1 do
         local Connection = table.remove(Library.Signals, Idx)
@@ -2844,7 +2851,7 @@ do
         Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
             if (not Picking) then
                 local Key = Library:KeyNameFromInput(Input);
-                if Key and Key == KeyPicker.Value and not Library.JustBound then
+                if Key and Key == KeyPicker.Value and not Library.JustBound and not Library.SliderEditor then
                     KeyPicker:HandleBindPress(Key);
                 else
                     KeyPicker:Update();
@@ -3640,6 +3647,7 @@ do
             Parent = Knob;
         });
 
+        Slider.Holder = SliderOuter;
         Library:Hover(SliderOuter, function()
             Library:Tween(Knob, { Size = UDim2.fromOffset(12, 12) }, 0.1);
         end, function()
@@ -3703,8 +3711,56 @@ do
             Library:SafeCallback(Slider.Callback, Slider.Value);
             Library:SafeCallback(Slider.Changed, Slider.Value);
         end;
+        local function OpenEditor()
+            Library:CloseSliderEditor();
+            local Box = Library:Create('TextBox', {
+                AnchorPoint = Vector2.new(0, 0.5);
+                BackgroundColor3 = Library.InputColor;
+                ClearTextOnFocus = false;
+                Font = Library.Font;
+                Position = UDim2.new(0, 0, 0.5, 0);
+                Size = UDim2.new(1, 0, 0, 18);
+                Text = tostring(Slider.Value);
+                TextColor3 = Library.FontColor;
+                TextSize = Library.FontSize;
+                ZIndex = 20;
+                Parent = SliderOuter;
+            });
+            Library:Round(Box, 4);
+            Library:Stroke(Box, 'AccentColor');
+            local Done = false;
+            local Editor = { Box = Box };
+            function Editor.Close()
+                if Done then return; end;
+                Done = true;
+                if Library.SliderEditor == Editor then Library.SliderEditor = nil; end;
+                pcall(function() Box:Destroy() end);
+            end;
+            Library.SliderEditor = Editor;
+            Box.FocusLost:Connect(function(EnterPressed)
+                if Done then return; end;
+                local Text = Box.Text;
+                Editor.Close();
+                if not EnterPressed then return; end;
+                local Str = tostring(Text):match('[-+]?%d*%.?%d+[eE][-+]?%d+') or tostring(Text):match('[-+]?%d*%.?%d+');
+                local Num = tonumber(Str);
+                if not Num or Num ~= Num then return; end;
+                Slider:SetValue(Round(math.clamp(Num, Slider.Min, Slider.Max)));
+                Library:AttemptSave();
+            end);
+            pcall(function()
+                Box:CaptureFocus();
+                Box.SelectionStart = 1;
+                Box.CursorPosition = #Box.Text + 1;
+            end);
+        end;
         SliderOuter.InputBegan:Connect(function(Input)
             if (Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch) and not Library:MouseIsOverOpenedFrame() then
+                if InputService:IsKeyDown(Enum.KeyCode.LeftControl) or InputService:IsKeyDown(Enum.KeyCode.RightControl) then
+                    OpenEditor();
+                    return;
+                end;
+                Library:CloseSliderEditor();
                 Slider.Dragging = true;
 
                 local function UpdateSlider(PosX)
@@ -7067,7 +7123,7 @@ function Library:CreateWindow(...)
         Modal = false;
         Parent = ScreenGui;
     });
-    -- Themed cursor: accent diamond with a dark outline and a soft glow; reacts to hover and mouse down
+    -- Themed cursor: pixel-exact accent crosshair with a dark outline and centre pixel; the gap widens on hover and closes on mouse down
     function Library:StartCursor()
         if Library.ShowCustomCursor == false then return end;
         Library.CursorToken = (Library.CursorToken or 0) + 1;
@@ -7087,49 +7143,69 @@ function Library:CreateWindow(...)
             Library.CursorGui = Gui;
 
             local Root = Library:Create('Frame', { BackgroundTransparency = 1; Size = UDim2.fromOffset(0, 0); Parent = Gui });
-            local function Part(Parent, Size, Z, Rotation, Round)
+            local function Box(Name, Z)
                 local Frame = Library:Create('Frame', {
-                    AnchorPoint = Vector2.new(0.5, 0.5);
+                    Name = Name;
+                    AnchorPoint = Vector2.new(0, 0);
                     BorderSizePixel = 0;
-                    Position = UDim2.fromOffset(0, 0);
-                    Rotation = Rotation;
-                    Size = UDim2.fromOffset(Size, Size);
                     ZIndex = Z;
-                    Parent = Parent;
+                    Parent = Root;
                 });
-                Library:Create('UICorner', { CornerRadius = Round; Parent = Frame });
                 return Frame;
             end;
-            local Glow = Part(Root, 26, 97, 0, UDim.new(1, 0));
-            local Body = Library:Create('Frame', { BackgroundTransparency = 1; Size = UDim2.fromOffset(0, 0); Parent = Root });
-            local BodyScale = Library:Create('UIScale', { Scale = 1; Parent = Body });
-            local Outline = Part(Body, 14, 98, 45, UDim.new(0, 3));
-            local Fill = Part(Body, 9, 99, 45, UDim.new(0, 2));
-            local Core = Part(Body, 3, 100, 0, UDim.new(1, 0));
+            local function Rect(Frame, X, Y, W, H)
+                Frame.Position = UDim2.fromOffset(X, Y);
+                Frame.Size = UDim2.fromOffset(W, H);
+            end;
+            -- Odd, whole-pixel layout: the centre pixel is [0,1); arms are 3 thick ([-1,2)) and mirror exactly about it
+            local LEN, THICK = 6, 3;
+            local Arms = {};
+            for _, Name in ipairs({ 'Left', 'Right', 'Up', 'Down' }) do
+                Arms[Name] = { Outline = Box('Outline' .. Name, 98); Fill = Box('Arm' .. Name, 99) };
+            end;
+            local Core = Box('Dot', 100);
+            local function Layout(G)
+                local O = -(THICK - 1) / 2;
+                local Spans = {
+                    Left = { -(G + LEN), O, LEN, THICK };
+                    Right = { 1 + G, O, LEN, THICK };
+                    Up = { O, -(G + LEN), THICK, LEN };
+                    Down = { O, 1 + G, THICK, LEN };
+                };
+                for Name, R in next, Spans do
+                    Rect(Arms[Name].Fill, R[1], R[2], R[3], R[4]);
+                    Rect(Arms[Name].Outline, R[1] - 1, R[2] - 1, R[3] + 2, R[4] + 2);
+                end;
+                Rect(Core, 0, 0, 1, 1);
+            end;
 
-            local Scale, Time = 1, 0;
+            local Gap = 3;
+            local Hidden = false;
             while Library.Toggled and not Library.Unloaded and Token == Library.CursorToken and ScreenGui.Parent do
-                InputService.MouseIconEnabled = false;
+                if Library.HideGameCursor ~= false then
+                    InputService.MouseIconEnabled = false;
+                    Hidden = true;
+                elseif Hidden then
+                    InputService.MouseIconEnabled = Library.SavedMouseIcon;
+                    Hidden = false;
+                end;
                 local Pos = InputService:GetMouseLocation();
-                Root.Position = UDim2.fromOffset(Pos.X, Pos.Y);
+                Root.Position = UDim2.fromOffset(math.floor(Pos.X), math.floor(Pos.Y));
 
                 local Down = false;
                 pcall(function() Down = InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end);
                 local Hot = Library.CursorHot and true or false;
-                local Target = Down and 0.78 or (Hot and 1.3 or 1);
-                local Dt = RenderStepped:Wait();
-                Time = Time + Dt;
-                Scale = Scale + (Target - Scale) * math.min(1, Dt * 18);
-                BodyScale.Scale = Scale;
+                local Target = Down and 2 or (Hot and 4 or 3);
+                RenderStepped:Wait();
+                Gap = Gap + (Target - Gap) * 0.5;
+                Layout(math.floor(Gap + 0.5));
 
-                Fill.BackgroundColor3 = Library.AccentColor;
-                Outline.BackgroundColor3 = Library.BackgroundColor:Lerp(Library.Black, 0.6);
+                local Dark = Library.BackgroundColor:Lerp(Library.Black, 0.6);
+                for _, Arm in next, Arms do
+                    Arm.Fill.BackgroundColor3 = Library.AccentColor;
+                    Arm.Outline.BackgroundColor3 = Dark;
+                end;
                 Core.BackgroundColor3 = Library.FontColor;
-                Glow.BackgroundColor3 = Library.AccentColor;
-                local Pulse = math.sin(Time * 3.2);
-                local GlowSize = (Hot and 34 or 26) + Pulse * 2.5 + (Down and -6 or 0);
-                Glow.Size = UDim2.fromOffset(GlowSize, GlowSize);
-                Glow.BackgroundTransparency = (Down and 0.68 or (Hot and 0.74 or 0.86)) + Pulse * 0.02;
             end;
 
             pcall(function() Gui:Destroy() end);
@@ -7139,6 +7215,13 @@ function Library:CreateWindow(...)
                 Library.CursorGui = nil;
             end;
         end);
+    end;
+
+    function Library:SetHideGameCursor(Bool)
+        Library.HideGameCursor = Bool and true or false;
+        if Library.CursorGui and Library.Toggled and Library.SavedMouseIcon ~= nil then
+            InputService.MouseIconEnabled = Library.HideGameCursor and false or Library.SavedMouseIcon;
+        end;
     end;
 
     function Library:Toggle()
@@ -7168,6 +7251,7 @@ function Library:CreateWindow(...)
                 Library.OpenedFrames[Frame] = nil;
             end;
             Library:CloseAllPopups();
+            Library:CloseSliderEditor();
             Library:UpdateHovers(true);
             task.delay(Fade, function()
                 if Token == Library.ToggleToken then
@@ -7185,6 +7269,7 @@ function Library:CreateWindow(...)
     end
 
     Library:GiveSignal(InputService.InputBegan:Connect(function(Input, Processed)
+        if Library.SliderEditor then return; end;
         local Bound = Library.ToggleKeybind;
         if type(Bound) == 'table' and Bound.Type == 'KeyPicker' then
             if not Library.JustBound and next(Library.SideBinders) == nil and Library:KeyNameFromInput(Input) == Bound.Value then

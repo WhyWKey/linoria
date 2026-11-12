@@ -551,7 +551,7 @@ function Stretch.apply(cam)
     Stretch.restore(cam)
     if not cam or not flag("world_stretch", false) then return end
     pcall(function()
-        local sx, sy = flag("world_stretch_x", 0.75), flag("world_stretch_y", 1)
+        local sx, sy = math.clamp(flag("world_stretch_x", 0.75), 0.3, 1.27), math.clamp(flag("world_stretch_y", 1), 0.3, 1.2)
         if math.abs(sx - 1) < 1e-3 and math.abs(sy - 1) < 1e-3 then return end
         local base = cam.CFrame
         local api = PhantomCam.api
@@ -5109,6 +5109,40 @@ function Local.armCategory(object, model)
     return "glove"
 end
 
+Local.glassWords = { "glass", "lens", "reticle", "window", "screen", "hologram", "holo", "reflector", "crosshair" }
+Local.sightWords = { "sight", "optic", "scope", "acog", "holo", "reflex", "thermal", "attachment" }
+
+function Local.hasWord(name, words)
+    if type(name) ~= "string" then return false end
+    name = string.lower(name)
+    for _, word in ipairs(words) do
+        if string.find(name, word, 1, true) then return true end
+    end
+    return false
+end
+
+function Local.isGlass(object, model)
+    if Local.hasWord(propGet(object, "Name"), Local.glassWords) then return true end
+    if propGet(object, "Material") == Enum.Material.Glass then return true end
+    local okKids, kids = pcall(function() return object:GetChildren() end)
+    if okKids and type(kids) == "table" then
+        for _, kid in ipairs(kids) do
+            local okGui, gui = pcall(function() return kid:IsA("SurfaceGui") end)
+            if okGui and gui then return true end
+        end
+    end
+    local alpha = propGet(object, "Transparency")
+    if type(alpha) == "number" and alpha >= 0.05 and alpha <= 0.99 then
+        local node = propGet(object, "Parent")
+        for _ = 1, 12 do
+            if not node or node == model then break end
+            if Local.hasWord(propGet(node, "Name"), Local.sightWords) then return true end
+            node = propGet(node, "Parent")
+        end
+    end
+    return false
+end
+
 function Local.build(model, kind)
     local items = {}
     local ok, list = pcall(function() return model:GetDescendants() end)
@@ -5118,8 +5152,15 @@ function Local.build(model, kind)
         if class then
             local item = { inst = object, kind = class, cat = kind == "weapon" and "gun" or Local.armCategory(object, model) }
             if class == "decal" and item.cat == "gun" then
-                local parentName = propGet(propGet(object, "Parent"), "Name")
+                local parent = propGet(object, "Parent")
+                local parentName = propGet(parent, "Name")
                 item.keep = type(parentName) == "string" and string.find(string.lower(parentName), "sight", 1, true) ~= nil
+                if not item.keep and parent and parent ~= model then
+                    local okPart, isPart = pcall(function() return parent:IsA("BasePart") end)
+                    item.keep = okPart and isPart and Local.isGlass(parent, model) or false
+                end
+            elseif item.cat == "gun" and (class == "part" or class == "mesh" or class == "union") and object ~= model and Local.isGlass(object, model) then
+                item.glass = true
             end
             items[#items + 1] = item
         end
@@ -5175,7 +5216,17 @@ function Local.restoreItem(item)
     item.wrote = nil
 end
 
-function Local.applyItem(item, spec, hide)
+function Local.applyItem(item, spec, hide, noglass)
+    if item.glass and not hide then
+        if not (spec and noglass) then
+            if item.orig then Local.restoreItem(item) end
+            return
+        end
+        if item.orig == nil then item.orig = Local.snapshot(item) or false end
+        local current = propGet(item.inst, "Transparency")
+        if item.orig and type(current) == "number" then Local.writeTransparency(item, 1, current) end
+        return
+    end
     if not (hide or spec) then
         if item.orig then Local.restoreItem(item) end
         return
@@ -5230,6 +5281,7 @@ function Local.settings()
         clothLeft = on("local_rm_lsleeve") == true, clothRight = on("local_rm_rsleeve") == true,
         glove = on("local_rm_gloves") == true, gun = on("local_rm_gun") == true,
     } }
+    state.noglass = on("local_gun_noglass") == true
     for _, cat in ipairs(Local.cats) do
         local spec = Local.spec(cat)
         state.specs[cat] = spec
@@ -5245,7 +5297,7 @@ function Local.styleRec(rec, state)
     for _, item in ipairs(rec.items) do
         local cat = item.cat
         local hide = state.rm[(cat == "glove" or cat == "gun") and cat or cat .. (rec.side or "")]
-        Local.applyItem(item, state.specs[cat], hide)
+        Local.applyItem(item, state.specs[cat], hide, state.noglass)
     end
 end
 
@@ -5353,7 +5405,7 @@ Util.onUnload(function()
     end
 end)
 
-local Corpse = { recs = setmetatable({}, { __mode = "k" }), bodyNames = {}, lifetime = 30, matchRange = 10, scanAt = 0 }
+local Corpse = { recs = setmetatable({}, { __mode = "k" }), owned = setmetatable({}, { __mode = "k" }), bodyNames = {}, lifetime = 30, matchRange = 10, scanAt = 0 }
 
 for _, name in ipairs(PART_NAMES) do Corpse.bodyNames[name] = true end
 
@@ -5466,6 +5518,8 @@ function Corpse.step(now)
     for model, rec in pairs(Corpse.recs) do
         if propGet(model, "Parent") == nil then
             Corpse.recs[model] = nil
+        elseif Corpse.owned[model] then
+            rec.sig = nil
         elseif rec.sig ~= state.sig or (state.fade > 0 and now - rec.born > Corpse.lifetime - state.fade) then
             rec.sig = state.sig
             Corpse.style(rec, state, now)
@@ -5474,6 +5528,394 @@ function Corpse.step(now)
 end
 
 Util.onUnload(Corpse.restoreAll)
+
+local KillFx = {
+    events = {}, pending = {}, fired = setmetatable({}, { __mode = "k" }), maxEvents = 6, fx = {},
+    names = { "Dissolve", "Lightning", "Shockwave", "Sparks", "Pillar", "Screen flash" },
+    glow = "rbxasset://textures/particles/sparkles_main.dds",
+}
+
+local function fxRand(low, high) return low + (high - low) * math.random() end
+
+function KillFx.make(ev, class, props, parent)
+    local object = Instance.new(class)
+    object.Name = Util.randomName()
+    ev.group[#ev.group + 1] = object
+    for key, value in pairs(props) do object[key] = value end
+    object.Parent = parent or ev.root
+    return object
+end
+
+function KillFx.anchor(ev, pos, size)
+    return KillFx.make(ev, "Part", {
+        Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false,
+        Transparency = 1, Size = size or Vector3.new(1, 1, 1), Position = pos,
+    })
+end
+
+function KillFx.beam(ev, parent, a0, a1, color, width0, width1)
+    return KillFx.make(ev, "Beam", {
+        Attachment0 = a0, Attachment1 = a1, Color = ColorSequence.new(color), LightEmission = 1, LightInfluence = 0,
+        FaceCamera = true, Segments = 1, Width0 = width0, Width1 = width1, Transparency = NumberSequence.new(0),
+    }, parent)
+end
+
+function KillFx.emitter(ev, parent, props)
+    local base = {
+        Texture = KillFx.glow, LightEmission = 1, LightInfluence = 0, Rate = 0, Enabled = false,
+        Rotation = NumberRange.new(0, 360), Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(1, 1) }),
+    }
+    for key, value in pairs(props) do base[key] = value end
+    return KillFx.make(ev, "ParticleEmitter", base, parent)
+end
+
+function KillFx.shrink(size)
+    return NumberSequence.new({ NumberSequenceKeypoint.new(0, size), NumberSequenceKeypoint.new(1, 0) })
+end
+
+function KillFx.jag(from, to, count, spread)
+    local delta = to - from
+    local axis = math.abs(delta.Unit.Y) > 0.98 and Vector3.new(1, 0, 0) or Vector3.new(0, 1, 0)
+    local side = delta:Cross(axis).Unit
+    local up = delta:Cross(side).Unit
+    local points = { from }
+    for index = 1, count - 1 do
+        points[#points + 1] = from + delta * (index / count) + side * fxRand(-spread, spread) + up * fxRand(-spread, spread)
+    end
+    points[#points + 1] = to
+    return points
+end
+
+KillFx.fx.Lightning = {
+    start = function(ev, corpse, pos, opts)
+        local top = pos + Vector3.new(fxRand(-8, 8), fxRand(60, 80), fxRand(-8, 8))
+        local holder = KillFx.anchor(ev, pos)
+        local chains = { { from = top, to = pos, count = 12, spread = 4.5, width = 0.9 * opts.int, taper = 0.5 } }
+        for _ = 1, math.random(1, 2) do
+            local origin = top + (pos - top) * fxRand(0.3, 0.8)
+            local heading = Vector3.new(fxRand(-1, 1), fxRand(-1.2, -0.2), fxRand(-1, 1)).Unit
+            chains[#chains + 1] = { from = origin, to = origin + heading * fxRand(12, 22), count = 4, spread = 1.5, width = 0.5 * opts.int, taper = 0.8 }
+        end
+        local beams = {}
+        for _, chain in ipairs(chains) do
+            chain.points = {}
+            for index = 1, chain.count + 1 do chain.points[index] = KillFx.make(ev, "Attachment", {}, holder) end
+            for index = 1, chain.count do
+                local w0 = chain.width * (1 - chain.taper * (index - 1) / chain.count)
+                local w1 = chain.width * (1 - chain.taper * index / chain.count)
+                beams[#beams + 1] = KillFx.beam(ev, holder, chain.points[index], chain.points[index + 1], opts.color, w0, w1)
+                beams[#beams + 1] = KillFx.beam(ev, holder, chain.points[index], chain.points[index + 1], WHITE, w0 * 0.4, w1 * 0.4)
+            end
+        end
+        local function reshape()
+            for _, chain in ipairs(chains) do
+                local points = KillFx.jag(chain.from, chain.to, chain.count, chain.spread)
+                for index, attachment in ipairs(chain.points) do attachment.WorldPosition = points[index] end
+            end
+        end
+        reshape()
+        local light = KillFx.make(ev, "PointLight", { Color = opts.color, Brightness = 8 * opts.int, Range = 30 }, holder)
+        local frame, shown = 0, 0
+        ev.ticks[#ev.ticks + 1] = function(t)
+            local step = math.floor(t / 0.06)
+            if step ~= frame and step < 4 then
+                frame = step
+                reshape()
+            end
+            local fade = math.clamp((t - 0.24) / 0.36, 0, 1)
+            if fade ~= shown then
+                shown = fade
+                for _, beam in ipairs(beams) do beam.Transparency = NumberSequence.new(fade) end
+            end
+            light.Brightness = 8 * opts.int * math.max(0, 1 - t / 0.35)
+            return t >= 0.6
+        end
+    end,
+}
+
+KillFx.fx.Dissolve = {
+    start = function(ev, corpse, pos, opts)
+        local ok, list = pcall(function() return corpse:GetDescendants() end)
+        if not (ok and type(list) == "table") then return end
+        local parts, decals, byPart, low, high = {}, {}, {}, math.huge, -math.huge
+        for _, object in ipairs(list) do
+            local kind = Local.kindOf(object)
+            local base = propGet(object, "Transparency")
+            if type(base) == "number" then
+                if kind == "decal" then
+                    decals[#decals + 1] = { inst = object, base = base }
+                elseif kind then
+                    local at = propGet(object, "Position")
+                    if base < 1 and typeof(at) == "Vector3" then
+                        local item = { inst = object, base = base, y = at.Y, alpha = -1 }
+                        parts[#parts + 1], byPart[object] = item, item
+                        low, high = math.min(low, at.Y), math.max(high, at.Y)
+                    end
+                end
+            end
+        end
+        if #parts == 0 then return end
+        Corpse.owned[corpse] = true
+        local span = math.max(high - low, 0.01)
+        for _, item in ipairs(parts) do item.key = (item.y - low) / span * 0.55 + math.random() * 0.25 end
+        for _, item in ipairs(decals) do
+            local owner = byPart[propGet(item.inst, "Parent")]
+            item.key = owner and owner.key or 0.4
+        end
+        local rate = math.max(2, math.floor(10 * opts.int))
+        ev.ticks[#ev.ticks + 1] = function(t)
+            if propGet(corpse, "Parent") == nil then return true end
+            local progress = t / opts.dur
+            for _, item in ipairs(parts) do
+                local alpha = math.clamp((progress - item.key) / 0.2, 0, 1)
+                if alpha ~= item.alpha then
+                    item.alpha = alpha
+                    local object = item.inst
+                    if alpha > 0 then
+                        if not item.glow then
+                            item.glow = true
+                            propSet(object, "Material", Enum.Material.Neon)
+                            item.emitter = KillFx.emitter(ev, object, {
+                                Rate = rate, Enabled = true, Lifetime = NumberRange.new(0.6, 1.3), Speed = NumberRange.new(1, 4),
+                                Acceleration = Vector3.new(0, 6, 0), EmissionDirection = Enum.NormalId.Top, SpreadAngle = Vector2.new(40, 40),
+                                Size = KillFx.shrink(0.35), Color = ColorSequence.new(opts.color2, opts.color),
+                            })
+                        end
+                        propSet(object, "Color", Util.lerpColor(opts.color2, opts.color, alpha))
+                    end
+                    propSet(object, "Transparency", item.base + (1 - item.base) * alpha)
+                    if alpha >= 1 and item.emitter then propSet(item.emitter, "Enabled", false) end
+                end
+            end
+            for _, item in ipairs(decals) do
+                propSet(item.inst, "Transparency", item.base + (1 - item.base) * math.clamp((progress - item.key) / 0.2, 0, 1))
+            end
+            return progress >= 1.05
+        end
+    end,
+}
+
+KillFx.fx.Shockwave = {
+    start = function(ev, corpse, pos, opts)
+        local ground = pos
+        local okCast, hit = pcall(Game.cast, pos + Vector3.new(0, 3, 0), Vector3.new(0, -60, 0), Visible.params)
+        if okCast and hit and typeof(hit.Position) == "Vector3" then ground = hit.Position end
+        local holder = KillFx.anchor(ev, ground)
+        local count, points, beams = 24, {}, {}
+        for index = 1, count do points[index] = KillFx.make(ev, "Attachment", {}, holder) end
+        for index = 1, count do
+            beams[index] = KillFx.beam(ev, holder, points[index], points[index % count + 1], opts.color, 1, 1)
+        end
+        local shell = KillFx.make(ev, "Part", {
+            Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false, Shape = Enum.PartType.Ball,
+            Material = Enum.Material.Neon, Color = opts.color2, Transparency = 0.45, Size = Vector3.new(2, 2, 2), Position = pos,
+        })
+        local reach = 30 * (0.7 + 0.3 * opts.int)
+        ev.ticks[#ev.ticks + 1] = function(t)
+            local progress = math.clamp(t / 0.9, 0, 1)
+            local radius = Util.lerp(2, reach, 1 - (1 - progress) ^ 2)
+            local width = 0.2 + 1.4 * opts.int * (1 - progress)
+            local fade = NumberSequence.new(progress)
+            for index = 1, count do
+                local angle = (index - 1) / count * math.pi * 2
+                points[index].WorldPosition = ground + Vector3.new(math.cos(angle) * radius, 0.4, math.sin(angle) * radius)
+                beams[index].Width0, beams[index].Width1, beams[index].Transparency = width, width, fade
+            end
+            local across = Util.lerp(2, 18, progress)
+            shell.Size, shell.Transparency = Vector3.new(across, across, across), Util.lerp(0.45, 1, progress)
+            return progress >= 1
+        end
+    end,
+}
+
+KillFx.fx.Sparks = {
+    start = function(ev, corpse, pos, opts)
+        local holder = KillFx.anchor(ev, pos)
+        local emitter = KillFx.emitter(ev, holder, {
+            Speed = NumberRange.new(25, 55), SpreadAngle = Vector2.new(180, 180), Lifetime = NumberRange.new(0.4, 1),
+            Acceleration = Vector3.new(0, -70, 0), Size = KillFx.shrink(0.5), Color = ColorSequence.new(opts.color, opts.color2),
+            Orientation = Enum.ParticleOrientation.VelocityParallel,
+        })
+        local count = math.floor(40 * opts.int)
+        local burst = pcall(function() emitter:Emit(count) end)
+        if not burst then
+            propSet(emitter, "Rate", count * 8)
+            propSet(emitter, "Enabled", true)
+        end
+        ev.ticks[#ev.ticks + 1] = function(t)
+            if t > 0.12 and not burst then propSet(emitter, "Enabled", false) end
+            return t >= 1.2
+        end
+    end,
+}
+
+KillFx.fx.Pillar = {
+    start = function(ev, corpse, pos, opts)
+        local width = 3.5 * math.sqrt(opts.int)
+        local column = KillFx.make(ev, "Part", {
+            Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false, Shape = Enum.PartType.Cylinder,
+            Material = Enum.Material.Neon, Color = opts.color, Transparency = 0.2, Size = Vector3.new(1, width, width), Position = pos,
+        })
+        local base = KillFx.anchor(ev, pos, Vector3.new(3, 0.2, 3))
+        local emitter = KillFx.emitter(ev, base, {
+            Rate = math.floor(18 * opts.int), Enabled = true, Lifetime = NumberRange.new(1, 2), Speed = NumberRange.new(10, 20),
+            EmissionDirection = Enum.NormalId.Top, SpreadAngle = Vector2.new(10, 10), Size = KillFx.shrink(0.5),
+            Color = ColorSequence.new(opts.color2, opts.color),
+        })
+        ev.ticks[#ev.ticks + 1] = function(t)
+            local height = 120 * math.min(1, t / 0.2)
+            local girth = width * (1 + 0.12 * math.sin(t * 16))
+            column.Size = Vector3.new(height, girth, girth)
+            column.CFrame = CFrame.new(pos.X, pos.Y + height / 2 - 2, pos.Z) * CFrame.Angles(0, 0, math.pi / 2)
+            column.Transparency = 0.2 + 0.8 * math.clamp(t / opts.dur, 0, 1) ^ 1.3
+            if t > opts.dur * 0.7 then propSet(emitter, "Enabled", false) end
+            return t >= opts.dur
+        end
+    end,
+}
+
+KillFx.fx["Screen flash"] = {
+    start = function(ev, corpse, pos, opts)
+        local camera = ev.root
+        local eye = camera and propGet(camera, "CFrame")
+        if eye and (eye.Position - pos).Magnitude > opts.flashDist then return end
+        local gui = Chams.getContainer()
+        if not gui then return end
+        local frame = KillFx.make(ev, "Frame", {
+            Size = UDim2.fromScale(1, 1), BackgroundColor3 = Util.lerpColor(opts.color, WHITE, 0.6), BackgroundTransparency = 0.6,
+            BorderSizePixel = 0, ZIndex = 1000,
+        }, gui)
+        ev.ticks[#ev.ticks + 1] = function(t)
+            local progress = math.clamp(t / 0.25, 0, 1)
+            frame.BackgroundTransparency = 0.6 + 0.4 * progress
+            return progress >= 1
+        end
+    end,
+}
+
+function KillFx.settings()
+    return {
+        color = val("kill_fx_color") or Color3.fromRGB(102, 204, 255), color2 = val("kill_fx_color2") or WHITE,
+        int = val("kill_fx_int") or 1, dur = math.max(0.5, val("kill_fx_dur") or 2.5), flashDist = val("kill_fx_flash_dist") or 150,
+        list = Util.set("kill_fx_list", { "Dissolve", "Lightning" }),
+    }
+end
+
+function KillFx.free(group)
+    for index = #group, 1, -1 do
+        local object = group[index]
+        pcall(object.Destroy, object)
+        group[index] = nil
+    end
+end
+
+function KillFx.destroy(ev)
+    for _, group in ipairs(ev.groups) do KillFx.free(group) end
+    ev.groups, ev.ticks = {}, {}
+end
+
+function KillFx.run(ev, name, fn, ...)
+    local group, first = {}, #ev.ticks + 1
+    ev.group = group
+    ev.groups[#ev.groups + 1] = group
+    Util.guard("killfx " .. name, fn, ev, ...)
+    for slot = first, #ev.ticks do ev.ticks[slot] = { fn = ev.ticks[slot], group = group } end
+end
+
+function KillFx.clear()
+    for _, ev in ipairs(KillFx.events) do KillFx.destroy(ev) end
+    KillFx.events, KillFx.pending, KillFx.seeded = {}, {}, false
+end
+
+function KillFx.queue(child, now)
+    if not on("kill_fx") or KillFx.fired[child] then return end
+    KillFx.fired[child] = true
+    KillFx.pending[child] = now
+end
+
+function KillFx.anchorOf(model)
+    for _, name in ipairs({ "Torso", "Head" }) do
+        local ok, part = pcall(model.FindFirstChild, model, name)
+        local at = ok and part and propGet(part, "Position")
+        if typeof(at) == "Vector3" then return at end
+    end
+    return nil
+end
+
+function KillFx.launch(model, pos, now)
+    local kind = Corpse.kindOf(model)
+    if not on("kill_fx_" .. kind) then return end
+    local opts = KillFx.settings()
+    local root = propGet(Workspace, "CurrentCamera")
+    if not root then return end
+    while #KillFx.events >= KillFx.maxEvents do KillFx.destroy(table.remove(KillFx.events, 1)) end
+    local ev = { born = now, groups = {}, ticks = {}, root = root, limit = opts.dur + 4 }
+    KillFx.events[#KillFx.events + 1] = ev
+    for _, name in ipairs(KillFx.names) do
+        if opts.list[name] then KillFx.run(ev, name, KillFx.fx[name].start, model, pos, opts) end
+    end
+    local id = on("kill_fx_sound") and tostring(val("kill_fx_sound_id") or "") or ""
+    if id:match("%S") then
+        KillFx.run(ev, "sound", function()
+            local holder = KillFx.anchor(ev, pos)
+            local sound = KillFx.make(ev, "Sound", { SoundId = id:match("^%d+$") and "rbxassetid://" .. id or id, Volume = 1 }, holder)
+            pcall(sound.Play, sound)
+            ev.ticks[#ev.ticks + 1] = function(t) return t >= 3 end
+        end)
+    end
+end
+
+function KillFx.step(now)
+    if not on("kill_fx") then
+        if next(KillFx.events) or next(KillFx.pending) or KillFx.seeded then KillFx.clear() end
+        return
+    end
+    local root = Game.rootPart()
+    if root then Corpse.localPos = propGet(root, "Position") end
+    local folder = Corpse.container()
+    if folder and folder ~= KillFx.watching then
+        KillFx.watching = folder
+        pcall(function()
+            Util.track(folder.ChildAdded:Connect(function(child) Util.guard("killfxadd", KillFx.queue, child, os.clock()) end))
+        end)
+    end
+    if folder and not KillFx.seeded then
+        KillFx.seeded = true
+        local ok, children = pcall(folder.GetChildren, folder)
+        if ok and type(children) == "table" then
+            for _, child in ipairs(children) do KillFx.fired[child] = true end
+        end
+    end
+    for model, born in pairs(KillFx.pending) do
+        local pos = KillFx.anchorOf(model)
+        if propGet(model, "Parent") == nil or now - born > 1 then
+            KillFx.pending[model] = nil
+        elseif pos then
+            KillFx.pending[model] = nil
+            Util.guard("killfx launch", KillFx.launch, model, pos, now)
+        end
+    end
+    local events = KillFx.events
+    for index = #events, 1, -1 do
+        local ev = events[index]
+        local age, ticks = now - ev.born, ev.ticks
+        for slot = #ticks, 1, -1 do
+            local entry = ticks[slot]
+            local ok, finished = pcall(entry.fn, age)
+            if not ok then Util.note("killfx tick" .. tostring(finished), "killfx:", finished) end
+            if not ok or finished == true then
+                KillFx.free(entry.group)
+                table.remove(ticks, slot)
+            end
+        end
+        if #ticks == 0 or age > ev.limit then
+            KillFx.destroy(ev)
+            table.remove(events, index)
+        end
+    end
+end
+
+Util.onUnload(KillFx.clear)
 
 local Pages = {
     Legit = UI.page("Legit", "crosshair"),
@@ -5658,6 +6100,7 @@ do
         popup:Dropdown({ Name = "Material", Flag = base .. "_mat", Items = Local.materials, Default = "ForceField" })
         popup:Dropdown({ Name = "Texture", Flag = base .. "_tex", Items = Local.names, Default = "None", Tooltip = "Pattern drawn by the ForceField material" })
         popup:Slider({ Name = "Reflectance", Flag = base .. "_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
+        if cat == "gun" then popup:Toggle({ Name = "Hide scope glass", Flag = "local_gun_noglass", Default = true, Tooltip = "Makes sight lenses fully clear; they are never recoloured either way" }) end
     end
     chams("Arm chams", "arm", "First-person skin parts of your arms (SkinTone)", Color3.fromRGB(255, 120, 160))
     chams("Glove chams", "glove", "First-person arm parts that are neither sleeve nor skin: gloves and accessories", Color3.fromRGB(120, 200, 255))
@@ -5865,6 +6308,20 @@ do
     Cham:Slider({ Name = "Reflectance", Flag = "chams_dead_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
     Cham:Toggle({ Name = "Hide clothing/accessories", Flag = "chams_dead_hide", Tooltip = "Hides everything on the corpse except the six body parts" })
     Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 15, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the corpse out over the last seconds before the game removes it; 0 is off" })
+
+    local Kill = Other:Section({ Name = "Kill effects", Side = 2, Icon = "flame" })
+    local Fx = Kill:Toggle({ Name = "Kill effects", Flag = "kill_fx", Tooltip = "Plays local effects on the corpse when a player dies. Visual only, nothing is sent to the server" }):Settings("Kill effects", 260)
+    Fx:Dropdown({ Name = "Effects", Flag = "kill_fx_list", Items = KillFx.names, Multi = true, Default = { "Dissolve", "Lightning" } })
+    pickColor(Fx, "Colour", "kill_fx_color", Color3.fromRGB(102, 204, 255))
+    pickColor(Fx, "Secondary", "kill_fx_color2", Color3.fromRGB(235, 248, 255))
+    Fx:Slider({ Name = "Intensity", Flag = "kill_fx_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
+    Fx:Slider({ Name = "Duration", Flag = "kill_fx_dur", Min = 0.5, Max = 6, Default = 2.5, Decimals = 0.1, Suffix = " s", Tooltip = "Length of Dissolve and Pillar" })
+    Fx:Toggle({ Name = "Enemies", Flag = "kill_fx_enemy", Default = true, Tooltip = "Corpses whose owner could not be matched count as enemy" })
+    Fx:Toggle({ Name = "Teammates", Flag = "kill_fx_team" })
+    Fx:Toggle({ Name = "Local player", Flag = "kill_fx_local" })
+    Fx:Slider({ Name = "Screen flash only near", Flag = "kill_fx_flash_dist", Min = 20, Max = 500, Default = 150, Decimals = 1, Suffix = " studs" })
+    Fx:Toggle({ Name = "Play sound", Flag = "kill_fx_sound" })
+    Fx:Input({ Name = "Sound id", Flag = "kill_fx_sound_id", Placeholder = "rbxassetid or number" })
 end
 
 do
@@ -6026,8 +6483,8 @@ do
     FovSet:Slider({ Name = "Blend speed", Flag = "world_fov_speed", Min = 2, Max = 30, Default = 10, Decimals = 0.1 })
     FovSet:Slider({ Name = "Scope zoom multiplier", Flag = "world_fov_mult", Min = 0.5, Max = 3, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Scales the game's own scope zoom; 1 leaves it unchanged" })
     local StretchSet = Fov:Toggle({ Name = "Stretch resolution", Flag = "world_stretch", Tooltip = "Scales the rendered image sideways or vertically; aim maths keep using the real camera" }):Settings("Stretch resolution", 230)
-    StretchSet:Slider({ Name = "Stretch X", Flag = "world_stretch_x", Min = 0.3, Max = 1.5, Default = 0.75, Decimals = 0.01, Suffix = "x", Tooltip = "Below 1 gives the classic 4:3 stretched look" })
-    StretchSet:Slider({ Name = "Stretch Y", Flag = "world_stretch_y", Min = 0.3, Max = 1.5, Default = 1, Decimals = 0.01, Suffix = "x" })
+    StretchSet:Slider({ Name = "Stretch X", Flag = "world_stretch_x", Min = 0.3, Max = 1.27, Default = 0.75, Decimals = 0.01, Suffix = "x", Tooltip = "Below 1 gives the classic 4:3 stretched look" })
+    StretchSet:Slider({ Name = "Stretch Y", Flag = "world_stretch_y", Min = 0.3, Max = 1.2, Default = 1, Decimals = 0.01, Suffix = "x" })
     local Cross = Cam:Section({ Name = "Crosshair", Side = 2, Icon = "crosshair" })
     local Ch = Cross:Toggle({ Name = "Custom crosshair", Flag = "cross_on" }):Settings("Crosshair", 230)
     pickColor(Ch, "Crosshair", "cross_color", Color3.fromRGB(120, 255, 170))
@@ -6106,6 +6563,8 @@ do
     Menu:AddLabel("Menu key"):AddKeyPicker("MenuKeybind", { Default = "Delete", Mode = "Toggle", Text = "Menu key", NoUI = true })
     Library.ToggleKeybind = Options.MenuKeybind
     escapeUnbinds("MenuKeybind", "Delete")
+    Menu:AddToggle("menu_hide_cursor", { Text = "Hide game cursor", Default = true })
+    Toggles.menu_hide_cursor:OnChanged(function() pcall(function() Library:SetHideGameCursor(Toggles.menu_hide_cursor.Value) end) end)
     Menu:AddToggle("menu_watermark", { Text = "Watermark", Default = true })
     Menu:AddToggle("menu_keybinds", { Text = "Keybind list", Default = false })
     Toggles.menu_watermark:OnChanged(function() pcall(function() Library:SetWatermarkVisibility(Toggles.menu_watermark.Value) end) end)
@@ -7085,6 +7544,7 @@ function Loop.step()
     Util.guard("nades", Nades.step, cam, now)
     Util.guard("localvis", Local.step, now)
     Util.guard("corpse", Corpse.step, now)
+    Util.guard("killfx", KillFx.step, now)
 
     if now - Loop.labelAt > 0.2 then
         Loop.labelAt = now

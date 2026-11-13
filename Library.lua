@@ -130,6 +130,10 @@ local Library = {
     HideGameCursor = true;
 
     KeybindMode = 'All';
+    -- open menu swallows clicks outside it (full-screen sink under the window); false = game input passes through
+    BlockGameInput = true;
+    -- true = clicking a toggle's label or row flips it too, not only the switch
+    ToggleClickRow = false;
 
     NotifyConfig = {
         ClipDescendants  = false;
@@ -147,6 +151,8 @@ local Library = {
 };
 
 Library.KeyPickerList = {};
+-- row keybind chips (chip frame -> re-measure), refreshed when the font changes
+Library.KeyChips = setmetatable({}, { __mode = 'k' });
 Library.Toggles = Toggles;
 Library.Options = Options;
 
@@ -302,6 +308,10 @@ function Library:SetFontSize(Size)
         end
         end
     end
+    for _, Refresh in next, Library.KeyChips do
+        pcall(Refresh);
+    end;
+    if Library.RelayoutNotifications then Library:RelayoutNotifications() end;
 end
 
 local RainbowStep = 0
@@ -671,6 +681,32 @@ function Library:KeyNameFromInput(Input)
     end;
 end;
 
+local KeyShortNames = {
+    LeftShift = 'LShift'; RightShift = 'RShift'; LeftControl = 'LCtrl'; RightControl = 'RCtrl';
+    LeftAlt = 'LAlt'; RightAlt = 'RAlt'; LeftSuper = 'LWin'; RightSuper = 'RWin';
+    Return = 'Enter'; Escape = 'Esc'; Backspace = 'Back'; Delete = 'Del'; Insert = 'Ins';
+    PageUp = 'PgUp'; PageDown = 'PgDn'; CapsLock = 'Caps'; Space = 'Space';
+    Zero = '0'; One = '1'; Two = '2'; Three = '3'; Four = '4';
+    Five = '5'; Six = '6'; Seven = '7'; Eight = '8'; Nine = '9';
+};
+
+-- Short label for a bind, shared by the row chip and the keybind list: MB1..MB5, '-' when unbound.
+function Library:KeyDisplayName(Key)
+    Key = tostring(Key or 'None');
+    if Key == '' or Key == 'None' or Key == 'Unknown' then
+        return '-';
+    end;
+    local Button = Key:match('^MouseButton(%d)$') or Key:match('^Mouse%s*(%d)$') or Key:match('^MB(%d)$');
+    if Button then
+        return 'MB' .. Button;
+    end;
+    local Pad = Key:match('^Keypad(.+)$');
+    if Pad then
+        return 'Num' .. (KeyShortNames[Pad] or Pad);
+    end;
+    return KeyShortNames[Key] or Key;
+end;
+
 -- True if a held-key bind named Key is currently down (mouse buttons, side buttons and keys).
 function Library:IsBindDown(Key)
     if Key == 'None' or Key == nil then
@@ -855,6 +891,9 @@ function Library:Unload()
     end;
     Library.Unloaded = true;
     Library:CloseSliderEditor();
+    for Chip in next, Library.KeyChips do
+        Library.KeyChips[Chip] = nil;
+    end;
 
     for Idx = #Library.Signals, 1, -1 do
         local Connection = table.remove(Library.Signals, Idx)
@@ -1155,6 +1194,10 @@ function Library:SetFont(Font)
             end;
         end;
     end;
+    for _, Refresh in next, Library.KeyChips do
+        pcall(Refresh);
+    end;
+    if Library.RelayoutNotifications then Library:RelayoutNotifications() end;
 end;
 
 function Library:SetCornerScale(Scale)
@@ -2508,37 +2551,50 @@ do
             Info.Mode = 'Toggle'
         end
 
+        -- 18px rows: chip height keeps the row's parity so it centres on whole pixels
+        -- CHIP_TEXT: chip text size at the default 13pt font, where the chip stays 16px
+        local CHIP_ROW, CHIP_H, CHIP_PAD, CHIP_MIN, CHIP_TEXT = 18, 16, 6, 28, 11;
         local PickOuter = Library:Create('Frame', {
             BackgroundColor3 = Library.InputColor;
             LayoutOrder = AddonSlot(ParentObj, 'KeyPicker');
-            Size = UDim2.new(0, 34, 0, 16);
+            Size = UDim2.fromOffset(CHIP_MIN, CHIP_H);
             ZIndex = 6;
             Parent = AddonHolder(ParentObj);
         });
-        Library:Round(PickOuter, 4);
+        Library:Round(PickOuter, 3);
         local PickStroke = Library:Stroke(PickOuter, 'OutlineColor');
         Library:AddToRegistry(PickOuter, {
             BackgroundColor3 = 'InputColor';
         });
-        local PickInner = PickOuter;
         local ChipLabel = Library:CreateLabel({
             Dim = true;
-            Size = UDim2.new(1, 0, 1, 0);
+            Size = UDim2.fromScale(1, 1);
             TextSize = Library.FontSize - 2;
+            TextXAlignment = Enum.TextXAlignment.Center;
+            TextYAlignment = Enum.TextYAlignment.Center;
             Text = '';
             ZIndex = 8;
             Parent = PickOuter;
         });
+        local ChipValue;
         local function SetChip(Value)
-            Value = tostring(Value or '');
-            if Value ~= '' and Value:sub(1, 1) ~= '.' then
-                Value = '[' .. Value .. ']';
-            end;
-            ChipLabel.Text = Value;
-            local W = Library:GetTextBounds(Value, Library.Font, Library.FontSize - 2);
-            PickOuter.Size = UDim2.new(0, math.max(24, (W or 0) + 12), 0, 16);
+            ChipValue = Value;
+            local Text = Value == '...' and '[...]' or '[' .. Library:KeyDisplayName(Value) .. ']';
+            ChipLabel.Text = Text;
+            local TW, TH = Library:GetTextBounds(Text, ChipLabel.Font, ChipLabel.TextSize);
+            TW, TH = math.ceil(TW or 0), math.ceil(TH or 0);
+            -- same parity as the text on both axes, so centring never lands on a half pixel
+            local W = math.max(CHIP_MIN, TW + CHIP_PAD * 2);
+            if (W - TW) % 2 == 1 then W = W + 1 end;
+            local H = ChipLabel.TextSize > CHIP_TEXT and math.max(CHIP_H, TH + 4) or CHIP_H;
+            if (CHIP_ROW - H) % 2 == 1 then H = H + 1 end;
+            local Nudge = (H - TH) % 2;
+            ChipLabel.Position = UDim2.fromOffset(0, Nudge);
+            ChipLabel.Size = UDim2.new(1, 0, 1, -Nudge);
+            PickOuter.Size = UDim2.fromOffset(W, H);
             ArrangeAddons(ParentObj);
         end;
+        Library.KeyChips[PickOuter] = function() SetChip(ChipValue) end;
         -- the rest of the picker assigns DisplayLabel.Text; route that to the chip
         local DisplayLabel = setmetatable({}, {
             __newindex = function(_, Key, Value)
@@ -2676,8 +2732,7 @@ do
 
             local State = KeyPicker:GetState();
 
-            local displayKey = (KeyPicker.Value == 'None') and '...' or KeyPicker.Value
-            KeyLabel.Text = string.format('[%s]', displayKey);
+            KeyLabel.Text = string.format('[%s]', Library:KeyDisplayName(KeyPicker.Value));
             NameLabel.Text = tostring(Info.Text);
             ModeLabel.Text = string.format('%s', KeyPicker.Mode or '');
             local Want = false
@@ -2814,34 +2869,18 @@ do
 
             Picking = true;
 
-            DisplayLabel.Text = '';
-
-            local Break;
-            local Text = '';
+            -- steady '[...]': animated dots would resize the chip and re-lay the row every tick
+            DisplayLabel.Text = '...';
 
             if not Library.SideMouseSupported and not Library.SideNoticeShown then
                 Library.SideNoticeShown = true;
                 Library:Notify('Side mouse buttons need an executor with iskeypressed', 5);
             end;
 
-            task.spawn(function()
-                while (not Break) do
-                    if Text == '...' then
-                        Text = '';
-                    end;
-
-                    Text = Text .. '.';
-                    DisplayLabel.Text = Text;
-
-                    wait(0.4);
-                end;
-            end);
-
             wait(0.2);
 
             local Event;
             local function Finish(Key, Raw)
-                Break = true;
                 Picking = false;
                 Library.SideBinders[KeyPicker] = nil;
                 Library.JustBound = true;
@@ -3507,13 +3546,26 @@ do
             ZIndex = 10;
             Parent = Row;
         });
-        Library:Hover(ToggleRegion, function()
-            if not Toggle.Value then
+        -- click/hover target for the switch, a few pixels larger than the 26x12 pill and above the row region
+        local SwitchHit = Library:Create('Frame', {
+            Name = 'SwitchHit';
+            BackgroundTransparency = 1;
+            Position = UDim2.fromOffset(-3, -3);
+            Size = UDim2.new(1, 6, 1, 6);
+            ZIndex = 11;
+            Parent = Pill;
+        });
+        local HoverRow, HoverSwitch = false, false;
+        local function PaintHover()
+            local On = HoverSwitch or (HoverRow and Library.ToggleClickRow);
+            if On and not Toggle.Value then
                 Library:Tween(PillStroke, { Color = Library.AccentColor }, 0.12);
-            end
-        end, function()
-            Library:Tween(PillStroke, { Color = Library.OutlineColor }, 0.12);
-        end);
+            elseif not On then
+                Library:Tween(PillStroke, { Color = Library.OutlineColor }, 0.12);
+            end;
+        end;
+        Library:Hover(ToggleRegion, function() HoverRow = true; PaintHover() end, function() HoverRow = false; PaintHover() end);
+        Library:Hover(SwitchHit, function() HoverSwitch = true; PaintHover() end, function() HoverSwitch = false; PaintHover() end);
 
         function Toggle:UpdateColors()
             Toggle:Display(true);
@@ -3560,17 +3612,25 @@ do
             Library:SafeCallback(Toggle.Changed, Toggle.Value);
             Library:UpdateDependencyBoxes();
         end;
+        local function Clicked(Input)
+            return (Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch) and not Library:MouseIsOverOpenedFrame();
+        end;
+        SwitchHit.InputBegan:Connect(function(Input)
+            if not Clicked(Input) then return end;
+            Toggle:SetValue(not Toggle.Value)
+            Library:AttemptSave();
+        end);
+        -- the whole row only flips the toggle with Library.ToggleClickRow; a click on the switch is SwitchHit's
         ToggleRegion.InputBegan:Connect(function(Input)
-            if (Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch) and not Library:MouseIsOverOpenedFrame() then
-                for _, Child in next, Addons:GetChildren() do
-                    if Child ~= Pill and Child:IsA('GuiObject') and Child.Visible and Library:IsMouseOverFrame(Child) then
-                        return;
-                    end;
+            if not Library.ToggleClickRow or not Clicked(Input) or Library:IsMouseOverFrame(SwitchHit) then return end;
+            for _, Child in next, Addons:GetChildren() do
+                if Child ~= Pill and Child:IsA('GuiObject') and Child.Visible and Library:IsMouseOverFrame(Child) then
+                    return;
                 end;
-
-                Toggle:SetValue(not Toggle.Value)
-                Library:AttemptSave();
             end;
+
+            Toggle:SetValue(not Toggle.Value)
+            Library:AttemptSave();
         end);
         if Toggle.Risky then
             Library:RemoveFromRegistry(ToggleLabel)
@@ -3584,6 +3644,9 @@ do
         Groupbox:Resize();
 
         Toggle.Container = Container;
+        Toggle.Switch = Pill;
+        Toggle.SwitchHit = SwitchHit;
+        Toggle.Region = ToggleRegion;
         setmetatable(Toggle, BaseAddons);
 
         Toggles[Idx] = Toggle;
@@ -7054,6 +7117,9 @@ end;
 
 do
     Library.NotificationStack = {};
+    -- open and closing notification handles, oldest first; NotifyById maps an Id to its open handle
+    Library.Notifications = {};
+    Library.NotifyById = {};
 
     Library.NotificationArea = Library:Create('Frame', {
         BackgroundTransparency  = 1;
@@ -7062,8 +7128,9 @@ do
         ZIndex                  = 100;
         Parent                  = ScreenGui;
     });
+    -- no padding: each card's holder carries its own gap, so the gap collapses with the card
     Library:Create('UIListLayout', {
-        Padding        = UDim.new(0, 6);
+        Padding        = UDim.new(0, 0);
         FillDirection  = Enum.FillDirection.Vertical;
         SortOrder      = Enum.SortOrder.LayoutOrder;
         Parent         = Library.NotificationArea;
@@ -7315,103 +7382,352 @@ function Library:SetWatermark(Text)
     Library:SetWatermarkVisibility(true)
 end;
 
-function Library:Notify(Text, Time)
-    if not Text or Text == "" then return end;
-    table.insert(Library.NotifyQueue, { Text = Text, Time = Time });
-    Library:ProcessNotifyQueue();
+-- Notifications ---------------------------------------------------------------
+-- Cards use the groupbox look (NotifyColor panel, outline, 6px corners). One RenderStepped ticker runs the
+-- enter/exit animation, the timer and the progress bar of every card, so nothing waits on task.wait.
+Library.NotifyMaxVisible = 6;
+Library.NotifyMaxWidth = 300;
+Library.NotifyMinWidth = 160;
+Library.NotifyIcon = 'bell';
+Library.NotifySoundVolume = 0.5;
+
+local NOTIFY_PAD, NOTIFY_GAP, NOTIFY_ICON, NOTIFY_SLIDE = 10, 6, 14, 18;
+local NOTIFY_IN, NOTIFY_OUT = 0.22, 0.2;
+
+local NotifyMethods = {};
+NotifyMethods.__index = NotifyMethods;
+
+local function NotifyAccent(Note)
+    return Note.Accent or Library.AccentColor;
 end;
 
-function Library:ProcessNotifyQueue()
+local PaintNotify;
+
+local function LayoutNotify(Note)
+    if Note.Dead then return end;
+    local Size = Library.FontSize;
+    local Bold = Library:BoldFont();
+    local HasIcon = false;
+    if Note.Icon ~= false then
+        HasIcon = Library:ApplyIcon(Note.IconImage, Note.Icon or Library.NotifyIcon);
+    end;
+    Note.IconImage.Visible = HasIcon;
+    local TextX = NOTIFY_PAD + (HasIcon and NOTIFY_ICON + 8 or 0);
+
+    local TitleW, TitleH = 0, 0;
+    if Note.Title then TitleW, TitleH = Library:GetTextBounds(Note.Title, Bold, Size) end;
+    local TextW, LineH = Library:GetTextBounds(Note.Text ~= '' and Note.Text or 'A', Library.Font, Size);
+    if Note.Text == '' then TextW = 0 end;
+    local W = math.clamp(math.ceil(math.max(TitleW, TextW)) + TextX + NOTIFY_PAD, Library.NotifyMinWidth, Library.NotifyMaxWidth);
+    local AreaW = W - TextX - NOTIFY_PAD;
+    local BodyH = 0;
+    if Note.Text ~= '' then
+        local _, Wrapped = Library:GetTextBounds(Note.Text, Library.Font, Size, Vector2.new(AreaW, 10000));
+        BodyH = math.ceil(Wrapped);
+    end;
+    TitleH, LineH = math.ceil(TitleH), math.ceil(LineH);
+
+    local Y = NOTIFY_PAD;
+    local Title, Body = Note.TitleLabel, Note.TextLabel;
+    Title.Visible = Note.Title ~= nil;
+    Title.Font = Bold;
+    Title.TextSize = Size;
+    Title.Text = Note.Title or '';
+    if Note.Title then
+        Title.Position = UDim2.fromOffset(TextX, Y);
+        Title.Size = UDim2.fromOffset(AreaW, TitleH);
+        Y = Y + TitleH + (BodyH > 0 and 2 or 0);
+    end;
+    Body.Visible = BodyH > 0;
+    Body.Font = Library.Font;
+    Body.TextSize = Size;
+    Body.Text = Note.Text;
+    Body.Position = UDim2.fromOffset(TextX, Y);
+    Body.Size = UDim2.fromOffset(AreaW, BodyH);
+    Y = Y + BodyH;
+
+    local H = Y + NOTIFY_PAD;
+    local FirstLine = Note.Title and TitleH or LineH;
+    Note.IconImage.Position = UDim2.fromOffset(NOTIFY_PAD, NOTIFY_PAD + math.floor((FirstLine - NOTIFY_ICON) / 2));
+    Note.Card.Size = UDim2.fromOffset(W, H);
+    Note.Track.Position = UDim2.fromOffset(NOTIFY_PAD, H - 4);
+    Note.Track.Size = UDim2.fromOffset(W - NOTIFY_PAD * 2, 2);
+    Note.Track.Visible = Note.Progress and Note.Duration < math.huge;
+    Note.W, Note.H = W, H;
+    Note.LastE, Note.BarPx = nil, nil;
+    PaintNotify(Note, 1 - (1 - Note.Show) ^ 3);
+end;
+
+function PaintNotify(Note, E)
     local C = Library.NotifyConfig;
-    local ItemHeight = 30 + 6;
+    local Bottom = (C.VAnchor or C.BarSide) ~= 'Top';
+    local Dir = C.Alignment == 'Right' and 1 or (C.Alignment == 'Left' and -1 or 0);
+    local Base = math.clamp(Library.WindowTransparency * 0.6, 0, 1);
+    local Key = E .. ':' .. Base .. ':' .. Dir .. ':' .. tostring(Bottom);
+    if Note.LastE ~= Key then
+        Note.LastE = Key;
+        local Fade = 1 - E;
+        Note.Holder.Size = UDim2.fromOffset(Note.W, math.floor((Note.H + NOTIFY_GAP) * E + 0.5));
+        Note.Card.AnchorPoint = Vector2.new(0, Bottom and 1 or 0);
+        Note.Card.Position = UDim2.new(0, Dir * math.floor(NOTIFY_SLIDE * Fade + 0.5), Bottom and 1 or 0, 0);
+        Note.Card.BackgroundTransparency = Base + (1 - Base) * Fade;
+        Note.Stroke.Transparency = Fade;
+        Note.TitleLabel.TextTransparency = Fade;
+        Note.TextLabel.TextTransparency = Fade;
+        Note.IconImage.ImageTransparency = Fade;
+        Note.Track.BackgroundTransparency = 0.5 + 0.5 * Fade;
+        Note.Bar.BackgroundTransparency = Fade;
+    end;
+    local Frac = 1;
+    if Note.Duration > 0 and Note.Duration < math.huge then
+        Frac = math.clamp(1 - Note.Elapsed / Note.Duration, 0, 1);
+    end;
+    local Px = math.floor((Note.W - NOTIFY_PAD * 2) * Frac + 0.5);
+    if Note.BarPx ~= Px then
+        Note.BarPx = Px;
+        Note.Bar.Size = UDim2.fromOffset(Px, 2);
+    end;
+end;
+
+local function BuildNotify(Note)
+    local Holder = Library:Create('Frame', {
+        Name = 'Notification';
+        BackgroundTransparency = 1;
+        LayoutOrder = Note.Order;
+        Size = UDim2.fromOffset(0, 0);
+        ZIndex = 100;
+        Parent = Library.NotificationArea;
+    });
+    local Card = Library:Create('Frame', {
+        BackgroundColor3 = Library.NotifyColor;
+        BackgroundTransparency = 1;
+        ZIndex = 101;
+        Parent = Holder;
+    });
+    Library:Round(Card, 6);
+    Library:AddToRegistry(Card, { BackgroundColor3 = 'NotifyColor' });
+    local Stroke = Library:Stroke(Card, 'OutlineColor', 1, 1);
+
+    local Icon = Library:Create('ImageLabel', {
+        BackgroundTransparency = 1;
+        ImageColor3 = NotifyAccent(Note);
+        ImageTransparency = 1;
+        Size = UDim2.fromOffset(NOTIFY_ICON, NOTIFY_ICON);
+        ZIndex = 103;
+        Parent = Card;
+    });
+    Library:AddToRegistry(Icon, { ImageColor3 = function() return NotifyAccent(Note) end });
+
+    local Title = Library:CreateLabel({
+        TextSize = Library.FontSize;
+        TextTransparency = 1;
+        TextTruncate = Enum.TextTruncate.AtEnd;
+        TextXAlignment = Enum.TextXAlignment.Left;
+        TextYAlignment = Enum.TextYAlignment.Top;
+        ZIndex = 103;
+        Parent = Card;
+    });
+    local Body = Library:CreateLabel({
+        TextSize = Library.FontSize;
+        TextTransparency = 1;
+        TextWrapped = true;
+        TextXAlignment = Enum.TextXAlignment.Left;
+        TextYAlignment = Enum.TextYAlignment.Top;
+        ZIndex = 103;
+        Parent = Card;
+    });
+    -- with a title the body steps back to the dim colour, like a groupbox header over its rows
+    Library:RemoveFromRegistry(Body);
+    Library:AddToRegistry(Body, { TextColor3 = function() return Note.Title and Library:GetDimColor() or Library.FontColor end });
+
+    local Track = Library:Create('Frame', {
+        BackgroundColor3 = Library.OutlineColor;
+        BackgroundTransparency = 1;
+        ZIndex = 102;
+        Parent = Card;
+    });
+    Library:Round(Track, 1);
+    Library:AddToRegistry(Track, { BackgroundColor3 = 'OutlineColor' });
+    local Bar = Library:Create('Frame', {
+        BackgroundColor3 = NotifyAccent(Note);
+        BackgroundTransparency = 1;
+        ZIndex = 103;
+        Parent = Track;
+    });
+    Library:Round(Bar, 1);
+    Library:AddToRegistry(Bar, { BackgroundColor3 = function() return NotifyAccent(Note) end });
+
+    Note.Holder, Note.Card, Note.Stroke, Note.IconImage = Holder, Card, Stroke, Icon;
+    Note.TitleLabel, Note.TextLabel, Note.Track, Note.Bar = Title, Body, Track, Bar;
+end;
+
+local function RepaintNotifyColors(Note)
+    Note.IconImage.ImageColor3 = NotifyAccent(Note);
+    Note.Bar.BackgroundColor3 = NotifyAccent(Note);
+    Note.TextLabel.TextColor3 = Note.Title and Library:GetDimColor() or Library.FontColor;
+end;
+
+local function PlayNotifySound(Id)
+    if Id == nil or Id == false then return end;
+    pcall(function()
+        local Asset = tostring(Id);
+        if not Asset:find('://', 1, true) then Asset = 'rbxassetid://' .. Asset end;
+        local Sound = Instance.new('Sound');
+        Sound.SoundId = Asset;
+        Sound.Volume = Library.NotifySoundVolume;
+        Sound.Parent = game:GetService('SoundService');
+        Sound.Ended:Connect(function() Sound:Destroy() end);
+        Sound:Play();
+        task.delay(15, function() pcall(function() Sound:Destroy() end) end);
+    end);
+end;
+
+local function NotifyTitle(Value)
+    if Value == nil or Value == false then return nil end;
+    Value = tostring(Value);
+    return Value ~= '' and Value or nil;
+end;
+
+function NotifyMethods:SetText(Text)
+    self.Text = Text ~= nil and tostring(Text) or '';
+    LayoutNotify(self);
+    return self;
+end;
+
+function NotifyMethods:SetTitle(Title)
+    self.Title = NotifyTitle(Title);
+    if not self.Dead then RepaintNotifyColors(self) end;
+    LayoutNotify(self);
+    return self;
+end;
+
+function NotifyMethods:SetDuration(Seconds)
+    self.Duration = tonumber(Seconds) or self.Duration;
+    self.Elapsed = 0;
+    LayoutNotify(self);
+    return self;
+end;
+
+function NotifyMethods:Update(Info)
+    if Info.Title ~= nil then self.Title = NotifyTitle(Info.Title) end;
+    if Info.Text ~= nil then self.Text = tostring(Info.Text) end;
+    if Info.Icon ~= nil then self.Icon = Info.Icon end;
+    if Info.Accent ~= nil then self.Accent = typeof(Info.Accent) == 'Color3' and Info.Accent or nil end;
+    if Info.Progress ~= nil then self.Progress = Info.Progress ~= false end;
+    if Info.Duration ~= nil then self.Duration = tonumber(Info.Duration) or self.Duration end;
+    self.Elapsed = 0;
+    if not self.Dead then RepaintNotifyColors(self) end;
+    LayoutNotify(self);
+    PlayNotifySound(Info.Sound);
+    return self;
+end;
+
+function NotifyMethods:Close()
+    if self.Closing then return end;
+    self.Closing = true;
+    if self.Id ~= nil and Library.NotifyById[self.Id] == self then
+        Library.NotifyById[self.Id] = nil;
+    end;
+    Library.ActiveNotifyCount = math.max(0, Library.ActiveNotifyCount - 1);
+end;
+
+local function DestroyNotify(Note)
+    Note.Dead = true;
+    for _, Obj in ipairs(Note.Holder:GetDescendants()) do
+        Library:RemoveFromRegistry(Obj);
+    end;
+    Note.Holder:Destroy();
+end;
+
+local function StepNotify(Note, Dt)
+    if Note.Closing then
+        Note.Show = math.max(0, Note.Show - Dt / NOTIFY_OUT);
+    else
+        Note.Show = math.min(1, Note.Show + Dt / NOTIFY_IN);
+        Note.Elapsed = Note.Elapsed + Dt;
+        if Note.Elapsed >= Note.Duration then Note:Close() end;
+    end;
+    PaintNotify(Note, 1 - (1 - Note.Show) ^ 3);
+    if Note.Closing and Note.Show <= 0 then
+        DestroyNotify(Note);
+        return true;
+    end;
+end;
+
+Library:GiveSignal(RenderStepped:Connect(function(Delta)
+    local List = Library.Notifications;
+    if #List == 0 then return end;
+    Delta = tonumber(Delta) or 0;
+    for Idx = #List, 1, -1 do
+        if StepNotify(List[Idx], Delta) then
+            table.remove(List, Idx);
+        end;
+    end;
+end));
+
+function Library:RelayoutNotifications()
+    for _, Note in ipairs(Library.Notifications) do
+        LayoutNotify(Note);
+    end;
+end;
+
+-- Library:Notify(Text, Duration) or Library:Notify({ Title, Text, Duration, Icon, Accent, Progress, Id, Sound }) -> handle
+function Library:Notify(Info, Duration)
+    if type(Info) ~= 'table' then
+        Info = { Text = Info; Duration = Duration };
+    end;
+    local Text = Info.Text ~= nil and tostring(Info.Text) or '';
+    local Title = NotifyTitle(Info.Title);
+    if Text == '' and not Title then return end;
+
+    local Existing = Info.Id ~= nil and Library.NotifyById[Info.Id];
+    if Existing and not Existing.Closing then
+        return Existing:Update(Info);
+    end;
+
+    Library.NotifyCounter = Library.NotifyCounter + 1;
+    local Note = setmetatable({
+        Id = Info.Id;
+        Title = Title;
+        Text = Text;
+        Icon = Info.Icon;
+        Accent = typeof(Info.Accent) == 'Color3' and Info.Accent or nil;
+        Progress = Info.Progress ~= false;
+        Duration = tonumber(Info.Duration) or 5;
+        Elapsed = 0;
+        Show = 0;
+        Order = Library.NotifyConfig.SortOrder == 'Text Length' and #Text or Library.NotifyCounter;
+    }, NotifyMethods);
+    BuildNotify(Note);
+    RepaintNotifyColors(Note);
+    LayoutNotify(Note);
+    table.insert(Library.Notifications, Note);
+    Library.ActiveNotifyCount = Library.ActiveNotifyCount + 1;
+    if Note.Id ~= nil then Library.NotifyById[Note.Id] = Note end;
+
+    -- oldest open cards make room past the cap
+    local Open = {};
+    for _, Other in ipairs(Library.Notifications) do
+        if not Other.Closing then Open[#Open + 1] = Other end;
+    end;
+    for Idx = 1, #Open - math.max(1, Library.NotifyMaxVisible) do
+        Open[Idx]:Close();
+    end;
+
+    PlayNotifySound(Info.Sound);
+    return Note;
+end;
+
+-- kept for scripts that queued through the old API
+function Library:ProcessNotifyQueue()
     while #Library.NotifyQueue > 0 do
-        if C.ClipDescendants and (Library.ActiveNotifyCount + 1) * ItemHeight > C.MaxHeight then break end;
         local Item = table.remove(Library.NotifyQueue, 1);
-        Library:SpawnNotify(Item.Text, Item.Time);
+        Library:Notify(Item.Text, Item.Time);
     end;
 end;
 
 function Library:SpawnNotify(Text, Time)
-    Time = Time or 5;
-    local H = 30;
-    local W = (Library:GetTextBounds(Text, Library.Font, Library.FontSize) or 200) + 44;
-    local NotifyTransparency = math.min((Library.NotifyConfig.Transparency or 0) / 100, 0.35);
-    local SlideDir = Library.NotifyConfig.Alignment == 'Right' and 1 or -1;
-    Library.NotifyCounter = Library.NotifyCounter + 1;
-    local Outer = Library:Create('Frame', {
-        BackgroundTransparency  = 1;
-        ClipsDescendants        = true;
-        LayoutOrder             = Library.NotifyConfig.SortOrder == "Text Length" and #Text or Library.NotifyCounter;
-        Size                    = UDim2.fromOffset(W, H);
-        ZIndex                  = 100;
-        Parent                  = Library.NotificationArea;
-    });
-    local Inner = Library:Create('Frame', {
-        BackgroundColor3  = Library.NotifyColor;
-        BackgroundTransparency = NotifyTransparency;
-        Position          = UDim2.new(SlideDir, SlideDir * 12, 0, 0);
-        Size              = UDim2.new(1, 0, 1, 0);
-        ZIndex            = 101;
-        Parent            = Outer;
-    });
-    Library:Round(Inner, 6);
-    Library:AddToRegistry(Inner, { BackgroundColor3 = 'NotifyColor' });
-    local InnerStroke = Library:Stroke(Inner, 'OutlineColor', 1, NotifyTransparency);
-
-    local Logo = Library:CreateLogo(Inner, 14, 103, true);
-    Logo.Position = UDim2.fromOffset(10, 8);
-    Library:CreateLabel({
-        Position = UDim2.new(0, 32, 0, 0);
-        Size = UDim2.new(1, -40, 1, 0);
-        Text = Text;
-        TextXAlignment = Enum.TextXAlignment.Left;
-        TextSize = Library.FontSize;
-        ZIndex = 103;
-        Parent = Inner;
-    });
-
-    local BarSide = Library.NotifyConfig.BarSide or "Bottom";
-    local BarPos, BarSize, BarEnd;
-    if BarSide == "Top" then
-        BarPos  = UDim2.new(0, 8, 0, 0);
-        BarSize = UDim2.new(1, -16, 0, 2);
-        BarEnd  = UDim2.new(0, 0, 0, 2);
-    elseif BarSide == "Bottom" then
-        BarPos  = UDim2.new(0, 8, 1, -2);
-        BarSize = UDim2.new(1, -16, 0, 2);
-        BarEnd  = UDim2.new(0, 0, 0, 2);
-    elseif BarSide == "Left" then
-        BarPos  = UDim2.new(0, 0, 0, 6);
-        BarSize = UDim2.new(0, 2, 1, -12);
-        BarEnd  = UDim2.new(0, 2, 0, 0);
-    else
-        BarPos  = UDim2.new(1, -2, 0, 6);
-        BarSize = UDim2.new(0, 2, 1, -12);
-        BarEnd  = UDim2.new(0, 2, 0, 0);
-    end;
-    local Bar = Library:Create('Frame', {
-        BackgroundColor3  = Library.AccentColor;
-        Position          = BarPos;
-        Size              = BarSize;
-        ZIndex            = 104;
-        Parent            = Inner;
-    });
-    Library:Round(Bar, 1);
-    Library:AddToRegistry(Bar, { BackgroundColor3 = 'AccentColor' });
-
-    Library:Tween(Inner, { Position = UDim2.new(0, 0, 0, 0) }, 0.3, Enum.EasingStyle.Quint);
-    Library:Tween(Bar, { Size = BarEnd }, Time, Enum.EasingStyle.Linear);
-    Library.ActiveNotifyCount = Library.ActiveNotifyCount + 1;
-    task.spawn(function()
-        task.wait(Time);
-        Library:Tween(Inner, { Position = UDim2.new(SlideDir, SlideDir * 12, 0, 0) }, 0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.In);
-        task.wait(0.25);
-        Library:Tween(Outer, { Size = UDim2.fromOffset(W, 0) }, 0.12);
-        task.wait(0.14);
-        Outer:Destroy();
-        Library.ActiveNotifyCount = Library.ActiveNotifyCount - 1;
-        Library:ProcessNotifyQueue();
-    end);
+    return Library:Notify(Text, Time);
 end;
 
 function Library:CreateWindow(...)
@@ -8851,14 +9167,27 @@ function Library:CreateWindow(...)
         return Tab;
     end;
 
+    -- Modal frees the mouse; while BlockGameInput is on it also covers the screen under the window (ZIndex 0)
+    -- so clicks outside the menu stop here instead of reaching the game's UI or the world
     local ModalElement = Library:Create('TextButton', {
+        Name = 'InputSink';
+        AutoButtonColor = false;
         BackgroundTransparency = 1;
         Size = UDim2.new(0, 0, 0, 0);
-        Visible = true;
+        Visible = false;
         Text = '';
         Modal = false;
+        ZIndex = 0;
         Parent = ScreenGui;
     });
+    Library.InputSink = ModalElement;
+    function Library:SyncInputSink()
+        local Block = Library.BlockGameInput ~= false;
+        ModalElement.Modal = Library.Toggled;
+        ModalElement.Position = Block and UDim2.fromOffset(0, -64) or UDim2.fromOffset(0, 0);
+        ModalElement.Size = Block and UDim2.new(1, 0, 1, 64) or UDim2.fromOffset(0, 0);
+        ModalElement.Visible = Library.Toggled;
+    end;
     -- Linoria cursor: accent arrow over a black outline; the game cursor is only hidden while it shows and HideGameCursor is on
     function Library:StartCursor()
         if Library.ShowCustomCursor == false then return end;
@@ -8934,7 +9263,7 @@ function Library:CreateWindow(...)
 
     function Library:Toggle()
         Library.Toggled = not Library.Toggled;
-        ModalElement.Modal = Library.Toggled;
+        Library:SyncInputSink();
         Library.ToggleToken = (Library.ToggleToken or 0) + 1;
         local Token = Library.ToggleToken;
         local Fade = Library.MenuFadeTime or 0.2;

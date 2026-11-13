@@ -978,7 +978,11 @@ function Visible.check(part, origin, now)
     if cached and now - cached[1] < 0.06 then return cached[2] end
     local hit = Game.cast(origin, (part.Position - origin) * 0.998, Visible.params, Visible.skip)
     local result = hit == nil
-    Visible.cache[part] = { now, result }
+    if cached then
+        cached[1], cached[2] = now, result
+    else
+        Visible.cache[part] = { now, result }
+    end
     return result
 end
 
@@ -1036,17 +1040,43 @@ function Visible.entity(record, origin, now, interval)
             end
         end
     end
-    record.visCache = { at = now, frame = Game.frame, value = value }
+    if cached then
+        cached.at, cached.frame, cached.value = now, Game.frame, value
+    else
+        record.visCache = { at = now, frame = Game.frame, value = value }
+    end
     return value
 end
 
 local Draw = { all = {}, hasApi = (type(Drawing) == "table" or type(Drawing) == "userdata") }
 local SINK = setmetatable({}, { __newindex = function() end })
 
+function Draw.wrap(object)
+    local shadow, bound = {}, {}
+    return setmetatable({}, {
+        __index = function(_, key)
+            local value = object[key]
+            if type(value) ~= "function" then return value end
+            local fn = bound[key]
+            if not fn then
+                fn = function(_, ...) return value(object, ...) end
+                bound[key] = fn
+            end
+            return fn
+        end,
+        __newindex = function(_, key, value)
+            if value ~= nil and shadow[key] == value then return end
+            object[key] = value
+            shadow[key] = value
+        end,
+    })
+end
+
 function Draw.new(kind, props)
     if not Draw.hasApi then return SINK end
     local ok, object = pcall(Drawing.new, kind)
     if not ok or not object then return SINK end
+    object = Draw.wrap(object)
     for key, value in pairs(props or {}) do pcall(function() object[key] = value end) end
     Draw.all[object] = true
     return object
@@ -1302,9 +1332,11 @@ function Icons.label(zindex)
     rawset(proxy, "_label", label)
     rawset(proxy, "_bind", function(asset) label.Image = asset end)
     rawset(proxy, "Remove", function() pcall(function() label:Destroy() end) end)
+    local shadow = {}
     return setmetatable(proxy, { __newindex = function(_, prop, value)
         local set = apply[prop]
-        if set then pcall(set, value) end
+        if not set or (value ~= nil and shadow[prop] == value) then return end
+        if pcall(set, value) then shadow[prop] = value end
     end })
 end
 
@@ -1433,12 +1465,32 @@ local BONES = {
 local JOINT_DOTS = { "neck", "pelvis", "lShoulder", "lElbow", "lHand", "rShoulder", "rElbow", "rHand", "lHip", "lKnee", "lFoot", "rHip", "rKnee", "rFoot" }
 local CAP_POINTS = { "head", table.unpack(JOINT_DOTS) }
 local NEAR_PLANE = 0.1
+local BOUND_PARTS = { "Head", "Torso", "Left Leg", "Right Leg" }
+local BOUND_SIDES, BOUND_LIFTS = { -2, 2 }, { Vector3.new(0, -1, 0), Vector3.new(0, 1, 0) }
+local STATIC_CORNERS, PART_CORNERS = {}, {}
+for _, sx in ipairs({ -1, 1 }) do
+    for _, sy in ipairs({ -1, 1 }) do
+        for _, sz in ipairs({ -1, 1 }) do
+            STATIC_CORNERS[#STATIC_CORNERS + 1] = Vector3.new(2 * sx, 2.5 * sy, 1.25 * sz)
+            for name, size in pairs(PART_SIZES) do
+                local half = size * 0.5
+                PART_CORNERS[name] = PART_CORNERS[name] or {}
+                table.insert(PART_CORNERS[name], Vector3.new(half.X * sx, half.Y * sy, half.Z * sz))
+            end
+        end
+    end
+end
+local CORNER_SEGMENTS = { { 0, 0, 1, 0 }, { 0, 0, 0, 1 }, { 1, 0, -1, 0 }, { 1, 0, 0, 1 }, { 0, 1, 1, 0 }, { 0, 1, 0, -1 }, { 1, 1, -1, 0 }, { 1, 1, 0, -1 } }
 
-function ESP.bonePoints(hash)
+function ESP.bonePoints(hash, points)
     local head, torso = hash.Head, hash.Torso
     if not (head and torso and head.Parent and torso.Parent) then return nil end
     local center = torso.Position
-    local points = {}
+    if points then
+        for name in pairs(points) do points[name] = nil end
+    else
+        points = {}
+    end
     for name, joint in pairs(JOINTS) do
         local part = hash[joint[1]]
         if part and part.Parent and (part.Position - center).Magnitude < 10 then
@@ -1457,45 +1509,46 @@ function ESP.clip(cam, a, b)
     return a, b
 end
 
+local function widen(cam, world, minX, minY, maxX, maxY)
+    local point = cam:WorldToViewportPoint(world)
+    if not (point.Z > 0) then return minX, minY, maxX, maxY, true end
+    local px, py = point.X, point.Y
+    if px < minX then minX = px end
+    if px > maxX then maxX = px end
+    if py < minY then minY = py end
+    if py > maxY then maxY = py end
+    return minX, minY, maxX, maxY, false
+end
+
 function ESP.bounds(cam, record, static)
     local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
-    local behind = false
-    local function add(world)
-        local point, front = Draw.project(cam, world)
-        if not front then behind = true return end
-        if point.X < minX then minX = point.X end
-        if point.X > maxX then maxX = point.X end
-        if point.Y < minY then minY = point.Y end
-        if point.Y > maxY then maxY = point.Y end
-    end
+    local behind, back = false, false
     local center = record.torso.Position
     if static then
         local look = record.torso.CFrame.LookVector
         local frame = CFrame.new(center + Vector3.new(0, -0.5, 0)) * CFrame.Angles(0, math.atan2(-look.X, -look.Z), 0)
-        for _, sx in ipairs({ -1, 1 }) do
-            for _, sy in ipairs({ -1, 1 }) do
-                for _, sz in ipairs({ -1, 1 }) do
-                    add(frame:PointToWorldSpace(Vector3.new(2 * sx, 2.5 * sy, 1.25 * sz)))
-                end
-            end
+        for _, corner in ipairs(STATIC_CORNERS) do
+            minX, minY, maxX, maxY, back = widen(cam, frame:PointToWorldSpace(corner), minX, minY, maxX, maxY)
+            behind = behind or back
         end
     else
-        for _, name in ipairs({ "Head", "Torso", "Left Leg", "Right Leg" }) do
+        for _, name in ipairs(BOUND_PARTS) do
             local part = record.hash[name]
             if part and part.Parent and (part.Position - center).Magnitude < 10 then
-                local half = PART_SIZES[name] * 0.5
-                for _, sx in ipairs({ -1, 1 }) do
-                    for _, sy in ipairs({ -1, 1 }) do
-                        for _, sz in ipairs({ -1, 1 }) do
-                            add(part.CFrame:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)))
-                        end
-                    end
+                local frame = part.CFrame
+                for _, corner in ipairs(PART_CORNERS[name]) do
+                    minX, minY, maxX, maxY, back = widen(cam, frame:PointToWorldSpace(corner), minX, minY, maxX, maxY)
+                    behind = behind or back
                 end
             end
         end
         local right = record.torso.CFrame.RightVector
-        for _, side in ipairs({ -1, 1 }) do
-            for _, lift in ipairs({ -1, 1 }) do add(center + right * (2 * side) + Vector3.new(0, lift, 0)) end
+        for _, side in ipairs(BOUND_SIDES) do
+            local edge = center + right * side
+            for _, lift in ipairs(BOUND_LIFTS) do
+                minX, minY, maxX, maxY, back = widen(cam, edge + lift, minX, minY, maxX, maxY)
+                behind = behind or back
+            end
         end
     end
     if behind or minX == math.huge then return nil end
@@ -1564,7 +1617,8 @@ function ESP.readSettings()
 end
 
 function ESP.make()
-    local o = { all = {}, strips = {}, corners = {}, cornerEdges = {}, bones = {}, boneEdges = {}, capEdges = {}, capFills = {}, hidden = false }
+    local o = { all = {}, strips = {}, corners = {}, cornerEdges = {}, bones = {}, boneEdges = {}, capEdges = {}, capFills = {}, hidden = false,
+        on = {}, points = {}, depth = {}, screen = {}, front = {}, gradColors = {} }
     local function add(drawing) o.all[#o.all + 1] = drawing return drawing end
     local function line(thick, z, color) return add(Draw.new("Line", { Thickness = thick, ZIndex = z, Color = color, Visible = false })) end
     local function square(filled, z, color) return add(Draw.new("Square", { Thickness = 1, Filled = filled, ZIndex = z, Color = color, Visible = false })) end
@@ -1613,9 +1667,14 @@ local function caseText(mode, text)
     return text
 end
 
-local function setLine(drawing, from, to, color, alpha, thick)
-    drawing.From, drawing.To, drawing.Color, drawing.Transparency, drawing.Visible = from, to, color, alpha, true
+local function setLine(on, drawing, from, to, color, alpha, thick)
+    drawing.From, drawing.To, drawing.Color, drawing.Transparency = from, to, color, alpha
     if thick then drawing.Thickness = thick end
+    on[drawing] = true
+end
+
+local function espTint(S, visible, base)
+    return S.visOverride and (visible and S.visColor or S.occColor) or base
 end
 
 local Chams = { objs = {}, pool = {}, container = nil }
@@ -1808,6 +1867,13 @@ function Chams.shown()
     return false
 end
 
+function Chams.signature(cfg, S)
+    return table.concat({
+        tostring(cfg.chamVis), cfg.chamVisT, tostring(cfg.chamHid), cfg.chamHidT,
+        S.chamMode, S.chamGrow, tostring(S.chamGlow), S.chamGlowSize, tostring(S.chamRound), S.chamHead,
+    }, "|")
+end
+
 function Chams.update(rec, cfg, S)
     local entry = Chams.objs[rec.player]
     local want = cfg and cfg.chams and rec.rendered and rec.model and rec.model.Parent ~= nil
@@ -1825,10 +1891,8 @@ function Chams.update(rec, cfg, S)
     else
         Chams.restoreGear(entry)
     end
-    local sig = table.concat({
-        tostring(cfg.chamVis), cfg.chamVisT, tostring(cfg.chamHid), cfg.chamHidT,
-        S.chamMode, S.chamGrow, tostring(S.chamGlow), S.chamGlowSize, tostring(S.chamRound), S.chamHead,
-    }, "|")
+    local sig = cfg.chamSig or Chams.signature(cfg, S)
+    Chams.identity()
     for _, name in ipairs(CHAM_PARTS) do
         local part = rec.hash[name]
         local slot = entry.parts[name]
@@ -1851,7 +1915,6 @@ function Chams.update(rec, cfg, S)
             local built = slot.layers.visible
             if built and not (built.Parent and slot.layers.behind.Parent) then slot.layers, slot.sig = {}, nil end
             if not slot.layers.visible and not Chams.build(slot) then return end
-            Chams.identity()
             if slot.adornee ~= part or slot.sig ~= sig then
                 slot.adornee, slot.sig = part, sig
                 Chams.style(slot, part, name, cfg, S)
@@ -1900,63 +1963,60 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
     end
 
     o.hidden, o.arrowOnly = false, false
-    o.arrow.Visible, o.arrowEdge.Visible = false, false
-    local function tint(base) return S.visOverride and (visible and S.visColor or S.occColor) or base end
+    local on = o.on
 
     if o.sig ~= S.font * 100 + S.size then
         o.sig = S.font * 100 + S.size
         for _, t in ipairs({ o.hpText, o.name, o.dist, o.weapon }) do t.Font, t.Size = S.font, S.size end
     end
 
-    local fillOn = cfg.fill
-    o.fill.Visible = false
-    for index = 1, STRIPS do o.strips[index].Visible = false end
-    if fillOn then
+    if cfg.fill then
         if S.gradient then
+            local colors = o.gradColors
+            if o.gradFrom ~= cfg.fillColor or o.gradTo ~= S.fill2 then
+                o.gradFrom, o.gradTo = cfg.fillColor, S.fill2
+                for index = 1, STRIPS do colors[index] = Util.lerpColor(cfg.fillColor, S.fill2, (index - 0.5) / STRIPS) end
+            end
             local stripH = h / STRIPS
             for index = 1, STRIPS do
                 local strip = o.strips[index]
                 strip.Position = Vector2.new(x, y + math.floor((index - 1) * stripH))
                 strip.Size = Vector2.new(w, math.ceil(stripH))
-                strip.Color = Util.lerpColor(cfg.fillColor, S.fill2, (index - 0.5) / STRIPS)
+                strip.Color = colors[index]
                 strip.Transparency = cfg.fillA
-                strip.Visible = true
+                on[strip] = true
             end
         else
             o.fill.Position, o.fill.Size = Vector2.new(x, y), Vector2.new(w, h)
-            o.fill.Color, o.fill.Transparency, o.fill.Visible = cfg.fillColor, cfg.fillA, true
+            o.fill.Color, o.fill.Transparency = cfg.fillColor, cfg.fillA
+            on[o.fill] = true
         end
     end
 
-    local boxColor = tint(cfg.boxColor)
+    local boxColor = espTint(S, visible, cfg.boxColor)
     local full = cfg.box and S.boxStyle == "Full"
     local corners = cfg.box and S.boxStyle ~= "Full"
-    o.box.Visible, o.outer.Visible, o.inner.Visible = full, full and S.outline, full and S.outline
     if full then
         o.box.Position, o.box.Size, o.box.Color, o.box.Transparency = Vector2.new(x, y), Vector2.new(w, h), boxColor, cfg.boxA
         o.outer.Position, o.outer.Size = Vector2.new(x - 1, y - 1), Vector2.new(w + 2, h + 2)
         o.inner.Position, o.inner.Size = Vector2.new(x + 1, y + 1), Vector2.new(w - 2, h - 2)
+        on[o.box] = true
+        if S.outline then on[o.outer], on[o.inner] = true, true end
     end
-    for index = 1, 8 do o.corners[index].Visible, o.cornerEdges[index].Visible = false, false end
     if corners then
         local len = math.max(4, math.floor(w * 0.28))
         local lenV = math.max(4, math.floor(h * 0.2))
-        local right, bottom = x + w, y + h
-        local segments = {
-            { Vector2.new(x, y), Vector2.new(x + len, y) }, { Vector2.new(x, y), Vector2.new(x, y + lenV) },
-            { Vector2.new(right, y), Vector2.new(right - len, y) }, { Vector2.new(right, y), Vector2.new(right, y + lenV) },
-            { Vector2.new(x, bottom), Vector2.new(x + len, bottom) }, { Vector2.new(x, bottom), Vector2.new(x, bottom - lenV) },
-            { Vector2.new(right, bottom), Vector2.new(right - len, bottom) }, { Vector2.new(right, bottom), Vector2.new(right, bottom - lenV) },
-        }
-        for index, segment in ipairs(segments) do
+        for index, segment in ipairs(CORNER_SEGMENTS) do
+            local fx, fy = x + w * segment[1], y + h * segment[2]
+            local from, to = Vector2.new(fx, fy), Vector2.new(fx + len * segment[3], fy + lenV * segment[4])
             if S.outline then
-                o.cornerEdges[index].From, o.cornerEdges[index].To, o.cornerEdges[index].Visible = segment[1], segment[2], true
+                o.cornerEdges[index].From, o.cornerEdges[index].To = from, to
+                on[o.cornerEdges[index]] = true
             end
-            setLine(o.corners[index], segment[1], segment[2], boxColor, cfg.boxA, 1)
+            setLine(on, o.corners[index], from, to, boxColor, cfg.boxA, 1)
         end
     end
 
-    o.hpBack.Visible, o.hpBar.Visible, o.hpText.Visible = false, false, false
     if cfg.hp or cfg.hpNum then
         local frac = math.clamp(rec.health / math.max(rec.maxHealth, 1), 0, 1)
         local left = S.hpSide == "Left"
@@ -1966,32 +2026,42 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
             local color
             if frac > 0.5 then color = Util.lerpColor(S.hpMid, cfg.hpFull, (frac - 0.5) * 2)
             else color = Util.lerpColor(cfg.hpLow, S.hpMid, frac * 2) end
-            o.hpBack.Position, o.hpBack.Size, o.hpBack.Visible = Vector2.new(barX - 1, y - 1), Vector2.new(5, h + 2), true
+            o.hpBack.Position, o.hpBack.Size = Vector2.new(barX - 1, y - 1), Vector2.new(5, h + 2)
             o.hpBar.Position, o.hpBar.Size = Vector2.new(barX, y + h - barH), Vector2.new(3, barH)
-            o.hpBar.Color, o.hpBar.Transparency, o.hpBar.Visible = color, 1, true
+            o.hpBar.Color, o.hpBar.Transparency = color, 1
+            on[o.hpBack], on[o.hpBar] = true, true
         end
         if cfg.hpNum then
             local textX = left and (barX - 11) or (barX + 14)
             o.hpText.Text = tostring(math.floor(rec.health + 0.5))
             local lowest = math.max(y - 2, y + h - S.size)
             o.hpText.Position = Vector2.new(textX, math.clamp(y + h - barH - math.floor(S.size / 2), y - 2, lowest))
-            o.hpText.Color, o.hpText.Transparency, o.hpText.Visible = cfg.hpNumColor, cfg.hpNumA, true
+            o.hpText.Color, o.hpText.Transparency = cfg.hpNumColor, cfg.hpNumA
+            on[o.hpText] = true
         end
     end
 
-    o.name.Visible = false
     if cfg.name then
-        local label = caseText(S.case, string.sub(rec.name, 1, 30))
-        o.name.Text = label
+        if o.nameFrom ~= rec.name or o.nameCase ~= S.case then
+            o.nameFrom, o.nameCase = rec.name, S.case
+            o.nameText = caseText(S.case, string.sub(rec.name, 1, 30))
+        end
+        o.name.Text = o.nameText
         o.name.Position = Vector2.new(x + w / 2, y - S.size - 3)
-        o.name.Color, o.name.Transparency, o.name.Visible = cfg.nameColor, cfg.nameA, true
+        o.name.Color, o.name.Transparency = cfg.nameColor, cfg.nameA
+        on[o.name] = true
     end
     local lineY = y + h + 2
-    o.dist.Visible, o.weapon.Visible, o.weaponIcon.Visible = false, false, false
     if cfg.dist then
-        o.dist.Text = caseText(S.case, math.floor(dist * STUDS_TO_M) .. "m")
+        local meters = math.floor(dist * STUDS_TO_M)
+        if o.distFrom ~= meters or o.distCase ~= S.case then
+            o.distFrom, o.distCase = meters, S.case
+            o.distText = caseText(S.case, meters .. "m")
+        end
+        o.dist.Text = o.distText
         o.dist.Position = Vector2.new(x + w / 2, lineY)
-        o.dist.Color, o.dist.Transparency, o.dist.Visible = cfg.distColor, cfg.distA, true
+        o.dist.Color, o.dist.Transparency = cfg.distColor, cfg.distA
+        on[o.dist] = true
         lineY = lineY + S.size + 1
     end
     if cfg.weapon and rec.weaponName then
@@ -2000,28 +2070,41 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
         if mode ~= "Text" then
             local top = mode == "Both" and lineY + S.size + 1 or lineY
             icon = Icons.place(o.weaponIcon, Icons.weaponKey(rec.weaponName, rec.weaponObject), x + w / 2, top + 7, 60, 13, cfg.weaponColor, cfg.weaponA)
+            if icon then on[o.weaponIcon] = true end
         end
         if mode ~= "Icon" or not icon then
             o.weapon.Text = caseText(S.case, tostring(rec.weaponName))
             o.weapon.Position = Vector2.new(x + w / 2, lineY)
-            o.weapon.Color, o.weapon.Transparency, o.weapon.Visible = cfg.weaponColor, cfg.weaponA, true
+            o.weapon.Color, o.weapon.Transparency = cfg.weaponColor, cfg.weaponA
+            on[o.weapon] = true
         end
     end
 
-    for index = 1, #BONES do o.bones[index].Visible, o.boneEdges[index].Visible = false, false end
-    for index = 1, #CAP_POINTS do o.capEdges[index].Visible, o.capFills[index].Visible = false, false end
     if cfg.skeleton then
-        local points = ESP.bonePoints(rec.hash)
+        local points = ESP.bonePoints(rec.hash, o.points)
         if points then
-            local color = tint(cfg.skeletonColor)
+            local color = espTint(S, visible, cfg.skeletonColor)
+            local frame = Stretch.cf(cam)
+            local depth, screen, front = o.depth, o.screen, o.front
+            for name in pairs(screen) do screen[name], front[name], depth[name] = nil, nil, nil end
+            for name, world in pairs(points) do depth[name] = -frame:PointToObjectSpace(world).Z end
             for index, bone in ipairs(BONES) do
-                local a, b = points[bone[1]], points[bone[2]]
+                local first, second = bone[1], bone[2]
+                local a, b = points[first], points[second]
                 if a and b then
-                    local ca, cb = ESP.clip(cam, a, b)
-                    if ca then
-                        local pa, pb = Draw.project(cam, ca), Draw.project(cam, cb)
-                        if S.skelOutline then setLine(o.boneEdges[index], pa, pb, BLACK, cfg.skeletonA, S.skelThick + 2) end
-                        setLine(o.bones[index], pa, pb, color, cfg.skeletonA, S.skelThick)
+                    local da, db = depth[first], depth[second]
+                    local pa, pb
+                    if da < NEAR_PLANE or db < NEAR_PLANE then
+                        local ca, cb = ESP.clip(cam, a, b)
+                        if ca then pa, pb = Draw.project(cam, ca), Draw.project(cam, cb) end
+                    else
+                        if not screen[first] then screen[first], front[first] = Draw.project(cam, a) end
+                        if not screen[second] then screen[second], front[second] = Draw.project(cam, b) end
+                        pa, pb = screen[first], screen[second]
+                    end
+                    if pa then
+                        if S.skelOutline then setLine(on, o.boneEdges[index], pa, pb, BLACK, cfg.skeletonA, S.skelThick + 2) end
+                        setLine(on, o.bones[index], pa, pb, color, cfg.skeletonA, S.skelThick)
                     end
                 end
             end
@@ -2030,14 +2113,17 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
                 for index, name in ipairs(CAP_POINTS) do
                     local world = points[name]
                     if world then
-                        local point, front = Draw.project(cam, world)
-                        if front then
+                        if not screen[name] then screen[name], front[name] = Draw.project(cam, world) end
+                        if front[name] then
+                            local point = screen[name]
                             if S.skelOutline then
                                 local edge = o.capEdges[index]
-                                edge.Position, edge.Radius, edge.Transparency, edge.Visible = point, fillRadius + 1, cfg.skeletonA, true
+                                edge.Position, edge.Radius, edge.Transparency = point, fillRadius + 1, cfg.skeletonA
+                                on[edge] = true
                             end
                             local fill = o.capFills[index]
-                            fill.Position, fill.Radius, fill.Color, fill.Transparency, fill.Visible = point, fillRadius, color, cfg.skeletonA, true
+                            fill.Position, fill.Radius, fill.Color, fill.Transparency = point, fillRadius, color, cfg.skeletonA
+                            on[fill] = true
                         end
                     end
                 end
@@ -2045,26 +2131,35 @@ function ESP.draw(cam, o, rec, cfg, S, now, origin, visible, dist, viewport, cen
         end
     end
 
-    o.dot.Visible, o.dotEdge.Visible, o.view.Visible = false, false, false
     local headPoint, headFront = Draw.project(cam, rec.head.Position)
     if cfg.dot and headFront then
         local radius = math.clamp(h * 0.09, 2, 12)
-        o.dot.Position, o.dot.Radius, o.dot.Color, o.dot.Transparency, o.dot.Visible = headPoint, radius, tint(cfg.dotColor), cfg.dotA, true
-        o.dotEdge.Position, o.dotEdge.Radius, o.dotEdge.Visible = headPoint, radius, S.outline
+        o.dot.Position, o.dot.Radius, o.dot.Color, o.dot.Transparency = headPoint, radius, espTint(S, visible, cfg.dotColor), cfg.dotA
+        o.dotEdge.Position, o.dotEdge.Radius = headPoint, radius
+        on[o.dot] = true
+        if S.outline then on[o.dotEdge] = true end
     end
     if cfg.view and headFront then
         local tip, tipFront = Draw.project(cam, rec.head.Position + rec.head.CFrame.LookVector * S.viewLen)
-        if tipFront then setLine(o.view, headPoint, tip, tint(cfg.viewColor), cfg.viewA, 1) end
+        if tipFront then setLine(on, o.view, headPoint, tip, espTint(S, visible, cfg.viewColor), cfg.viewA, 1) end
     end
 
-    o.tracer.Visible = false
     if cfg.tracer then
         local from
         if S.tracerOrigin == "Center" then from = center
         elseif S.tracerOrigin == "Top" then from = Vector2.new(viewport.X / 2, 0)
         elseif S.tracerOrigin == "Mouse" then from = UserInputService:GetMouseLocation()
         else from = Vector2.new(viewport.X / 2, viewport.Y) end
-        setLine(o.tracer, from, Vector2.new(x + w / 2, y + h), tint(cfg.tracerColor), cfg.tracerA, S.tracerThick)
+        setLine(on, o.tracer, from, Vector2.new(x + w / 2, y + h), espTint(S, visible, cfg.tracerColor), cfg.tracerA, S.tracerThick)
+    end
+
+    for _, drawing in ipairs(o.all) do
+        if on[drawing] then
+            on[drawing] = nil
+            drawing.Visible = true
+        else
+            drawing.Visible = false
+        end
     end
 end
 
@@ -2102,6 +2197,10 @@ function ESP.step(cam, now, records)
     ESP.readSettings()
     ESP.readTeam("esp_enemy_", ESP.enemy)
     ESP.readTeam("esp_team_", ESP.team)
+    for _, cfg in ipairs({ ESP.enemy, ESP.team }) do
+        local ok, sig = pcall(Chams.signature, cfg, ESP.S)
+        cfg.chamSig = ok and sig or nil
+    end
     local origin = Game.eye(cam).Position
     local viewport = cam.ViewportSize
     local center = viewport / 2
@@ -2369,6 +2468,10 @@ end
 local function on(name) return Toggles[name] and Toggles[name].Value end
 local function val(name) return Options[name] and Options[name].Value end
 
+local function assign(object, prop, value)
+    if object[prop] ~= value then object[prop] = value end
+end
+
 local function effect(key, class, enabled)
     local object = World.fx[key]
     if not (object and object.Parent) then
@@ -2378,7 +2481,7 @@ local function effect(key, class, enabled)
         object.Parent = Lighting
         World.fx[key] = object
     end
-    object.Enabled = enabled
+    assign(object, "Enabled", enabled)
     return object
 end
 
@@ -3177,30 +3280,34 @@ function World.apply(dt, now)
     end
 
     tune("cc", "ColorCorrectionEffect", "world_cc", function(object)
-        object.TintColor, object.Saturation = val("world_cc_tint"), val("world_cc_sat")
-        object.Contrast, object.Brightness = val("world_cc_con"), val("world_cc_bri")
+        assign(object, "TintColor", val("world_cc_tint"))
+        assign(object, "Saturation", val("world_cc_sat"))
+        assign(object, "Contrast", val("world_cc_con"))
+        assign(object, "Brightness", val("world_cc_bri"))
     end)
     pcall(function()
         local glowBloom = on("cham_glow") == true and on("cham_bloom") == true and Chams.shown()
         local worldBloom = on("world_bloom") == true
         local bloom = effect("bloom", "BloomEffect", worldBloom or glowBloom)
         if bloom then
-            if worldBloom then
-                bloom.Intensity, bloom.Size, bloom.Threshold = val("world_bloom_i"), val("world_bloom_s"), val("world_bloom_t")
-            else
-                bloom.Intensity, bloom.Size, bloom.Threshold = val("cham_bloom_i"), val("cham_bloom_s"), val("cham_bloom_t")
-            end
+            local prefix = worldBloom and "world_bloom_" or "cham_bloom_"
+            assign(bloom, "Intensity", val(prefix .. "i"))
+            assign(bloom, "Size", val(prefix .. "s"))
+            assign(bloom, "Threshold", val(prefix .. "t"))
         end
     end)
     tune("rays", "SunRaysEffect", "world_rays", function(object)
-        object.Intensity, object.Spread = val("world_rays_i"), val("world_rays_s")
+        assign(object, "Intensity", val("world_rays_i"))
+        assign(object, "Spread", val("world_rays_s"))
     end)
     tune("dof", "DepthOfFieldEffect", "world_dof", function(object)
-        object.FocusDistance, object.InFocusRadius = val("world_dof_focus"), val("world_dof_radius")
-        object.NearIntensity, object.FarIntensity = val("world_dof_near"), val("world_dof_far")
+        assign(object, "FocusDistance", val("world_dof_focus"))
+        assign(object, "InFocusRadius", val("world_dof_radius"))
+        assign(object, "NearIntensity", val("world_dof_near"))
+        assign(object, "FarIntensity", val("world_dof_far"))
     end)
     tune("blur", "BlurEffect", "world_blur", function(object)
-        object.Size = val("world_blur_size")
+        assign(object, "Size", val("world_blur_size"))
     end)
     for class, key in pairs(MODEL_FX) do
         local props = light and light[class]
@@ -3358,37 +3465,46 @@ function World.stepWeather(cam, now)
         World.dropWeather()
         state.preset = preset
     end
-    local cfg = {
-        density = val("world_weather_amount"), speed = val("world_weather_speed"), size = val("world_weather_size"),
-        wind = val("world_weather_wind"), windDir = val("world_weather_wind_dir"), height = val("world_weather_height"),
-        custom = on("world_weather_custom") == true, color = val("world_weather_color"),
-    }
-    local sig = table.concat({ cfg.density, cfg.speed, cfg.size, cfg.wind, cfg.windDir, cfg.height, tostring(cfg.custom), tostring(cfg.color) }, "|")
+    local density, speed, size, wind = val("world_weather_amount"), val("world_weather_speed"), val("world_weather_size"), val("world_weather_wind")
+    local windDir, height, custom, color = val("world_weather_wind_dir"), val("world_weather_height"), on("world_weather_custom") == true, val("world_weather_color")
+    local cfg = state.cfg
+    if not (cfg and cfg.density == density and cfg.speed == speed and cfg.size == size and cfg.wind == wind and cfg.windDir == windDir
+        and cfg.height == height and cfg.custom == custom and cfg.color == color) then
+        cfg = { density = density, speed = speed, size = size, wind = wind, windDir = windDir, height = height, custom = custom, color = color }
+        state.cfg, state.cfgSig = cfg, table.concat({ cfg.density, cfg.speed, cfg.size, cfg.wind, cfg.windDir, cfg.height, tostring(cfg.custom), tostring(cfg.color) }, "|")
+    end
+    local sig = state.cfgSig
     local position = cam.CFrame.Position
-    local plan, mode = {}, "near"
+    local plan, mode = nil, "near"
     local cover = on("world_weather_map") == true
     local bounds = cover and World.mapBounds(now)
     if cover and not bounds then
         if next(state.cells) then World.dropWeather() end
         return
     end
-    if bounds then
-        local cap = math.clamp(math.floor(val("world_weather_map_cap") or 100), 16, 400)
+    local gx0, gz0 = math.floor(position.X / CELL), math.floor(position.Z / CELL)
+    local range = math.clamp(math.floor(val("world_weather_range") or 2), 1, 3)
+    local cap = bounds and math.clamp(math.floor(val("world_weather_map_cap") or 100), 16, 400)
+    if bounds and state.planFor == bounds and state.planCap == cap then
+        plan, mode = state.plan, state.planMode
+    elseif not bounds and state.planFor == false and state.planGx == gx0 and state.planGz == gz0 and state.planRange == range then
+        plan, mode = state.plan, state.planMode
+    elseif bounds then
         local size = math.max(CELL, math.sqrt(bounds.w * bounds.d / cap))
         local nx, nz = math.ceil(bounds.w / size), math.ceil(bounds.d / size)
         while nx * nz > cap do
             size = size * 1.05
             nx, nz = math.ceil(bounds.w / size), math.ceil(bounds.d / size)
         end
-        mode = table.concat({ "map", nx, nz, math.floor(size * 100) }, ":")
+        mode, plan = table.concat({ "map", nx, nz, math.floor(size * 100) }, ":"), {}
         for gx = 0, nx - 1 do
             for gz = 0, nz - 1 do
                 plan[#plan + 1] = { key = gx .. ":" .. gz, gx = gx, gz = gz, size = size, x = bounds.x + (gx + 0.5) * size, z = bounds.z + (gz + 0.5) * size, every = 1.5, stagger = (gx * 7 + gz * 3) % 11 * 0.1 }
             end
         end
+        state.plan, state.planMode, state.planFor, state.planCap = plan, mode, bounds, cap
     else
-        local gx0, gz0 = math.floor(position.X / CELL), math.floor(position.Z / CELL)
-        local range = math.clamp(math.floor(val("world_weather_range") or 2), 1, 3)
+        plan = {}
         for dx = -range, range do
             for dz = -range, range do
                 if dx * dx + dz * dz <= (range + 0.5) * (range + 0.5) then
@@ -3397,6 +3513,7 @@ function World.stepWeather(cam, now)
                 end
             end
         end
+        state.plan, state.planMode, state.planFor, state.planGx, state.planGz, state.planRange = plan, mode, false, gx0, gz0, range
     end
     if state.mode ~= mode then
         World.dropWeather()
@@ -3419,8 +3536,9 @@ function World.stepWeather(cam, now)
         if now >= cell.nextAt and scans < 8 then
             scans = scans + 1
             cell.nextAt = now + item.every + item.stagger
+            local open, ground, camY = cell.open, cell.ground, cell.camY
             World.scanCell(cell, position.Y, bounds and bounds.top)
-            cell.dirty = true
+            if cell.open ~= open or cell.ground ~= ground or cell.camY ~= camY then cell.dirty = true end
         end
         if cell.dirty or cell.sig ~= sig then World.shapeCell(cell, def, cfg, sig) end
         local cleared = false
@@ -3520,9 +3638,11 @@ function World.stepCrosshair(center, now, dt)
     local cross = World.cross
     local shown = flag("cross_on", false)
     Util.guard("gamecross", World.hideGameCross, shown and flag("cross_hide_game", false))
-    for index = 1, 4 do cross.lines[index].Visible, cross.edges[index].Visible = false, false end
-    cross.dot.Visible = false
-    if not shown then return end
+    if not shown then
+        for index = 1, 4 do cross.lines[index].Visible, cross.edges[index].Visible = false, false end
+        cross.dot.Visible = false
+        return
+    end
     local color, alpha = flag("cross_color", WHITE), Util.opacity("cross_color")
     local length, thick, gap = flag("cross_len", 8), flag("cross_thick", 2), flag("cross_gap", 5)
     local outline = flag("cross_outline", true)
@@ -3539,23 +3659,28 @@ function World.stepCrosshair(center, now, dt)
     end
     local cos, sin = math.cos(cross.angle), math.sin(cross.angle)
     local directions = { Vector2.new(cos, sin), Vector2.new(-sin, cos), Vector2.new(-cos, -sin), Vector2.new(sin, -cos) }
+    local tee = flag("cross_t", false)
     for index = 1, 4 do
-        if not (flag("cross_t", false) and index == 4) then
+        local drawn = not (tee and index == 4)
+        if drawn then
             local direction = directions[index]
             if outline then
                 local edge = cross.edges[index]
                 edge.From, edge.To = center + direction * (near - 1), center + direction * (far + 1)
-                edge.Thickness, edge.Visible = whole + 2, true
+                edge.Thickness = whole + 2
             end
             local line = cross.lines[index]
             line.From, line.To = center + direction * near, center + direction * far
-            line.Color, line.Transparency, line.Thickness, line.Visible = color, alpha, whole, true
+            line.Color, line.Transparency, line.Thickness = color, alpha, whole
         end
+        cross.edges[index].Visible, cross.lines[index].Visible = drawn and outline, drawn
     end
-    if flag("cross_dot", false) then
+    local dot = flag("cross_dot", false)
+    if dot then
         cross.dot.Radius = whole % 2 == 1 and 1.5 or 2
-        cross.dot.Position, cross.dot.Color, cross.dot.Transparency, cross.dot.Visible = center, color, alpha, true
+        cross.dot.Position, cross.dot.Color, cross.dot.Transparency = center, color, alpha
     end
+    cross.dot.Visible = dot
 end
 
 Util.onUnload(function()
@@ -6201,7 +6326,7 @@ function Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
         if front then
             Legit.snapline.From, Legit.snapline.To = center, point
             Legit.snapline.Color = flag("legit_snapline_color", WHITE)
-            Legit.snapline.Visible = true
+            Legit.snapShown = true
         end
     end
     if now < Legit.reactUntil and not snap then return end
@@ -6223,6 +6348,7 @@ function Legit.onPress()
     if not (L.semi and L.onfire and last.cam) then return end
     Legit.target = nil
     Legit.runAim(0, last.cam, Legit.pressAt, last.records, last.center, last.weapon, last.origin, last.useBarrel)
+    if Legit.snapShown then Legit.snapline.Visible = true end
 end
 
 Util.track(UserInputService.InputBegan:Connect(function(input)
@@ -6236,7 +6362,7 @@ function Legit.stepAim(dt, cam, now, records, screen)
     local weapon = Game.weapon()
     Legit.stepRadius(dt, weapon, cam)
     Legit.drawFov(center)
-    Legit.snapline.Visible = false
+    Legit.snapShown = false
     Silent.step(dt, cam, weapon, screen)
     Aim.opts.depth = L.wallbang and weapon and Aim.depth(weapon, L.safety) or nil
     local useBarrel = L.barrel and Barrel.valid
@@ -6244,7 +6370,9 @@ function Legit.stepAim(dt, cam, now, records, screen)
     Legit.origin = origin
     local last = Legit.last
     last.cam, last.records, last.center, last.weapon, last.origin, last.useBarrel = cam, records, center, weapon, origin, useBarrel
-    Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
+    local ok, problem = pcall(Legit.runAim, dt, cam, now, records, center, weapon, origin, useBarrel)
+    Legit.snapline.Visible = ok and Legit.snapShown
+    if not ok then error(problem, 0) end
     Legit.stepPredict(cam, center, records)
     Legit.stepPoints(cam, center)
 end
@@ -9035,13 +9163,14 @@ local Pages = {
     Rage = UI.page("Rage", "swords"),
     ESP = UI.page("ESP", "eye"),
     World = UI.page("World", "globe"),
+    FX = UI.page("FX", "sparkles"),
     Misc = UI.page("Misc", "shapes"),
 }
 local Status = {}
-local ESPSubs = Pages.ESP:SubTabs({ { "Enemies", "swords" }, { "Teammates", "shield" }, { "Other", "package" }, { "Local", "user" } })
+local ESPSubs = Pages.ESP:SubTabs({ { "Enemies", "swords" }, { "Teammates", "shield" }, { "Items & grenades", "package" }, { "Viewmodel", "user" } })
 
 do
-    local Subs = Pages.Legit:SubTabs({ { "Aim Assist", "crosshair" }, { "Silent Aim", "scan" }, { "Trigger Bot", "zap" }, { "Recoil", "target" } })
+    local Subs = Pages.Legit:SubTabs({ { "Aim Assist", "crosshair" }, { "Silent Aim", "scan" }, { "Trigger & Recoil", "zap" } })
 
     local Aim = Subs["Aim Assist"]
     local function pickColor(popup, label, flagName, default, alpha)
@@ -9154,7 +9283,7 @@ do
     SilFov:Slider({ Name = "Zoom FOV scale", Flag = "legit_silent_fov_zoom", Min = 0, Max = 2, Default = 1, Decimals = 0.01, Suffix = "x", Tooltip = "Exponent on the zoom ratio; 1 keeps the angular coverage, 0 ignores zoom" })
     SilFov:Slider({ Name = "Blend speed", Flag = "legit_silent_fov_speed", Min = 2, Max = 30, Default = 10, Decimals = 0.1 })
 
-    local Trig = Subs["Trigger Bot"]
+    local Trig = Subs["Trigger & Recoil"]
     local TriggerBox = Trig:Section({ Name = "Trigger bot", Column = 1, Icon = "zap" })
     TriggerBox:Toggle({ Name = "Enabled", Flag = "trig_on", Tooltip = "Fires when the crosshair is on an enemy hitbox" }):Keybind({ Name = "Trigger key", Flag = "trig_key", Default = "None", Mode = "Always" })
     TriggerBox:Toggle({ Name = "Visible only", Flag = "trig_visible", Default = true })
@@ -9167,8 +9296,7 @@ do
     Timing:Slider({ Name = "Hold", Flag = "trig_hold", Min = 20, Max = 500, Default = 70, Decimals = 1, Suffix = " ms", Tooltip = "How long the button stays down; longer holds fire more shots on automatics" })
     Timing:Slider({ Name = "Cooldown", Flag = "trig_cool", Min = 0, Max = 500, Default = 90, Decimals = 1, Suffix = " ms" })
 
-    local Rcs = Subs["Recoil"]
-    local RcsBox = Rcs:Section({ Name = "Recoil control", Column = 1, Icon = "target" })
+    local RcsBox = Trig:Section({ Name = "Recoil control", Column = 3, Icon = "target" })
     RcsBox:Toggle({ Name = "Enabled", Flag = "rcs_on", Tooltip = "Cancels the recoil of each shot by tracking where the barrel points relative to your view" }):Keybind({ Name = "Recoil key", Flag = "rcs_key", Default = "None", Mode = "Always" })
     RcsBox:Toggle({ Name = "Use barrel direction", Flag = "rcs_barrel", Default = true, Tooltip = "Compensates the barrel's own recoil, shake and sway; off falls back to the camera recoil springs only" })
     RcsBox:Slider({ Name = "Vertical control", Flag = "rcs_v", Min = 0, Max = 100, Default = 70, Decimals = 1, Suffix = "%" })
@@ -9300,7 +9428,7 @@ do
         popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
     end
 
-    local LocalSub = ESPSubs.Local
+    local LocalSub = ESPSubs.Viewmodel
     local Chams = LocalSub:Section({ Name = "Viewmodel chams", Column = 1, Icon = "palette" })
     local function chams(label, cat, tooltip, tint)
         local base = "local_" .. cat
@@ -9478,14 +9606,15 @@ do
     buildTeam(Subs.Enemies, "esp_enemy_", "Enemy", Color3.fromRGB(255, 70, 90), Color3.fromRGB(170, 60, 255), true)
     buildTeam(Subs.Teammates, "esp_team_", "Teammate", Color3.fromRGB(90, 220, 130), Color3.fromRGB(60, 150, 255))
 
-    local Other = Subs.Other
-    local World = Other:Section({ Name = "Items and grenades", Column = 1, Icon = "package" })
-    local Item = World:Toggle({ Name = "Dropped items", Flag = "item_drops" }):Settings("Dropped items", 230)
+    local Other = Subs["Items & grenades"]
+    local Drops = Other:Section({ Name = "Dropped items", Column = 1, Icon = "package" })
+    local Item = Drops:Toggle({ Name = "Dropped items", Flag = "item_drops" }):Settings("Dropped items", 230)
     pickColor(Item, "Weapons", "item_drops_color", Color3.fromRGB(255, 190, 60))
     Item:Dropdown({ Name = "Display", Flag = "item_drops_display", Items = { "Text", "Icon", "Both" }, Default = "Text", Tooltip = "Icon draws the weapon silhouette, with the distance under it" })
     Item:Slider({ Name = "Max distance", Flag = "item_dist", Min = 20, Max = 1500, Default = 300, Decimals = 1, Suffix = " studs" })
 
-    local Warn = World:Toggle({ Name = "Grenade warning", Flag = "nade_on", Tooltip = "Tracks enemy grenades and your own from the game's throw event" }):Settings("Grenade warning", 230)
+    local Nades = Other:Section({ Name = "Grenade warning", Column = 2, Icon = "bell" })
+    local Warn = Nades:Toggle({ Name = "Grenade warning", Flag = "nade_on", Tooltip = "Tracks enemy grenades and your own from the game's throw event" }):Settings("Grenade warning", 230)
     Warn:Toggle({ Name = "Enemy grenades", Flag = "nade_enemy", Default = true })
     pickColor(Warn, "Enemy", "nade_enemy_color", Color3.fromRGB(255, 90, 60))
     Warn:Toggle({ Name = "My grenades", Flag = "nade_own", Default = true })
@@ -9496,48 +9625,20 @@ do
     Warn:Toggle({ Name = "Flight path", Flag = "nade_path", Default = true, Tooltip = "The path from the server's replicated grenade nodes, up to the blast" })
     Warn:Slider({ Name = "Max distance", Flag = "nade_dist", Min = 50, Max = 1500, Default = 400, Decimals = 1, Suffix = " studs" })
 
-    local Blast = World:Toggle({ Name = "Damage estimate", Flag = "nade_dmg", Default = true, Tooltip = "Torso damage to you at the blast point from the grenade's damage graph, 0 behind map cover" }):Settings("Damage estimate", 200)
+    local Blast = Nades:Toggle({ Name = "Damage estimate", Flag = "nade_dmg", Default = true, Tooltip = "Torso damage to you at the blast point from the grenade's damage graph, 0 behind map cover" }):Settings("Damage estimate", 200)
     pickColor(Blast, "Safe", "nade_safe_color", Color3.fromRGB(90, 255, 130))
     pickColor(Blast, "Danger", "nade_danger_color", Color3.fromRGB(255, 60, 60))
     Blast:Toggle({ Name = "Blast radius ring", Flag = "nade_ring", Default = true, Tooltip = "Ground ring at the damage range of the grenade" })
 
-    local Pred = World:Toggle({ Name = "Predict throw", Flag = "nade_predict", Tooltip = "While the pin is pulled, draws the predicted path, landing and fuse left" }):Settings("Throw predictor", 200)
+    local Throw = Other:Section({ Name = "Throw predictor", Column = 3, Icon = "target" })
+    local Pred = Throw:Toggle({ Name = "Predict throw", Flag = "nade_predict", Tooltip = "While the pin is pulled, draws the predicted path, landing and fuse left" }):Settings("Throw predictor", 200)
     pickColor(Pred, "Path", "nade_predict_color", Color3.fromRGB(120, 200, 255))
     Pred:Toggle({ Name = "Show before pin pull", Flag = "nade_predict_pre", Tooltip = "Dimmer preview while the pin is still in" })
     Pred:Toggle({ Name = "Bounce markers", Flag = "nade_predict_bounce", Default = true })
-
-    local Dead = Other:Section({ Name = "Corpses", Column = 2, Icon = "user" })
-    local Cham = Dead:Toggle({ Name = "Corpse chams", Flag = "chams_dead", Tooltip = "Restyles the ragdoll left behind when a player dies by changing its material, colour and transparency. The game removes corpses after about 30 seconds" }):Settings("Corpse chams", 260)
-    Cham:Toggle({ Name = "Enemy corpses", Flag = "chams_dead_enemy", Default = true, Tooltip = "Corpses whose owner could not be matched count as enemy" })
-    pickColor(Cham, "Enemy", "chams_dead_enemy_color", Color3.fromRGB(255, 70, 90))
-    Cham:Toggle({ Name = "Team corpses", Flag = "chams_dead_team" })
-    pickColor(Cham, "Team", "chams_dead_team_color", Color3.fromRGB(90, 220, 130))
-    Cham:Toggle({ Name = "My corpse", Flag = "chams_dead_local" })
-    pickColor(Cham, "Mine", "chams_dead_local_color", Color3.fromRGB(120, 200, 255))
-    Cham:Dropdown({ Name = "Material", Flag = "chams_dead_mat", Items = Local.materials, Default = "ForceField" })
-    Cham:Dropdown({ Name = "Texture", Flag = "chams_dead_tex", Items = Local.names, Default = "None", Tooltip = "Pattern drawn by the ForceField material" })
-    Cham:Slider({ Name = "Reflectance", Flag = "chams_dead_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
-    Cham:Toggle({ Name = "Hide clothing/accessories", Flag = "chams_dead_hide", Tooltip = "Hides everything on the corpse except the six body parts" })
-    Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 15, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the corpse out over the last seconds before the game removes it; 0 is off" })
-
-    local Kill = Other:Section({ Name = "Kill effects", Column = 3, Icon = "flame" })
-    local Fx = Kill:Toggle({ Name = "Kill effects", Flag = "kill_fx", Tooltip = "Plays local effects on the corpse of players you kill (from the game's death event). Visual only, nothing is sent to the server" }):Settings("Kill effects", 260)
-    Fx:Dropdown({ Name = "Effects", Flag = "kill_fx_list", Items = KillFx.names, Multi = true, Default = { "Dissolve", "Lightning" } })
-    pickColor(Fx, "Colour", "kill_fx_color", Color3.fromRGB(102, 204, 255))
-    pickColor(Fx, "Secondary", "kill_fx_color2", Color3.fromRGB(235, 248, 255))
-    Fx:Slider({ Name = "Intensity", Flag = "kill_fx_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
-    Fx:Slider({ Name = "Duration", Flag = "kill_fx_dur", Min = 0.5, Max = 6, Default = 2.5, Decimals = 0.1, Suffix = " s", Tooltip = "Length of Dissolve and Pillar" })
-    Fx:Slider({ Name = "Screen flash only near", Flag = "kill_fx_flash_dist", Min = 20, Max = 500, Default = 150, Decimals = 1, Suffix = " studs" })
-    Fx:Dropdown({ Name = "Corpse effects", Flag = "kill_fx_corpse", Items = KillFx.corpseNames, Multi = true, Tooltip = "Act on the body itself, locally. Only one movement effect (Zero-G float, Ascend, Ragdoll launch, Black hole) runs per corpse: the first one in this list" })
-    Fx:Slider({ Name = "Corpse effect time", Flag = "kill_fx_corpse_dur", Min = 1, Max = 8, Default = 3, Decimals = 0.1, Suffix = " s" })
-    Fx:Slider({ Name = "Corpse particles", Flag = "kill_fx_corpse_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
-    Fx:Slider({ Name = "Float height", Flag = "kill_fx_corpse_height", Min = 2, Max = 30, Default = 10, Decimals = 1, Suffix = " studs", Tooltip = "How high Zero-G float, Ascend, Ghost and Ragdoll launch carry the body" })
-    Fx:Toggle({ Name = "Play sound", Flag = "kill_fx_sound" })
-    Fx:Input({ Name = "Sound id", Flag = "kill_fx_sound_id", Placeholder = "rbxassetid or number" })
 end
 
 do
-    local Subs = Pages.World:SubTabs({ { "Environment", "sun" }, { "Sky", "moon" }, { "Weather", "cloud" }, { "Effects", "palette" }, { "Camera", "camera" }, { "Feedback", "flame" } })
+    local Subs = Pages.World:SubTabs({ { "Environment", "sun" }, { "Sky", "moon" }, { "Weather", "cloud" }, { "Post-processing", "palette" }, { "Camera", "camera" } })
 
     local Env = Subs.Environment
     local function pickColor(popup, label, flagName, default, alpha)
@@ -9561,12 +9662,6 @@ do
     local EnvLight = Light:Toggle({ Name = "Environment light", Flag = "world_env" }):Settings("Environment light", 230)
     EnvLight:Slider({ Name = "Diffuse", Flag = "world_env_diffuse", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
     EnvLight:Slider({ Name = "Specular", Flag = "world_env_specular", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
-
-    local Quick = Env:Section({ Name = "Quick toggles", Column = 1, Icon = "zap" })
-    Quick:Toggle({ Name = "Full bright", Flag = "world_fullbright", Tooltip = "Overrides lighting values while on" })
-    Quick:Toggle({ Name = "No shadows", Flag = "world_noshadow" })
-    Quick:Toggle({ Name = "No fog", Flag = "world_nofog" })
-    Quick:Toggle({ Name = "Remove sky", Flag = "world_nosky" })
 
     local Atmo = Env:Section({ Name = "Fog and atmosphere", Column = 2, Icon = "cloud" })
     local Fog = Atmo:Toggle({ Name = "Custom fog", Flag = "world_fog" }):Settings("Custom fog", 230)
@@ -9612,17 +9707,29 @@ do
     MapLamps:Toggle({ Name = "No light shadows", Flag = "world_lights_noshadow" })
     MapLamps:Toggle({ Name = "Disable lights", Flag = "world_lights_off" })
 
+    local Quick = Env:Section({ Name = "Quick toggles", Column = 3, Icon = "zap" })
+    Quick:Toggle({ Name = "Full bright", Flag = "world_fullbright", Tooltip = "Overrides lighting values while on" })
+    Quick:Toggle({ Name = "No shadows", Flag = "world_noshadow" })
+    Quick:Toggle({ Name = "No fog", Flag = "world_nofog" })
+    Quick:Toggle({ Name = "Remove sky", Flag = "world_nosky" })
+
     local SkySub = Subs.Sky
     local Box = SkySub:Section({ Name = "Skybox", Column = 1, Icon = "moon" })
     local Skybox = Box:Toggle({ Name = "Custom skybox", Flag = "world_skybox", Tooltip = "Replaces the sky textures; the original sky comes back when this is off" }):Settings("Custom skybox", 230)
     Skybox:Dropdown({ Name = "Skybox", Flag = "world_sky_box", Items = SKY_CHOICES, Default = SKY_CHOICES[1], Searchable = true })
     Skybox:Toggle({ Name = "Rotate skybox", Flag = "world_sky_spin" })
     Skybox:Slider({ Name = "Rotation speed", Flag = "world_sky_spin_speed", Min = -60, Max = 60, Default = 6, Decimals = 0.1, Suffix = " deg/s" })
+    local Asset = SkySub:Section({ Name = "Skybox asset", Column = 1, Icon = "link" })
+    Asset:Input({ Name = "Asset ID / store link", Flag = "world_sky_asset", Placeholder = "id or create.roblox.com/store/asset/<id>" })
+    Asset:Button({ Name = "Apply", Callback = function() Util.guard("sky-asset", World.applyAsset) end })
+    Asset:Toggle({ Name = "Apply model lighting", Flag = "world_sky_asset_light", Tooltip = "Also uses the Atmosphere, Bloom, Colour correction and Sun rays inside the sky model; they are undone when this or the skybox is off" })
+    Asset:Button({ Name = "Save", Callback = function() task.spawn(Util.guard, "sky-asset-save", World.saveAsset) end })
+    local Cloud = SkySub:Section({ Name = "Clouds", Column = 1, Icon = "cloud" })
+    local Clouds = Cloud:Toggle({ Name = "Clouds", Flag = "world_clouds" }):Settings("Clouds", 230)
+    pickColor(Clouds, "Clouds", "world_clouds_color", WHITE)
+    Clouds:Slider({ Name = "Cover", Flag = "world_clouds_cover", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
+    Clouds:Slider({ Name = "Density", Flag = "world_clouds_density", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
     local Own = SkySub:Section({ Name = "Custom skybox ids", Column = 2, Icon = "moon" })
-    Own:Input({ Name = "Asset ID / store link", Flag = "world_sky_asset", Placeholder = "id or create.roblox.com/store/asset/<id>" })
-    Own:Button({ Name = "Apply", Callback = function() Util.guard("sky-asset", World.applyAsset) end })
-    Own:Toggle({ Name = "Apply model lighting", Flag = "world_sky_asset_light", Tooltip = "Also uses the Atmosphere, Bloom, Colour correction and Sun rays inside the sky model; they are undone when this or the skybox is off" })
-    Own:Button({ Name = "Save", Callback = function() task.spawn(Util.guard, "sky-asset-save", World.saveAsset) end })
     Own:Toggle({ Name = "Resolve decal ids", Flag = "world_sky_resolve", Default = true, Tooltip = "Decal ids are not image ids; this looks up the image inside the decal (needs GetObjects)" })
     Own:Input({ Name = "Custom ids (1 or 6)", Flag = "world_sky_custom", Placeholder = "1 or 6 ids: up down front back left right" })
     Own:Input({ Name = "Single image (all faces)", Flag = "world_sky_single", Placeholder = "id, rbxassetid:// or roblox.com link" })
@@ -9632,7 +9739,7 @@ do
     Own:Input({ Name = "Custom sky: Left", Flag = "world_sky_f_lf", Placeholder = "id or link" })
     Own:Input({ Name = "Custom sky: Right", Flag = "world_sky_f_rt", Placeholder = "id or link" })
     Own:Input({ Name = "Custom sky: Up", Flag = "world_sky_f_up", Placeholder = "id or link" })
-    local Saved = SkySub:Section({ Name = "Saved skyboxes", Column = 1, Icon = "layers" })
+    local Saved = SkySub:Section({ Name = "Saved skyboxes", Column = 3, Icon = "layers" })
     Saved:Input({ Name = "Name", Flag = "world_sky_save_name", Placeholder = "name for the current skybox" })
     Saved:Button({ Name = "Save current skybox", Callback = function() Util.guard("sky-save", World.saveSky) end })
     Saved:Dropdown({ Name = "Saved set", Flag = "world_sky_saved_pick", Items = { "None" }, Default = "None" })
@@ -9644,11 +9751,6 @@ do
     Sky:Slider({ Name = "Sun size", Flag = "world_sky_sun", Min = 0, Max = 60, Default = 21, Decimals = 1, Suffix = " deg" })
     Sky:Slider({ Name = "Moon size", Flag = "world_sky_moon", Min = 0, Max = 60, Default = 11, Decimals = 1, Suffix = " deg" })
     Sky:Toggle({ Name = "Show sun and moon", Flag = "world_sky_bodies", Default = true })
-    local Cloud = SkySub:Section({ Name = "Clouds", Column = 3, Icon = "cloud" })
-    local Clouds = Cloud:Toggle({ Name = "Clouds", Flag = "world_clouds" }):Settings("Clouds", 230)
-    pickColor(Clouds, "Clouds", "world_clouds_color", WHITE)
-    Clouds:Slider({ Name = "Cover", Flag = "world_clouds_cover", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
-    Clouds:Slider({ Name = "Density", Flag = "world_clouds_density", Min = 0, Max = 1, Default = 0.6, Decimals = 0.01 })
 
     local Wx = Subs.Weather:Section({ Name = "Weather", Column = 1, Icon = "cloud" })
     Wx:Toggle({ Name = "Enabled", Flag = "world_weather", Tooltip = "Particles follow you in map-anchored cells and only fall where the sky is open above; Cover whole map replaces that with cells over the whole map" })
@@ -9656,17 +9758,18 @@ do
     Wx:Slider({ Name = "Density", Flag = "world_weather_amount", Min = 0.1, Max = 3, Default = 1, Decimals = 0.05 })
     Wx:Slider({ Name = "Speed", Flag = "world_weather_speed", Min = 0.2, Max = 3, Default = 1, Decimals = 0.05 })
     Wx:Slider({ Name = "Particle size", Flag = "world_weather_size", Min = 0.3, Max = 3, Default = 1, Decimals = 0.05 })
-    local mapGear = Wx:Toggle({ Name = "Cover whole map", Flag = "world_weather_map", Tooltip = "Weather over the whole map only; the cells that follow you are switched off and come back when this is off. Cells grow so the count stays under the cap" }):Settings("Whole map", 200)
+    local Cover = Subs.Weather:Section({ Name = "Coverage", Column = 2, Icon = "map" })
+    local mapGear = Cover:Toggle({ Name = "Cover whole map", Flag = "world_weather_map", Tooltip = "Weather over the whole map only; the cells that follow you are switched off and come back when this is off. Cells grow so the count stays under the cap" }):Settings("Whole map", 200)
     mapGear:Slider({ Name = "Max cells", Flag = "world_weather_map_cap", Min = 16, Max = 400, Default = 100, Decimals = 1, Tooltip = "More cells = finer roof detection but more emitters" })
     mapGear:Slider({ Name = "Clear radius around player", Flag = "world_weather_clear_radius", Min = 0, Max = 150, Default = 40, Decimals = 1, Suffix = " studs", Tooltip = "Cells this close to you stay empty so nothing falls on or above you; 0 = off" })
-    Wx:Slider({ Name = "Range", Flag = "world_weather_range", Min = 1, Max = 3, Default = 2, Decimals = 1, Suffix = " cells", Tooltip = "Rings of 28 stud cells around you; unused while Cover whole map is on" })
-    Wx:Slider({ Name = "Spawn height", Flag = "world_weather_height", Min = 10, Max = 80, Default = 35, Decimals = 1, Suffix = " studs" })
-    local Wind = Subs.Weather:Section({ Name = "Wind and colour", Column = 2, Icon = "cloud" })
+    Cover:Slider({ Name = "Range", Flag = "world_weather_range", Min = 1, Max = 3, Default = 2, Decimals = 1, Suffix = " cells", Tooltip = "Rings of 28 stud cells around you; unused while Cover whole map is on" })
+    Cover:Slider({ Name = "Spawn height", Flag = "world_weather_height", Min = 10, Max = 80, Default = 35, Decimals = 1, Suffix = " studs" })
+    local Wind = Subs.Weather:Section({ Name = "Wind and colour", Column = 3, Icon = "cloud" })
     Wind:Slider({ Name = "Wind strength", Flag = "world_weather_wind", Min = 0, Max = 30, Default = 4, Decimals = 0.1 })
     Wind:Slider({ Name = "Wind direction", Flag = "world_weather_wind_dir", Min = 0, Max = 360, Default = 0, Decimals = 1, Suffix = " deg" })
     Wind:Toggle({ Name = "Custom colour", Flag = "world_weather_custom", Tooltip = "Overrides the colour each weather type comes with" }):Colorpicker({ Name = "Weather", Flag = "world_weather_color", Default = WHITE })
 
-    local Fx = Subs.Effects
+    local Fx = Subs["Post-processing"]
     local Screen = Fx:Section({ Name = "Colour correction", Column = 1, Icon = "palette" })
     local Cc = Screen:Toggle({ Name = "Enabled", Flag = "world_cc" }):Settings("Colour correction", 230)
     pickColor(Cc, "Tint", "world_cc_tint", WHITE)
@@ -9717,64 +9820,27 @@ do
     Ch:Toggle({ Name = "Outline", Flag = "cross_outline", Default = true })
     Ch:Toggle({ Name = "Centre dot", Flag = "cross_dot" })
     Ch:Toggle({ Name = "T style", Flag = "cross_t", Tooltip = "Leaves out the top arm" })
-    local Spin = Cross:Toggle({ Name = "Spin", Flag = "cross_spin" }):Settings("Spin", 200)
+    local Motion = Cam:Section({ Name = "Crosshair motion", Column = 3, Icon = "refresh-cw" })
+    local Spin = Motion:Toggle({ Name = "Spin", Flag = "cross_spin" }):Settings("Spin", 200)
     Spin:Slider({ Name = "Spin speed", Flag = "cross_spin_speed", Min = -360, Max = 360, Default = 90, Decimals = 1, Suffix = " deg/s" })
-    local Pulse = Cross:Toggle({ Name = "Pulse gap", Flag = "cross_pulse" }):Settings("Pulse gap", 230)
+    local Pulse = Motion:Toggle({ Name = "Pulse gap", Flag = "cross_pulse" }):Settings("Pulse gap", 230)
     Pulse:Slider({ Name = "Pulse range", Flag = "cross_pulse_range", Min = 0, Max = 30, Default = 8, Decimals = 1, Suffix = " px" })
     Pulse:Slider({ Name = "Pulse speed", Flag = "cross_pulse_speed", Min = 0.2, Max = 10, Default = 3, Decimals = 0.1 })
+end
 
-    local Fb = Subs.Feedback
-    local Marker, HitSnd, KillSnd = Fb:MultiSection({ Name = "Hits and kills", Sections = { "Hit marker", "Hit sound", "Kill sound" }, Icons = { "crosshair", "zap", "flame" }, Column = 1 })
+do
+    local Subs = Pages.FX:SubTabs({ { "Hits", "target" }, { "Kills", "skull" }, { "Bullets", "zap" } })
+    local function pickColor(popup, label, flagName, default, alpha)
+        popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
+    end
+
+    local Hits = Subs.Hits
+    local Marker = Hits:Section({ Name = "Hit marker", Column = 1, Icon = "crosshair" })
     Marker:Toggle({ Name = "Hit marker", Flag = "hit_marker", Tooltip = "Drawn at the crosshair whenever the game registers one of your hits" }):Colorpicker({ Name = "Marker", Flag = "hit_marker_color", Default = WHITE, Alpha = 0 }):Colorpicker({ Name = "Headshot", Flag = "hit_marker_head", Default = Color3.fromRGB(255, 70, 70), Alpha = 0 })
     Marker:Slider({ Name = "Size", Flag = "hit_marker_size", Min = 4, Max = 24, Default = 9, Decimals = 1, Suffix = " px" })
     Marker:Slider({ Name = "Duration", Flag = "hit_marker_time", Min = 0.1, Max = 1.2, Default = 0.4, Decimals = 0.01, Suffix = " s" })
     Marker:Toggle({ Name = "Hide the game's marker", Flag = "hit_hide_game" })
-    HitSnd:Toggle({ Name = "Hit sound", Flag = "hit_snd" })
-    HitSnd:Dropdown({ Name = "Sound", Flag = "hit_snd_id", Items = HIT_SOUND_ORDER, Default = "Gamesense", Searchable = true })
-    HitSnd:Slider({ Name = "Volume", Flag = "hit_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
-    HitSnd:Slider({ Name = "Pitch", Flag = "hit_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
-    HitSnd:Toggle({ Name = "Different on headshot", Flag = "hit_snd_head" })
-    HitSnd:Dropdown({ Name = "Headshot sound", Flag = "hit_snd_head_id", Items = HIT_SOUND_ORDER, Default = "Alt Headshot kill", Searchable = true })
-    HitSnd:Input({ Name = "Custom sound id", Flag = "hit_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
-    HitSnd:Button({ Name = "Preview", Callback = function() Util.guard("hit-preview", Feedback.preview, "hit_snd", "Gamesense") end })
-    KillSnd:Toggle({ Name = "Kill sound", Flag = "kill_snd", Tooltip = "Plays when you kill a player (from the game's death event)" })
-    KillSnd:Dropdown({ Name = "Sound", Flag = "kill_snd_id", Items = KILL_SOUND_ORDER, Default = "Alt Killshot", Searchable = true })
-    KillSnd:Slider({ Name = "Volume", Flag = "kill_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
-    KillSnd:Slider({ Name = "Pitch", Flag = "kill_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
-    KillSnd:Input({ Name = "Custom sound id", Flag = "kill_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
-    KillSnd:Button({ Name = "Preview", Callback = function() Util.guard("kill-preview", Feedback.preview, "kill_snd", "Alt Killshot") end })
-
-    local Dmg = Fb:Section({ Name = "Damage numbers", Column = 2, Icon = "target" })
-    local Trace = Fb:Section({ Name = "Bullet tracers", Column = 3, Icon = "zap" })
-    Dmg:Toggle({ Name = "Custom damage numbers", Flag = "dmg_on", Tooltip = "Replaces the game's floating numbers; the game's Damage Numbers setting must be on" })
-    Dmg:Label({ Name = "Head" }):Colorpicker({ Name = "Head", Flag = "dmg_head", Default = Color3.fromRGB(255, 102, 102) })
-    Dmg:Label({ Name = "Torso" }):Colorpicker({ Name = "Torso", Flag = "dmg_torso", Default = Color3.fromRGB(255, 150, 0) })
-    Dmg:Label({ Name = "Limbs" }):Colorpicker({ Name = "Limbs", Flag = "dmg_limb", Default = Color3.fromRGB(255, 255, 0) })
-    Dmg:Slider({ Name = "Size", Flag = "dmg_size", Min = 8, Max = 32, Default = 16, Decimals = 1, Suffix = " px" })
-    Dmg:Slider({ Name = "Rise", Flag = "dmg_rise", Min = 10, Max = 150, Default = 60, Decimals = 1, Suffix = " px" })
-    Dmg:Slider({ Name = "Duration", Flag = "dmg_time", Min = 0.4, Max = 3, Default = 1.1, Decimals = 0.01, Suffix = " s" })
-    Trace:Toggle({ Name = "Own bullets", Flag = "trace_on", Tooltip = "Draws a tracer from your barrel to where the shot lands" }):Colorpicker({ Name = "Tracer", Flag = "trace_color", Default = Color3.fromRGB(255, 94, 94) })
-    Trace:Toggle({ Name = "Enemy bullets", Flag = "trace_enemy_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
-    Trace:Toggle({ Name = "Team bullets", Flag = "trace_team_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_team_color", Default = Color3.fromRGB(90, 220, 130) })
-    local traceItems = { "Obelus", "Lightning", "DNA", "Beam", "Bolt", "Trail", "Zigzag", "Heartrate", "Chain", "Glitch", "Swirl" }
-    for _, name in ipairs(Tracers.particleNames) do traceItems[#traceItems + 1] = name end
-    Trace:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = traceItems, Default = "Lightning", Tooltip = "Comet to Rainbow sparks are particle tracers that follow the bullet's real path" })
-    Trace:Slider({ Name = "Tracer lifetime", Flag = "trace_time", Min = 0.5, Max = 10, Default = 4, Decimals = 0.1, Suffix = " s" })
-    Trace:Slider({ Name = "Tracer width", Flag = "trace_width", Min = 0.2, Max = 3, Default = 1, Decimals = 0.1, Suffix = "x" })
-    local Glow = Trace:Toggle({ Name = "Tracer glow", Flag = "trace_glow", Tooltip = "Full-bright beam plus a wider additive halo behind it" }):Settings("Tracer glow", 230)
-    Glow:Slider({ Name = "Glow strength", Flag = "trace_glow_strength", Min = 0, Max = 10, Default = 4, Decimals = 0.1 })
-    Glow:Toggle({ Name = "Glow uses tracer colour", Flag = "trace_glow_same", Default = true })
-    Glow:Label({ Name = "Glow colour" }):Colorpicker({ Name = "Glow colour", Flag = "trace_glow_color", Default = Color3.fromRGB(255, 255, 255) })
-    local Grad = Trace:Toggle({ Name = "Tracer gradient", Flag = "trace_gradient", Tooltip = "Colours the tracer from start to end along its whole length, replacing the single tracer colour" }):Settings("Tracer gradient", 230)
-    Grad:Label({ Name = "Gradient start" }):Colorpicker({ Name = "Gradient start", Flag = "trace_grad_start", Default = Color3.fromRGB(255, 94, 94) })
-    Grad:Label({ Name = "Gradient end" }):Colorpicker({ Name = "Gradient end", Flag = "trace_grad_end", Default = Color3.fromRGB(94, 160, 255) })
-    Grad:Slider({ Name = "Gradient fade", Flag = "trace_grad_fade", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Tooltip = "Fades the tracer toward its far end" })
-    Grad:Toggle({ Name = "Rainbow", Flag = "trace_rainbow", Tooltip = "Cycles hue along the tracer instead of the two colours" })
-    Trace:Toggle({ Name = "Hide the game's beam", Flag = "trace_hide_beam", Default = true, Tooltip = "Turns off the game's own tracer beam on bullets that get a custom tracer" })
-    Trace:Slider({ Name = "Particle density", Flag = "trace_fx_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only" })
-    Trace:Toggle({ Name = "Particle impact burst", Flag = "trace_fx_impact", Default = true, Tooltip = "Particle tracers burst where the bullet hits" })
-
-    local Hc = Fb:Section({ Name = "Hit chams", Column = 1, Icon = "user" })
+    local Hc = Hits:Section({ Name = "Hit chams", Column = 1, Icon = "user" })
     local HcMore = Hc:Toggle({ Name = "Hit chams", Flag = "hit_cham_on", Tooltip = "Flashes a local copy of the body you hit, built from adornments. Only your own bullet hits on enemies" }):Colorpicker({ Name = "Hit cham", Flag = "hit_cham_color", Default = Color3.fromRGB(255, 70, 110), Alpha = 0.35 }):Settings("Hit chams", 240)
     Hc:Dropdown({ Name = "Look", Flag = "hit_cham_look", Items = { "Solid", "Glow", "Wireframe" }, Default = "Solid" })
     Hc:Dropdown({ Name = "Fade style", Flag = "hit_cham_fade", Items = { "Linear", "Pop", "Pulse" }, Default = "Linear" })
@@ -9787,8 +9853,84 @@ do
     HcMore:Dropdown({ Name = "Particles", Flag = "hit_cham_fx", Items = HitCham.fxNames, Multi = true, Tooltip = "Bursts from the part that was hit" })
     HcMore:Slider({ Name = "Particle amount", Flag = "hit_cham_fx_amount", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
     HcMore:Slider({ Name = "Max at once", Flag = "hit_cham_max", Min = 1, Max = 12, Default = 12, Decimals = 1, Tooltip = "The oldest cham is removed first" })
+    local Dmg = Hits:Section({ Name = "Damage numbers", Column = 2, Icon = "target" })
+    Dmg:Toggle({ Name = "Custom damage numbers", Flag = "dmg_on", Tooltip = "Replaces the game's floating numbers; the game's Damage Numbers setting must be on" })
+    Dmg:Label({ Name = "Head" }):Colorpicker({ Name = "Head", Flag = "dmg_head", Default = Color3.fromRGB(255, 102, 102) })
+    Dmg:Label({ Name = "Torso" }):Colorpicker({ Name = "Torso", Flag = "dmg_torso", Default = Color3.fromRGB(255, 150, 0) })
+    Dmg:Label({ Name = "Limbs" }):Colorpicker({ Name = "Limbs", Flag = "dmg_limb", Default = Color3.fromRGB(255, 255, 0) })
+    Dmg:Slider({ Name = "Size", Flag = "dmg_size", Min = 8, Max = 32, Default = 16, Decimals = 1, Suffix = " px" })
+    Dmg:Slider({ Name = "Rise", Flag = "dmg_rise", Min = 10, Max = 150, Default = 60, Decimals = 1, Suffix = " px" })
+    Dmg:Slider({ Name = "Duration", Flag = "dmg_time", Min = 0.4, Max = 3, Default = 1.1, Decimals = 0.01, Suffix = " s" })
+    local HitSnd = Hits:Section({ Name = "Hit sound", Column = 3, Icon = "music" })
+    HitSnd:Toggle({ Name = "Hit sound", Flag = "hit_snd" })
+    HitSnd:Dropdown({ Name = "Sound", Flag = "hit_snd_id", Items = HIT_SOUND_ORDER, Default = "Gamesense", Searchable = true })
+    HitSnd:Slider({ Name = "Volume", Flag = "hit_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
+    HitSnd:Slider({ Name = "Pitch", Flag = "hit_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+    HitSnd:Toggle({ Name = "Different on headshot", Flag = "hit_snd_head" })
+    HitSnd:Dropdown({ Name = "Headshot sound", Flag = "hit_snd_head_id", Items = HIT_SOUND_ORDER, Default = "Alt Headshot kill", Searchable = true })
+    HitSnd:Input({ Name = "Custom sound id", Flag = "hit_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
+    HitSnd:Button({ Name = "Preview", Callback = function() Util.guard("hit-preview", Feedback.preview, "hit_snd", "Gamesense") end })
 
-    local Imp = Fb:Section({ Name = "Bullet impacts", Column = 2, Icon = "flame" })
+    local Kills = Subs.Kills
+    local KillSnd = Kills:Section({ Name = "Kill sound", Column = 1, Icon = "music" })
+    KillSnd:Toggle({ Name = "Kill sound", Flag = "kill_snd", Tooltip = "Plays when you kill a player (from the game's death event)" })
+    KillSnd:Dropdown({ Name = "Sound", Flag = "kill_snd_id", Items = KILL_SOUND_ORDER, Default = "Alt Killshot", Searchable = true })
+    KillSnd:Slider({ Name = "Volume", Flag = "kill_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
+    KillSnd:Slider({ Name = "Pitch", Flag = "kill_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+    KillSnd:Input({ Name = "Custom sound id", Flag = "kill_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
+    KillSnd:Button({ Name = "Preview", Callback = function() Util.guard("kill-preview", Feedback.preview, "kill_snd", "Alt Killshot") end })
+    local Kill = Kills:Section({ Name = "Kill effects", Column = 2, Icon = "flame" })
+    local Fx = Kill:Toggle({ Name = "Kill effects", Flag = "kill_fx", Tooltip = "Plays local effects on the corpse of players you kill (from the game's death event). Visual only, nothing is sent to the server" }):Settings("Kill effects", 260)
+    Fx:Dropdown({ Name = "Effects", Flag = "kill_fx_list", Items = KillFx.names, Multi = true, Default = { "Dissolve", "Lightning" } })
+    pickColor(Fx, "Colour", "kill_fx_color", Color3.fromRGB(102, 204, 255))
+    pickColor(Fx, "Secondary", "kill_fx_color2", Color3.fromRGB(235, 248, 255))
+    Fx:Slider({ Name = "Intensity", Flag = "kill_fx_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
+    Fx:Slider({ Name = "Duration", Flag = "kill_fx_dur", Min = 0.5, Max = 6, Default = 2.5, Decimals = 0.1, Suffix = " s", Tooltip = "Length of Dissolve and Pillar" })
+    Fx:Slider({ Name = "Screen flash only near", Flag = "kill_fx_flash_dist", Min = 20, Max = 500, Default = 150, Decimals = 1, Suffix = " studs" })
+    Fx:Toggle({ Name = "Play sound", Flag = "kill_fx_sound" })
+    Fx:Input({ Name = "Sound id", Flag = "kill_fx_sound_id", Placeholder = "rbxassetid or number" })
+    Kill:Dropdown({ Name = "Corpse effects", Flag = "kill_fx_corpse", Items = KillFx.corpseNames, Multi = true, Tooltip = "Act on the body itself, locally. Only one movement effect (Zero-G float, Ascend, Ragdoll launch, Black hole) runs per corpse: the first one in this list" })
+    Kill:Slider({ Name = "Corpse effect time", Flag = "kill_fx_corpse_dur", Min = 1, Max = 8, Default = 3, Decimals = 0.1, Suffix = " s" })
+    Kill:Slider({ Name = "Corpse particles", Flag = "kill_fx_corpse_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
+    Kill:Slider({ Name = "Float height", Flag = "kill_fx_corpse_height", Min = 2, Max = 30, Default = 10, Decimals = 1, Suffix = " studs", Tooltip = "How high Zero-G float, Ascend, Ghost and Ragdoll launch carry the body" })
+    local Dead = Kills:Section({ Name = "Corpse chams", Column = 3, Icon = "ghost" })
+    local Cham = Dead:Toggle({ Name = "Corpse chams", Flag = "chams_dead", Tooltip = "Restyles the ragdoll left behind when a player dies by changing its material, colour and transparency. The game removes corpses after about 30 seconds" }):Settings("Corpse chams", 260)
+    Cham:Toggle({ Name = "Enemy corpses", Flag = "chams_dead_enemy", Default = true, Tooltip = "Corpses whose owner could not be matched count as enemy" })
+    pickColor(Cham, "Enemy", "chams_dead_enemy_color", Color3.fromRGB(255, 70, 90))
+    Cham:Toggle({ Name = "Team corpses", Flag = "chams_dead_team" })
+    pickColor(Cham, "Team", "chams_dead_team_color", Color3.fromRGB(90, 220, 130))
+    Cham:Toggle({ Name = "My corpse", Flag = "chams_dead_local" })
+    pickColor(Cham, "Mine", "chams_dead_local_color", Color3.fromRGB(120, 200, 255))
+    Cham:Dropdown({ Name = "Material", Flag = "chams_dead_mat", Items = Local.materials, Default = "ForceField" })
+    Cham:Dropdown({ Name = "Texture", Flag = "chams_dead_tex", Items = Local.names, Default = "None", Tooltip = "Pattern drawn by the ForceField material" })
+    Cham:Slider({ Name = "Reflectance", Flag = "chams_dead_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
+    Cham:Toggle({ Name = "Hide clothing/accessories", Flag = "chams_dead_hide", Tooltip = "Hides everything on the corpse except the six body parts" })
+    Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 15, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the corpse out over the last seconds before the game removes it; 0 is off" })
+
+    local Bullets = Subs.Bullets
+    local Trace = Bullets:Section({ Name = "Bullet tracers", Column = 1, Icon = "zap" })
+    Trace:Toggle({ Name = "Own bullets", Flag = "trace_on", Tooltip = "Draws a tracer from your barrel to where the shot lands" }):Colorpicker({ Name = "Tracer", Flag = "trace_color", Default = Color3.fromRGB(255, 94, 94) })
+    Trace:Toggle({ Name = "Enemy bullets", Flag = "trace_enemy_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
+    Trace:Toggle({ Name = "Team bullets", Flag = "trace_team_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_team_color", Default = Color3.fromRGB(90, 220, 130) })
+    local traceItems = { "Obelus", "Lightning", "DNA", "Beam", "Bolt", "Trail", "Zigzag", "Heartrate", "Chain", "Glitch", "Swirl" }
+    for _, name in ipairs(Tracers.particleNames) do traceItems[#traceItems + 1] = name end
+    Trace:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = traceItems, Default = "Lightning", Tooltip = "Comet to Rainbow sparks are particle tracers that follow the bullet's real path" })
+    Trace:Slider({ Name = "Tracer lifetime", Flag = "trace_time", Min = 0.5, Max = 10, Default = 4, Decimals = 0.1, Suffix = " s" })
+    Trace:Slider({ Name = "Tracer width", Flag = "trace_width", Min = 0.2, Max = 3, Default = 1, Decimals = 0.1, Suffix = "x" })
+    Trace:Toggle({ Name = "Hide the game's beam", Flag = "trace_hide_beam", Default = true, Tooltip = "Turns off the game's own tracer beam on bullets that get a custom tracer" })
+    local Style = Bullets:Section({ Name = "Tracer style", Column = 2, Icon = "sparkles" })
+    local Glow = Style:Toggle({ Name = "Tracer glow", Flag = "trace_glow", Tooltip = "Full-bright beam plus a wider additive halo behind it" }):Settings("Tracer glow", 230)
+    Glow:Slider({ Name = "Glow strength", Flag = "trace_glow_strength", Min = 0, Max = 10, Default = 4, Decimals = 0.1 })
+    Glow:Toggle({ Name = "Glow uses tracer colour", Flag = "trace_glow_same", Default = true })
+    Glow:Label({ Name = "Glow colour" }):Colorpicker({ Name = "Glow colour", Flag = "trace_glow_color", Default = Color3.fromRGB(255, 255, 255) })
+    local Grad = Style:Toggle({ Name = "Tracer gradient", Flag = "trace_gradient", Tooltip = "Colours the tracer from start to end along its whole length, replacing the single tracer colour" }):Settings("Tracer gradient", 230)
+    Grad:Label({ Name = "Gradient start" }):Colorpicker({ Name = "Gradient start", Flag = "trace_grad_start", Default = Color3.fromRGB(255, 94, 94) })
+    Grad:Label({ Name = "Gradient end" }):Colorpicker({ Name = "Gradient end", Flag = "trace_grad_end", Default = Color3.fromRGB(94, 160, 255) })
+    Grad:Slider({ Name = "Gradient fade", Flag = "trace_grad_fade", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Tooltip = "Fades the tracer toward its far end" })
+    Grad:Toggle({ Name = "Rainbow", Flag = "trace_rainbow", Tooltip = "Cycles hue along the tracer instead of the two colours" })
+    Style:Slider({ Name = "Particle density", Flag = "trace_fx_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only" })
+    Style:Toggle({ Name = "Particle impact burst", Flag = "trace_fx_impact", Default = true, Tooltip = "Particle tracers burst where the bullet hits" })
+    local Imp = Bullets:Section({ Name = "Bullet impacts", Column = 3, Icon = "flame" })
     local ImpMore = Imp:Toggle({ Name = "Bullet impacts", Flag = "impact_on", Tooltip = "Local effects where your bullets hit the world, at the same hit point the tracers use" }):Colorpicker({ Name = "Impact", Flag = "impact_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 }):Settings("Bullet impacts", 240)
     Imp:Toggle({ Name = "Enemy bullets too", Flag = "impact_enemy", Tooltip = "Same bullets the enemy tracers use; teammates are skipped" })
     Imp:Dropdown({ Name = "Effects", Flag = "impact_list", Items = Impacts.names, Multi = true, Default = { "Spark burst", "Glow ring" }, Tooltip = "Pick several to layer them" })
@@ -9850,7 +9992,7 @@ do
         Library:Notify("Outdated ThemeManager: upload addons/ThemeManager.lua from the latest release", 10)
     end
     SaveManager:IgnoreThemeSettings()
-    SaveManager:SetIgnoreIndexes({ "MenuKeybind", "menu_notify_corner", "ui_view_Legit", "ui_view_ESP", "ui_view_World", "ui_view_Misc" })
+    SaveManager:SetIgnoreIndexes({ "MenuKeybind", "menu_notify_corner", "ui_view_Legit", "ui_view_ESP", "ui_view_World", "ui_view_FX", "ui_view_Misc" })
     local skinIndexes = { "skin_class", "skin_search", "skin_weapon", "skin_slot", "skin_tex_color", "skin_brick_color", "skin_material",
         "skin_preset_src", "skin_preset", "skin_preset_name", "skin_preset_search", "skin_preset_weapon", "skin_case", "skin_pick", "skin_view", "skin_cases" }
     for _, spec in ipairs(Skins.sliders) do skinIndexes[#skinIndexes + 1] = spec.flag end

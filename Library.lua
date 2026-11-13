@@ -1554,7 +1554,7 @@ end;
 
 -- Logo ----------------------------------------------------------------------
 -- aster_logo.png is fetched from the repo in the background; until then (or without
--- writefile/getcustomasset) logos use the Frame-built aster below.
+-- writefile/getcustomasset) logos use the Frame-built tile below.
 Library.LogoImage = nil;
 Library.LogoListeners = {};
 
@@ -1563,7 +1563,7 @@ task.spawn(function()
         if type(writefile) ~= 'function' or type(getcustomasset) ~= 'function' then
             return;
         end;
-        local Path = 'Aster/aster_logo_v3.png';
+        local Path = 'Aster/aster_logo_v4.png';
         pcall(function()
             if type(makefolder) == 'function' and not (type(isfolder) == 'function' and isfolder('Aster')) then
                 makefolder('Aster');
@@ -1598,7 +1598,7 @@ task.spawn(function()
     end);
 end);
 
--- Accent-tinted aster: image when available, otherwise a disc with 8 rotated petal Frames.
+-- Accent-tinted orbit tile: image when available, otherwise a Frame-built rounded tile with a 4-point star hole.
 -- Returns the holder Frame plus a handle { SetSize, Draw, Destroy }. Hidden starts invisible for Draw to fade in.
 function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
     local Holder = Library:Create('Frame', {
@@ -1611,7 +1611,8 @@ function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
         AnchorPoint = Vector2.new(0.5, 0.5);
         BackgroundTransparency = 1;
         Position = UDim2.fromScale(0.5, 0.5);
-        Size = UDim2.fromScale(1, 1);
+        -- a solid tile reads heavier than an open mark, so it sits inside its slot; tiny logos keep every pixel
+        Size = Size > 20 and UDim2.fromScale(0.86, 0.86) or UDim2.fromScale(1, 1);
         ZIndex = ZIndex;
         Parent = Holder;
     });
@@ -1628,28 +1629,58 @@ function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
         return Piece;
     end;
 
-    local Fallback = {};
-    local Disc = AddPiece('Frame', {
-        AnchorPoint = Vector2.new(0.5, 0.5);
-        BackgroundColor3 = Library.AccentColor;
-        Position = UDim2.fromScale(0.5, 0.5);
-        Size = UDim2.fromScale(0.21, 0.21);
-    }, 'BackgroundTransparency');
-    Library:Create('UICorner', { CornerRadius = UDim.new(1, 0); Parent = Disc });
-    Library:AddToRegistry(Disc, { BackgroundColor3 = 'AccentColor' });
-    Fallback[1] = Disc;
-    for Idx = 0, 7 do
-        local Angle = math.rad(Idx * 45);
-        local Petal = AddPiece('Frame', {
-            AnchorPoint = Vector2.new(0.5, 0.5);
+    -- Frames cannot subtract, so the tile is assembled around the hole: edge strips and corner discs
+    -- outside the inner square, and inside it four clipped discs whose gap is the concave star.
+    -- The pieces overlap, so they fade as one CanvasGroup where available.
+    local GroupOk, Group = pcall(Instance.new, 'CanvasGroup');
+    local Tile = Library:Create(GroupOk and Group or Instance.new('Frame'), {
+        BackgroundTransparency = 1;
+        Size = UDim2.fromScale(1, 1);
+        ZIndex = ZIndex + 1;
+        Parent = Content;
+    });
+    if GroupOk then
+        Tile.GroupTransparency = StartAlpha;
+        Pieces[1] = { Instance = Tile; Prop = 'GroupTransparency' };
+    end;
+    local function Fill(Parent, X, Y, W, H, Round)
+        local Piece = Library:Create('Frame', {
             BackgroundColor3 = Library.AccentColor;
-            Position = UDim2.fromScale(0.5 + math.sin(Angle) * 0.315, 0.5 - math.cos(Angle) * 0.315);
-            Rotation = Idx * 45;
-            Size = UDim2.fromScale(0.12, 0.34);
-        }, 'BackgroundTransparency');
-        Library:Create('UICorner', { CornerRadius = UDim.new(0.5, 0); Parent = Petal });
-        Library:AddToRegistry(Petal, { BackgroundColor3 = 'AccentColor' });
-        Fallback[#Fallback + 1] = Petal;
+            BackgroundTransparency = GroupOk and 0 or StartAlpha;
+            BorderSizePixel = 0;
+            Position = UDim2.fromScale(X, Y);
+            Size = UDim2.fromScale(W, H);
+            ZIndex = ZIndex + 1;
+            Parent = Parent;
+        });
+        if Round then
+            Library:Create('UICorner', { CornerRadius = UDim.new(1, 0); Parent = Piece });
+        end;
+        Library:AddToRegistry(Piece, { BackgroundColor3 = 'AccentColor' });
+        if not GroupOk then
+            Pieces[#Pieces + 1] = { Instance = Piece; Prop = 'BackgroundTransparency' };
+        end;
+        return Piece;
+    end;
+    local C, A, R = 0.22, 0.18, 0.325;
+    for _, P in ipairs({ { 0, 0 }, { 1 - 2 * C, 0 }, { 0, 1 - 2 * C }, { 1 - 2 * C, 1 - 2 * C } }) do
+        Fill(Tile, P[1], P[2], 2 * C, 2 * C, true);
+    end;
+    Fill(Tile, C, 0, 1 - 2 * C, A + 0.01);
+    Fill(Tile, C, 1 - A - 0.01, 1 - 2 * C, A + 0.01);
+    Fill(Tile, 0, C, A + 0.01, 1 - 2 * C);
+    Fill(Tile, 1 - A - 0.01, C, A + 0.01, 1 - 2 * C);
+    local Hole = Library:Create('Frame', {
+        BackgroundTransparency = 1;
+        ClipsDescendants = true;
+        Position = UDim2.fromScale(A, A);
+        Size = UDim2.fromScale(1 - 2 * A, 1 - 2 * A);
+        ZIndex = ZIndex + 1;
+        Parent = Tile;
+    });
+    local Span = R / (1 - 2 * A);
+    for _, P in ipairs({ { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } }) do
+        Fill(Hole, P[1] - Span, P[2] - Span, 2 * Span, 2 * Span, true);
     end;
 
     local Img;
@@ -1665,11 +1696,9 @@ function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
             Position = UDim2.fromScale(0.5, 0.5);
             Size = UDim2.fromScale(1, 1);
         }, 'ImageTransparency');
-        Img.ImageTransparency = Disc.BackgroundTransparency;
+        Img.ImageTransparency = Pieces[1].Instance[Pieces[1].Prop];
         Library:AddToRegistry(Img, { ImageColor3 = 'AccentColor' });
-        for _, Piece in ipairs(Fallback) do
-            Piece.Visible = false;
-        end;
+        Tile.Visible = false;
     end;
     if Library.LogoImage then
         UseImage(Library.LogoImage);

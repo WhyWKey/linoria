@@ -1554,7 +1554,7 @@ end;
 
 -- Logo ----------------------------------------------------------------------
 -- aster_logo.png is fetched from the repo in the background; until then (or without
--- writefile/getcustomasset) logos use the Frame-built tile below.
+-- writefile/getcustomasset) logos use the Frame-built star below.
 Library.LogoImage = nil;
 Library.LogoListeners = {};
 
@@ -1563,7 +1563,7 @@ task.spawn(function()
         if type(writefile) ~= 'function' or type(getcustomasset) ~= 'function' then
             return;
         end;
-        local Path = 'Aster/aster_logo_v4.png';
+        local Path = 'Aster/aster_logo_v5.png';
         pcall(function()
             if type(makefolder) == 'function' and not (type(isfolder) == 'function' and isfolder('Aster')) then
                 makefolder('Aster');
@@ -1598,7 +1598,7 @@ task.spawn(function()
     end);
 end);
 
--- Accent-tinted orbit tile: image when available, otherwise a Frame-built rounded tile with a 4-point star hole.
+-- Accent-tinted orbit mark (star + ring, no tile): image when available, otherwise a Frame-built 4-point star.
 -- Returns the holder Frame plus a handle { SetSize, Draw, Destroy }. Hidden starts invisible for Draw to fade in.
 function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
     local Holder = Library:Create('Frame', {
@@ -1611,8 +1611,7 @@ function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
         AnchorPoint = Vector2.new(0.5, 0.5);
         BackgroundTransparency = 1;
         Position = UDim2.fromScale(0.5, 0.5);
-        -- a solid tile reads heavier than an open mark, so it sits inside its slot; tiny logos keep every pixel
-        Size = Size > 20 and UDim2.fromScale(0.86, 0.86) or UDim2.fromScale(1, 1);
+        Size = UDim2.fromScale(1, 1);
         ZIndex = ZIndex;
         Parent = Holder;
     });
@@ -1629,58 +1628,46 @@ function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
         return Piece;
     end;
 
-    -- Frames cannot subtract, so the tile is assembled around the hole: edge strips and corner discs
-    -- outside the inner square, and inside it four clipped discs whose gap is the concave star.
-    -- The pieces overlap, so they fade as one CanvasGroup where available.
+    -- Frames cannot draw curves, so the concave star is a stack of centred rectangles whose corners
+    -- trace the star's quadrant curve (same cubic as aster_orbit_c.svg). The pieces overlap, so they
+    -- fade as one CanvasGroup where available.
     local GroupOk, Group = pcall(Instance.new, 'CanvasGroup');
-    local Tile = Library:Create(GroupOk and Group or Instance.new('Frame'), {
+    local Star = Library:Create(GroupOk and Group or Instance.new('Frame'), {
         BackgroundTransparency = 1;
         Size = UDim2.fromScale(1, 1);
         ZIndex = ZIndex + 1;
         Parent = Content;
     });
     if GroupOk then
-        Tile.GroupTransparency = StartAlpha;
-        Pieces[1] = { Instance = Tile; Prop = 'GroupTransparency' };
+        Star.GroupTransparency = StartAlpha;
+        Pieces[1] = { Instance = Star; Prop = 'GroupTransparency' };
     end;
-    local function Fill(Parent, X, Y, W, H, Round)
+    local function Fill(W, H)
         local Piece = Library:Create('Frame', {
+            AnchorPoint = Vector2.new(0.5, 0.5);
             BackgroundColor3 = Library.AccentColor;
             BackgroundTransparency = GroupOk and 0 or StartAlpha;
             BorderSizePixel = 0;
-            Position = UDim2.fromScale(X, Y);
+            Position = UDim2.fromScale(0.5, 0.5);
             Size = UDim2.fromScale(W, H);
             ZIndex = ZIndex + 1;
-            Parent = Parent;
+            Parent = Star;
         });
-        if Round then
-            Library:Create('UICorner', { CornerRadius = UDim.new(1, 0); Parent = Piece });
-        end;
         Library:AddToRegistry(Piece, { BackgroundColor3 = 'AccentColor' });
         if not GroupOk then
             Pieces[#Pieces + 1] = { Instance = Piece; Prop = 'BackgroundTransparency' };
         end;
-        return Piece;
     end;
-    local C, A, R = 0.22, 0.18, 0.325;
-    for _, P in ipairs({ { 0, 0 }, { 1 - 2 * C, 0 }, { 0, 1 - 2 * C }, { 1 - 2 * C, 1 - 2 * C } }) do
-        Fill(Tile, P[1], P[2], 2 * C, 2 * C, true);
-    end;
-    Fill(Tile, C, 0, 1 - 2 * C, A + 0.01);
-    Fill(Tile, C, 1 - A - 0.01, 1 - 2 * C, A + 0.01);
-    Fill(Tile, 0, C, A + 0.01, 1 - 2 * C);
-    Fill(Tile, 1 - A - 0.01, C, A + 0.01, 1 - 2 * C);
-    local Hole = Library:Create('Frame', {
-        BackgroundTransparency = 1;
-        ClipsDescendants = true;
-        Position = UDim2.fromScale(A, A);
-        Size = UDim2.fromScale(1 - 2 * A, 1 - 2 * A);
-        ZIndex = ZIndex + 1;
-        Parent = Tile;
-    });
-    local Span = R / (1 - 2 * A);
-    for _, P in ipairs({ { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } }) do
-        Fill(Hole, P[1] - Span, P[2] - Span, 2 * Span, 2 * Span, true);
+    -- quadrant control points of the star tip-to-tip, normalised so the tips touch the slot edges
+    local P1, P2 = 0.23, 0.085;
+    for _, T in ipairs({ 0.03, 0.08, 0.14, 0.21, 0.29, 0.38, 0.5 }) do
+        local U = 1 - T;
+        local X = U * U * U + 3 * U * U * T * P1 + 3 * U * T * T * P2;
+        local Y = 3 * U * U * T * P2 + 3 * U * T * T * P1 + T * T * T;
+        Fill(X, Y);
+        if T < 0.5 then
+            Fill(Y, X);
+        end;
     end;
 
     local Img;
@@ -1698,7 +1685,7 @@ function Library:CreateLogo(Parent, Size, ZIndex, Always, Hidden)
         }, 'ImageTransparency');
         Img.ImageTransparency = Pieces[1].Instance[Pieces[1].Prop];
         Library:AddToRegistry(Img, { ImageColor3 = 'AccentColor' });
-        Tile.Visible = false;
+        Star.Visible = false;
     end;
     if Library.LogoImage then
         UseImage(Library.LogoImage);
@@ -7253,7 +7240,7 @@ do
         Parent = WatermarkContent;
     });
 
-    local WatermarkLogo = Library:CreateLogo(WatermarkContent, 16, 202, true);
+    local WatermarkLogo = Library:CreateLogo(WatermarkContent, 18, 202, true);
     WatermarkLogo.LayoutOrder = 1;
 
     local WatermarkLabel = Library:CreateLabel({
@@ -7913,7 +7900,7 @@ function Library:CreateWindow(...)
     });
     Library:AddToRegistry(SidebarEdge, { BackgroundColor3 = 'OutlineColor' });
 
-    local SidebarLogo = Library:CreateLogo(Sidebar, 28, 5, true);
+    local SidebarLogo = Library:CreateLogo(Sidebar, 36, 5, true);
     SidebarLogo.AnchorPoint = Vector2.new(0.5, 0.5);
     SidebarLogo.Position = UDim2.new(0.5, 0, 0, 30);
     Library.SidebarLogo = SidebarLogo;

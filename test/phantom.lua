@@ -221,6 +221,17 @@ function Util.menuOpen()
     return Library.Toggled == true
 end
 
+function Util.notify(info)
+    if type(Library.NotifyById) == "table" then
+        local ok, note = pcall(Library.Notify, Library, info)
+        if ok then return note end
+    end
+    local text = tostring(info.Text or "")
+    if info.Title then text = info.Title .. ": " .. text end
+    pcall(function() Library:Notify(text, info.Duration or 5) end)
+    return nil
+end
+
 pcall(function()
     ThemeManager:SetLibrary(Library)
     ThemeManager:SetFolder("Aster/PhantomForces")
@@ -472,7 +483,7 @@ local Game = { ready = false, mods = {}, via = {}, missing = {}, frame = 0, acce
 local REQUIRED = { "ReplicationInterface", "CharacterInterface", "CameraInterface" }
 local OPTIONAL = { "PublicSettings", "NetworkClient", "HudCrosshairsInterface", "HudDamageInterface", "BulletInterface", "PlayerStatusEvents", "ContentInterface",
     "CharacterObject", "ActiveLoadoutUtils", "PlayerDataClientInterface", "PlayerDataUtils", "SkinCaseUtils", "FirearmObject", "MeleeObject", "GrenadeObject",
-    "HudScreenGui", "PlayerSettingsInterface", "WeaponUtils", "ContentUtils" }
+    "HudScreenGui", "PlayerSettingsInterface", "WeaponUtils", "ContentUtils", "RoundSystemClientEvents" }
 
 function Game.load()
     Game.ready, Game.mods, Game.via, Game.missing = false, {}, {}, {}
@@ -3705,9 +3716,10 @@ end)
 
 local Tracers = {
     list = {}, fade = 0.5, fx = {}, particle = {},
-    particleNames = { "Comet", "Ember trail", "Plasma", "Stardust", "Smoke ribbon", "Spiral helix", "Frost", "Rainbow sparks" },
+    particleNames = { "Comet", "Plasma", "Smoke ribbon", "Frost", "Railgun", "Laser", "Ion bolt", "Tracer round", "Neon streak", "Void" },
     caps = { records = 20, emitters = 20, rate = 120, life = 2.5, burst = 40, beams = 360 },
     fire = "rbxasset://textures/particles/fire_main.dds", ice = Color3.fromRGB(190, 235, 255),
+    ring = "rbxassetid://5857851812", flare = "rbxassetid://8983307836", bolt = "rbxassetid://5833323391",
 }
 
 function Tracers.presets()
@@ -4187,8 +4199,9 @@ function Tracers.spawnFx(name, path, color, hit, speed)
         path = path, cumulative = cumulative, total = total, nodes = nodes, t = {}, color = color, chord = path[#path] - path[1],
         hit = flag("trace_fx_impact", true) and hit or nil,
         travel = math.clamp(total / math.max(type(speed) == "number" and speed or 0, 300), 0.03, 1.2),
-        keep = math.clamp(flag("trace_time", 4), 0.5, 3), density = math.clamp(flag("trace_fx_density", 1), 0.25, 3),
-        scale = math.clamp(flag("trace_width", 1), 0.2, 3),
+        keep = math.clamp(flag("trace_time", 4), 0.5, 10), density = math.clamp(flag("trace_fx_density", 1), 0.25, 3),
+        scale = math.clamp(flag("trace_width", 1), 0.2, 3), psize = math.clamp(flag("trace_fx_size", 1), 0.25, 3),
+        fade = gradient and math.clamp(flag("trace_grad_fade", 0), 0, 1) or 0,
     }
     if ctx.chord.Magnitude < 1e-6 then ctx.chord = Vector3.new(0, 0, -1) end
     for index = 1, #nodes do ctx.t[index] = (index - 1) / (#nodes - 1) end
@@ -4218,9 +4231,76 @@ function Tracers.spawnFx(name, path, color, hit, speed)
     return true
 end
 
+function Tracers.plain(color)
+    return color
+end
+
+function Tracers.whiten(amount)
+    return function(color) return Util.lerpColor(color, WHITE, amount) end
+end
+
+function Tracers.streak(rec, ctx, width, alpha, tint, opts)
+    opts = opts or {}
+    local nodes, list = ctx.nodes, {}
+    for index = 1, #nodes - 1 do
+        local ahead = nodes[index + 1] - nodes[index]
+        local t0, t1 = ctx.t[index], ctx.t[index + 1]
+        local a0, a1 = alpha + (1 - alpha) * ctx.fade * t0, alpha + (1 - alpha) * ctx.fade * t1
+        local base = Tracers.point(rec, nodes[index], ahead)
+        local tip = Tracers.point(rec, opts.instant and nodes[index + 1] or nodes[index], ahead)
+        local beam = Tracers.make(rec, "Beam", {
+            Attachment0 = base, Attachment1 = tip, FaceCamera = true, LightEmission = opts.emission or 1, LightInfluence = 0, Segments = 1,
+            Width0 = width, Width1 = width, Transparency = NumberSequence.new(a0, a1), Color = ColorSequence.new(tint(ctx.colorAt(t0)), tint(ctx.colorAt(t1))),
+        })
+        propSet(beam, "Brightness", (opts.bright or 2) * rec.bright)
+        if opts.z then propSet(beam, "ZOffset", opts.z) end
+        rec.beams = rec.beams + 1
+        list[index] = { beam = beam, tip = tip, t0 = t0, t1 = t1, a0 = a0, a1 = a1, open = not opts.instant }
+    end
+    if not opts.instant then
+        rec.ticks[#rec.ticks + 1] = function(age)
+            local u, open = math.clamp(age / ctx.travel, 0, 1), false
+            for _, seg in ipairs(list) do
+                if seg.open and u > seg.t0 then
+                    local position, direction = Tracers.at(ctx, math.min(u, seg.t1))
+                    seg.tip.WorldCFrame = Tracers.frame(position, direction)
+                    seg.open = u < seg.t1
+                end
+                open = open or seg.open
+            end
+            return not open
+        end
+    end
+    local from, length = ctx.travel + (opts.hold or ctx.keep), opts.fade or 0.4
+    rec.ticks[#rec.ticks + 1] = function(age)
+        local k = math.clamp((age - from) / length, 0, 1)
+        if k > 0 then
+            for _, seg in ipairs(list) do seg.beam.Transparency = NumberSequence.new(seg.a0 + (1 - seg.a0) * k, seg.a1 + (1 - seg.a1) * k) end
+        end
+        return k >= 1
+    end
+    return list, from + length - ctx.travel
+end
+
+function Tracers.reveal(rec, ctx, list, alpha)
+    local shown = 0
+    for _, beam in ipairs(list) do beam.Transparency = NumberSequence.new(1) end
+    rec.ticks[#rec.ticks + 1] = function(age)
+        while shown < #list and age >= ctx.travel * ctx.t[shown + 1] do
+            shown = shown + 1
+            list[shown].Transparency = NumberSequence.new(alpha)
+        end
+        return shown >= #list
+    end
+end
+
 Tracers.particle.Comet = function(rec, ctx)
+    local s, p = ctx.scale, ctx.psize
+    local linger = { hold = ctx.keep * 0.6, fade = 0.6 }
+    local _, finish = Tracers.streak(rec, ctx, 0.35 * s, 0.6, Tracers.plain, linger)
+    Tracers.streak(rec, ctx, 0.08 * s, 0, Tracers.whiten(0.6), { hold = linger.hold, fade = linger.fade, bright = 3 })
     local head
-    local part, top, bottom = Tracers.runner(rec, ctx, 0.35 * ctx.scale, function() if head then head.Enabled = false end end)
+    local part, top, bottom = Tracers.runner(rec, ctx, 0.45 * s, function() if head then head.Enabled = false end end)
     Tracers.make(rec, "Trail", {
         Attachment0 = top, Attachment1 = bottom, FaceCamera = true, LightEmission = 1, LightInfluence = 0, Lifetime = math.clamp(ctx.travel * 0.35, 0.05, 0.3),
         Color = ColorSequence.new(Util.lerpColor(ctx.colorAt(1), WHITE, 0.5), ctx.colorAt(0)), Transparency = NumberSequence.new(0, 1), WidthScale = NumberSequence.new(1, 0.1),
@@ -4228,47 +4308,35 @@ Tracers.particle.Comet = function(rec, ctx)
     Tracers.make(rec, "PointLight", { Color = ctx.color, Brightness = 2 * rec.bright, Range = 10 }, part)
     head = Tracers.emitter(rec, part, {
         Rate = 120, Enabled = true, Lifetime = NumberRange.new(0.25, 0.5), Speed = NumberRange.new(0.5, 2.5),
-        Size = Tracers.curve(0, 0.45 * ctx.scale, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(0)),
+        Size = Tracers.curve(0, 0.45 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(0)),
     })
     local tail = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
         return {
             Lifetime = NumberRange.new(0.4, 0.9), Speed = NumberRange.new(1, 3), Acceleration = Vector3.new(0, -4, 0),
-            Size = Tracers.curve(0, 0.25 * ctx.scale, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(t)),
+            Size = Tracers.curve(0, 0.25 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(t)),
         }
     end)
     Tracers.sweep(rec, ctx, tail, 4 * ctx.density)
     Tracers.impact(rec, ctx, {
-        { count = 18, props = { Lifetime = NumberRange.new(0.3, 0.7), Speed = NumberRange.new(8, 18), Drag = 4, Size = Tracers.curve(0, 0.4 * ctx.scale, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+        { count = 1, props = { Texture = Tracers.flare, Lifetime = NumberRange.new(0.15, 0.2), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 2.5 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+        { count = 18, props = { Lifetime = NumberRange.new(0.3, 0.7), Speed = NumberRange.new(8, 18), Drag = 4, Size = Tracers.curve(0, 0.4 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
     })
-    return 1
-end
-
-Tracers.particle["Ember trail"] = function(rec, ctx)
-    local hot, ash = Color3.fromRGB(255, 120, 30), Color3.fromRGB(90, 20, 10)
-    local embers = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
-        local tint = ctx.colorAt(t)
-        return {
-            Lifetime = NumberRange.new(1.2, 2.2), Speed = NumberRange.new(0.3, 1.4), Drag = 1, Acceleration = Vector3.new(0.6, 2.5, 0),
-            Size = Tracers.curve(0, 0.2 * ctx.scale, 0.7, 0.12 * ctx.scale, 1, 0), RotSpeed = NumberRange.new(-60, 60), Transparency = Tracers.curve(0, 0, 0.6, 0.2, 1, 1),
-            Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Util.lerpColor(tint, WHITE, 0.4)), ColorSequenceKeypoint.new(0.4, Util.lerpColor(tint, hot, 0.5)), ColorSequenceKeypoint.new(1, ash) }),
-        }
-    end)
-    Tracers.sweep(rec, ctx, embers, 5 * ctx.density)
-    Tracers.impact(rec, ctx, {
-        { count = 6, props = { Texture = Tracers.fire, Lifetime = NumberRange.new(0.25, 0.45), Speed = NumberRange.new(1, 3), Size = Tracers.curve(0, 1.2 * ctx.scale, 1, 0), Color = ColorSequence.new(hot, ctx.colorAt(1)) } },
-        { count = 14, props = { Lifetime = NumberRange.new(0.8, 1.6), Speed = NumberRange.new(4, 10), Drag = 2, Acceleration = Vector3.new(0, 3, 0), Size = Tracers.curve(0, 0.2 * ctx.scale, 1, 0), Color = ColorSequence.new(hot, ctx.colorAt(1)) } },
-    })
-    return 2.4
+    return math.max(finish, 1)
 end
 
 Tracers.particle.Plasma = function(rec, ctx)
+    local s, p = ctx.scale, ctx.psize
+    local hold = math.max(ctx.keep, 1)
     local points = Tracers.nodePoints(rec, ctx)
-    local inner = Tracers.core(rec, ctx, points, 0.18 * ctx.scale, 0, function(c) return Util.lerpColor(c, WHITE, 0.6) end)
-    local outer = Tracers.core(rec, ctx, points, 0.7 * ctx.scale, 0.55, function(c) return c end)
+    local _, finish = Tracers.streak(rec, ctx, 0.08 * s, 0, Tracers.whiten(0.75), { hold = hold, bright = 3 })
+    local inner = Tracers.core(rec, ctx, points, 0.2 * s, 0.2, Tracers.whiten(0.4))
+    local outer = Tracers.core(rec, ctx, points, 0.75 * s, 0.55, Tracers.plain)
+    Tracers.reveal(rec, ctx, inner, 0.2)
+    Tracers.reveal(rec, ctx, outer, 0.55)
     local sparks = Tracers.perNode(rec, ctx, points, function(t)
         return {
             Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.08, 0.22), Speed = NumberRange.new(6, 14),
-            Size = Tracers.curve(0, 0.15 * ctx.scale, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(t)),
+            Size = Tracers.curve(0, 0.15 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(t)),
         }
     end)
     Tracers.sweep(rec, ctx, sparks, 6 * ctx.density)
@@ -4277,43 +4345,28 @@ Tracers.particle.Plasma = function(rec, ctx)
         local frame = math.floor(age / 0.05)
         if frame == step then return false end
         step = frame
-        local spread = age < settle and 0.45 * ctx.scale or 0
+        local spread = age < settle and 0.45 * s or 0
         for index = 2, #points - 1 do
             local offset = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * (2 * spread)
             points[index].WorldPosition = ctx.nodes[index] + offset
-            if spread > 0 and frame % 3 == 0 then Tracers.burst(sparks[index] or nil, 2 * ctx.density) end
+            if spread > 0 and frame % 3 == 0 and age >= ctx.travel * ctx.t[index] then Tracers.burst(sparks[index] or nil, 2 * ctx.density) end
         end
         return age >= settle
     end
-    local fadeAt = ctx.travel + math.max(ctx.keep, 1) - 0.4
-    Tracers.fadeOut(rec, inner, 0, fadeAt, 0.4)
-    Tracers.fadeOut(rec, outer, 0.55, fadeAt, 0.4)
+    Tracers.fadeOut(rec, inner, 0.2, ctx.travel + hold, 0.4)
+    Tracers.fadeOut(rec, outer, 0.55, ctx.travel + hold, 0.4)
     Tracers.impact(rec, ctx, {
-        { count = 1, props = { Lifetime = NumberRange.new(0.25, 0.3), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 3 * ctx.scale, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
-        { count = 16, props = { Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.1, 0.3), Speed = NumberRange.new(10, 22), Size = Tracers.curve(0, 0.2 * ctx.scale, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+        { count = 1, props = { Lifetime = NumberRange.new(0.25, 0.3), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 3 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+        { count = 16, props = { Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.1, 0.3), Speed = NumberRange.new(10, 22), Size = Tracers.curve(0, 0.2 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
     })
-    return math.max(ctx.keep, 1)
-end
-
-Tracers.particle.Stardust = function(rec, ctx)
-    local dust = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
-        local size = 0.3 * ctx.scale
-        return {
-            Lifetime = NumberRange.new(1.4, 2.4), Speed = NumberRange.new(0.3, 1.6), Drag = 3, RotSpeed = NumberRange.new(-90, 90),
-            Size = Tracers.curve(0, 0, 0.15, size, 0.35, size * 0.25, 0.55, size * 0.9, 0.8, size * 0.2, 1, 0),
-            Transparency = Tracers.curve(0, 0, 0.8, 0.2, 1, 1), Color = ColorSequence.new(ctx.colorAt(t), WHITE),
-        }
-    end)
-    Tracers.sweep(rec, ctx, dust, 7 * ctx.density)
-    Tracers.impact(rec, ctx, {
-        { count = 24, props = { Lifetime = NumberRange.new(1, 2), Speed = NumberRange.new(4, 10), Drag = 3, Size = Tracers.curve(0, 0.35 * ctx.scale, 0.5, 0.1 * ctx.scale, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
-    })
-    return 2.6
+    return finish
 end
 
 Tracers.particle["Smoke ribbon"] = function(rec, ctx)
+    local s, p = ctx.scale, ctx.psize
     local function soft(t) return Util.lerpColor(ctx.colorAt(t), WHITE, 0.3) end
-    local part, top, bottom = Tracers.runner(rec, ctx, 0.5 * ctx.scale)
+    Tracers.streak(rec, ctx, 0.07 * s, 0.15, Tracers.whiten(0.5), { hold = math.min(ctx.keep, 0.5), fade = 0.5 })
+    local part, top, bottom = Tracers.runner(rec, ctx, 0.5 * s)
     Tracers.make(rec, "Trail", {
         Attachment0 = top, Attachment1 = bottom, FaceCamera = true, Texture = SMOKE, TextureMode = Enum.TextureMode.Stretch, LightEmission = 0.2, LightInfluence = 0.5,
         Lifetime = ctx.keep, Color = ColorSequence.new(soft(1), soft(0)), Transparency = Tracers.curve(0, 0.35, 0.7, 0.6, 1, 1), WidthScale = NumberSequence.new(1, 3),
@@ -4321,120 +4374,206 @@ Tracers.particle["Smoke ribbon"] = function(rec, ctx)
     local puffs = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
         return {
             Texture = SMOKE, LightEmission = 0.15, LightInfluence = 0.6, Lifetime = NumberRange.new(1.4, 2.4), Speed = NumberRange.new(0.2, 0.6),
-            RotSpeed = NumberRange.new(-30, 30), Size = Tracers.curve(0, 0.5 * ctx.scale, 1, 2.6 * ctx.scale), Transparency = Tracers.curve(0, 0.55, 1, 1),
+            RotSpeed = NumberRange.new(-30, 30), Size = Tracers.curve(0, 0.5 * p, 1, 2.6 * p), Transparency = Tracers.curve(0, 0.55, 1, 1),
             Color = ColorSequence.new(soft(t)),
         }
     end)
     Tracers.sweep(rec, ctx, puffs, 2 * ctx.density)
     Tracers.impact(rec, ctx, {
-        { count = 6, props = { Texture = SMOKE, LightEmission = 0.15, LightInfluence = 0.6, Lifetime = NumberRange.new(1.2, 2), Speed = NumberRange.new(2, 5), Drag = 2, Size = Tracers.curve(0, 1 * ctx.scale, 1, 4 * ctx.scale), Transparency = Tracers.curve(0, 0.4, 1, 1), Color = ColorSequence.new(soft(1)) } },
-        { count = 8, props = { Lifetime = NumberRange.new(0.2, 0.5), Speed = NumberRange.new(6, 14), Size = Tracers.curve(0, 0.2 * ctx.scale, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+        { count = 6, props = { Texture = SMOKE, LightEmission = 0.15, LightInfluence = 0.6, Lifetime = NumberRange.new(1.2, 2), Speed = NumberRange.new(2, 5), Drag = 2, Size = Tracers.curve(0, 1 * p, 1, 4 * p), Transparency = Tracers.curve(0, 0.4, 1, 1), Color = ColorSequence.new(soft(1)) } },
+        { count = 8, props = { Lifetime = NumberRange.new(0.2, 0.5), Speed = NumberRange.new(6, 14), Size = Tracers.curve(0, 0.2 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
     })
     return math.max(ctx.keep, 2.4)
 end
 
-Tracers.particle["Spiral helix"] = function(rec, ctx)
-    local turns = math.clamp(math.floor(ctx.total / 10), 2, 6)
-    local steps, radius = turns * 3, 0.6 * ctx.scale
-    local function spot(u, phase)
-        local base, direction = Tracers.at(ctx, u)
-        local axis = math.abs(direction.Y) > 0.98 and Vector3.new(1, 0, 0) or Vector3.new(0, 1, 0)
-        local right = direction:Cross(axis).Unit
-        local up = right:Cross(direction).Unit
-        local angle = phase + u * turns * math.pi * 2
-        local taper = math.clamp(math.min(u, 1 - u) * ctx.total / 3, 0, 1)
-        return base + (right * math.cos(angle) + up * math.sin(angle)) * (radius * taper)
-    end
-    local strands, beams = {}, {}
-    for strand = 1, 2 do
-        local points, sparks = {}, {}
-        for index = 0, steps do points[index + 1] = Tracers.make(rec, "Attachment", {}) end
-        local tint = strand == 1 and ctx.colorAt or function(t) return Util.lerpColor(ctx.colorAt(1 - t), WHITE, 0.45) end
-        for index = 1, steps do
-            local u0, u1 = (index - 1) / steps, index / steps
-            local beam = Tracers.make(rec, "Beam", {
-                Attachment0 = points[index], Attachment1 = points[index + 1], FaceCamera = true, LightEmission = 1, LightInfluence = 0, Segments = 6,
-                Width0 = 0.12 * ctx.scale, Width1 = 0.12 * ctx.scale, Transparency = NumberSequence.new(0), Color = ColorSequence.new(tint(u0), tint(u1)),
-            })
-            propSet(beam, "Brightness", 2 * rec.bright)
-            beams[#beams + 1] = beam
-            rec.beams = rec.beams + 1
-            if index % 3 == 1 then
-                sparks[#sparks + 1] = Tracers.emitter(rec, points[index], {
-                    Lifetime = NumberRange.new(0.6, 1.2), Speed = NumberRange.new(0.2, 0.8), Drag = 2,
-                    Size = Tracers.curve(0, 0.2 * ctx.scale, 1, 0), Color = ColorSequence.new(WHITE, tint(u0)),
-                }) or nil
-            end
-        end
-        strands[strand] = { points = points, phase = (strand - 1) * math.pi, beams = beams, sparks = sparks }
-    end
-    local function layout(spin)
-        for _, strand in ipairs(strands) do
-            local spots = {}
-            for index = 0, steps do spots[index + 1] = spot(index / steps, strand.phase + spin) end
-            for index, point in ipairs(strand.points) do
-                point.WorldCFrame = Tracers.frame(spots[index], spots[math.min(index + 1, #spots)] - spots[math.max(index - 1, 1)])
-            end
-        end
-    end
-    layout(0)
-    for _, beam in ipairs(beams) do
-        local reach = (beam.Attachment1.WorldCFrame.Position - beam.Attachment0.WorldCFrame.Position).Magnitude / 3
-        beam.CurveSize0, beam.CurveSize1 = reach, -reach
-    end
-    local stop, puffAt = ctx.travel + ctx.keep, 0
-    rec.ticks[#rec.ticks + 1] = function(age)
-        layout(age * 5)
-        if age >= puffAt and age < stop - 0.5 then
-            puffAt = age + 0.25
-            for _, strand in ipairs(strands) do
-                for _, emitter in ipairs(strand.sparks) do Tracers.burst(emitter, 2 * ctx.density) end
-            end
-        end
-        return age >= stop
-    end
-    Tracers.fadeOut(rec, beams, 0, stop - 0.4, 0.4)
-    Tracers.impact(rec, ctx, {
-        { count = 20, props = { Lifetime = NumberRange.new(0.4, 0.9), Speed = NumberRange.new(6, 14), Drag = 3, Size = Tracers.curve(0, 0.3 * ctx.scale, 1, 0), Color = ColorSequence.new(ctx.colorAt(1), WHITE) } },
-    })
-    return ctx.keep + 0.4
-end
-
 Tracers.particle.Frost = function(rec, ctx)
-    local points = Tracers.nodePoints(rec, ctx)
-    local core = Tracers.core(rec, ctx, points, 0.1 * ctx.scale, 0.2, function(c) return Util.lerpColor(c, Tracers.ice, 0.6) end)
-    Tracers.fadeOut(rec, core, 0.2, ctx.travel + ctx.keep - 0.4, 0.4)
-    local crystals = Tracers.perNode(rec, ctx, points, function(t)
+    local s, p = ctx.scale, ctx.psize
+    local function icy(amount) return function(c) return Util.lerpColor(c, Tracers.ice, amount) end end
+    local _, finish = Tracers.streak(rec, ctx, 0.45 * s, 0.6, icy(0.4), { z = -0.05 })
+    Tracers.streak(rec, ctx, 0.1 * s, 0.05, icy(0.7), { bright = 2.5 })
+    local crystals = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
         return {
             Lifetime = NumberRange.new(1, 1.8), Speed = NumberRange.new(0.2, 1), Drag = 1.5, Acceleration = Vector3.new(0, -2.5, 0), RotSpeed = NumberRange.new(-20, 20),
-            Size = Tracers.curve(0, 0.22 * ctx.scale, 1, 0.05 * ctx.scale), Color = ColorSequence.new(Util.lerpColor(ctx.colorAt(t), Tracers.ice, 0.5), WHITE),
+            Size = Tracers.curve(0, 0.22 * p, 1, 0.05 * p), Color = ColorSequence.new(Util.lerpColor(ctx.colorAt(t), Tracers.ice, 0.5), WHITE),
         }
     end)
     Tracers.sweep(rec, ctx, crystals, 5 * ctx.density)
     Tracers.impact(rec, ctx, {
-        { count = 6, props = { Texture = SMOKE, LightEmission = 0.3, Lifetime = NumberRange.new(0.8, 1.4), Speed = NumberRange.new(1, 3), Drag = 1, Size = Tracers.curve(0, 1 * ctx.scale, 1, 4 * ctx.scale), Transparency = Tracers.curve(0, 0.4, 1, 1), Color = ColorSequence.new(Tracers.ice, WHITE) } },
-        { count = 16, props = { Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.4, 0.9), Speed = NumberRange.new(6, 14), Acceleration = Vector3.new(0, -20, 0), Size = Tracers.curve(0, 0.25 * ctx.scale, 1, 0), Color = ColorSequence.new(WHITE, Tracers.ice) } },
+        { count = 6, props = { Texture = SMOKE, LightEmission = 0.3, Lifetime = NumberRange.new(0.8, 1.4), Speed = NumberRange.new(1, 3), Drag = 1, Size = Tracers.curve(0, 1 * p, 1, 4 * p), Transparency = Tracers.curve(0, 0.4, 1, 1), Color = ColorSequence.new(Tracers.ice, WHITE) } },
+        { count = 16, props = { Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.4, 0.9), Speed = NumberRange.new(6, 14), Acceleration = Vector3.new(0, -20, 0), Size = Tracers.curve(0, 0.25 * p, 1, 0), Color = ColorSequence.new(WHITE, Tracers.ice) } },
     })
-    return math.max(ctx.keep, 1.8)
+    return math.max(finish, 1.8)
 end
 
-Tracers.particle["Rainbow sparks"] = function(rec, ctx)
-    local function spectrum(offset)
-        local keys = {}
-        for step = 0, 5 do keys[#keys + 1] = ColorSequenceKeypoint.new(step / 5, Color3.fromHSV((offset + step / 5) % 1, 0.9, 1)) end
-        return ColorSequence.new(keys)
-    end
-    local sparks = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
+Tracers.particle.Railgun = function(rec, ctx)
+    local s, p = ctx.scale, ctx.psize
+    local linger = { hold = ctx.keep, fade = 0.8 }
+    local _, finish = Tracers.streak(rec, ctx, 0.6 * s, 0.45, Tracers.plain, { hold = linger.hold, fade = linger.fade, z = -0.05 })
+    Tracers.streak(rec, ctx, 0.14 * s, 0, Tracers.whiten(0.75), { hold = linger.hold, fade = linger.fade, bright = 3 })
+    local rings = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
         return {
-            Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.35, 0.75), Speed = NumberRange.new(5, 12),
-            Acceleration = Vector3.new(0, -30, 0), Size = Tracers.curve(0, 0.2 * ctx.scale, 1, 0), Color = spectrum(t * 0.8),
+            Texture = Tracers.ring, EmissionDirection = Enum.NormalId.Right, SpreadAngle = Vector2.new(0, 0), Speed = NumberRange.new(0.6, 1.2), Drag = 1.5,
+            Orientation = Enum.ParticleOrientation.VelocityPerpendicular, Lifetime = NumberRange.new(0.9, 1.6), RotSpeed = NumberRange.new(90, 180),
+            Size = Tracers.curve(0, 0.3 * p, 0.3, 0.8 * p, 1, 1.1 * p), Transparency = Tracers.curve(0, 0.1, 1, 1),
+            Color = ColorSequence.new(Util.lerpColor(ctx.colorAt(t), WHITE, 0.4), ctx.colorAt(t)),
         }
     end)
-    Tracers.sweep(rec, ctx, sparks, 8 * ctx.density)
+    Tracers.sweep(rec, ctx, rings, 2 * ctx.density)
     Tracers.impact(rec, ctx, {
-        { count = 30, props = { Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.5, 1), Speed = NumberRange.new(10, 25), Acceleration = Vector3.new(0, -40, 0), Size = Tracers.curve(0, 0.3 * ctx.scale, 1, 0), Color = spectrum(0) } },
+        { count = 1, props = { Texture = Tracers.flare, Lifetime = NumberRange.new(0.2, 0.3), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 3.5 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+        { count = 3, props = { Texture = Tracers.ring, Lifetime = NumberRange.new(0.4, 0.7), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 0.4 * p, 1, 3 * p), Transparency = Tracers.curve(0, 0.1, 1, 1), Color = ColorSequence.new(ctx.colorAt(1)) } },
+        { count = 20, props = { Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.2, 0.5), Speed = NumberRange.new(12, 26), Drag = 3, Size = Tracers.curve(0, 0.2 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
     })
-    return 1.2
+    return math.max(finish, 1.8)
+end
+
+Tracers.particle.Laser = function(rec, ctx)
+    local s, p = ctx.scale, ctx.psize
+    ctx.travel = 0.03
+    local linger = { instant = true, hold = ctx.keep, fade = 0.25 }
+    local _, finish = Tracers.streak(rec, ctx, 0.24 * s, 0.82, Tracers.plain, { instant = true, hold = linger.hold, fade = linger.fade, z = -0.05 })
+    Tracers.streak(rec, ctx, 0.05 * s, 0, Tracers.plain, { instant = true, hold = linger.hold, fade = linger.fade, bright = 4 })
+    Tracers.streak(rec, ctx, 0.02 * s, 0, Tracers.whiten(0.85), { instant = true, hold = linger.hold, fade = linger.fade, bright = 4 })
+    local shimmer = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
+        return {
+            Texture = SMOKE, LightEmission = 0.4, Lifetime = NumberRange.new(0.6, 1.2), Speed = NumberRange.new(0.2, 0.6), Acceleration = Vector3.new(0, 1.5, 0),
+            RotSpeed = NumberRange.new(-40, 40), Size = Tracers.curve(0, 0.15 * p, 1, 0.6 * p), Transparency = Tracers.curve(0, 0.85, 1, 1),
+            Color = ColorSequence.new(Util.lerpColor(ctx.colorAt(t), WHITE, 0.5)),
+        }
+    end)
+    Tracers.sweep(rec, ctx, shimmer, 2 * ctx.density)
+    local again, stop = 0.35, ctx.travel + ctx.keep
+    rec.ticks[#rec.ticks + 1] = function(age)
+        if age >= again and age < stop then
+            again = age + 0.35
+            for _, emitter in ipairs(shimmer) do Tracers.burst(emitter or nil, ctx.density) end
+        end
+        return age >= stop
+    end
+    Tracers.impact(rec, ctx, {
+        { count = 1, props = { Texture = Tracers.flare, Lifetime = NumberRange.new(0.2, 0.3), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 1.6 * p, 1, 0.8 * p), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+        { count = 14, props = { Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.15, 0.4), Speed = NumberRange.new(8, 18), Acceleration = Vector3.new(0, -30, 0), Size = Tracers.curve(0, 0.15 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+    })
+    return math.max(finish, 1.2)
+end
+
+Tracers.particle["Ion bolt"] = function(rec, ctx)
+    local s, p = ctx.scale, ctx.psize
+    local stop = ctx.travel + ctx.keep
+    local points = Tracers.nodePoints(rec, ctx)
+    local _, finish = Tracers.streak(rec, ctx, 0.05 * s, 0.4, Tracers.whiten(0.5))
+    local bolt = Tracers.core(rec, ctx, points, 0.14 * s, 0, Tracers.whiten(0.5))
+    local halo = Tracers.core(rec, ctx, points, 0.5 * s, 0.6, Tracers.plain)
+    Tracers.reveal(rec, ctx, bolt, 0)
+    Tracers.reveal(rec, ctx, halo, 0.6)
+    local sparks = Tracers.perNode(rec, ctx, points, function(t)
+        return {
+            Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.08, 0.25), Speed = NumberRange.new(8, 16),
+            Size = Tracers.curve(0, 0.14 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(t)),
+        }
+    end)
+    Tracers.sweep(rec, ctx, sparks, 4 * ctx.density)
+    local flicker = {}
+    for index = 2, #points - 1, 3 do
+        local emitter = Tracers.emitter(rec, points[index], {
+            Texture = Tracers.bolt, Lifetime = NumberRange.new(0.06, 0.14), Speed = NumberRange.new(0, 0),
+            Size = Tracers.curve(0, 1.1 * p, 1, 0.5 * p), Color = ColorSequence.new(WHITE, ctx.colorAt(ctx.t[index])),
+        })
+        if emitter then flicker[#flicker + 1] = { emitter = emitter, at = ctx.travel * ctx.t[index] } end
+    end
+    local step = -1
+    rec.ticks[#rec.ticks + 1] = function(age)
+        local frame = math.floor(age / 0.06)
+        if frame == step then return false end
+        step = frame
+        for index = 2, #points - 1 do
+            local offset = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * (1.2 * s)
+            points[index].WorldPosition = ctx.nodes[index] + offset
+        end
+        if frame % 2 == 0 then
+            for _, item in ipairs(flicker) do
+                if age >= item.at then Tracers.burst(item.emitter, 1) end
+            end
+        end
+        return age >= stop
+    end
+    Tracers.fadeOut(rec, bolt, 0, stop, 0.4)
+    Tracers.fadeOut(rec, halo, 0.6, stop, 0.4)
+    Tracers.impact(rec, ctx, {
+        { count = 3, props = { Texture = Tracers.bolt, Lifetime = NumberRange.new(0.1, 0.25), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 1.8 * p, 1, 0.6 * p), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+        { count = 18, props = { Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.1, 0.3), Speed = NumberRange.new(10, 22), Size = Tracers.curve(0, 0.16 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+    })
+    return math.max(ctx.keep + 0.4, finish)
+end
+
+Tracers.particle["Tracer round"] = function(rec, ctx)
+    local s, p = ctx.scale, ctx.psize
+    local hot = Util.lerpColor(ctx.color, Color3.fromRGB(255, 190, 90), 0.35)
+    local haze = math.min(ctx.keep, 2.5)
+    local _, finish = Tracers.streak(rec, ctx, 0.06 * s, 0.55, Tracers.whiten(0.3), { hold = math.min(ctx.keep, 0.25), fade = 0.35 })
+    local part, top, bottom = Tracers.runner(rec, ctx, 0.16 * s)
+    local slug = Tracers.make(rec, "Trail", {
+        Attachment0 = top, Attachment1 = bottom, FaceCamera = true, LightEmission = 1, LightInfluence = 0, Lifetime = math.clamp(ctx.travel * 0.12, 0.03, 0.08),
+        Color = ColorSequence.new(WHITE, hot), Transparency = NumberSequence.new(0, 0.6), WidthScale = NumberSequence.new(1, 0.4),
+    }, part)
+    propSet(slug, "Brightness", 3 * rec.bright)
+    Tracers.make(rec, "Trail", {
+        Attachment0 = top, Attachment1 = bottom, FaceCamera = true, Texture = SMOKE, TextureMode = Enum.TextureMode.Stretch, LightEmission = 0.1, LightInfluence = 0.7,
+        Lifetime = haze, Color = ColorSequence.new(Util.lerpColor(ctx.colorAt(0), Color3.fromRGB(150, 150, 150), 0.75)),
+        Transparency = Tracers.curve(0, 0.75, 1, 1), WidthScale = NumberSequence.new(0.6, 2.5),
+    }, part)
+    Tracers.make(rec, "PointLight", { Color = hot, Brightness = 2 * rec.bright, Range = 6 }, part)
+    local shed = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function()
+        return {
+            Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.1, 0.25), Speed = NumberRange.new(2, 6), Drag = 3,
+            Size = Tracers.curve(0, 0.08 * p, 1, 0), Color = ColorSequence.new(WHITE, hot),
+        }
+    end)
+    Tracers.sweep(rec, ctx, shed, 1.5 * ctx.density)
+    Tracers.impact(rec, ctx, {
+        { count = 14, props = { Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.15, 0.4), Speed = NumberRange.new(8, 18), Acceleration = Vector3.new(0, -40, 0), Size = Tracers.curve(0, 0.14 * p, 1, 0), Color = ColorSequence.new(WHITE, hot) } },
+        { count = 4, props = { Texture = SMOKE, LightEmission = 0, LightInfluence = 1, Lifetime = NumberRange.new(0.8, 1.4), Speed = NumberRange.new(1, 3), Drag = 2, Size = Tracers.curve(0, 0.4 * p, 1, 1.8 * p), Transparency = Tracers.curve(0, 0.55, 1, 1), Color = ColorSequence.new(Color3.fromRGB(170, 165, 155)) } },
+    })
+    return math.max(finish, haze, 1)
+end
+
+Tracers.particle["Neon streak"] = function(rec, ctx)
+    local s, p = ctx.scale, ctx.psize
+    local _, finish = Tracers.streak(rec, ctx, 1.4 * s, 0.82, Tracers.plain, { fade = 0.9, z = -0.1 })
+    Tracers.streak(rec, ctx, 0.6 * s, 0.35, Tracers.plain, { fade = 0.9, z = -0.05 })
+    Tracers.streak(rec, ctx, 0.22 * s, 0, Tracers.whiten(0.55), { fade = 0.9, bright = 3 })
+    local motes = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
+        return {
+            Texture = Tracers.flare, Lifetime = NumberRange.new(0.4, 0.8), Speed = NumberRange.new(0.2, 0.8), Drag = 2,
+            Size = Tracers.curve(0, 0.5 * p, 1, 0), Transparency = Tracers.curve(0, 0.4, 1, 1), Color = ColorSequence.new(ctx.colorAt(t)),
+        }
+    end)
+    Tracers.sweep(rec, ctx, motes, 2 * ctx.density)
+    Tracers.impact(rec, ctx, {
+        { count = 1, props = { Texture = Tracers.flare, Lifetime = NumberRange.new(0.25, 0.35), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 3 * p, 1, 0), Transparency = Tracers.curve(0, 0.2, 1, 1), Color = ColorSequence.new(ctx.colorAt(1)) } },
+        { count = 12, props = { Lifetime = NumberRange.new(0.3, 0.6), Speed = NumberRange.new(6, 14), Drag = 4, Size = Tracers.curve(0, 0.3 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(1)) } },
+    })
+    return finish
+end
+
+Tracers.particle.Void = function(rec, ctx)
+    local s, p = ctx.scale, ctx.psize
+    local purple = Color3.fromRGB(150, 60, 255)
+    local function edge(c) return Util.lerpColor(c, purple, 0.6) end
+    local _, finish = Tracers.streak(rec, ctx, 0.7 * s, 0.55, edge, { fade = 0.6, z = -0.05 })
+    Tracers.streak(rec, ctx, 0.3 * s, 0, function(c) return Util.lerpColor(c, BLACK, 0.92) end, { fade = 0.6, emission = 0, bright = 1 })
+    local wisps = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
+        return {
+            Lifetime = NumberRange.new(0.6, 1.2), Speed = NumberRange.new(0.8, 2), Drag = 2, RotSpeed = NumberRange.new(-90, 90),
+            Size = Tracers.curve(0, 0.25 * p, 1, 0), Color = ColorSequence.new(edge(ctx.colorAt(t)), Util.lerpColor(purple, BLACK, 0.6)),
+        }
+    end)
+    Tracers.sweep(rec, ctx, wisps, 4 * ctx.density)
+    Tracers.impact(rec, ctx, {
+        { count = 3, props = { Texture = SMOKE, LightEmission = 0, LightInfluence = 0, Lifetime = NumberRange.new(0.4, 0.6), Speed = NumberRange.new(0, 0.5), Size = Tracers.curve(0, 2.5 * p, 1, 0), Transparency = Tracers.curve(0, 0.2, 1, 1), Color = ColorSequence.new(Util.lerpColor(purple, BLACK, 0.85)) } },
+        { count = 16, props = { Lifetime = NumberRange.new(0.3, 0.7), Speed = NumberRange.new(6, 14), Drag = 4, Size = Tracers.curve(0, 0.25 * p, 1, 0), Color = ColorSequence.new(WHITE, edge(ctx.colorAt(1))) } },
+    })
+    return math.max(finish, 1.4)
 end
 
 Util.onUnload(function()
@@ -4446,7 +4585,8 @@ end)
 
 local Impacts = {
     list = {}, cap = 30, build = {},
-    names = { "Spark burst", "Dust puff", "Glow ring", "Neon crater", "Electric arc", "Ember splash", "Ice shatter", "Portal ripple", "Hologram marker", "Ink splat" },
+    names = { "Spark burst", "Dust puff", "Glow ring", "Neon crater", "Electric arc", "Ember splash", "Ice shatter", "Portal ripple", "Hologram marker", "Ink splat",
+        "Shock decal", "Plasma scorch", "Gold coins", "Pixel shatter", "Lightning strike", "Smoke column", "Neon splash" },
     ring = "rbxassetid://5857851812", bolt = "rbxassetid://5833323391", shard = "rbxassetid://6772766413", dust = "rbxassetid://14302399641",
     heart = "rbxassetid://5857851618", flare = "rbxassetid://8983307836",
 }
@@ -4835,6 +4975,210 @@ Impacts.build["Ink splat"] = function(rec, ctx)
     Impacts.emit(rec, ctx, 14, Impacts.spray(60, {
         LightEmission = 0, LightInfluence = 1, Lifetime = NumberRange.new(0.3, 0.6), Speed = NumberRange.new(6 * s, 12 * s), Acceleration = Vector3.new(0, -50, 0),
         Size = Tracers.curve(0, 0.15 * s, 1, 0.05 * s), Transparency = Tracers.curve(0, a, 1, 1), Color = ColorSequence.new(ink),
+    }))
+    return ctx.life
+end
+
+function Impacts.toss(rec, ctx, items, gravity)
+    rec.ticks[#rec.ticks + 1] = function(age)
+        local k = math.clamp((age - ctx.life * 0.7) / (ctx.life * 0.3), 0, 1)
+        for _, item in ipairs(items) do
+            local t = math.min(age, item.land)
+            local y = math.max(item.v.Y * t - 0.5 * gravity * t * t, item.floor)
+            item.object.CFrame = CFrame.new(item.v.X * t, y, item.v.Z * t) * CFrame.Angles(t * item.spin, t * item.spin * 0.6, 0)
+            item.object.Transparency = item.alpha + (1 - item.alpha) * k
+        end
+        return age >= ctx.life
+    end
+end
+
+function Impacts.flight(spread, rise, gravity, s)
+    local angle, out = math.random() * math.pi * 2, (spread[1] + math.random() * (spread[2] - spread[1])) * s
+    local up = (rise[1] + math.random() * (rise[2] - rise[1])) * s
+    return Vector3.new(math.cos(angle) * out, up, math.sin(angle) * out), 2 * up / gravity
+end
+
+Impacts.build["Shock decal"] = function(rec, ctx)
+    local s, a = ctx.size, ctx.alpha
+    local darkAlpha = math.max(a, 0.2)
+    local dark = Impacts.disc(rec, 0.35 * s, Util.lerpColor(ctx.color, BLACK, 0.8), darkAlpha, nil, 0.02)
+    local ring = Impacts.disc(rec, 0.9 * s, ctx.color, a, 0.78 * s, 0.03)
+    local list, cracks = { { dark, darkAlpha }, { ring, a } }, {}
+    for index = 1, 7 do
+        local crack = Impacts.adorn(rec, "BoxHandleAdornment", { Size = Vector3.new(0.04 * s, 0.02, 0.05), Color3 = Util.lerpColor(ctx.color, WHITE, 0.4), Transparency = a })
+        cracks[index] = { crack, index / 7 * math.pi * 2 + (math.random() - 0.5) * 0.5, (0.7 + math.random() * 0.9) * s }
+        list[#list + 1] = { crack, a }
+    end
+    rec.ticks[#rec.ticks + 1] = function(age)
+        local grow = 1 - (1 - math.clamp(age / 0.1, 0, 1)) ^ 2
+        for _, item in ipairs(cracks) do
+            local length = math.max(item[3] * grow, 0.05)
+            item[1].Size = Vector3.new(0.04 * s, 0.02, length)
+            item[1].CFrame = CFrame.Angles(0, item[2], 0) * CFrame.new(0, 0.03, -length / 2)
+        end
+        return grow >= 1
+    end
+    Impacts.fade(rec, list, ctx.life * 0.6, ctx.life * 0.4)
+    Impacts.emit(rec, ctx, 1, { Texture = Impacts.bolt, Lifetime = NumberRange.new(0.1, 0.2), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 1.4 * s, 1, 0.4 * s), Color = ColorSequence.new(WHITE, ctx.color) })
+    Impacts.emit(rec, ctx, 10, Impacts.spray(75, {
+        Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.15, 0.35), Speed = NumberRange.new(8 * s, 16 * s), Drag = 2,
+        Size = Tracers.curve(0, 0.12 * s, 1, 0), Color = ColorSequence.new(WHITE, ctx.color),
+    }))
+    return ctx.life
+end
+
+Impacts.build["Plasma scorch"] = function(rec, ctx)
+    local s, a = ctx.size, ctx.alpha
+    local hot, ember = Util.lerpColor(ctx.color, WHITE, 0.4), Color3.fromRGB(120, 30, 10)
+    local scorchAlpha = math.max(a, 0.25)
+    local scorch = Impacts.disc(rec, 0.8 * s, Util.lerpColor(ctx.color, BLACK, 0.9), scorchAlpha, nil, 0.02)
+    local rim = Impacts.disc(rec, 0.55 * s, hot, a, 0.4 * s, 0.03)
+    local light = Tracers.make(rec, "PointLight", { Color = ctx.color, Brightness = 3, Range = 7 * s })
+    rec.ticks[#rec.ticks + 1] = function(age)
+        local k = math.clamp(age / ctx.life, 0, 1)
+        rim.Color3 = Util.lerpColor(hot, ember, math.min(k * 1.5, 1))
+        rim.Transparency = a + (1 - a) * k
+        scorch.Transparency = scorchAlpha + (1 - scorchAlpha) * math.clamp((k - 0.6) / 0.4, 0, 1)
+        light.Brightness = 3 * (1 - k)
+        return k >= 1
+    end
+    Impacts.emit(rec, ctx, 6, Impacts.spray(25, {
+        Texture = Tracers.fire, Lifetime = NumberRange.new(0.4, 0.8), Speed = NumberRange.new(1 * s, 3 * s), Acceleration = Vector3.new(0, 4, 0),
+        Size = Tracers.curve(0, 0.8 * s, 1, 0), Transparency = Tracers.curve(0, 0.2, 1, 1), Color = ColorSequence.new(hot, ctx.color),
+    }))
+    Impacts.emit(rec, ctx, 10, Impacts.spray(60, {
+        Lifetime = NumberRange.new(0.3, 0.7), Speed = NumberRange.new(5 * s, 11 * s), Drag = 2, Acceleration = Vector3.new(0, -20, 0),
+        Size = Tracers.curve(0, 0.14 * s, 1, 0), Color = ColorSequence.new(WHITE, ctx.color),
+    }))
+    return ctx.life
+end
+
+Impacts.build["Gold coins"] = function(rec, ctx)
+    local s, a = ctx.size, ctx.alpha
+    local gold = Util.lerpColor(Color3.fromRGB(255, 200, 50), ctx.color, 0.15)
+    local gravity, coins = 30 * s, {}
+    for index = 1, 8 do
+        local v, land = Impacts.flight({ 2, 5 }, { 7, 12 }, gravity, s)
+        local coin = Impacts.adorn(rec, "CylinderHandleAdornment", { Radius = 0.16 * s, Height = 0.04 * s, Color3 = Util.lerpColor(gold, WHITE, math.random() * 0.3), Transparency = a })
+        coins[index] = { object = coin, v = v, land = land, floor = 0.05, spin = 6 + math.random() * 10, alpha = a }
+    end
+    Impacts.toss(rec, ctx, coins, gravity)
+    Impacts.emit(rec, ctx, 12, Impacts.spray(60, {
+        Texture = SPARK, Lifetime = NumberRange.new(0.4, 0.9), Speed = NumberRange.new(3 * s, 8 * s), Drag = 2,
+        Size = Tracers.curve(0, 0.3 * s, 1, 0), Color = ColorSequence.new(WHITE, gold),
+    }))
+    return ctx.life
+end
+
+Impacts.build["Pixel shatter"] = function(rec, ctx)
+    local s, a = ctx.size, ctx.alpha
+    local gravity, cubes = 40 * s, {}
+    for index = 1, 12 do
+        local v, land = Impacts.flight({ 3, 7 }, { 3, 8 }, gravity, s)
+        local shade = index % 3 == 0 and Util.lerpColor(ctx.color, WHITE, 0.5) or (index % 3 == 1 and ctx.color or Util.lerpColor(ctx.color, BLACK, 0.35))
+        local size = (0.12 + math.random() * 0.1) * s
+        local cube = Impacts.adorn(rec, "BoxHandleAdornment", { Size = Vector3.new(size, size, size), Color3 = shade, Transparency = a })
+        cubes[index] = { object = cube, v = v, land = land, floor = size / 2, spin = 4 + math.random() * 8, alpha = a }
+    end
+    Impacts.toss(rec, ctx, cubes, gravity)
+    Impacts.emit(rec, ctx, 1, { Lifetime = NumberRange.new(0.08, 0.12), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 1.2 * s, 1, 0), Color = ColorSequence.new(WHITE, ctx.color) })
+    return ctx.life
+end
+
+Impacts.build["Lightning strike"] = function(rec, ctx)
+    local s, a = ctx.size, ctx.alpha
+    local top, glowAlpha = rec.pos + Vector3.new(0, 14 * s, 0), math.max(a, 0.6)
+    local points, bolts, glows = {}, {}, {}
+    for index = 1, 7 do points[index] = Tracers.make(rec, "Attachment", {}) end
+    for index = 1, 6 do
+        bolts[index] = Tracers.make(rec, "Beam", {
+            Attachment0 = points[index], Attachment1 = points[index + 1], FaceCamera = true, LightEmission = 1, LightInfluence = 0, Segments = 1,
+            Width0 = 0.18 * s, Width1 = 0.12 * s, Color = ColorSequence.new(WHITE, Util.lerpColor(ctx.color, WHITE, 0.4)), Transparency = NumberSequence.new(a),
+        })
+        glows[index] = Tracers.make(rec, "Beam", {
+            Attachment0 = points[index], Attachment1 = points[index + 1], FaceCamera = true, LightEmission = 1, LightInfluence = 0, Segments = 1,
+            Width0 = 0.8 * s, Width1 = 0.6 * s, Color = ColorSequence.new(ctx.color), Transparency = NumberSequence.new(glowAlpha),
+        })
+    end
+    local function layout()
+        for index, point in ipairs(points) do
+            local jitter = (index == 1 or index == #points) and Vector3.zero or Vector3.new(math.random() - 0.5, 0, math.random() - 0.5) * (1.6 * s)
+            point.WorldCFrame = CFrame.new(top + (rec.pos - top) * ((index - 1) / (#points - 1)) + jitter)
+        end
+    end
+    layout()
+    local light = Tracers.make(rec, "PointLight", { Color = Util.lerpColor(ctx.color, WHITE, 0.5), Brightness = 6, Range = 14 * s })
+    local stop, step = math.min(ctx.life, 0.5), 0
+    rec.ticks[#rec.ticks + 1] = function(age)
+        local frame = math.floor(age / 0.05)
+        if frame ~= step then
+            step = frame
+            layout()
+        end
+        local k = math.clamp(age / stop, 0, 1)
+        local flicker = frame % 2 == 0 and 0 or 0.25
+        local core, glow = NumberSequence.new(math.min(1, a + (1 - a) * k + flicker)), NumberSequence.new(glowAlpha + (1 - glowAlpha) * k)
+        for index = 1, #bolts do bolts[index].Transparency, glows[index].Transparency = core, glow end
+        light.Brightness = 6 * (1 - k)
+        return k >= 1
+    end
+    Impacts.emit(rec, ctx, 2, { Texture = Impacts.bolt, Lifetime = NumberRange.new(0.1, 0.25), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 2 * s, 1, 0.6 * s), Color = ColorSequence.new(WHITE, ctx.color) })
+    Impacts.emit(rec, ctx, 18, Impacts.spray(70, {
+        Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.2, 0.5), Speed = NumberRange.new(10 * s, 22 * s), Acceleration = Vector3.new(0, -40, 0),
+        Size = Tracers.curve(0, 0.14 * s, 1, 0), Color = ColorSequence.new(WHITE, ctx.color),
+    }))
+    Impacts.emit(rec, ctx, 4, Impacts.spray(80, {
+        Texture = SMOKE, LightEmission = 0, LightInfluence = 1, Lifetime = NumberRange.new(0.6, 1.2), Speed = NumberRange.new(2 * s, 4 * s), Drag = 2,
+        Size = Tracers.curve(0, 0.6 * s, 1, 2.4 * s), Transparency = Tracers.curve(0, 0.5, 1, 1), Color = ColorSequence.new(Color3.fromRGB(150, 150, 160)),
+    }))
+    return math.max(stop + 0.3, 0.8)
+end
+
+Impacts.build["Smoke column"] = function(rec, ctx)
+    local s = ctx.size
+    local tint = Util.lerpColor(ctx.color, Color3.fromRGB(120, 120, 125), 0.7)
+    local plume = Tracers.emitter(rec, rec.holder, {
+        Texture = SMOKE, LightEmission = 0, LightInfluence = 1, EmissionDirection = Enum.NormalId.Top, SpreadAngle = Vector2.new(12, 12),
+        Lifetime = NumberRange.new(1.6, 2.4), Speed = NumberRange.new(3 * s, 5 * s), Acceleration = Vector3.new(0, 3 * s, 0), Drag = 0.6,
+        RotSpeed = NumberRange.new(-25, 25), Size = Tracers.curve(0, 0.6 * s, 1, 3 * s), Transparency = Tracers.curve(0, math.max(0.4, ctx.alpha), 0.6, 0.7, 1, 1),
+        Color = ColorSequence.new(tint),
+    })
+    local again, stop = 0, ctx.life * 0.6
+    rec.ticks[#rec.ticks + 1] = function(age)
+        if age >= again and age < stop then
+            again = age + 0.12
+            Tracers.burst(plume, 2 * ctx.density)
+        end
+        return age >= stop
+    end
+    Impacts.emit(rec, ctx, 6, Impacts.spray(85, {
+        Texture = SMOKE, LightEmission = 0, LightInfluence = 1, Lifetime = NumberRange.new(0.6, 1.2), Speed = NumberRange.new(2 * s, 4 * s), Drag = 3,
+        Size = Tracers.curve(0, 0.4 * s, 1, 1.8 * s), Transparency = Tracers.curve(0, 0.5, 1, 1), Color = ColorSequence.new(tint),
+    }))
+    return stop + 2.4
+end
+
+Impacts.build["Neon splash"] = function(rec, ctx)
+    local s, a = ctx.size, ctx.alpha
+    local glowAlpha = math.max(a, 0.35)
+    local puddle = Impacts.disc(rec, 0.1, ctx.color, glowAlpha, nil, 0.02)
+    local ring = Impacts.disc(rec, 0.1, Util.lerpColor(ctx.color, WHITE, 0.5), a, 0.08, 0.03)
+    rec.ticks[#rec.ticks + 1] = function(age)
+        local grow = 1 - (1 - math.clamp(age / 0.15, 0, 1)) ^ 2
+        local wave = math.clamp(age / (ctx.life * 0.5), 0, 1)
+        local k = math.clamp((age - ctx.life * 0.6) / (ctx.life * 0.4), 0, 1)
+        puddle.Radius = math.max(0.1, 0.9 * s * grow)
+        puddle.Transparency = glowAlpha + (1 - glowAlpha) * k
+        local radius = 0.1 + 1.8 * s * (1 - (1 - wave) ^ 2)
+        ring.Radius = radius
+        propSet(ring, "InnerRadius", radius * 0.85)
+        ring.Transparency = a + (1 - a) * wave
+        return age >= ctx.life
+    end
+    Impacts.emit(rec, ctx, 1, { Texture = Impacts.flare, Lifetime = NumberRange.new(0.15, 0.25), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 1.8 * s, 1, 0), Color = ColorSequence.new(WHITE, ctx.color) })
+    Impacts.emit(rec, ctx, 20, Impacts.spray(35, {
+        Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.3, 0.7), Speed = NumberRange.new(8 * s, 14 * s), Acceleration = Vector3.new(0, -40, 0),
+        Size = Tracers.curve(0, 0.16 * s, 1, 0.05 * s), Color = ColorSequence.new(Util.lerpColor(ctx.color, WHITE, 0.4), ctx.color),
     }))
     return ctx.life
 end
@@ -5340,39 +5684,390 @@ local HIT_SOUNDS = {
     ["Xbox Achievement"] = "rbxassetid://114852766717197",
     ["Among Us Kill"] = "rbxassetid://5700183626",
     ["ULTRAKILL Coin"] = "rbxassetid://136124980150792",
+    ["Headshot Ding"] = "rbxassetid://118799613600209",
+    ["Headshot Ding (short)"] = "rbxassetid://137096881472307",
+    ["Apex Shield Break"] = "rbxassetid://110698656704091",
+    ["Fortnite Shield Crack"] = "rbxassetid://140073271098075",
+    ["Fortnite Headshot"] = "rbxassetid://2513174484",
+    ["Rust Headshot"] = "rbxassetid://4764109000",
+    ["TF2 Default"] = "rbxassetid://3455144981",
+    ["TF2 Note"] = "rbxassetid://3466988045",
+    ["TF2 Beepo"] = "rbxassetid://3466987025",
+    ["TF2 Retro"] = "rbxassetid://3466984142",
+    ["Quake 3"] = "rbxassetid://18518730335",
+    ["Quake (alt)"] = "rbxassetid://4868633804",
+    ["Halo Plasma Hit"] = "rbxassetid://128012593895616",
+    ["Halo Shield Pop"] = "rbxassetid://86717349989793",
+    ["Bubble Pop (soft)"] = "rbxassetid://132948338000932",
+    ["Roblox Bubble"] = "rbxassetid://17208204604",
+    ["Soft Click"] = "rbxassetid://16480568821",
+    ["8-Bit Blip"] = "rbxassetid://16480580213",
+    ["Synth Blip"] = "rbxassetid://9125397583",
+    ["8-Bit Hit"] = "rbxassetid://109598434966968",
+    ["Katana Slash"] = "rbxassetid://140180249061198",
+    ["Anime Slice"] = "rbxassetid://81776525964742",
+    ["Punch"] = "rbxassetid://109316755832781",
+    ["Glass Tink"] = "rbxassetid://9114618736",
+    ["Water Drop"] = "rbxassetid://403292408",
+    ["Minecraft Bow Ding"] = "rbxassetid://135478009117226",
+    ["XP Orb Hit"] = "rbxassetid://15181891182",
+    ["MW Hitmarker"] = "rbxassetid://138832207290954",
+    ["Quake Hitmarker"] = "rbxassetid://1455817260",
+    ["L4D2 Ding"] = "rbxassetid://97641752127312",
+    ["Case Tick"] = "rbxassetid://134329097481839",
+    ["Valorant Prime"] = "rbxassetid://18329331565",
+    ["Valorant Reaver"] = "rbxassetid://18339080128",
+    ["Apex Knock"] = "rbxassetid://93205253060872",
+    ["Apex Kill"] = "rbxassetid://121098554975978",
+    ["Fortnite Elim"] = "rbxassetid://4578268588",
+    ["Quake Impressive"] = "rbxassetid://119653725017052",
+    ["UT Excellent"] = "rbxassetid://109636227907658",
+    ["UT Headshot"] = "rbxassetid://117061855740552",
+    ["Halo Infinite Kill"] = "rbxassetid://18921249379",
+    ["TF2 Domination"] = "rbxassetid://3759232123",
+    ["TF2 Kill"] = "rbxassetid://124543461907751",
+    ["Minecraft Orb"] = "rbxassetid://118671160608385",
+    ["Minecraft Level Up"] = "rbxassetid://6647877129",
+    ["Minecraft Hurt"] = "rbxassetid://535690488",
+    ["8-Bit Explosion"] = "rbxassetid://298553078",
+    ["Retro Pop Explosion"] = "rbxassetid://89770340622391",
+    ["8-Bit Death"] = "rbxassetid://120320778004569",
+    ["Sword Slash"] = "rbxassetid://140277245983305",
+    ["MLG Airhorn"] = "rbxassetid://678089961",
+    ["Record Scratch"] = "rbxassetid://9118086936",
+    ["Bruh"] = "rbxassetid://140007222940724",
+    ["Oof (Official)"] = "rbxassetid://79348298352567",
+    ["Ka-ching"] = "rbxassetid://7112275565",
+    ["Coins Ka-ching"] = "rbxassetid://1210852193",
+    ["Gong"] = "rbxassetid://17798541626",
+    ["Cute Gong"] = "rbxassetid://124380386119700",
+    ["Warzone Elim"] = "rbxassetid://76988259513359",
+    ["Overwatch 2 Kill"] = "rbxassetid://79327164938465",
+    ["Killer7 Crit"] = "rbxassetid://72735383475864",
 }
-local HIT_SOUND_ORDER = { "Gamesense", "CSGO", "Click", "Hitmarker", "Minecraft", "Neverlose", "Rust", "TF2", "Windows", "Alt Hitmarker", "Alt Killshot", "Alt Headshot kill", "Skeet (alt, clean)", "Fatality", "Bameware", "Bubble Pop", "Metal Tick", "Bell", "CoD Hitmarker", "Minecraft XP", "Laser Zap", "Glass", "Bass Hit", "osu!", "Electronic Ping", "Crowbar", "Custom" }
-local KILL_SOUND_ORDER = { "Gamesense", "CSGO", "Click", "Hitmarker", "Minecraft", "Neverlose", "Rust", "TF2", "Windows", "Alt Hitmarker", "Alt Killshot", "Alt Headshot kill", "Kill Confirm (Warzone)", "Overwatch Elimination", "Level Up", "Celeste Level Up", "Orchestral Hit", "Vine Boom", "Mario Coin", "Roblox Coin", "Roblox UI Stinger", "Classic Victory", "Steam Achievement", "Xbox Achievement", "Among Us Kill", "ULTRAKILL Coin", "Custom" }
+local HIT_SOUND_ORDER = { "Gamesense", "CSGO", "Click", "Hitmarker", "Minecraft", "Neverlose", "Rust", "TF2", "Windows", "Alt Hitmarker", "Alt Killshot", "Alt Headshot kill", "Skeet (alt, clean)", "Fatality", "Bameware", "Bubble Pop", "Metal Tick", "Bell", "CoD Hitmarker", "Minecraft XP", "Laser Zap", "Glass", "Bass Hit", "osu!", "Electronic Ping", "Crowbar",
+    "Headshot Ding", "Headshot Ding (short)", "Apex Shield Break", "Fortnite Shield Crack", "Fortnite Headshot", "Rust Headshot", "TF2 Default", "TF2 Note", "TF2 Beepo", "TF2 Retro", "Quake 3", "Quake (alt)", "Halo Plasma Hit", "Halo Shield Pop", "Bubble Pop (soft)", "Roblox Bubble",
+    "Soft Click", "8-Bit Blip", "Synth Blip", "8-Bit Hit", "Katana Slash", "Anime Slice", "Punch", "Glass Tink", "Water Drop", "Minecraft Bow Ding", "XP Orb Hit", "MW Hitmarker", "Quake Hitmarker", "L4D2 Ding", "Case Tick", "Custom" }
+local KILL_SOUND_ORDER = { "Gamesense", "CSGO", "Click", "Hitmarker", "Minecraft", "Neverlose", "Rust", "TF2", "Windows", "Alt Hitmarker", "Alt Killshot", "Alt Headshot kill", "Kill Confirm (Warzone)", "Overwatch Elimination", "Level Up", "Celeste Level Up", "Orchestral Hit", "Vine Boom", "Mario Coin", "Roblox Coin", "Roblox UI Stinger", "Classic Victory", "Steam Achievement", "Xbox Achievement", "Among Us Kill", "ULTRAKILL Coin",
+    "Valorant Prime", "Valorant Reaver", "Apex Knock", "Apex Kill", "Fortnite Elim", "Quake Impressive", "UT Excellent", "UT Headshot", "Halo Infinite Kill", "TF2 Domination", "TF2 Kill", "Minecraft Orb", "Minecraft Level Up", "Minecraft Hurt", "8-Bit Explosion",
+    "Retro Pop Explosion", "8-Bit Death", "Sword Slash", "MLG Airhorn", "Record Scratch", "Bruh", "Oof (Official)", "Ka-ching", "Coins Ka-ching", "Gong", "Cute Gong", "Warzone Elim", "Overwatch 2 Kill", "Killer7 Crit", "Custom" }
 
-function Feedback.play(name, volume, pitch, customFlag)
+local STREAK_SETS = {
+    ["Valorant"] = { [1] = "7968068093", [2] = "7968069420", [3] = "7968071357", [4] = "7968072764", [5] = "7968074794" },
+    ["Dota 2"] = { [1] = "140397943730865", [2] = "118926358887065", [3] = "140467520845555", [4] = "106862934557764", [5] = "101642576209921", [6] = "76056711922637", [7] = "82677534875089", [8] = "125621554040822", [9] = "80101615094724", [10] = "98999628638541", [11] = "109593039762499" },
+    ["DotA Killstreak"] = { [1] = "93254093525275", [2] = "116907610084760", [3] = "110678298850636", [4] = "92723765069002", [5] = "125662494668382", [6] = "77212563363943", [7] = "111246371044303" },
+    ["Unreal Tournament Multi-kill"] = { [2] = "937894293", [3] = "937890819", [4] = "937895810", [5] = "938073601", [6] = "938076502", [7] = "938072543" },
+    ["Unreal Tournament 1-5"] = { [1] = "109636227907658", [2] = "937894293", [3] = "6410923021", [4] = "937890819", [5] = "938076502" },
+    ["Kill Announcer 1-8"] = { [1] = "6042277821", [2] = "6042278260", [3] = "6042278776", [4] = "6042279307", [5] = "6042279740", [6] = "6042280097", [7] = "6042280481", [8] = "6042280887" },
+    ["Unreal Tournament Spree"] = { [5] = "937898383", [10] = "937900118", [15] = "937902490", [20] = "937904734", [25] = "6410918897", [30] = "937906049" },
+    ["Halo Reach Medals"] = { [5] = "79144706198435", [7] = "138109270661636", [10] = "101472665916770", [15] = "110655042933470", [20] = "139742166528829" },
+    ["Call of Duty"] = { [3] = "132189707", [25] = "109945056933427" },
+    ["Pitched tick"] = { [1] = "16480579910" },
+}
+local STREAK_SPREE = { ["Unreal Tournament Spree"] = true, ["Halo Reach Medals"] = true, ["Call of Duty"] = true }
+local STREAK_SET_ORDER = { "None", "Valorant", "Dota 2", "DotA Killstreak", "Unreal Tournament Multi-kill", "Unreal Tournament 1-5", "Kill Announcer 1-8", "Unreal Tournament Spree", "Halo Reach Medals", "Call of Duty", "Pitched tick", "Pitched tick (use kill sound)" }
+local STREAK_PITCH = { 1, 1.122, 1.26, 1.335, 1.498 }
+local KILLCAM_SOUND = "rbxassetid://9125397583"
+
+function Feedback.play(name, volume, pitch, customFlag, maxLength)
     local entry
     if name == "Custom" then entry = customFlag and World.parseAsset(flag(customFlag, "")) else entry = HIT_SOUNDS[name] end
     if type(entry) == "table" then entry = entry[math.random(#entry)] end
     if not entry then return false end
-    pcall(function()
-        local sound = Instance.new("Sound")
-        sound.SoundId, sound.Volume, sound.PlaybackSpeed = entry, volume, pitch
-        sound.Parent = game:GetService("SoundService")
-        sound:Play()
-        game:GetService("Debris"):AddItem(sound, 4)
-    end)
+    Feedback.sound(entry, volume, pitch, maxLength)
     return true
 end
 
+function Feedback.sound(asset, volume, pitch, maxLength)
+    pcall(function()
+        local sound = Instance.new("Sound")
+        sound.SoundId, sound.Volume, sound.PlaybackSpeed = asset, volume, pitch
+        sound.Parent = game:GetService("SoundService")
+        sound:Play()
+        game:GetService("Debris"):AddItem(sound, 8)
+        if type(maxLength) == "number" and maxLength > 0 then
+            task.delay(maxLength, function() pcall(function() sound:Stop(); sound:Destroy() end) end)
+        end
+    end)
+end
+
 function Feedback.preview(kind, fallback)
-    if not Feedback.play(flag(kind .. "_id", fallback), flag(kind .. "_vol", 1.5), flag(kind .. "_pitch", 1), kind .. "_custom") then
+    if not Feedback.play(flag(kind .. "_id", fallback), flag(kind .. "_vol", 1.5), flag(kind .. "_pitch", 1), kind .. "_custom", flag(kind .. "_max", 0)) then
         World.notify("Sound: type a sound id or link in Custom sound id first")
     end
 end
 
 function Feedback.onHit(isHead)
     Feedback.at, Feedback.head = os.clock(), isHead
+    Feedback.addMark(Feedback.at, isHead)
     if flag("hit_snd", false) then
         local name = flag("hit_snd_id", "Gamesense")
         if isHead and flag("hit_snd_head", false) then name = flag("hit_snd_head_id", "Alt Headshot kill") end
-        Feedback.play(name, flag("hit_snd_vol", 1.5), flag("hit_snd_pitch", 1), "hit_snd_custom")
+        Feedback.play(name, flag("hit_snd_vol", 1.5), flag("hit_snd_pitch", 1), "hit_snd_custom", flag("hit_snd_max", 0.6))
     end
 end
+
+local Killcam = { cards = {}, LENGTH = 5 }
+
+function Killcam.start(victim, now)
+    if not flag("killcam_notify", true) or not Game.localAlive() then return end
+    local name = tostring(victim.Name)
+    Killcam.cards[victim] = { at = now, note = Util.notify({
+        Title = "Killcam", Text = name .. " is watching you", Duration = Killcam.LENGTH, Icon = "eye", Progress = true,
+        Id = "killcam_" .. tostring(victim.UserId or name), Sound = flag("killcam_sound", false) and KILLCAM_SOUND or nil,
+    }) }
+end
+
+function Killcam.close(victim)
+    local card = Killcam.cards[victim]
+    if not card then return end
+    Killcam.cards[victim] = nil
+    if card.note then pcall(function() card.note:Close() end) end
+end
+
+function Killcam.clear()
+    for victim in pairs(Killcam.cards) do Killcam.close(victim) end
+end
+
+function Killcam.step(now)
+    if next(Killcam.cards) == nil then return end
+    if not flag("killcam_notify", true) or not Game.localAlive() then return Killcam.clear() end
+    for victim, card in pairs(Killcam.cards) do
+        if now - card.at >= Killcam.LENGTH or (card.note and card.note.Closing) then Killcam.close(victim) end
+    end
+end
+
+pcall(function() Util.track(Players.PlayerRemoving:Connect(function(player) Killcam.close(player) end)) end)
+Util.onUnload(Killcam.clear)
+
+local Streak = { count = 0, total = 0, last = -math.huge, shownAt = -math.huge, BURST = 12 }
+Streak.labels = { "Kill", "Double kill", "Triple kill", "Quadra kill", "Penta kill" }
+Streak.styles = { "Valorant bars", "Overwatch", "Minimal", "Arcade" }
+
+function Streak.label(count, style)
+    if count == 5 and style == "Valorant bars" then return "Ace" end
+    return Streak.labels[count] or ("x" .. count)
+end
+
+function Streak.soundFor(set, count, total)
+    local ids = STREAK_SETS[set]
+    if not ids then return nil end
+    if STREAK_SPREE[set] then
+        if ids[total] then return ids[total] end
+        local top = 0
+        for at in pairs(ids) do top = math.max(top, at) end
+        return total > top and total % 5 == 0 and ids[top] or nil
+    end
+    for at = math.min(count, 40), 1, -1 do
+        if ids[at] then return ids[at] end
+    end
+    return nil
+end
+
+function Streak.playSound(count, total)
+    local set = flag("streak_snd_set", "Valorant")
+    local volume = flag("streak_snd_vol", 1.5)
+    local speed = STREAK_PITCH[math.clamp(count, 1, #STREAK_PITCH)]
+    if set == "Pitched tick (use kill sound)" then
+        return Feedback.play(flag("kill_snd_id", "Alt Killshot"), volume, flag("kill_snd_pitch", 1) * speed, "kill_snd_custom", flag("kill_snd_max", 2.5))
+    end
+    local id = Streak.soundFor(set, count, total)
+    if not id then return false end
+    Feedback.sound("rbxassetid://" .. id, volume, set == "Pitched tick" and speed or 1)
+    return true
+end
+
+function Streak.onKill(now)
+    if not flag("streak_on", false) then return false end
+    if now - Streak.last > flag("streak_window", 4) then Streak.count = 0 end
+    Streak.count, Streak.total, Streak.last = Streak.count + 1, Streak.total + 1, now
+    Streak.show(Streak.count, Streak.total, now)
+    local every = math.floor(flag("streak_milestone_every", 5))
+    if flag("streak_milestone", false) and every >= 1 and Streak.total % every == 0 then
+        Util.notify({ Title = "Kill streak", Text = Streak.total .. " kills without dying", Icon = "flame", Duration = 4, Id = "streak_milestone" })
+    end
+    return Streak.playSound(Streak.count, Streak.total) and flag("streak_mute_kill", true)
+end
+
+function Streak.died()
+    Streak.total = 0
+    if flag("streak_reset_death", true) then Streak.count, Streak.last = 0, -math.huge end
+end
+
+function Streak.test()
+    if not flag("streak_on", false) then return World.notify("Kill streak: turn it on first") end
+    Streak.onKill(os.clock())
+end
+
+function Streak.make(class, parent, props)
+    local object = Instance.new(class)
+    for key, value in pairs(props) do object[key] = value end
+    object.Parent = parent
+    return object
+end
+
+function Streak.container()
+    if setthreadidentity then pcall(setthreadidentity, 7) end
+    local parents = {}
+    pcall(function() parents[#parents + 1] = game:GetService("CoreGui") end)
+    pcall(function() if gethui then parents[#parents + 1] = gethui() end end)
+    for _, parent in ipairs(parents) do
+        local gui
+        local ok = pcall(function()
+            gui = Instance.new("ScreenGui")
+            gui.Name = Util.randomName()
+            gui.DisplayOrder = 20
+            gui.IgnoreGuiInset = true
+            gui.ResetOnSpawn = false
+            gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+            gui.Parent = parent
+        end)
+        if ok and gui and gui.Parent then return gui end
+        if gui then pcall(function() gui:Destroy() end) end
+    end
+    return nil
+end
+
+function Streak.build()
+    local ui = Streak.ui
+    if ui and ui.gui.Parent then return ui end
+    Streak.destroy()
+    local gui = Streak.container()
+    if not gui then return nil end
+    local make, centre = Streak.make, Vector2.new(0.5, 0.5)
+    ui = { gui = gui, bars = {}, burst = {} }
+    ui.root = make("Frame", gui, { AnchorPoint = centre, BackgroundTransparency = 1, Visible = false })
+    ui.ring = make("Frame", ui.root, { AnchorPoint = centre, BackgroundTransparency = 1, Visible = false, ZIndex = 2 })
+    make("UICorner", ui.ring, { CornerRadius = UDim.new(0.5, 0) })
+    ui.ringStroke = make("UIStroke", ui.ring, { Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border })
+    for index = 1, Streak.BURST do
+        local dot = make("Frame", ui.root, { AnchorPoint = centre, BorderSizePixel = 0, Visible = false, ZIndex = 2 })
+        make("UICorner", dot, { CornerRadius = UDim.new(0.5, 0) })
+        ui.burst[index] = dot
+    end
+    for index = 1, 5 do ui.bars[index] = make("Frame", ui.root, { AnchorPoint = centre, BorderSizePixel = 0, Visible = false, ZIndex = 3 }) end
+    ui.number = make("TextLabel", ui.root, { AnchorPoint = centre, BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, Text = "", TextColor3 = WHITE, ZIndex = 4 })
+    ui.numberStroke = make("UIStroke", ui.number, { Thickness = 2 })
+    ui.label = make("TextLabel", ui.root, { AnchorPoint = centre, BackgroundTransparency = 1, Font = Enum.Font.GothamBold, Text = "", TextColor3 = WHITE, ZIndex = 4 })
+    ui.labelStroke = make("UIStroke", ui.label, { Thickness = 1.5, Color = BLACK })
+    ui.total = make("TextLabel", ui.root, { AnchorPoint = centre, BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, Text = "", TextColor3 = WHITE, ZIndex = 4 })
+    make("UIStroke", ui.total, { Thickness = 1, Color = BLACK, Transparency = 0.3 })
+    Streak.ui = ui
+    return ui
+end
+
+function Streak.show(count, total, now)
+    local ui = Streak.build()
+    if not ui then return end
+    ui.count, ui.kills, ui.style, ui.live = count, total, flag("streak_style", "Valorant bars"), true
+    assign(ui.number, "Text", tostring(count))
+    assign(ui.label, "Text", string.upper(Streak.label(count, ui.style)))
+    assign(ui.total, "Text", "STREAK " .. total)
+    Streak.shownAt = now
+    Streak.paint(ui, 0, now)
+end
+
+function Streak.paint(ui, t, now)
+    local style, count, s = ui.style, ui.count, flag("streak_scale", 1)
+    local life = math.max(flag("streak_time", 2.2), 0.5)
+    local fade = math.clamp((t - (life - 0.35)) / 0.35, 0, 1)
+    local color = Util.lerpColor(flag("streak_color", Color3.fromRGB(255, 80, 90)), flag("streak_color2", Color3.fromRGB(255, 200, 70)), math.clamp((count - 1) / 4, 0, 1))
+    if style == "Arcade" then color = Color3.fromHSV((now * 0.5 + count * 0.13) % 1, 0.65, 1) end
+    local kick = math.clamp(1 - t / 0.2, 0, 1)
+    local pop = style == "Minimal" and 1 or 1 + ((style == "Arcade" and 0.7 or 0.3) + 0.06 * math.min(count, 5)) * kick * kick
+    local width = 320 * s
+    local cx, cy = width / 2, 44 * s
+    local bars = style == "Valorant bars"
+    local labelY = (bars and 108 or 94) * s
+    assign(ui.root, "Size", UDim2.fromOffset(width, 150 * s))
+    assign(ui.root, "Position", UDim2.new(0.5, 0, flag("streak_y", 0.72), 0))
+    assign(ui.root, "Visible", true)
+    assign(ui.number, "Position", UDim2.fromOffset(cx, cy))
+    assign(ui.number, "Size", UDim2.fromOffset(width, 80 * s))
+    assign(ui.number, "TextSize", math.floor(58 * s * pop + 0.5))
+    assign(ui.number, "TextColor3", Util.lerpColor(WHITE, color, 0.3))
+    assign(ui.number, "TextTransparency", fade)
+    assign(ui.numberStroke, "Color", color)
+    assign(ui.numberStroke, "Thickness", (1 + math.min(count, 6) * 0.6) * s)
+    assign(ui.numberStroke, "Transparency", 0.15 + 0.85 * fade)
+    assign(ui.label, "Position", UDim2.fromOffset(cx, labelY))
+    assign(ui.label, "Size", UDim2.fromOffset(width, 28 * s))
+    assign(ui.label, "TextSize", math.floor(22 * s * (1 + 0.4 * (pop - 1)) + 0.5))
+    assign(ui.label, "TextColor3", color)
+    assign(ui.label, "TextTransparency", fade)
+    assign(ui.labelStroke, "Transparency", 0.4 + 0.6 * fade)
+    assign(ui.total, "Visible", flag("streak_total", true) and ui.kills >= 2)
+    assign(ui.total, "Position", UDim2.fromOffset(cx, labelY + 24 * s))
+    assign(ui.total, "Size", UDim2.fromOffset(width, 18 * s))
+    assign(ui.total, "TextSize", math.floor(14 * s + 0.5))
+    assign(ui.total, "TextTransparency", 0.15 + 0.85 * fade)
+    for index, bar in ipairs(ui.bars) do
+        assign(bar, "Visible", bars)
+        if bars then
+            local lit = index <= count
+            local grow = index == math.min(count, 5) and pop or 1
+            assign(bar, "Position", UDim2.fromOffset(cx + (index - 3) * 34 * s, 88 * s))
+            assign(bar, "Size", UDim2.fromOffset(28 * s * grow, 5 * s * grow))
+            assign(bar, "BackgroundColor3", lit and color or WHITE)
+            assign(bar, "BackgroundTransparency", lit and fade or 0.75 + 0.25 * fade)
+        end
+    end
+    local ringT = t / 0.5
+    local ringOn = (style == "Overwatch" or style == "Arcade" or (bars and count >= 3)) and ringT < 1
+    assign(ui.ring, "Visible", ringOn)
+    if ringOn then
+        local size = (50 + 150 * (1 - (1 - ringT) ^ 2)) * s * (1 + 0.12 * math.min(count, 5))
+        assign(ui.ring, "Position", UDim2.fromOffset(cx, cy))
+        assign(ui.ring, "Size", UDim2.fromOffset(size, size))
+        assign(ui.ringStroke, "Color", color)
+        assign(ui.ringStroke, "Thickness", (2 + math.min(count, 5)) * s * (1 - ringT))
+        assign(ui.ringStroke, "Transparency", ringT)
+    end
+    local burstT = t / 0.6
+    local dots = burstT < 1 and style ~= "Minimal" and (style == "Arcade" or count >= 3) and math.min(Streak.BURST, 4 + 2 * count) or 0
+    for index, dot in ipairs(ui.burst) do
+        local shown = index <= dots
+        assign(dot, "Visible", shown)
+        if shown then
+            local angle = index / dots * math.pi * 2 + count
+            local ease = 1 - (1 - burstT) ^ 3
+            local reach = (24 + (90 + 8 * math.min(count, 8)) * ease) * s
+            local size = math.max(1, 7 * s * (1 - burstT))
+            assign(dot, "Position", UDim2.fromOffset(cx + math.cos(angle) * reach, cy + math.sin(angle) * reach * 0.7))
+            assign(dot, "Size", UDim2.fromOffset(size, size))
+            assign(dot, "BackgroundColor3", color)
+            assign(dot, "BackgroundTransparency", burstT)
+        end
+    end
+end
+
+function Streak.step(now)
+    if not flag("streak_on", false) then
+        if Streak.ui or Streak.count ~= 0 or Streak.total ~= 0 then Streak.clear() end
+        return
+    end
+    local ui = Streak.ui
+    if not (ui and ui.live) then return end
+    local t = now - Streak.shownAt
+    if t >= math.max(flag("streak_time", 2.2), 0.5) or not ui.gui.Parent then
+        ui.live = false
+        assign(ui.root, "Visible", false)
+        return
+    end
+    Streak.paint(ui, t, now)
+end
+
+function Streak.destroy()
+    local ui = Streak.ui
+    Streak.ui = nil
+    if ui then pcall(function() ui.gui:Destroy() end) end
+end
+
+function Streak.clear()
+    Streak.count, Streak.total, Streak.last = 0, 0, -math.huge
+    Streak.destroy()
+end
+Util.onUnload(Streak.clear)
 
 Feedback.kills = {}
 
@@ -5394,10 +6089,32 @@ function Feedback.noteKill(victim, now)
 end
 
 function Feedback.onKill(info)
-    if type(info) ~= "table" or info.attacker ~= LocalPlayer or info.victim == nil or info.victim == LocalPlayer then return end
-    Feedback.noteKill(info.victim, os.clock())
-    if not flag("kill_snd", false) then return end
-    Feedback.play(flag("kill_snd_id", "Alt Killshot"), flag("kill_snd_vol", 1.5), flag("kill_snd_pitch", 1), "kill_snd_custom")
+    if type(info) ~= "table" then return end
+    if info.victim == LocalPlayer then
+        Killcam.clear()
+        Streak.died()
+        return
+    end
+    if info.attacker ~= LocalPlayer or info.victim == nil then return end
+    local now = os.clock()
+    Feedback.noteKill(info.victim, now)
+    Feedback.markKill(now)
+    if not info.forced then Killcam.start(info.victim, now) end
+    if Streak.onKill(now) or not flag("kill_snd", false) then return end
+    Feedback.play(flag("kill_snd_id", "Alt Killshot"), flag("kill_snd_vol", 1.5), flag("kill_snd_pitch", 1), "kill_snd_custom", flag("kill_snd_max", 2.5))
+end
+
+function Feedback.listen(key, event, fn)
+    if Feedback.hooked[key] or type(event) ~= "table" or type(event.connect) ~= "function" then return end
+    local ok, connection = pcall(function()
+        return event:connect(function(...) pcall(fn, ...) end)
+    end)
+    if not ok then return end
+    Feedback.hooked[key] = true
+    Util.onUnload(function()
+        pcall(function() connection:Disconnect() end)
+        Feedback.hooked[key] = nil
+    end)
 end
 
 function Feedback.addNumber(position, part, damage, big)
@@ -5454,46 +6171,184 @@ function Feedback.hook()
             end
         end)
     end
-    local events = mods.PlayerStatusEvents
-    if not Feedback.hooked.kills and events and events.onPlayerDied and type(events.onPlayerDied.connect) == "function" then
-        local ok, connection = pcall(function()
-            return events.onPlayerDied:connect(function(info) pcall(Feedback.onKill, info) end)
-        end)
-        if ok then
-            Feedback.hooked.kills = true
-            Util.onUnload(function()
-                pcall(function() connection:Disconnect() end)
-                Feedback.hooked.kills = nil
-            end)
+    local events = mods.PlayerStatusEvents or {}
+    Feedback.listen("kills", events.onPlayerDied, Feedback.onKill)
+    Feedback.listen("spawns", events.onPlayerSpawned, Killcam.close)
+    Feedback.listen("rounds", (mods.RoundSystemClientEvents or {}).onRoundEnded, Killcam.clear)
+end
+
+Feedback.marks, Feedback.slots, Feedback.cfg = {}, {}, {}
+Feedback.styles = { "Classic X", "Rotated plus", "Circle ring", "Diamond", "Brackets", "Dot" }
+Feedback.anims = { "None", "Expand", "Shrink", "Spin", "Pulse" }
+Feedback.corners = { Vector2.new(-1, -1), Vector2.new(1, -1), Vector2.new(-1, 1), Vector2.new(1, 1) }
+Feedback.diagonals = { Vector2.new(-1, -1).Unit, Vector2.new(1, -1).Unit, Vector2.new(-1, 1).Unit, Vector2.new(1, 1).Unit }
+Feedback.axes = { Vector2.new(1, 0), Vector2.new(0, 1), Vector2.new(-1, 0), Vector2.new(0, -1) }
+
+function Feedback.addMark(now, isHead)
+    local hit = Feedback.lastHit
+    if #Feedback.marks >= 6 then table.remove(Feedback.marks, 1) end
+    local mark = { at = now, head = isHead == true, kill = false, pos = hit and now - hit.at < 0.3 and hit.pos or nil }
+    Feedback.marks[#Feedback.marks + 1] = mark
+    return mark
+end
+
+function Feedback.noteHit(position, now)
+    if typeof(position) ~= "Vector3" then return end
+    Feedback.lastHit = { pos = position, at = now }
+    local mark = Feedback.marks[#Feedback.marks]
+    if mark and not mark.pos and now - mark.at < 0.3 then mark.pos = position end
+end
+
+function Feedback.markKill(now)
+    if not (flag("hit_marker_kill", false) or flag("hit_marker_skull", false)) then return end
+    local mark = Feedback.marks[#Feedback.marks]
+    if not (mark and now - mark.at < 0.5) then mark = Feedback.addMark(now, false) end
+    mark.kill, mark.at = true, now
+end
+
+function Feedback.slot(index)
+    local slot = Feedback.slots[index]
+    if slot then return slot end
+    slot = { lines = {}, edges = {}, all = {}, on = {}, live = false }
+    local function add(kind, props)
+        props.Visible = false
+        local drawing = Draw.new(kind, props)
+        slot.all[#slot.all + 1] = drawing
+        return drawing
+    end
+    for line = 1, 8 do
+        slot.edges[line] = add("Line", { Thickness = 3, Color = BLACK, ZIndex = 11 })
+        slot.lines[line] = add("Line", { Thickness = 1, ZIndex = 12 })
+    end
+    slot.ringEdge = add("Circle", { Filled = false, NumSides = 32, Color = BLACK, ZIndex = 11 })
+    slot.ring = add("Circle", { Filled = false, NumSides = 32, ZIndex = 12 })
+    slot.jaw = add("Square", { Filled = true, ZIndex = 12 })
+    slot.eyes = { add("Circle", { Filled = true, NumSides = 12, Color = BLACK, ZIndex = 13 }), add("Circle", { Filled = true, NumSides = 12, Color = BLACK, ZIndex = 13 }) }
+    Feedback.slots[index] = slot
+    return slot
+end
+
+function Feedback.drawMark(slot, at, mark, progress, cfg)
+    local on, used = slot.on, 0
+    local scale, spin, gap = 1, 0, cfg.gap
+    if cfg.anim == "Expand" then
+        gap = gap + progress * 4
+    elseif cfg.anim == "Shrink" then
+        scale = 1 + 0.8 * (1 - progress) ^ 2
+    elseif cfg.anim == "Spin" then
+        spin = progress * math.pi
+    elseif cfg.anim == "Pulse" then
+        scale = 1 + 0.35 * math.sin(progress * math.pi * 3) ^ 2
+    end
+    local killed = mark.kill and cfg.kill
+    if killed then scale = scale * cfg.killScale end
+    local size, thick = cfg.size * scale, cfg.thick
+    gap = gap * scale
+    local color, opacity = cfg.color, cfg.opacity
+    if killed then color, opacity = cfg.killColor, cfg.killOpacity elseif mark.head then color, opacity = cfg.headColor, cfg.headOpacity end
+    local alpha = (1 - progress) * opacity
+    local cos, sin = math.cos(spin), math.sin(spin)
+    local function seg(x0, y0, x1, y1)
+        used = used + 1
+        local from = Vector2.new(at.X + x0 * cos - y0 * sin, at.Y + x0 * sin + y0 * cos)
+        local to = Vector2.new(at.X + x1 * cos - y1 * sin, at.Y + x1 * sin + y1 * cos)
+        local line = slot.lines[used]
+        line.From, line.To, line.Color, line.Thickness, line.Transparency = from, to, color, thick, alpha
+        on[line] = true
+        if cfg.outline then
+            local edge = slot.edges[used]
+            edge.From, edge.To, edge.Thickness, edge.Transparency = from, to, thick + 2, alpha
+            on[edge] = true
+        end
+    end
+    local function circle(centre, radius, filled)
+        local ring = slot.ring
+        ring.Position, ring.Radius, ring.Filled, ring.Color, ring.Thickness, ring.Transparency = centre, radius, filled, color, thick, alpha
+        on[ring] = true
+        if cfg.outline then
+            local edge = slot.ringEdge
+            edge.Position, edge.Radius, edge.Thickness, edge.Transparency = centre, filled and radius + 1 or radius, filled and 2 or thick + 2, alpha
+            on[edge] = true
+        end
+    end
+    local style = (mark.kill and cfg.skull) and "Skull" or cfg.style
+    if style == "Skull" then
+        local r = math.max(size * 0.75, 4)
+        circle(Vector2.new(at.X, at.Y - r * 0.2), r, true)
+        local jaw = slot.jaw
+        jaw.Position, jaw.Size, jaw.Color, jaw.Transparency = Vector2.new(at.X - r * 0.55, at.Y + r * 0.35), Vector2.new(r * 1.1, r * 0.75), color, alpha
+        on[jaw] = true
+        for side, eye in ipairs(slot.eyes) do
+            eye.Position, eye.Radius, eye.Transparency = Vector2.new(at.X + (side == 1 and -1 or 1) * r * 0.38, at.Y - r * 0.2), r * 0.27, alpha
+            on[eye] = true
+        end
+    elseif style == "Circle ring" then
+        circle(at, gap + size * 0.6, false)
+    elseif style == "Dot" then
+        circle(at, math.max(2, size * 0.35), true)
+    elseif style == "Diamond" then
+        local r = gap + size
+        seg(r, 0, 0, r)
+        seg(0, r, -r, 0)
+        seg(-r, 0, 0, -r)
+        seg(0, -r, r, 0)
+    elseif style == "Brackets" then
+        local h, arm = gap + size, math.max(size * 0.6, 3)
+        for _, corner in ipairs(Feedback.corners) do
+            seg(corner.X * h, corner.Y * h, corner.X * (h - arm), corner.Y * h)
+            seg(corner.X * h, corner.Y * h, corner.X * h, corner.Y * (h - arm))
+        end
+    else
+        local reach = gap + size
+        for _, direction in ipairs(style == "Rotated plus" and Feedback.axes or Feedback.diagonals) do
+            seg(direction.X * gap, direction.Y * gap, direction.X * reach, direction.Y * reach)
         end
     end
 end
 
-Feedback.lines, Feedback.edges = {}, {}
-for index = 1, 4 do
-    Feedback.edges[index] = Draw.new("Line", { Thickness = 3, Color = BLACK, ZIndex = 11, Visible = false })
-    Feedback.lines[index] = Draw.new("Line", { Thickness = 1, ZIndex = 12, Visible = false })
+function Feedback.stepMarks(cam, center, now)
+    local marks = Feedback.marks
+    while #marks > 0 and now - marks[1].at > 4 do table.remove(marks, 1) end
+    if #marks > 0 and flag("hit_marker", false) then
+        local cfg = Feedback.cfg
+        cfg.duration = flag("hit_marker_time", 0.4)
+        cfg.size, cfg.thick, cfg.gap = flag("hit_marker_size", 9), flag("hit_marker_thick", 1), flag("hit_marker_gap", 3)
+        cfg.style, cfg.anim, cfg.outline = flag("hit_marker_style", "Classic X"), flag("hit_marker_anim", "Expand"), flag("hit_marker_outline", true)
+        cfg.color, cfg.opacity = flag("hit_marker_color", WHITE), Util.opacity("hit_marker_color")
+        cfg.headColor, cfg.headOpacity = flag("hit_marker_head", WHITE), Util.opacity("hit_marker_head")
+        cfg.kill, cfg.skull, cfg.killScale = flag("hit_marker_kill", false), flag("hit_marker_skull", false), flag("hit_marker_kill_size", 1.5)
+        cfg.killColor, cfg.killOpacity = flag("hit_marker_kill_color", WHITE), Util.opacity("hit_marker_kill_color")
+        local world, drawn = flag("hit_marker_3d", false), 0
+        for index = #marks, 1, -1 do
+            local mark = marks[index]
+            local life = cfg.duration * ((mark.kill and (cfg.kill or cfg.skull)) and 1.5 or 1)
+            local age = now - mark.at
+            if age >= 0 and age < life then
+                local at, show = center, index == #marks
+                if world and mark.pos then
+                    local point, front = Draw.project(cam, mark.pos)
+                    at, show = point, front
+                end
+                if show then
+                    drawn = drawn + 1
+                    Feedback.drawMark(Feedback.slot(drawn), at, mark, age / life, cfg)
+                end
+            end
+        end
+    end
+    for _, slot in ipairs(Feedback.slots) do
+        local on = slot.on
+        local any = next(on) ~= nil
+        if slot.live or any then
+            for _, drawing in ipairs(slot.all) do drawing.Visible = on[drawing] == true end
+            for drawing in pairs(on) do on[drawing] = nil end
+            slot.live = any
+        end
+    end
 end
 
 function Feedback.step(cam, center, now)
-    local age = now - Feedback.at
-    local duration = flag("hit_marker_time", 0.4)
-    local show = flag("hit_marker", false) and age < duration
-    for index = 1, 4 do Feedback.lines[index].Visible, Feedback.edges[index].Visible = false, false end
-    if show then
-        local progress = age / duration
-        local size = flag("hit_marker_size", 9)
-        local gap = 3 + progress * 4
-        local color = Feedback.head and flag("hit_marker_head", WHITE) or flag("hit_marker_color", WHITE)
-        for index = 1, 4 do
-            local direction = Vector2.new(index % 2 == 1 and -1 or 1, index <= 2 and -1 or 1).Unit
-            local from, to = center + direction * gap, center + direction * (gap + size)
-            local edge, line = Feedback.edges[index], Feedback.lines[index]
-            edge.From, edge.To, edge.Transparency, edge.Visible = from, to, 1 - progress, true
-            line.From, line.To, line.Color, line.Transparency, line.Visible = from, to, color, 1 - progress, true
-        end
-    end
-
+    Feedback.stepMarks(cam, center, now)
     local life, rise, size = flag("dmg_time", 1.1), flag("dmg_rise", 60), flag("dmg_size", 16)
     local used = 0
     for index = #Feedback.numbers, 1, -1 do
@@ -5521,7 +6376,7 @@ function Feedback.step(cam, center, now)
     for index = used + 1, #Feedback.texts do Feedback.texts[index].Visible = false end
 end
 
-local HitCham = { list = {}, cap = 12, fxNames = { "Sparks", "Shards", "Glow burst", "Electric", "Hearts", "Smoke" }, fx = {} }
+local HitCham = { list = {}, cap = 12 }
 
 function HitCham.victim(player)
     local record = Entities.byPlayer[player]
@@ -5614,75 +6469,6 @@ function HitCham.follow(rec)
         local frame = ok and alive and HitCham.frameOf(slot.part)
         if frame then slot.holder.CFrame = frame end
     end
-    if rec.fxPart and rec.hit then rec.fxPart.CFrame = rec.hit.holder.CFrame end
-end
-
-HitCham.fx.Sparks = function(color)
-    return { count = 18, life = 0.6, props = {
-        Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.2, 0.5), Speed = NumberRange.new(8, 18), Drag = 2,
-        Acceleration = Vector3.new(0, -40, 0), Size = Tracers.curve(0, 0.15, 1, 0), Color = ColorSequence.new(WHITE, color),
-    } }
-end
-
-HitCham.fx.Shards = function(color)
-    return { count = 10, life = 0.9, props = {
-        Texture = Impacts.shard, Lifetime = NumberRange.new(0.4, 0.8), Speed = NumberRange.new(5, 12), Acceleration = Vector3.new(0, -40, 0),
-        RotSpeed = NumberRange.new(-300, 300), Size = Tracers.curve(0, 0.3, 1, 0.1), Color = ColorSequence.new(Util.lerpColor(color, WHITE, 0.4), color),
-    } }
-end
-
-HitCham.fx["Glow burst"] = function(color)
-    return { count = 2, life = 0.4, props = {
-        Texture = Impacts.flare, Lifetime = NumberRange.new(0.2, 0.35), Speed = NumberRange.new(0, 0),
-        Size = Tracers.curve(0, 0.5, 0.3, 3, 1, 0), Transparency = Tracers.curve(0, 0.2, 1, 1), Color = ColorSequence.new(WHITE, color),
-    } }
-end
-
-HitCham.fx.Electric = function(color)
-    return { count = 3, life = 0.5, repeats = 5, every = 0.06, props = {
-        Texture = Impacts.bolt, Lifetime = NumberRange.new(0.08, 0.18), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 1.2, 1, 0.6),
-        Color = ColorSequence.new(WHITE, color),
-    } }
-end
-
-HitCham.fx.Hearts = function(color)
-    return { count = 6, life = 1.5, props = {
-        Texture = Impacts.heart, Lifetime = NumberRange.new(0.8, 1.4), Speed = NumberRange.new(2, 4), Drag = 1, Acceleration = Vector3.new(0, 3, 0),
-        Rotation = NumberRange.new(-20, 20), Size = Tracers.curve(0, 0.35, 0.5, 0.5, 1, 0), Color = ColorSequence.new(Util.lerpColor(color, Color3.fromRGB(255, 90, 150), 0.5)),
-    } }
-end
-
-HitCham.fx.Smoke = function(color)
-    return { count = 5, life = 1.5, props = {
-        Texture = SMOKE, LightEmission = 0.1, LightInfluence = 0.8, Lifetime = NumberRange.new(0.8, 1.4), Speed = NumberRange.new(1, 2.5), Drag = 1,
-        RotSpeed = NumberRange.new(-30, 30), Size = Tracers.curve(0, 0.6, 1, 2.2), Transparency = Tracers.curve(0, 0.4, 1, 1), Color = ColorSequence.new(Util.lerpColor(color, WHITE, 0.6)),
-    } }
-end
-
-function HitCham.particles(rec, color)
-    local chosen = Util.set("hit_cham_fx", {})
-    if next(chosen) == nil or not rec.hit then return end
-    local amount = math.clamp(flag("hit_cham_fx_amount", 1), 0.25, 3)
-    rec.fxPart = Tracers.make(rec, "Part", Tracers.solid(rec.hit.holder.CFrame), rec.root)
-    for _, name in ipairs(HitCham.fxNames) do
-        if chosen[name] then
-            local spec = HitCham.fx[name](color)
-            local emitter = Tracers.emitter(rec, rec.fxPart, spec.props)
-            local count = spec.count * amount
-            Tracers.burst(emitter, count)
-            if spec.repeats then
-                local fired = 1
-                rec.ticks[#rec.ticks + 1] = function(age)
-                    while fired < spec.repeats and age >= fired * spec.every do
-                        fired = fired + 1
-                        Tracers.burst(emitter, count)
-                    end
-                    return fired >= spec.repeats
-                end
-            end
-            rec.span = math.max(rec.span, spec.life)
-        end
-    end
 end
 
 function HitCham.onHit(player, position, partName)
@@ -5724,7 +6510,6 @@ function HitCham.onHit(player, position, partName)
                 if outline then HitCham.shape(rec, slot, round, 0.14, flag("hit_cham_outline_color", WHITE), Util.alpha("hit_cham_outline_color", 0.4), 2) end
             end
         end
-        HitCham.particles(rec, color)
     end)
     if not ok or #rec.slots == 0 then
         Tracers.dropFx(rec)
@@ -5758,7 +6543,312 @@ function HitCham.clear()
 end
 
 Util.onUnload(HitCham.clear)
-Game.onBulletHit = HitCham.onHit
+
+local HitFx = {
+    list = {}, cap = 16, build = {},
+    names = { "Sparks", "Shards", "Glow burst", "Electric", "Hearts", "Smoke", "Blood mist", "Crit star", "Shockring", "Pixel burst", "Feathers", "Confetti pop", "Damage flash", "Spark fountain" },
+    legacy = { "Sparks", "Shards", "Glow burst", "Electric", "Hearts", "Smoke" },
+}
+
+function HitFx.emit(rec, ctx, count, props)
+    local life = props.Lifetime
+    if life then props.Lifetime = NumberRange.new(life.Min * ctx.time, life.Max * ctx.time) end
+    local emitter = Tracers.emitter(rec, rec.holder, props)
+    Tracers.burst(emitter, count * ctx.amount)
+    return emitter
+end
+
+function HitFx.repeats(rec, ctx, emitter, count, times, every)
+    local fired = 1
+    rec.ticks[#rec.ticks + 1] = function(age)
+        while fired < times and age >= fired * every do
+            fired = fired + 1
+            Tracers.burst(emitter, count * ctx.amount)
+        end
+        return fired >= times
+    end
+end
+
+HitFx.build.Sparks = function(rec, ctx)
+    local s = ctx.size
+    HitFx.emit(rec, ctx, 18, {
+        Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.2, 0.5), Speed = NumberRange.new(8 * s, 18 * s), Drag = 2,
+        Acceleration = Vector3.new(0, -40, 0), Size = Tracers.curve(0, 0.15 * s, 1, 0), Color = ColorSequence.new(WHITE, ctx.color),
+    })
+    return 0.6
+end
+
+HitFx.build.Shards = function(rec, ctx)
+    local s = ctx.size
+    HitFx.emit(rec, ctx, 10, {
+        Texture = Impacts.shard, Lifetime = NumberRange.new(0.4, 0.8), Speed = NumberRange.new(5 * s, 12 * s), Acceleration = Vector3.new(0, -40, 0),
+        RotSpeed = NumberRange.new(-300, 300), Size = Tracers.curve(0, 0.3 * s, 1, 0.1 * s), Color = ColorSequence.new(Util.lerpColor(ctx.color, WHITE, 0.4), ctx.color),
+    })
+    return 0.9
+end
+
+HitFx.build["Glow burst"] = function(rec, ctx)
+    local s = ctx.size
+    HitFx.emit(rec, ctx, 2, {
+        Texture = Impacts.flare, Lifetime = NumberRange.new(0.2, 0.35), Speed = NumberRange.new(0, 0),
+        Size = Tracers.curve(0, 0.5 * s, 0.3, 3 * s, 1, 0), Transparency = Tracers.curve(0, math.max(0.2, ctx.alpha), 1, 1), Color = ColorSequence.new(WHITE, ctx.color),
+    })
+    return 0.4
+end
+
+HitFx.build.Electric = function(rec, ctx)
+    local s = ctx.size
+    local emitter = HitFx.emit(rec, ctx, 3, {
+        Texture = Impacts.bolt, Lifetime = NumberRange.new(0.08, 0.18), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 1.2 * s, 1, 0.6 * s),
+        Color = ColorSequence.new(WHITE, ctx.color),
+    })
+    HitFx.repeats(rec, ctx, emitter, 3, 5, 0.06)
+    return 0.5
+end
+
+HitFx.build.Hearts = function(rec, ctx)
+    local s = ctx.size
+    HitFx.emit(rec, ctx, 6, {
+        Texture = Impacts.heart, Lifetime = NumberRange.new(0.8, 1.4), Speed = NumberRange.new(2 * s, 4 * s), Drag = 1, Acceleration = Vector3.new(0, 3, 0),
+        Rotation = NumberRange.new(-20, 20), Size = Tracers.curve(0, 0.35 * s, 0.5, 0.5 * s, 1, 0), Color = ColorSequence.new(Util.lerpColor(ctx.color, Color3.fromRGB(255, 90, 150), 0.5)),
+    })
+    return 1.5
+end
+
+HitFx.build.Smoke = function(rec, ctx)
+    local s = ctx.size
+    HitFx.emit(rec, ctx, 5, {
+        Texture = SMOKE, LightEmission = 0.1, LightInfluence = 0.8, Lifetime = NumberRange.new(0.8, 1.4), Speed = NumberRange.new(1 * s, 2.5 * s), Drag = 1,
+        RotSpeed = NumberRange.new(-30, 30), Size = Tracers.curve(0, 0.6 * s, 1, 2.2 * s), Transparency = Tracers.curve(0, math.max(0.4, ctx.alpha), 1, 1),
+        Color = ColorSequence.new(Util.lerpColor(ctx.color, WHITE, 0.6)),
+    })
+    return 1.5
+end
+
+HitFx.build["Blood mist"] = function(rec, ctx)
+    local s = ctx.size
+    local blood = Util.lerpColor(Color3.fromRGB(170, 20, 30), ctx.color, 0.25)
+    HitFx.emit(rec, ctx, 6, {
+        Texture = SMOKE, LightEmission = 0, LightInfluence = 1, Lifetime = NumberRange.new(0.5, 0.9), Speed = NumberRange.new(1 * s, 3 * s), Drag = 3,
+        RotSpeed = NumberRange.new(-40, 40), Size = Tracers.curve(0, 0.5 * s, 1, 2.4 * s), Transparency = Tracers.curve(0, math.max(0.35, ctx.alpha), 1, 1),
+        Color = ColorSequence.new(blood, Util.lerpColor(blood, BLACK, 0.4)),
+    })
+    HitFx.emit(rec, ctx, 14, {
+        LightEmission = 0, LightInfluence = 1, Lifetime = NumberRange.new(0.4, 0.8), Speed = NumberRange.new(4 * s, 9 * s), Drag = 1, Acceleration = Vector3.new(0, -45, 0),
+        Size = Tracers.curve(0, 0.12 * s, 1, 0.06 * s), Color = ColorSequence.new(blood),
+    })
+    return 1
+end
+
+HitFx.build["Crit star"] = function(rec, ctx)
+    local s = ctx.size
+    local gold = Util.lerpColor(ctx.color, Color3.fromRGB(255, 215, 80), 0.5)
+    for _, turn in ipairs({ 0, 45 }) do
+        HitFx.emit(rec, ctx, 1, {
+            Texture = Impacts.flare, Lifetime = NumberRange.new(0.3, 0.35), Speed = NumberRange.new(0, 0), Rotation = NumberRange.new(turn, turn), RotSpeed = NumberRange.new(180, 180),
+            Size = Tracers.curve(0, 0.4 * s, 0.25, 3.2 * s, 1, 0), Transparency = Tracers.curve(0, math.max(0.05, ctx.alpha), 1, 1), Color = ColorSequence.new(WHITE, gold),
+        })
+    end
+    HitFx.emit(rec, ctx, 8, {
+        Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.15, 0.3), Speed = NumberRange.new(14 * s, 22 * s), Drag = 5,
+        Size = Tracers.curve(0, 0.22 * s, 1, 0), Color = ColorSequence.new(WHITE, gold),
+    })
+    return 0.5
+end
+
+HitFx.build.Shockring = function(rec, ctx)
+    local s, a = ctx.size, ctx.alpha
+    local facing = CFrame.new()
+    local camera = ctx.camera and propGet(ctx.camera, "CFrame")
+    if typeof(camera) == "CFrame" and (camera.Position - ctx.pos).Magnitude > 1e-3 then facing = CFrame.new(Vector3.zero, camera.Position - ctx.pos) end
+    local rings = {}
+    for index = 1, 2 do
+        local ring = Impacts.adorn(rec, "CylinderHandleAdornment", {
+            Radius = 0.1, Height = 0.04, Color3 = index == 1 and ctx.color or Util.lerpColor(ctx.color, WHITE, 0.5), Transparency = 1, CFrame = facing, AlwaysOnTop = true, ZIndex = 2,
+        })
+        propSet(ring, "InnerRadius", 0.08)
+        rings[index] = ring
+    end
+    local span = 0.45 * ctx.time
+    rec.ticks[#rec.ticks + 1] = function(age)
+        for index, ring in ipairs(rings) do
+            local k = math.clamp((age - (index - 1) * span * 0.3) / span, 0, 1)
+            local radius = 0.1 + 2.2 * s * (1 - (1 - k) ^ 3)
+            ring.Radius = radius
+            propSet(ring, "InnerRadius", radius * 0.82)
+            ring.Transparency = (k <= 0 or k >= 1) and 1 or a + (1 - a) * k
+        end
+        return age >= span * 1.3
+    end
+    HitFx.emit(rec, ctx, 1, { Texture = Impacts.ring, Lifetime = NumberRange.new(0.3, 0.4), Speed = NumberRange.new(0, 0), Size = Tracers.curve(0, 0.3 * s, 1, 3 * s), Transparency = Tracers.curve(0, 0.2, 1, 1), Color = ColorSequence.new(ctx.color) })
+    return span * 1.3 + 0.1
+end
+
+HitFx.build["Pixel burst"] = function(rec, ctx)
+    local s, a = ctx.size, ctx.alpha
+    local pieces = {}
+    for index = 1, 10 do
+        local direction = Vector3.new(math.random() - 0.5, math.random() * 0.8 - 0.1, math.random() - 0.5)
+        direction = direction.Magnitude > 1e-3 and direction.Unit or Vector3.new(0, 1, 0)
+        local size = (0.1 + math.random() * 0.08) * s
+        local shade = index % 2 == 0 and Util.lerpColor(ctx.color, WHITE, 0.45) or ctx.color
+        pieces[index] = { object = Impacts.adorn(rec, "BoxHandleAdornment", { Size = Vector3.new(size, size, size), Color3 = shade, Transparency = a, AlwaysOnTop = true, ZIndex = 2 }), v = direction * ((6 + math.random() * 6) * s) }
+    end
+    local life = 0.7 * ctx.time
+    rec.ticks[#rec.ticks + 1] = function(age)
+        local k = math.clamp(age / life, 0, 1)
+        for _, piece in ipairs(pieces) do
+            local v = piece.v
+            piece.object.CFrame = CFrame.new(v.X * age, v.Y * age - 14 * age * age, v.Z * age)
+            piece.object.Transparency = a + (1 - a) * k * k
+        end
+        return k >= 1
+    end
+    return life
+end
+
+HitFx.build.Feathers = function(rec, ctx)
+    local s = ctx.size
+    HitFx.emit(rec, ctx, 8, {
+        Texture = Impacts.shard, LightEmission = 0.2, LightInfluence = 0.8, Lifetime = NumberRange.new(1, 1.8), Speed = NumberRange.new(3 * s, 6 * s), Drag = 3,
+        Acceleration = Vector3.new(0, -2, 0), RotSpeed = NumberRange.new(-120, 120), Size = Tracers.curve(0, 0.35 * s, 1, 0.25 * s), Transparency = Tracers.curve(0, ctx.alpha, 0.7, ctx.alpha, 1, 1),
+        Color = ColorSequence.new(Util.lerpColor(ctx.color, WHITE, 0.75)),
+    })
+    return 1.8
+end
+
+HitFx.build["Confetti pop"] = function(rec, ctx)
+    local s = ctx.size
+    local hue = Color3.toHSV(ctx.color)
+    for index = 0, 3 do
+        HitFx.emit(rec, ctx, 7, {
+            Texture = Impacts.shard, EmissionDirection = Enum.NormalId.Top, SpreadAngle = Vector2.new(50, 50), Lifetime = NumberRange.new(0.8, 1.4),
+            Speed = NumberRange.new(8 * s, 16 * s), Drag = 2, Acceleration = Vector3.new(0, -25, 0), RotSpeed = NumberRange.new(-400, 400),
+            Size = Tracers.curve(0, 0.18 * s, 1, 0.14 * s), Color = ColorSequence.new(Color3.fromHSV((hue + index * 0.25) % 1, 0.75, 1)),
+        })
+    end
+    return 1.4
+end
+
+HitFx.build["Damage flash"] = function(rec, ctx)
+    local flashes = {}
+    for _, name in ipairs(CHAM_PARTS) do
+        local part = ctx.hash[name]
+        local frame = part and HitCham.frameOf(part)
+        if frame then
+            local size = HitCham.sizeOf(part, name)
+            local holder = Tracers.make(rec, "Part", Tracers.solid(frame, size))
+            local box = Impacts.adorn(rec, "BoxHandleAdornment", { Adornee = holder, Size = size + Vector3.new(0.05, 0.05, 0.05), Color3 = WHITE, Transparency = 0.1, AlwaysOnTop = true, ZIndex = 4 }, holder)
+            flashes[#flashes + 1] = { part = part, holder = holder, box = box }
+        end
+    end
+    local life = 0.25 * ctx.time
+    rec.ticks[#rec.ticks + 1] = function(age)
+        local k = math.clamp(age / life, 0, 1)
+        for _, flash in ipairs(flashes) do
+            local frame = HitCham.frameOf(flash.part)
+            if frame then flash.holder.CFrame = frame end
+            flash.box.Transparency = 0.1 + 0.9 * k
+        end
+        return k >= 1
+    end
+    return life
+end
+
+HitFx.build["Spark fountain"] = function(rec, ctx)
+    local s = ctx.size
+    local emitter = HitFx.emit(rec, ctx, 6, {
+        Orientation = Enum.ParticleOrientation.VelocityParallel, EmissionDirection = Enum.NormalId.Top, SpreadAngle = Vector2.new(18, 18),
+        Lifetime = NumberRange.new(0.4, 0.8), Speed = NumberRange.new(14 * s, 22 * s), Acceleration = Vector3.new(0, -50, 0),
+        Size = Tracers.curve(0, 0.14 * s, 1, 0), Color = ColorSequence.new(WHITE, ctx.color),
+    })
+    HitFx.repeats(rec, ctx, emitter, 6, 8, 0.05)
+    return 1.2
+end
+
+function HitFx.onHit(player, position, partName)
+    if player == nil or player == LocalPlayer or not flag("hit_fx_on", false) then return end
+    local head = partName == "Head"
+    if flag("hit_fx_head", false) and not head then return end
+    local chosen, names = Util.set("hit_fx_list", { "Sparks", "Glow burst" }), {}
+    for _, name in ipairs(HitFx.names) do
+        if chosen[name] then names[#names + 1] = name end
+    end
+    if #names == 0 then return end
+    local hash = HitCham.victim(player)
+    local camera = propGet(Workspace, "CurrentCamera")
+    if not (hash and camera) then return end
+    local hitName = type(partName) == "string" and hash[partName] and partName or "Torso"
+    local centre = flag("hit_fx_at", "Hit point") == "Body centre"
+    local anchor = centre and (hash.Torso or hash[hitName]) or hash[hitName]
+    local frame = anchor and HitCham.frameOf(anchor)
+    local spot = (not centre and typeof(position) == "Vector3") and position or (frame and frame.Position)
+    if not spot then return end
+    local ctx = {
+        color = flag("hit_fx_color", Color3.fromRGB(255, 120, 80)), alpha = Util.alpha("hit_fx_color", 0), size = math.clamp(flag("hit_fx_size", 1), 0.25, 3),
+        amount = math.clamp(flag("hit_fx_amount", 1), 0.25, 3), time = math.clamp(flag("hit_fx_time", 1), 0.3, 2.5), hash = hash, camera = camera, pos = spot, head = head,
+    }
+    local rec = { objects = {}, ticks = {}, emitters = 0, bright = 1, born = os.clock(), life = 0 }
+    local ok = Util.guard("hit fx", function()
+        rec.holder = Tracers.make(rec, "Part", Tracers.solid(CFrame.new(spot)), camera)
+        for _, name in ipairs(names) do
+            rec.life = math.max(rec.life, (HitFx.build[name](rec, ctx) or 1) * ctx.time)
+        end
+    end)
+    if not ok then
+        Tracers.dropFx(rec)
+        return
+    end
+    local cap = math.clamp(math.floor(flag("hit_fx_max", 12)), 1, HitFx.cap)
+    while #HitFx.list >= cap do Tracers.dropFx(table.remove(HitFx.list, 1)) end
+    HitFx.list[#HitFx.list + 1] = rec
+end
+
+function HitFx.migrate()
+    HitFx.pending = false
+    local old = Util.set("hit_cham_fx", {})
+    if next(old) == nil then return end
+    if not flag("hit_fx_on", false) and Options.hit_fx_list and Toggles.hit_fx_on then
+        local list = {}
+        for _, name in ipairs(HitFx.legacy) do
+            if old[name] then list[name] = true end
+        end
+        Options.hit_fx_list:SetValue(list)
+        if Options.hit_fx_amount then Options.hit_fx_amount:SetValue(math.clamp(flag("hit_cham_fx_amount", 1), 0.25, 3)) end
+        if Options.hit_fx_color then pcall(Options.hit_fx_color.SetValueRGB, Options.hit_fx_color, flag("hit_cham_color", Color3.fromRGB(255, 70, 110)), 0) end
+        Toggles.hit_fx_on:SetValue(flag("hit_cham_on", false))
+    end
+    Options.hit_cham_fx:SetValue({})
+end
+
+function HitFx.step(now)
+    if HitFx.pending then HitFx.migrate() end
+    if #HitFx.list == 0 then return end
+    if not flag("hit_fx_on", false) then return HitFx.clear() end
+    for index = #HitFx.list, 1, -1 do
+        local rec = HitFx.list[index]
+        local age = now - rec.born
+        if age >= rec.life then
+            Tracers.dropFx(rec)
+            table.remove(HitFx.list, index)
+        else
+            Impacts.run(rec, age)
+        end
+    end
+end
+
+function HitFx.clear()
+    for _, rec in ipairs(HitFx.list) do Tracers.dropFx(rec) end
+    HitFx.list = {}
+end
+
+Util.onUnload(HitFx.clear)
+
+function Game.onBulletHit(player, position, partName)
+    Feedback.noteHit(position, os.clock())
+    Util.guard("hit chams", HitCham.onHit, player, position, partName)
+    Util.guard("hit fx", HitFx.onHit, player, position, partName)
+end
 
 local Legit = { target = nil, record = nil, part = nil, switchAt = 0, reactUntil = 0, moved = false, radius = 0, zoom = 1, L = {}, pressAt = -1e9, snapTime = 0.12, last = {} }
 local GROUPS = { Head = { "Head" }, Torso = { "Torso" }, Arms = { "Left Arm", "Right Arm" }, Legs = { "Left Leg", "Right Leg" } }
@@ -9834,12 +10924,40 @@ do
         popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
     end
 
+    local function hidden(flagName, kind, value, values)
+        local option = { Type = kind, Value = value, Values = values, Multi = type(value) == "table" }
+        function option:SetValue(new)
+            if kind == "Dropdown" then
+                local out = {}
+                for key, on in pairs(Util.toSet(new)) do
+                    if on and table.find(values, key) then out[key] = true end
+                end
+                self.Value = out
+            else
+                self.Value = tonumber(new) or self.Value
+            end
+            if self.Changed then pcall(self.Changed, self.Value) end
+        end
+        function option:OnChanged(fn) self.Changed = fn end
+        Options[flagName] = option
+        return option
+    end
+
     local Hits = Subs.Hits
     local Marker = Hits:Section({ Name = "Hit marker", Column = 1, Icon = "crosshair" })
-    Marker:Toggle({ Name = "Hit marker", Flag = "hit_marker", Tooltip = "Drawn at the crosshair whenever the game registers one of your hits" }):Colorpicker({ Name = "Marker", Flag = "hit_marker_color", Default = WHITE, Alpha = 0 }):Colorpicker({ Name = "Headshot", Flag = "hit_marker_head", Default = Color3.fromRGB(255, 70, 70), Alpha = 0 })
+    local MarkerMore = Marker:Toggle({ Name = "Hit marker", Flag = "hit_marker", Tooltip = "Drawn at the crosshair whenever the game registers one of your hits" }):Colorpicker({ Name = "Marker", Flag = "hit_marker_color", Default = WHITE, Alpha = 0 }):Colorpicker({ Name = "Headshot", Flag = "hit_marker_head", Default = Color3.fromRGB(255, 70, 70), Alpha = 0 }):Settings("Hit marker", 240)
+    Marker:Dropdown({ Name = "Style", Flag = "hit_marker_style", Items = Feedback.styles, Default = "Classic X" })
+    Marker:Dropdown({ Name = "Animation", Flag = "hit_marker_anim", Items = Feedback.anims, Default = "Expand" })
     Marker:Slider({ Name = "Size", Flag = "hit_marker_size", Min = 4, Max = 24, Default = 9, Decimals = 1, Suffix = " px" })
     Marker:Slider({ Name = "Duration", Flag = "hit_marker_time", Min = 0.1, Max = 1.2, Default = 0.4, Decimals = 0.01, Suffix = " s" })
+    Marker:Toggle({ Name = "Kill marker", Flag = "hit_marker_kill", Tooltip = "Bigger marker in its own colour when the hit kills" }):Colorpicker({ Name = "Kill", Flag = "hit_marker_kill_color", Default = Color3.fromRGB(255, 190, 60), Alpha = 0 })
+    Marker:Toggle({ Name = "3D at hit position", Flag = "hit_marker_3d", Tooltip = "Draws each marker where the bullet hit the player instead of at the crosshair" })
     Marker:Toggle({ Name = "Hide the game's marker", Flag = "hit_hide_game" })
+    MarkerMore:Slider({ Name = "Thickness", Flag = "hit_marker_thick", Min = 1, Max = 5, Default = 1, Decimals = 1, Suffix = " px" })
+    MarkerMore:Slider({ Name = "Gap", Flag = "hit_marker_gap", Min = 0, Max = 20, Default = 3, Decimals = 1, Suffix = " px" })
+    MarkerMore:Toggle({ Name = "Outline", Flag = "hit_marker_outline", Default = true })
+    MarkerMore:Slider({ Name = "Kill marker size", Flag = "hit_marker_kill_size", Min = 1, Max = 3, Default = 1.5, Decimals = 0.05, Suffix = "x" })
+    MarkerMore:Toggle({ Name = "Skull on kill", Flag = "hit_marker_skull", Tooltip = "Replaces the marker with a skull when the hit kills" })
     local Hc = Hits:Section({ Name = "Hit chams", Column = 1, Icon = "user" })
     local HcMore = Hc:Toggle({ Name = "Hit chams", Flag = "hit_cham_on", Tooltip = "Flashes a local copy of the body you hit, built from adornments. Only your own bullet hits on enemies" }):Colorpicker({ Name = "Hit cham", Flag = "hit_cham_color", Default = Color3.fromRGB(255, 70, 110), Alpha = 0.35 }):Settings("Hit chams", 240)
     Hc:Dropdown({ Name = "Look", Flag = "hit_cham_look", Items = { "Solid", "Glow", "Wireframe" }, Default = "Solid" })
@@ -9850,9 +10968,30 @@ do
     HcMore:Toggle({ Name = "Always on top", Flag = "hit_cham_top", Default = true })
     HcMore:Toggle({ Name = "Outline", Flag = "hit_cham_outline", Tooltip = "A second, slightly larger layer around each part" })
     pickColor(HcMore, "Outline colour", "hit_cham_outline_color", WHITE, 0.4)
-    HcMore:Dropdown({ Name = "Particles", Flag = "hit_cham_fx", Items = HitCham.fxNames, Multi = true, Tooltip = "Bursts from the part that was hit" })
-    HcMore:Slider({ Name = "Particle amount", Flag = "hit_cham_fx_amount", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
     HcMore:Slider({ Name = "Max at once", Flag = "hit_cham_max", Min = 1, Max = 12, Default = 12, Decimals = 1, Tooltip = "The oldest cham is removed first" })
+    hidden("hit_cham_fx", "Dropdown", {}, HitFx.legacy):OnChanged(function(value)
+        if next(value) ~= nil then HitFx.pending = true end
+    end)
+    hidden("hit_cham_fx_amount", "Slider", 1)
+    local HitSnd = Hits:Section({ Name = "Hit sound", Column = 3, Icon = "music" })
+    HitSnd:Toggle({ Name = "Hit sound", Flag = "hit_snd" })
+    HitSnd:Dropdown({ Name = "Sound", Flag = "hit_snd_id", Items = HIT_SOUND_ORDER, Default = "Gamesense", Searchable = true })
+    HitSnd:Slider({ Name = "Volume", Flag = "hit_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
+    HitSnd:Slider({ Name = "Pitch", Flag = "hit_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+    HitSnd:Toggle({ Name = "Different on headshot", Flag = "hit_snd_head" })
+    HitSnd:Dropdown({ Name = "Headshot sound", Flag = "hit_snd_head_id", Items = HIT_SOUND_ORDER, Default = "Alt Headshot kill", Searchable = true })
+    HitSnd:Slider({ Name = "Max length", Flag = "hit_snd_max", Min = 0, Max = 3, Default = 0.6, Decimals = 0.05, Suffix = " s", Tooltip = "Stops long sounds (Glass Tink is about 4 s) after this long; 0 plays the whole sound" })
+    HitSnd:Input({ Name = "Custom sound id", Flag = "hit_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
+    HitSnd:Button({ Name = "Preview", Callback = function() Util.guard("hit-preview", Feedback.preview, "hit_snd", "Gamesense") end })
+    local HitEffects = Hits:Section({ Name = "Hit effects", Column = 2, Icon = "sparkles" })
+    local HfMore = HitEffects:Toggle({ Name = "Hit effects", Flag = "hit_fx_on", Tooltip = "Local particle effects where your bullets hit enemies, separate from hit chams" }):Colorpicker({ Name = "Hit effect", Flag = "hit_fx_color", Default = Color3.fromRGB(255, 120, 80), Alpha = 0 }):Settings("Hit effects", 240)
+    HitEffects:Dropdown({ Name = "Effects", Flag = "hit_fx_list", Items = HitFx.names, Multi = true, Default = { "Sparks", "Glow burst" }, Tooltip = "Pick several to layer them" })
+    HitEffects:Slider({ Name = "Size", Flag = "hit_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
+    HitEffects:Slider({ Name = "Amount", Flag = "hit_fx_amount", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
+    HitEffects:Slider({ Name = "Lifetime", Flag = "hit_fx_time", Min = 0.3, Max = 2.5, Default = 1, Decimals = 0.05, Suffix = "x" })
+    HitEffects:Toggle({ Name = "Headshots only", Flag = "hit_fx_head" })
+    HitEffects:Dropdown({ Name = "Position", Flag = "hit_fx_at", Items = { "Hit point", "Body centre" }, Default = "Hit point" })
+    HfMore:Slider({ Name = "Max at once", Flag = "hit_fx_max", Min = 1, Max = 16, Default = 12, Decimals = 1, Tooltip = "The oldest effect is removed first" })
     local Dmg = Hits:Section({ Name = "Damage numbers", Column = 2, Icon = "target" })
     Dmg:Toggle({ Name = "Custom damage numbers", Flag = "dmg_on", Tooltip = "Replaces the game's floating numbers; the game's Damage Numbers setting must be on" })
     Dmg:Label({ Name = "Head" }):Colorpicker({ Name = "Head", Flag = "dmg_head", Default = Color3.fromRGB(255, 102, 102) })
@@ -9861,15 +11000,6 @@ do
     Dmg:Slider({ Name = "Size", Flag = "dmg_size", Min = 8, Max = 32, Default = 16, Decimals = 1, Suffix = " px" })
     Dmg:Slider({ Name = "Rise", Flag = "dmg_rise", Min = 10, Max = 150, Default = 60, Decimals = 1, Suffix = " px" })
     Dmg:Slider({ Name = "Duration", Flag = "dmg_time", Min = 0.4, Max = 3, Default = 1.1, Decimals = 0.01, Suffix = " s" })
-    local HitSnd = Hits:Section({ Name = "Hit sound", Column = 3, Icon = "music" })
-    HitSnd:Toggle({ Name = "Hit sound", Flag = "hit_snd" })
-    HitSnd:Dropdown({ Name = "Sound", Flag = "hit_snd_id", Items = HIT_SOUND_ORDER, Default = "Gamesense", Searchable = true })
-    HitSnd:Slider({ Name = "Volume", Flag = "hit_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
-    HitSnd:Slider({ Name = "Pitch", Flag = "hit_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
-    HitSnd:Toggle({ Name = "Different on headshot", Flag = "hit_snd_head" })
-    HitSnd:Dropdown({ Name = "Headshot sound", Flag = "hit_snd_head_id", Items = HIT_SOUND_ORDER, Default = "Alt Headshot kill", Searchable = true })
-    HitSnd:Input({ Name = "Custom sound id", Flag = "hit_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
-    HitSnd:Button({ Name = "Preview", Callback = function() Util.guard("hit-preview", Feedback.preview, "hit_snd", "Gamesense") end })
 
     local Kills = Subs.Kills
     local KillSnd = Kills:Section({ Name = "Kill sound", Column = 1, Icon = "music" })
@@ -9877,6 +11007,7 @@ do
     KillSnd:Dropdown({ Name = "Sound", Flag = "kill_snd_id", Items = KILL_SOUND_ORDER, Default = "Alt Killshot", Searchable = true })
     KillSnd:Slider({ Name = "Volume", Flag = "kill_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
     KillSnd:Slider({ Name = "Pitch", Flag = "kill_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+    KillSnd:Slider({ Name = "Max length", Flag = "kill_snd_max", Min = 0, Max = 6, Default = 2.5, Decimals = 0.05, Suffix = " s", Tooltip = "Stops long sounds (Killer7 Crit is about 5 s) after this long; 0 plays the whole sound" })
     KillSnd:Input({ Name = "Custom sound id", Flag = "kill_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
     KillSnd:Button({ Name = "Preview", Callback = function() Util.guard("kill-preview", Feedback.preview, "kill_snd", "Alt Killshot") end })
     local Kill = Kills:Section({ Name = "Kill effects", Column = 2, Icon = "flame" })
@@ -9906,6 +11037,24 @@ do
     Cham:Slider({ Name = "Reflectance", Flag = "chams_dead_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
     Cham:Toggle({ Name = "Hide clothing/accessories", Flag = "chams_dead_hide", Tooltip = "Hides everything on the corpse except the six body parts" })
     Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 15, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the corpse out over the last seconds before the game removes it; 0 is off" })
+    local Run = Kills:Section({ Name = "Kill streak", Column = 3, Icon = "flame" })
+    local RunMore = Run:Toggle({ Name = "Kill streak", Flag = "streak_on", Tooltip = "Banner and announcer for kills in quick succession: each kill within the window of the previous one raises the count" }):Colorpicker({ Name = "Streak", Flag = "streak_color", Default = Color3.fromRGB(255, 80, 90), Alpha = 0 }):Colorpicker({ Name = "Peak", Flag = "streak_color2", Default = Color3.fromRGB(255, 200, 70), Alpha = 0 }):Settings("Kill streak", 250)
+    Run:Dropdown({ Name = "Style", Flag = "streak_style", Items = Streak.styles, Default = "Valorant bars" })
+    Run:Slider({ Name = "Window", Flag = "streak_window", Min = 1, Max = 15, Default = 4, Decimals = 0.1, Suffix = " s", Tooltip = "Longest gap between two kills that still continues the streak" })
+    Run:Dropdown({ Name = "Streak sound set", Flag = "streak_snd_set", Items = STREAK_SET_ORDER, Default = "Valorant", Searchable = true, Tooltip = "Counts past the end of a set repeat its last line. Spree sets (UT Spree, Halo, CoD) follow kills since your last death and only play on their thresholds" })
+    Run:Slider({ Name = "Streak volume", Flag = "streak_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
+    Run:Toggle({ Name = "Mute kill sound", Flag = "streak_mute_kill", Default = true, Tooltip = "Skips the normal kill sound when a streak sound plays for that kill" })
+    Run:Button({ Name = "Test streak", Callback = function() Util.guard("streak-test", Streak.test) end })
+    RunMore:Toggle({ Name = "Reset on death", Flag = "streak_reset_death", Default = true })
+    RunMore:Slider({ Name = "Scale", Flag = "streak_scale", Min = 0.5, Max = 2, Default = 1, Decimals = 0.05, Suffix = "x" })
+    RunMore:Slider({ Name = "Position Y", Flag = "streak_y", Min = 0.1, Max = 0.95, Default = 0.72, Decimals = 0.01, Tooltip = "Fraction of the screen height" })
+    RunMore:Slider({ Name = "Duration", Flag = "streak_time", Min = 0.5, Max = 5, Default = 2.2, Decimals = 0.1, Suffix = " s" })
+    RunMore:Toggle({ Name = "Show total streak", Flag = "streak_total", Default = true, Tooltip = "Kills since your last death, under the banner" })
+    RunMore:Toggle({ Name = "Milestone notifications", Flag = "streak_milestone" })
+    RunMore:Slider({ Name = "Milestone every", Flag = "streak_milestone_every", Min = 2, Max = 25, Default = 5, Decimals = 1, Suffix = " kills" })
+    local Notice = Kills:Section({ Name = "Killcam", Column = 2, Icon = "eye" })
+    Notice:Toggle({ Name = "Killcam notice", Flag = "killcam_notify", Default = true, Tooltip = "Estimate: the player you kill watches you on their killcam for up to 5 s, but they may skip it after 0.5 s and the game does not tell us. Closes early when they respawn, you die, they leave or the round ends" })
+    Notice:Toggle({ Name = "Notice sound", Flag = "killcam_sound" })
 
     local Bullets = Subs.Bullets
     local Trace = Bullets:Section({ Name = "Bullet tracers", Column = 1, Icon = "zap" })
@@ -9914,7 +11063,7 @@ do
     Trace:Toggle({ Name = "Team bullets", Flag = "trace_team_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_team_color", Default = Color3.fromRGB(90, 220, 130) })
     local traceItems = { "Obelus", "Lightning", "DNA", "Beam", "Bolt", "Trail", "Zigzag", "Heartrate", "Chain", "Glitch", "Swirl" }
     for _, name in ipairs(Tracers.particleNames) do traceItems[#traceItems + 1] = name end
-    Trace:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = traceItems, Default = "Lightning", Tooltip = "Comet to Rainbow sparks are particle tracers that follow the bullet's real path" })
+    Trace:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = traceItems, Default = "Lightning", Tooltip = "Comet to Void are particle tracers that follow the bullet's real path" })
     Trace:Slider({ Name = "Tracer lifetime", Flag = "trace_time", Min = 0.5, Max = 10, Default = 4, Decimals = 0.1, Suffix = " s" })
     Trace:Slider({ Name = "Tracer width", Flag = "trace_width", Min = 0.2, Max = 3, Default = 1, Decimals = 0.1, Suffix = "x" })
     Trace:Toggle({ Name = "Hide the game's beam", Flag = "trace_hide_beam", Default = true, Tooltip = "Turns off the game's own tracer beam on bullets that get a custom tracer" })
@@ -9928,6 +11077,7 @@ do
     Grad:Label({ Name = "Gradient end" }):Colorpicker({ Name = "Gradient end", Flag = "trace_grad_end", Default = Color3.fromRGB(94, 160, 255) })
     Grad:Slider({ Name = "Gradient fade", Flag = "trace_grad_fade", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Tooltip = "Fades the tracer toward its far end" })
     Grad:Toggle({ Name = "Rainbow", Flag = "trace_rainbow", Tooltip = "Cycles hue along the tracer instead of the two colours" })
+    Style:Slider({ Name = "Particle size", Flag = "trace_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only; Tracer width sets their core beam" })
     Style:Slider({ Name = "Particle density", Flag = "trace_fx_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only" })
     Style:Toggle({ Name = "Particle impact burst", Flag = "trace_fx_impact", Default = true, Tooltip = "Particle tracers burst where the bullet hits" })
     local Imp = Bullets:Section({ Name = "Bullet impacts", Column = 3, Icon = "flame" })
@@ -10960,7 +12110,9 @@ function Loop.step()
         Util.guard("tracers", Tracers.step, now)
         Util.guard("impacts", Impacts.step, now)
         Util.guard("hitchams", HitCham.step, now)
+        Util.guard("hitfx", HitFx.step, now)
         Util.guard("nades", Nades.step, cam, now)
+        Util.guard("streak", Streak.step, now)
         return
     end
 
@@ -10990,10 +12142,13 @@ function Loop.step()
     Util.guard("tracers", Tracers.step, now)
     Util.guard("impacts", Impacts.step, now)
     Util.guard("hitchams", HitCham.step, now)
+    Util.guard("hitfx", HitFx.step, now)
     Util.guard("nades", Nades.step, cam, now)
     Util.guard("localvis", Local.step, now)
     Util.guard("corpse", Corpse.step, now)
     Util.guard("killfx", KillFx.step, now)
+    Util.guard("killcam", Killcam.step, now)
+    Util.guard("streak", Streak.step, now)
     Util.guard("skins", Skins.step, now)
 
     if now - Loop.labelAt > 0.2 then

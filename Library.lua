@@ -646,6 +646,16 @@ function Library:IsMenuClick(Key)
     return Library.Toggled and Menu ~= nil and Library:IsMouseOverFrame(Menu) == true;
 end;
 
+-- Keystrokes meant for a focused TextBox (dropdown search, slider editor, chat) must never reach binds.
+-- Mouse input still passes: a click outside the box is what releases its focus.
+function Library:IsTypingInput(Input)
+    if Input and Input.UserInputType ~= Enum.UserInputType.Keyboard then
+        return false;
+    end;
+    local Ok, Box = pcall(function() return InputService:GetFocusedTextBox() end);
+    return Ok and Box ~= nil;
+end;
+
 function Library:KeyNameFromInput(Input)
     local Type = Input.UserInputType;
     if Type == Enum.UserInputType.Keyboard then
@@ -671,6 +681,9 @@ function Library:IsBindDown(Key)
         return Library:SideDown(Key);
     elseif Key == 'Touch' then
         return true;
+    end;
+    if Library:IsTypingInput() then
+        return false;
     end;
     local Ok, Code = pcall(function() return Enum.KeyCode[Key] end);
     return Ok and Code ~= nil and InputService:IsKeyDown(Code) or false;
@@ -1867,6 +1880,7 @@ Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
     local Float = Library.ActiveFloat;
     if not Float then return end;
     if Input.KeyCode == Enum.KeyCode.Escape then
+        if Float.OnEscape and Float.OnEscape() then return end;
         Library:CloseFloat();
         return;
     end;
@@ -2914,7 +2928,7 @@ do
         Library:GiveSignal(InputService.InputBegan:Connect(function(Input)
             if (not Picking) then
                 local Key = Library:KeyNameFromInput(Input);
-                if Key and Key == KeyPicker.Value and not Library.JustBound and not Library.SliderEditor then
+                if Key and Key == KeyPicker.Value and not Library.JustBound and not Library.SliderEditor and not Library:IsTypingInput(Input) then
                     KeyPicker:HandleBindPress(Key);
                 else
                     KeyPicker:Update();
@@ -3964,7 +3978,10 @@ do
         -- Popup: muted header, divider, borderless rows, multi gets an All / None footer
         local Title = Info.Text or Info.Title;
         local HEAD_H = Title and 28 or 0;
+        local SEARCH_H = 30;
         local FOOT_H = Info.Multi and 36 or 0;
+        -- rows in Values order, and the values the search currently lets through
+        local Rows, Shown = {}, {};
         local Float = Library:CreateFloat(MIN_W);
         local Panel = Float.Frame;
         if Title then
@@ -3988,6 +4005,53 @@ do
             });
             Library:AddToRegistry(HeadLine, { BackgroundColor3 = 'OutlineColor' });
         end;
+
+        local SearchOuter = Library:Create('Frame', {
+            Name = 'Search';
+            Active = true;
+            BackgroundColor3 = Library.InputColor;
+            Position = UDim2.fromOffset(6, HEAD_H + 6);
+            Size = UDim2.new(1, -12, 0, SEARCH_H - 6);
+            Visible = false;
+            ZIndex = 42;
+            Parent = Panel;
+        });
+        Library:Round(SearchOuter, 4);
+        local SearchStroke = Library:Stroke(SearchOuter, 'OutlineColor');
+        Library:AddToRegistry(SearchOuter, { BackgroundColor3 = 'InputColor' });
+        local SearchIcon = Library:Create('ImageLabel', {
+            AnchorPoint = Vector2.new(0, 0.5);
+            BackgroundTransparency = 1;
+            ImageColor3 = Library:GetDimColor();
+            Position = UDim2.new(0, 7, 0.5, 0);
+            Size = UDim2.fromOffset(12, 12);
+            ZIndex = 43;
+            Parent = SearchOuter;
+        });
+        local SearchX = 8;
+        if Library:ApplyIcon(SearchIcon, 'search') then
+            Library:AddToRegistry(SearchIcon, { ImageColor3 = function() return Library:GetDimColor() end });
+            SearchX = 24;
+        else
+            SearchIcon:Destroy();
+        end;
+        local SearchBox = Library:Create('TextBox', {
+            BackgroundTransparency = 1;
+            ClearTextOnFocus = false;
+            Font = Library.Font;
+            PlaceholderColor3 = Library:GetDimColor();
+            PlaceholderText = 'Search...';
+            Position = UDim2.fromOffset(SearchX, 0);
+            Size = UDim2.new(1, -SearchX - 6, 1, 0);
+            Text = '';
+            TextColor3 = Library.FontColor;
+            TextSize = Library.FontSize - 1;
+            TextXAlignment = Enum.TextXAlignment.Left;
+            TextTruncate = Enum.TextTruncate.AtEnd;
+            ZIndex = 43;
+            Parent = SearchOuter;
+        });
+        Library:AddToRegistry(SearchBox, { TextColor3 = 'FontColor'; PlaceholderColor3 = function() return Library:GetDimColor() end });
 
         local Scrolling = Library:Create('ScrollingFrame', {
             BackgroundTransparency = 1;
@@ -4065,29 +4129,94 @@ do
                 end);
                 return Btn;
             end;
-            FootButton('All', 0, 8, function()
-                local All = {};
-                for _, Value in ipairs(Dropdown.Values) do
-                    All[Value] = true;
+            -- both act only on the rows the search lets through
+            local function SetShown(On)
+                local New = {};
+                for Value in next, Dropdown.Value do
+                    New[Value] = true;
                 end;
-                Dropdown:SetValue(All);
-            end);
-            FootButton('None', 0.5, 4, function()
-                Dropdown:SetValue({});
-            end);
+                for _, Value in ipairs(Shown) do
+                    New[Value] = On or nil;
+                end;
+                Dropdown:SetValue(New);
+            end;
+            FootButton('All', 0, 8, function() SetShown(true) end);
+            FootButton('None', 0.5, 4, function() SetShown(false) end);
         end;
 
         local ListHeight = ITEM_H;
         local function RecalculateListSize(Count)
+            local Top = HEAD_H + (SearchOuter.Visible and SEARCH_H or 0);
             ListHeight = math.clamp(Count, 1, MAX_DROPDOWN_ITEMS) * ITEM_H;
+            Scrolling.Position = UDim2.fromOffset(0, Top + 4);
             Scrolling.Size = UDim2.new(1, 0, 0, ListHeight);
             Scrolling.CanvasSize = UDim2.fromOffset(0, Count * ITEM_H);
             local Width = math.max(MIN_W, DropdownOuter.AbsoluteSize.X / math.max(Library.UIScale, 0.1));
-            Panel.Size = UDim2.fromOffset(Width, HEAD_H + 4 + ListHeight + 4 + FOOT_H);
+            Panel.Size = UDim2.fromOffset(Width, Top + 4 + ListHeight + 4 + FOOT_H);
         end;
 
         local function Place()
             Float:Place(DropdownOuter, false);
+        end;
+
+        local function Searchable()
+            if Info.Searchable ~= nil then return Info.Searchable and true or false end;
+            return #Dropdown.Values > MAX_DROPDOWN_ITEMS;
+        end;
+
+        local EmptyLabel;
+        local function Filter()
+            SearchOuter.Visible = Searchable();
+            local Query = SearchOuter.Visible and SearchBox.Text:lower() or '';
+            Shown = {};
+            for _, Row in ipairs(Rows) do
+                local Match = Query == '' or tostring(Row.Value):lower():find(Query, 1, true) ~= nil;
+                Row.Button.Visible = Match;
+                if Match then table.insert(Shown, Row.Value) end;
+            end;
+            if EmptyLabel then
+                EmptyLabel.Text = #Rows == 0 and 'No options' or 'No matches';
+                EmptyLabel.Visible = #Shown == 0;
+            end;
+            RecalculateListSize(#Shown);
+            if Float.Open then Place() end;
+        end;
+
+        local function FocusSearch()
+            task.defer(function()
+                if Float.Open and SearchOuter.Visible then
+                    pcall(SearchBox.CaptureFocus, SearchBox);
+                end;
+            end);
+        end;
+
+        SearchBox:GetPropertyChangedSignal('Text'):Connect(function()
+            Scrolling.CanvasPosition = Vector2.new(0, 0);
+            Filter();
+        end);
+        SearchBox.Focused:Connect(function()
+            Library:Tween(SearchStroke, { Color = Library.AccentColor }, 0.12);
+        end);
+        SearchBox.FocusLost:Connect(function(EnterPressed)
+            Library:Tween(SearchStroke, { Color = Library.OutlineColor }, 0.12);
+            if not (EnterPressed and Float.Open) then return end;
+            local First = Shown[1];
+            if Info.Multi or First == nil or SearchBox.Text == '' then
+                FocusSearch();
+                return;
+            end;
+            if Dropdown.Value ~= First then
+                Dropdown:SetValue(First);
+                Library:AttemptSave();
+            end;
+            Dropdown:CloseDropdown();
+        end);
+        -- Esc clears the search first, a second Esc closes
+        function Float.OnEscape()
+            if not SearchOuter.Visible or SearchBox.Text == '' then return false end;
+            SearchBox.Text = '';
+            FocusSearch();
+            return true;
         end;
         DropdownOuter:GetPropertyChangedSignal('AbsolutePosition'):Connect(function()
             if Float.Open then Place() end;
@@ -4128,6 +4257,7 @@ do
         function Dropdown:BuildDropdownList()
             local Values = Dropdown.Values;
             local Buttons = {};
+            Rows = {};
 
             for _, Element in next, Scrolling:GetChildren() do
                 if Element:IsA('GuiObject') then
@@ -4264,23 +4394,25 @@ do
                 Table:UpdateButton();
 
                 Buttons[Button] = Table;
+                table.insert(Rows, { Button = Button; Value = Value });
             end;
 
-            if Count == 0 then
-                Library:CreateLabel({
-                    Dim = true;
-                    Position = UDim2.fromOffset(26, 0);
-                    Size = UDim2.new(1, -32, 0, ITEM_H);
-                    Text = 'No options';
-                    TextSize = Library.FontSize - 1;
-                    TextXAlignment = Enum.TextXAlignment.Left;
-                    ZIndex = 43;
-                    Parent = Scrolling;
-                });
-            end;
+            EmptyLabel = Library:CreateLabel({
+                Dim = true;
+                Name = 'Empty';
+                LayoutOrder = Count + 1;
+                Size = UDim2.new(1, 0, 0, ITEM_H);
+                Text = 'No options';
+                TextSize = Library.FontSize - 1;
+                TextXAlignment = Enum.TextXAlignment.Left;
+                Visible = false;
+                ZIndex = 43;
+                Parent = Scrolling;
+            });
+            Library:Create('UIPadding', { PaddingLeft = UDim.new(0, 26); Parent = EmptyLabel });
 
             Dropdown:Display();
-            RecalculateListSize(Count);
+            Filter();
         end;
 
         function Dropdown:SetValues(NewValues)
@@ -4292,15 +4424,18 @@ do
         end;
 
         function Dropdown:OpenDropdown()
-            RecalculateListSize(#Dropdown.Values);
+            SearchBox.Text = '';
+            Filter();
             -- bring the current single choice into view
             local Index = (not Info.Multi) and Dropdown.Value ~= nil and table.find(Dropdown.Values, Dropdown.Value);
             Scrolling.CanvasPosition = Vector2.new(0, Index and math.max(0, (Index - 1) * ITEM_H - (ListHeight - ITEM_H) / 2) or 0);
             Library:OpenFloat(Float, DropdownOuter, function()
+                if SearchBox:IsFocused() then pcall(SearchBox.ReleaseFocus, SearchBox) end;
                 Library:Tween(DropdownArrow, { Rotation = 0 }, 0.14);
             end);
             Place();
             Library:Tween(DropdownArrow, { Rotation = 180 }, 0.14);
+            FocusSearch();
         end;
 
         function Dropdown:CloseDropdown()
@@ -4387,6 +4522,7 @@ do
         Dropdown.Button = DropdownOuter;
         Dropdown.List = Scrolling;
         Dropdown.Footer = Footer;
+        Dropdown.Search = SearchBox;
         Options[Idx] = Dropdown;
 
         return Dropdown;
@@ -4713,7 +4849,7 @@ do
             AnchorPoint = Vector2.new(0.5, 0.5);
             Position = UDim2.fromScale(0.5, 0.5);
             Size = UDim2.new(1, -16, 0, 16);
-            Text = type(Info.EmptyText) == 'string' and Info.EmptyText or 'No model';
+            Text = 'No model';
             TextSize = Library.FontSize - 1;
             ZIndex = 6;
             Parent = View;
@@ -4845,6 +4981,11 @@ do
         function Viewport:GetModel()
             return Viewport.Model;
         end;
+
+        function Viewport:SetEmptyText(Text)
+            Empty.Text = type(Text) == 'string' and Text or 'No model';
+        end;
+        Viewport:SetEmptyText(Info.EmptyText);
 
         function Viewport:ResetView()
             Viewport.Spin = 0;
@@ -6865,7 +7006,7 @@ function Library:PlayIntro(Config)
         RunQueue();
         if Config.Skippable ~= false then
             table.insert(Connections, InputService.InputBegan:Connect(function(Input)
-                if Input.KeyCode == Enum.KeyCode.Escape or Input.KeyCode == Enum.KeyCode.Space then
+                if (Input.KeyCode == Enum.KeyCode.Escape or Input.KeyCode == Enum.KeyCode.Space) and not Library:IsTypingInput(Input) then
                     Intro:Skip();
                 end;
             end));
@@ -8836,7 +8977,7 @@ function Library:CreateWindow(...)
     end
 
     Library:GiveSignal(InputService.InputBegan:Connect(function(Input, Processed)
-        if Library.SliderEditor then return; end;
+        if Library.SliderEditor or Library:IsTypingInput(Input) then return; end;
         local Bound = Library.ToggleKeybind;
         if type(Bound) == 'table' and Bound.Type == 'KeyPicker' then
             if not Library.JustBound and next(Library.SideBinders) == nil and Library:KeyNameFromInput(Input) == Bound.Value then

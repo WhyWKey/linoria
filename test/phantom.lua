@@ -691,6 +691,20 @@ function Game.aiming(weapon)
     return ok and state == true
 end
 
+function Game.aimProgress(weapon)
+    local character = type(weapon) == "table" and weapon._characterObject
+    if type(character) ~= "table" then
+        local interface = Game.mods.CharacterInterface
+        local ok, object = pcall(function() return interface and interface.getCharacterObject() end)
+        character = ok and object
+    end
+    if type(character) == "table" and type(character.getSpring) == "function" then
+        local ok, value = pcall(function() return character:getSpring("masteraimspring").p end)
+        if ok and type(value) == "number" and value == value then return math.clamp(value, 0, 1) end
+    end
+    return Game.aiming(weapon) and 1 or 0
+end
+
 function Game.zoom(weapon)
     if type(weapon) ~= "table" or type(weapon.getActiveAimStats) ~= "function" then return nil end
     local ok, stats = pcall(weapon.getActiveAimStats, weapon)
@@ -1442,7 +1456,38 @@ function Barrel.update(cam, gameCam, weapon, now)
     Barrel.muzzle2d = muzzleFront and muzzlePoint or nil
     local hitPoint, hitFront = Draw.project(cam, Barrel.hit)
     Barrel.hit2d = hitFront and hitPoint or nil
+    Barrel.progress = Game.aimProgress(weapon)
+    Barrel.weight = Barrel.blend(Barrel.progress, flag("legit_barrel_ads", 0.9))
     Barrel.valid = true
+end
+
+function Barrel.smooth(x)
+    x = math.clamp(x, 0, 1)
+    return x * x * (3 - 2 * x)
+end
+
+function Barrel.blend(progress, threshold)
+    if threshold <= 0 then return 1 end
+    local hip = 1 - Barrel.smooth((progress - 0.02) / 0.1)
+    local top = threshold + (1 - threshold) * 0.75
+    local scoped = top - threshold > 1e-3 and Barrel.smooth((progress - threshold) / (top - threshold)) or (progress >= threshold and 1 or 0)
+    return math.max(hip, scoped)
+end
+
+function Barrel.mix(eye, camLook)
+    local weight = Barrel.valid and Barrel.weight or 0
+    if weight >= 1 then return Barrel.fire, Barrel.look end
+    if weight <= 0 then return eye, nil end
+    local look = camLook + (Barrel.look - camLook) * weight
+    return eye + (Barrel.fire - eye) * weight, look.Magnitude > 1e-3 and look.Unit or Barrel.look
+end
+
+function Barrel.center(mode, center)
+    local weight = Barrel.valid and Barrel.weight or 0
+    local point = mode == "Muzzle" and Barrel.muzzle2d or Barrel.hit2d
+    if weight <= 0 or not point then return center end
+    if weight >= 1 then return point end
+    return center + (point - center) * weight
 end
 
 function Barrel.point(mode, center)
@@ -1691,13 +1736,11 @@ end
 local Chams = { objs = {}, pool = {}, container = nil }
 local CHAM_PARTS = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }
 local ChamStyle = {
-    objs = {}, pool = {}, allowed = {}, order = {}, frame = 0, cfg = {}, rate = 1 / 20, styles = {}, edgeList = {},
-    names = { "Classic", "Hologram", "Energy shield", "Galaxy", "Lava", "Liquid chrome", "Toon", "Rainbow flow", "Ghost", "Inferno", "Glow shells" },
-    viewNames = { "Classic", "Hologram", "Energy shield", "Galaxy", "Lava", "Liquid chrome", "Rainbow flow", "Glow shells" },
-    tex = { hex = "rbxassetid://6175083785", scan = "rbxassetid://5843010904", galaxy = "rbxassetid://1120738433", swirl = "rbxassetid://8133639623" },
-    fire = "rbxasset://textures/particles/fire_main.dds", faces = { "Front", "Back", "Left", "Right" },
-    ghosts = 4, ghostEvery = 0.12, shells = 3, fireRate = 40,
-    heights = { Head = 0, Torso = 0.6, ["Left Arm"] = 0.8, ["Right Arm"] = 0.8, ["Left Leg"] = 1.5, ["Right Leg"] = 1.5 },
+    objs = {}, pool = {}, allowed = {}, order = {}, frame = 0, cfg = {}, rate = 1 / 20, styles = {},
+    names = { "Classic", "Toon", "Ghost", "Glow shells" },
+    viewNames = { "Classic", "Glow shells" },
+    ghostMax = 8, shellMax = 3,
+    keyLight = Vector3.new(0.45, -0.75, -0.5).Unit, rimLight = Vector3.new(0.7, -0.35, 0.6).Unit,
 }
 
 function Chams.identity()
@@ -1895,27 +1938,12 @@ function Chams.signature(cfg, S)
     }, "|")
 end
 
-do
-    local corners = {}
-    for _, sx in ipairs({ -1, 1 }) do
-        for _, sy in ipairs({ -1, 1 }) do
-            for _, sz in ipairs({ -1, 1 }) do corners[#corners + 1] = Vector3.new(sx, sy, sz) end
-        end
-    end
-    for first = 1, #corners do
-        for second = first + 1, #corners do
-            local a, b = corners[first], corners[second]
-            local same = (a.X == b.X and 1 or 0) + (a.Y == b.Y and 1 or 0) + (a.Z == b.Z and 1 or 0)
-            if same == 2 then ChamStyle.edgeList[#ChamStyle.edgeList + 1] = { a, b } end
-        end
-    end
-end
-
 function ChamStyle.nearer(a, b) return a.styleDist < b.styleDist end
 
 function ChamStyle.read()
     local c = ChamStyle.cfg
     c.style = flag("chams_style", "Classic")
+    if not ChamStyle.styles[c.style] then c.style = "Classic" end
     if c.style == "Classic" then return c end
     c.c1 = flag("chams_style_color", Color3.fromRGB(0, 220, 255))
     c.c2 = flag("chams_style_color2", Color3.fromRGB(255, 60, 200))
@@ -1923,7 +1951,22 @@ function ChamStyle.read()
     c.int = flag("chams_style_int", 1)
     c.walls = flag("chams_style_walls", true)
     c.cap = math.max(1, math.floor(flag("chams_style_cap", 8)))
-    c.sig = table.concat({ tostring(c.c1), tostring(c.c2), c.int, tostring(c.walls) }, "|")
+    c.vis = flag("chams_style_vis", false)
+    c.visColor, c.visAlpha = flag("chams_style_vis_color", Color3.fromRGB(80, 255, 140)), Util.alpha("chams_style_vis_color", 0)
+    c.occColor, c.occAlpha = flag("chams_style_occ_color", Color3.fromRGB(255, 70, 110)), Util.alpha("chams_style_occ_color", 0.25)
+    c.toonGrow = flag("chams_toon_outline", 0.3)
+    c.toonLine = flag("chams_toon_outline_color", Color3.fromRGB(12, 12, 18))
+    c.toonShade = flag("chams_toon_shade", 0.45)
+    c.toonRim = flag("chams_toon_rim", true)
+    c.ghostCount = math.clamp(math.floor(flag("chams_ghost_count", 5)), 1, ChamStyle.ghostMax)
+    c.ghostSpacing = math.max(flag("chams_ghost_spacing", 1.2), 0.1)
+    c.ghostLength = math.max(flag("chams_ghost_length", 0.6), 0.05)
+    c.ghostGradient = flag("chams_ghost_gradient", true)
+    c.glowShells = math.clamp(math.floor(flag("chams_glow_shells", 3)), 1, ChamStyle.shellMax)
+    c.glowPulse = flag("chams_glow_pulse", 0.5)
+    c.glowOutline = flag("chams_glow_outline", false)
+    c.sig = table.concat({ tostring(c.c1), tostring(c.c2), c.int, tostring(c.walls), tostring(c.visColor), c.visAlpha, tostring(c.occColor), c.occAlpha,
+        c.toonGrow, c.ghostCount, tostring(c.ghostGradient), c.glowShells, tostring(c.glowOutline) }, "|")
     return c
 end
 
@@ -1984,12 +2027,7 @@ function ChamStyle.view()
     local camera = Instance.new("Camera")
     camera.Parent = views.front
     views.back.CurrentCamera, views.front.CurrentCamera, views.camera = camera, camera, camera
-    local keys = {}
-    for index = 0, 6 do keys[#keys + 1] = ColorSequenceKeypoint.new(index / 6, Color3.fromHSV(index / 6 % 1, 0.85, 1)) end
-    views.gradient = Instance.new("UIGradient")
-    views.gradient.Color = ColorSequence.new(keys)
-    views.gradient.Enabled = ChamStyle.current == "Rainbow flow"
-    views.gradient.Parent = views.front
+    views.memo = { back = {}, front = {} }
     views.back.Visible = ChamStyle.current == "Toon"
     ChamStyle.views = views
     return views
@@ -2029,45 +2067,12 @@ function ChamStyle.body(rig, parent, props, grow, loose)
     return set
 end
 
-function ChamStyle.skin(rig, set, texture, tile)
-    for _, name in ipairs(CHAM_PARTS) do
-        for _, face in ipairs(ChamStyle.faces) do
-            rig.textures[#rig.textures + 1] = ChamStyle.make(rig, "Texture", { Texture = texture, Face = Enum.NormalId[face], StudsPerTileU = tile, StudsPerTileV = tile }, set[name])
-        end
-    end
-end
-
-function ChamStyle.edges(rig, parent, part, size)
-    if ChamStyle.wire == nil then
-        local ok, probe = pcall(Instance.new, "WireframeHandleAdornment")
-        ChamStyle.wire = ok and probe ~= nil and type(probe.AddLine) == "function"
-        if ok and probe then pcall(probe.Destroy, probe) end
-    end
-    if not ChamStyle.wire then
-        return ChamStyle.make(rig, "SelectionBox", { Adornee = part, LineThickness = 0.04, SurfaceTransparency = 1 }, parent)
-    end
-    local wire = ChamStyle.make(rig, "WireframeHandleAdornment", { Adornee = part, Thickness = 2, AdornCullingMode = Enum.AdornCullingMode.Never }, parent)
-    local half = size * 0.5
-    for _, edge in ipairs(ChamStyle.edgeList) do
-        pcall(wire.AddLine, wire, edge[1] * half, edge[2] * half)
-    end
-    return wire
-end
-
 function ChamStyle.tint(set, color)
     for _, part in pairs(set) do part.Color = color end
 end
 
 function ChamStyle.fade(set, alpha)
     for _, part in pairs(set) do part.Transparency = alpha end
-end
-
-function ChamStyle.scroll(rig, key, value)
-    for _, texture in ipairs(rig.textures) do texture[key] = value end
-end
-
-function ChamStyle.texture(rig, color, alpha)
-    for _, texture in ipairs(rig.textures) do texture.Color3, texture.Transparency = color, alpha end
 end
 
 function ChamStyle.screen(cfg)
@@ -2077,173 +2082,97 @@ function ChamStyle.screen(cfg)
     views.back.ImageTransparency, views.front.ImageTransparency = alpha, alpha
 end
 
-ChamStyle.styles.Hologram = {
-    build = function(rig, root)
-        local folder = ChamStyle.group(rig, root)
-        local set = ChamStyle.body(rig, folder, { Material = Enum.Material.SmoothPlastic, Transparency = 1 })
-        ChamStyle.skin(rig, set, ChamStyle.tex.scan, 1.5)
-        for _, name in ipairs(CHAM_PARTS) do rig.layers[#rig.layers + 1] = ChamStyle.edges(rig, folder, set[name], ChamStyle.size(name)) end
-    end,
-    paint = function(rig, cfg)
-        rig.glitch = nil
-        for _, edge in ipairs(rig.layers) do
-            edge.Color3 = cfg.c2
-            if ChamStyle.wire then edge.AlwaysOnTop = cfg.walls end
-        end
-    end,
-    tick = function(rig, cfg, now)
-        local glitch = math.sin(math.floor(now * 20) * 91.7) > 1 - 0.12 * cfg.speed
-        if glitch ~= rig.glitch then
-            rig.glitch = glitch
-            local alpha = math.clamp(1 - 0.6 * cfg.int, 0, 0.9)
-            if glitch then alpha = math.min(1, alpha + 0.45) end
-            ChamStyle.texture(rig, cfg.c1, alpha)
-            for _, edge in ipairs(rig.layers) do edge.Transparency = math.max(0, alpha - 0.3) end
-        end
-        ChamStyle.scroll(rig, "OffsetStudsV", (now * cfg.speed * 0.9) % 1.5)
-    end,
-}
+function ChamStyle.mix(alpha, extra)
+    return 1 - (1 - alpha) * (1 - extra)
+end
 
-ChamStyle.styles["Energy shield"] = {
-    build = function(rig, root)
-        ChamStyle.skin(rig, ChamStyle.body(rig, ChamStyle.group(rig, root), { Material = Enum.Material.ForceField }), ChamStyle.tex.hex, 2)
-    end,
-    paint = function(rig, cfg)
-        ChamStyle.fade(rig.sets[1], math.clamp(1 - 0.8 * cfg.int, 0, 0.9))
-        ChamStyle.texture(rig, cfg.c2, math.clamp(1 - 0.5 * cfg.int, 0, 0.95))
-    end,
-    tick = function(rig, cfg, now)
-        ChamStyle.tint(rig.sets[1], Util.lerpColor(cfg.c1, cfg.c2, 0.25 + 0.25 * math.sin(now * cfg.speed * 3)))
-        ChamStyle.scroll(rig, "OffsetStudsV", (now * cfg.speed * 0.8) % 2)
-    end,
-}
+function ChamStyle.put(views, key, prop, value)
+    local memo = views.memo[key]
+    if memo[prop] ~= value then
+        memo[prop] = value
+        views[key][prop] = value
+    end
+end
 
-ChamStyle.styles.Galaxy = {
-    build = function(rig, root)
-        ChamStyle.skin(rig, ChamStyle.body(rig, ChamStyle.group(rig, root), { Material = Enum.Material.SmoothPlastic }), ChamStyle.tex.galaxy, 4)
-    end,
-    paint = function(rig, cfg)
-        ChamStyle.tint(rig.sets[1], Util.lerpColor(cfg.c2, BLACK, 0.7))
-        ChamStyle.fade(rig.sets[1], math.clamp(0.5 - 0.4 * cfg.int, 0, 0.9))
-        ChamStyle.texture(rig, Util.lerpColor(cfg.c1, WHITE, 0.35), math.clamp(0.6 - 0.5 * cfg.int, 0, 0.9))
-    end,
-    tick = function(rig, cfg, now)
-        ChamStyle.scroll(rig, "OffsetStudsU", (now * cfg.speed * 0.5) % 4)
-    end,
-}
+function ChamStyle.toonLight(views, cam, cfg)
+    local shade = math.clamp(cfg.toonShade, 0, 0.95)
+    ChamStyle.put(views, "front", "Ambient", Color3.new(1 - shade, 1 - shade, 1 - shade))
+    ChamStyle.put(views, "front", "LightColor", Color3.new(shade, shade, shade))
+    ChamStyle.put(views, "front", "LightDirection", cam.CFrame:VectorToWorldSpace(ChamStyle.keyLight))
+    ChamStyle.put(views, "back", "Ambient", cfg.toonLine)
+    ChamStyle.put(views, "back", "LightColor", cfg.toonRim and cfg.c2 or BLACK)
+    ChamStyle.put(views, "back", "LightDirection", cam.CFrame:VectorToWorldSpace(ChamStyle.rimLight))
+end
 
-ChamStyle.styles.Lava = {
-    build = function(rig, root)
-        ChamStyle.skin(rig, ChamStyle.body(rig, ChamStyle.group(rig, root), { Material = Enum.Material.Neon }), ChamStyle.tex.swirl, 2.5)
-    end,
-    paint = function(rig, cfg)
-        ChamStyle.fade(rig.sets[1], math.clamp(0.4 - 0.3 * cfg.int, 0, 0.9))
-        ChamStyle.texture(rig, cfg.c2, math.clamp(0.7 - 0.5 * cfg.int, 0, 0.9))
-    end,
-    tick = function(rig, cfg, now)
-        ChamStyle.tint(rig.sets[1], Util.lerpColor(cfg.c1, cfg.c2, 0.3 + 0.3 * math.sin(now * cfg.speed * 2.5)))
-        ChamStyle.scroll(rig, "OffsetStudsV", (-now * cfg.speed * 0.7) % 2.5)
-    end,
-}
-
-ChamStyle.styles["Liquid chrome"] = {
-    build = function(rig, root)
-        ChamStyle.body(rig, ChamStyle.group(rig, root), { Material = Enum.Material.SmoothPlastic, Reflectance = 1 })
-    end,
-    paint = function(rig, cfg)
-        for _, part in pairs(rig.sets[1]) do part.Reflectance = math.clamp(0.5 + 0.5 * cfg.int, 0, 1) end
-        ChamStyle.fade(rig.sets[1], math.clamp(0.4 - 0.4 * cfg.int, 0, 0.9))
-    end,
-    tick = function(rig, cfg, now)
-        for name, part in pairs(rig.sets[1]) do
-            part.Color = Util.lerpColor(cfg.c1, cfg.c2, 0.5 + 0.5 * math.sin(now * cfg.speed * 2.4 - ChamStyle.heights[name] * 2))
-        end
-    end,
-}
+function ChamStyle.glowGrow(shell, count)
+    return 0.04 + 0.7 * (shell / count) ^ 1.5
+end
 
 ChamStyle.styles.Toon = {
     view = true,
     build = function(rig, views)
-        rig.outline = ChamStyle.body(rig, ChamStyle.group(rig, views.back), { Material = Enum.Material.SmoothPlastic }, 0.3)
+        rig.outline = ChamStyle.body(rig, ChamStyle.group(rig, views.back), { Material = Enum.Material.SmoothPlastic, Color = WHITE }, 0.3)
         rig.fill = ChamStyle.body(rig, ChamStyle.group(rig, views.front), { Material = Enum.Material.SmoothPlastic })
+        rig.grow = 0.3
     end,
     paint = function(rig, cfg)
-        ChamStyle.tint(rig.outline, cfg.c2)
-        ChamStyle.tint(rig.fill, cfg.c1)
-        ChamStyle.screen(cfg)
-    end,
-}
-
-ChamStyle.styles["Rainbow flow"] = {
-    view = true,
-    build = function(rig, views)
-        rig.fill = ChamStyle.body(rig, ChamStyle.group(rig, views.front), { Material = Enum.Material.SmoothPlastic, Color = WHITE })
-    end,
-    paint = function(rig, cfg)
+        if rig.grow ~= cfg.toonGrow then
+            rig.grow = cfg.toonGrow
+            for name, part in pairs(rig.outline) do part.Size = ChamStyle.size(name, cfg.toonGrow) end
+        end
+        ChamStyle.tint(rig.fill, rig.c1)
+        ChamStyle.fade(rig.fill, rig.alpha)
+        ChamStyle.fade(rig.outline, rig.alpha)
         ChamStyle.screen(cfg)
     end,
 }
 
 ChamStyle.styles.Ghost = {
-    build = function(rig, root)
-        local folder = ChamStyle.group(rig, root)
-        rig.base = ChamStyle.body(rig, folder, { Material = Enum.Material.ForceField })
-        for index = 1, ChamStyle.ghosts do
-            rig.ghosts[index] = { set = ChamStyle.body(rig, folder, { Material = Enum.Material.Neon, Transparency = 1 }, nil, true), born = -math.huge }
+    view = true,
+    build = function(rig, views)
+        local folder = ChamStyle.group(rig, views.front)
+        rig.base = ChamStyle.body(rig, folder, { Material = Enum.Material.SmoothPlastic })
+        for index = 1, ChamStyle.ghostMax do
+            rig.ghosts[index] = { set = ChamStyle.body(rig, folder, { Material = Enum.Material.SmoothPlastic, Transparency = 1 }, 0, true), born = -math.huge }
         end
     end,
     paint = function(rig, cfg)
-        ChamStyle.tint(rig.base, cfg.c1)
-        ChamStyle.fade(rig.base, math.clamp(0.6 - 0.4 * cfg.int, 0, 0.9))
-        for _, ghost in ipairs(rig.ghosts) do
-            ChamStyle.tint(ghost.set, cfg.c2)
-            ghost.alpha = nil
-        end
+        ChamStyle.tint(rig.base, rig.c1)
+        ChamStyle.fade(rig.base, ChamStyle.mix(math.clamp(0.75 - 0.45 * cfg.int, 0.1, 0.95), rig.alpha))
+        for _, ghost in ipairs(rig.ghosts) do ghost.step = nil end
+        if rig.ghostNext > cfg.ghostCount then rig.ghostNext = 1 end
     end,
     follow = function(rig, rec, now, cfg)
-        if now < rig.ghostAt then return end
-        rig.ghostAt = now + ChamStyle.ghostEvery / cfg.speed
+        local torso = rec.hash.Torso
+        if not torso then return end
+        local position = torso.Position
+        if rig.ghostPos and (position - rig.ghostPos).Magnitude < cfg.ghostSpacing then return end
+        local first = rig.ghostPos == nil
+        rig.ghostPos = position
+        if first then return end
         local ghost = rig.ghosts[rig.ghostNext]
-        rig.ghostNext = rig.ghostNext % #rig.ghosts + 1
-        ghost.born = now
+        rig.ghostNext = rig.ghostNext % cfg.ghostCount + 1
+        ghost.born, ghost.step = now, nil
         for name, part in pairs(ghost.set) do
             local real = rec.hash[name]
             if real then part.CFrame = real.CFrame end
         end
     end,
     tick = function(rig, cfg, now)
-        local life = ChamStyle.ghostEvery * #rig.ghosts / cfg.speed
-        local floor = math.clamp(0.85 - 0.35 * cfg.int, 0.2, 0.95)
-        for _, ghost in ipairs(rig.ghosts) do
-            local k = (now - ghost.born) / life
-            local alpha = k >= 1 and 1 or math.floor((floor + (1 - floor) * k) * 20 + 0.5) / 20
-            if alpha ~= ghost.alpha then
-                ghost.alpha = alpha
-                ChamStyle.fade(ghost.set, alpha)
+        local floor = math.clamp(0.8 - 0.4 * cfg.int, 0.2, 0.95)
+        for index, ghost in ipairs(rig.ghosts) do
+            local k = index <= cfg.ghostCount and (now - ghost.born) / cfg.ghostLength or 1
+            local step = k >= 1 and -1 or math.floor(k * 16)
+            if step ~= ghost.step then
+                ghost.step = step
+                if step < 0 then
+                    ChamStyle.fade(ghost.set, 1)
+                else
+                    local t = (step + 0.5) / 16
+                    ChamStyle.fade(ghost.set, ChamStyle.mix(floor + (1 - floor) * t * t * (3 - 2 * t), rig.alpha))
+                    ChamStyle.tint(ghost.set, cfg.ghostGradient and Util.lerpColor(rig.c1, cfg.c2, t) or cfg.c2)
+                end
             end
-        end
-    end,
-}
-
-ChamStyle.styles.Inferno = {
-    build = function(rig, root)
-        local set = ChamStyle.body(rig, ChamStyle.group(rig, root), { Material = Enum.Material.Neon })
-        for _, name in ipairs(CHAM_PARTS) do
-            rig.layers[#rig.layers + 1] = ChamStyle.make(rig, "ParticleEmitter", {
-                Texture = ChamStyle.fire, LightEmission = 1, LightInfluence = 0, LockedToPart = false, Lifetime = NumberRange.new(0.35, 0.7),
-                Speed = NumberRange.new(1, 3), Acceleration = Vector3.new(0, 7, 0), SpreadAngle = Vector2.new(25, 25), EmissionDirection = Enum.NormalId.Top,
-                Rotation = NumberRange.new(0, 360), RotSpeed = NumberRange.new(-90, 90),
-                Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.9), NumberSequenceKeypoint.new(1, 0) }),
-                Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(1, 1) }),
-            }, set[name])
-        end
-    end,
-    paint = function(rig, cfg)
-        ChamStyle.tint(rig.sets[1], cfg.c1)
-        ChamStyle.fade(rig.sets[1], math.clamp(0.9 - 0.3 * cfg.int, 0.3, 0.95))
-        for _, emitter in ipairs(rig.layers) do
-            emitter.Color = ColorSequence.new(cfg.c1, cfg.c2)
-            emitter.Rate = math.min(ChamStyle.fireRate, 16 * cfg.int)
         end
     end,
 }
@@ -2251,20 +2180,34 @@ ChamStyle.styles.Inferno = {
 ChamStyle.styles["Glow shells"] = {
     build = function(rig, root)
         local folder = ChamStyle.group(rig, root)
-        for layer = 1, ChamStyle.shells do
+        for layer = 1, ChamStyle.shellMax + 1 do
             local list = {}
             for _, name in ipairs(CHAM_PARTS) do
-                list[name] = ChamStyle.make(rig, "BoxHandleAdornment", { Size = ChamStyle.size(name, 0.12 + 0.22 * layer), ZIndex = layer, AdornCullingMode = Enum.AdornCullingMode.Never }, folder)
+                list[name] = ChamStyle.make(rig, "BoxHandleAdornment", { Size = ChamStyle.size(name, 0.03), ZIndex = layer, AdornCullingMode = Enum.AdornCullingMode.Never }, folder)
             end
             rig.layers[layer] = list
         end
+        local lines = {}
+        for _, name in ipairs(CHAM_PARTS) do
+            lines[name] = ChamStyle.make(rig, "SelectionBox", { LineThickness = 0.035, SurfaceTransparency = 1, Visible = false }, folder)
+        end
+        rig.layers[#rig.layers + 1] = lines
+        rig.lines = lines
     end,
     paint = function(rig, cfg)
-        for layer, list in ipairs(rig.layers) do
-            local color = Util.lerpColor(cfg.c1, cfg.c2, (layer - 1) / math.max(1, ChamStyle.shells - 1))
-            for _, adornment in pairs(list) do adornment.Color3, adornment.AlwaysOnTop = color, cfg.walls end
+        local count = cfg.glowShells
+        for layer = 1, ChamStyle.shellMax + 1 do
+            local shell = layer - 1
+            local on = shell <= count
+            local color = shell == 0 and rig.c1 or Util.lerpColor(rig.c1, cfg.c2, shell / count)
+            for name, adornment in pairs(rig.layers[layer]) do
+                adornment.Color3, adornment.AlwaysOnTop, adornment.Visible = color, cfg.walls, on
+                if on and shell > 0 then adornment.Size = ChamStyle.size(name, ChamStyle.glowGrow(shell, count)) end
+            end
             rig.layerAlpha[layer] = nil
         end
+        local edge = Util.lerpColor(rig.c1, WHITE, 0.35)
+        for _, line in pairs(rig.lines) do line.Visible, line.Color3, line.Transparency = cfg.glowOutline, edge, rig.alpha end
     end,
     follow = function(rig, rec)
         for _, name in ipairs(CHAM_PARTS) do
@@ -2276,12 +2219,22 @@ ChamStyle.styles["Glow shells"] = {
         end
     end,
     tick = function(rig, cfg, now)
-        for layer, list in ipairs(rig.layers) do
-            local wave = math.sin(now * cfg.speed * 4 - layer * 0.9)
-            local alpha = math.floor(math.clamp(1 - (0.55 - 0.13 * layer) * cfg.int + 0.15 * wave, 0, 1) * 40 + 0.5) / 40
+        local count = cfg.glowShells
+        local dim = cfg.glowPulse * 0.9 * (0.5 + 0.5 * math.cos(now * cfg.speed * 2.2))
+        for layer = 1, count + 1 do
+            local shell = layer - 1
+            local alpha
+            if shell == 0 then
+                alpha = 1 - 0.6 * cfg.int
+                alpha = alpha + (1 - alpha) * dim * 0.5
+            else
+                alpha = 1 - 0.55 * cfg.int * (1 - shell / (count + 1)) ^ 2
+                alpha = alpha + (1 - alpha) * dim
+            end
+            alpha = math.floor(ChamStyle.mix(math.clamp(alpha, 0, 1), rig.alpha) * 30 + 0.5) / 30
             if rig.layerAlpha[layer] ~= alpha then
                 rig.layerAlpha[layer] = alpha
-                for _, adornment in pairs(list) do adornment.Transparency = alpha end
+                for _, adornment in pairs(rig.layers[layer]) do adornment.Transparency = alpha end
             end
         end
     end,
@@ -2294,7 +2247,7 @@ function ChamStyle.build(style)
     if def.view then parent = ChamStyle.view() else parent = ChamStyle.root() end
     if not parent then return nil end
     local rig = { style = style, objects = {}, sets = {}, textures = {}, folders = {}, layers = {}, layerAlpha = {}, ghosts = {}, adornee = {},
-        parts = {}, frames = {}, animAt = 0, shown = true, world = not def.view, ghostAt = 0, ghostNext = 1 }
+        parts = {}, frames = {}, animAt = 0, shown = true, world = not def.view, ghostNext = 1, c1 = WHITE, alpha = 0 }
     local ok, problem = pcall(def.build, rig, parent)
     if not ok then
         Util.note("chamstyle" .. tostring(problem), "cham style " .. style .. ":", problem)
@@ -2332,6 +2285,7 @@ function ChamStyle.drop(player)
     if not rig then return end
     ChamStyle.objs[player] = nil
     ChamStyle.show(rig, false)
+    rig.ghostPos = nil
     if next(rig.adornee) then
         for _, list in ipairs(rig.layers) do
             for _, adornment in pairs(list) do adornment.Adornee = nil end
@@ -2392,12 +2346,22 @@ function ChamStyle.update(rec, style)
     end
     rig.frame = ChamStyle.frame
     local now = os.clock()
-    local shown = true
-    if def.view and not cfg.walls then shown = Visible.entity(rec, ChamStyle.origin, now, flag("vis_interval", 100) / 1000) end
+    local covered = def.view and not cfg.walls
+    local visible = true
+    if cfg.vis or covered then visible = Visible.entity(rec, ChamStyle.origin, now, flag("vis_interval", 100) / 1000) end
+    local shown = visible or not covered
     ChamStyle.show(rig, shown)
     if not shown then return true end
-    if rig.sig ~= cfg.sig then
-        rig.sig = cfg.sig
+    local state = cfg.vis and (visible and "vis" or "occ") or "base"
+    if rig.sig ~= cfg.sig or rig.state ~= state then
+        rig.sig, rig.state = cfg.sig, state
+        if state == "vis" then
+            rig.c1, rig.alpha = cfg.visColor, cfg.visAlpha
+        elseif state == "occ" then
+            rig.c1, rig.alpha = cfg.occColor, cfg.occAlpha
+        else
+            rig.c1, rig.alpha = cfg.c1, 0
+        end
         def.paint(rig, cfg)
     end
     ChamStyle.pose(rig, rec)
@@ -2418,40 +2382,18 @@ function ChamStyle.finish(cam, now)
     if views and next(ChamStyle.objs) then
         views.camera.CFrame = cam.CFrame
         views.camera.FieldOfView = cam.FieldOfView
-        if ChamStyle.current == "Rainbow flow" then views.gradient.Offset = Vector2.new((now * ChamStyle.cfg.speed * 0.4) % 2 - 1, 0) end
+        if ChamStyle.current == "Toon" then ChamStyle.toonLight(views, cam, ChamStyle.cfg) end
     end
 end
 
 function ChamStyle.viewSpec(spec)
     if not spec then return spec end
-    local style = flag("local_cham_style", "Classic")
-    if style == "Classic" then return spec end
+    if flag("local_cham_style", "Classic") ~= "Glow shells" then return spec end
     local now = math.floor(os.clock() * 15) / 15
     local speed = math.max(flag("chams_style_speed", 1), 0.05)
-    local second = flag("chams_style_color2", Color3.fromRGB(255, 60, 200))
     local wave = 0.5 + 0.5 * math.sin(now * speed * 3)
-    if style == "Hologram" then
-        spec.material, spec.texture = Enum.Material.ForceField, ChamStyle.tex.scan
-        if math.sin(math.floor(now * 20) * 91.7) > 1 - 0.12 * speed then spec.alpha = math.min(1, spec.alpha + 0.4) end
-    elseif style == "Energy shield" then
-        spec.material, spec.texture = Enum.Material.ForceField, ChamStyle.tex.hex
-        spec.color = Util.lerpColor(spec.color, second, wave * 0.5)
-    elseif style == "Galaxy" then
-        spec.material, spec.texture = Enum.Material.ForceField, ChamStyle.tex.galaxy
-        spec.color = Util.lerpColor(spec.color, second, wave * 0.35)
-    elseif style == "Lava" then
-        spec.material, spec.texture = Enum.Material.Neon, ""
-        spec.color = Util.lerpColor(spec.color, second, wave * 0.6)
-    elseif style == "Liquid chrome" then
-        spec.material, spec.texture, spec.refl = Enum.Material.SmoothPlastic, "", 1
-        spec.color = Util.lerpColor(spec.color, second, wave)
-    elseif style == "Rainbow flow" then
-        spec.material, spec.texture = Enum.Material.Neon, ""
-        spec.color = Color3.fromHSV((now * speed * 0.2) % 1, 0.8, 1)
-    elseif style == "Glow shells" then
-        spec.material, spec.texture = Enum.Material.Neon, ""
-        spec.alpha = math.clamp(spec.alpha + 0.3 * wave, 0, 0.95)
-    end
+    spec.material, spec.texture = Enum.Material.Neon, ""
+    spec.alpha = math.clamp(spec.alpha + 0.3 * wave, 0, 0.95)
     spec.vertex = Vector3.new(spec.color.R, spec.color.G, spec.color.B)
     return spec
 end
@@ -6697,12 +6639,15 @@ end
 local Killcam = { cards = {}, LENGTH = 5 }
 
 function Killcam.start(victim, now)
-    if not flag("killcam_notify", true) or not Game.localAlive() then return end
+    if not flag("killcam_notify", true) then return "killcam off" end
+    if not Game.localAlive() then return "killcam skipped (we are dead)" end
     local name = tostring(victim.Name)
-    Killcam.cards[victim] = { at = now, note = Util.notify({
+    local note = Util.notify({
         Title = "Killcam", Text = name .. " is watching you", Duration = Killcam.LENGTH, Icon = "eye", Progress = true,
         Id = "killcam_" .. tostring(victim.UserId or name), Sound = flag("killcam_sound", false) and KILLCAM_SOUND or nil,
-    }) }
+    })
+    Killcam.cards[victim] = { at = now, note = note }
+    return note and "killcam" or "killcam (text notify)"
 end
 
 function Killcam.close(victim)
@@ -6975,26 +6920,87 @@ function Feedback.noteKill(victim, now)
     Feedback.kills[#Feedback.kills + 1] = kill
 end
 
+function Feedback.identity()
+    for _, name in ipairs({ "getthreadidentity", "getidentity", "getthreadcontext" }) do
+        local fn = getgenv()[name]
+        if type(fn) == "function" then
+            local ok, level = pcall(fn)
+            if ok then return level end
+        end
+    end
+    return "?"
+end
+
+function Feedback.capture(info)
+    if type(info) ~= "table" then return nil end
+    local event = { victim = info.victim, attacker = info.attacker, forced = info.forced == true, weapon = info.weaponIndex, at = os.clock() }
+    if flag("misc_debug_kills", false) then event.thread = Feedback.identity() end
+    if event.attacker == LocalPlayer and event.victim ~= nil and event.victim ~= LocalPlayer then Feedback.noteKill(event.victim, event.at) end
+    return event
+end
+
+function Feedback.onOwnKill(victim, info)
+    local now = info.at or os.clock()
+    local fired = {}
+    Feedback.markKill(now)
+    if flag("kill_fx", false) then fired[#fired + 1] = "kill effects" end
+    fired[#fired + 1] = info.forced and "killcam skipped (forced)" or Killcam.start(victim, now)
+    local muted = false
+    if flag("streak_on", false) then
+        muted = Streak.onKill(now)
+        fired[#fired + 1] = "streak " .. Streak.count .. "/" .. Streak.total
+    end
+    if flag("kill_snd", false) then
+        if muted then
+            fired[#fired + 1] = "kill sound muted by streak"
+        else
+            Feedback.play(flag("kill_snd_id", "Alt Killshot"), flag("kill_snd_vol", 1.5), flag("kill_snd_pitch", 1), "kill_snd_custom", flag("kill_snd_max", 2.5))
+            fired[#fired + 1] = "kill sound"
+        end
+    end
+    return table.concat(fired, ", ")
+end
+
 function Feedback.onKill(info)
     if type(info) ~= "table" then return end
+    local result = "not ours"
     if info.victim == LocalPlayer then
         Killcam.clear()
         Streak.died()
-        return
+        result = "our death: killcam cleared, streak reset"
+    elseif info.attacker == LocalPlayer and info.victim ~= nil then
+        result = Feedback.onOwnKill(info.victim, info)
     end
-    if info.attacker ~= LocalPlayer or info.victim == nil then return end
-    local now = os.clock()
-    Feedback.noteKill(info.victim, now)
-    Feedback.markKill(now)
-    if not info.forced then Killcam.start(info.victim, now) end
-    if Streak.onKill(now) or not flag("kill_snd", false) then return end
-    Feedback.play(flag("kill_snd_id", "Alt Killshot"), flag("kill_snd_vol", 1.5), flag("kill_snd_pitch", 1), "kill_snd_custom", flag("kill_snd_max", 2.5))
+    if flag("misc_debug_kills", false) then
+        local function name(player) return player == nil and "nil" or tostring(type(player) ~= "string" and player.Name or player) end
+        print(string.format("[Aster kills] victim=%s attacker=%s forced=%s weapon=%s thread=%s delay=%.3fs -> %s", name(info.victim), name(info.attacker),
+            tostring(info.forced), tostring(info.weapon), tostring(info.thread), os.clock() - (info.at or os.clock()), result ~= "" and result or "nothing enabled"))
+    end
 end
 
-function Feedback.listen(key, event, fn)
+Feedback.queue = {}
+
+function Feedback.defer(fn, capture, ...)
+    local queue = Feedback.queue
+    if #queue >= 64 then table.remove(queue, 1) end
+    if capture then
+        queue[#queue + 1] = { fn = fn, args = { n = 1, capture(...) } }
+    else
+        queue[#queue + 1] = { fn = fn, args = table.pack(...) }
+    end
+end
+
+function Feedback.drain()
+    local queue = Feedback.queue
+    if #queue == 0 then return end
+    Feedback.queue = {}
+    for _, item in ipairs(queue) do Util.guard("pf-event", item.fn, table.unpack(item.args, 1, item.args.n)) end
+end
+
+function Feedback.listen(key, event, fn, capture)
     if Feedback.hooked[key] or type(event) ~= "table" or type(event.connect) ~= "function" then return end
     local ok, connection = pcall(function()
-        return event:connect(function(...) pcall(fn, ...) end)
+        return event:connect(function(...) pcall(Feedback.defer, fn, capture, ...) end)
     end)
     if not ok then return end
     Feedback.hooked[key] = true
@@ -7059,7 +7065,7 @@ function Feedback.hook()
         end)
     end
     local events = mods.PlayerStatusEvents or {}
-    Feedback.listen("kills", events.onPlayerDied, Feedback.onKill)
+    Feedback.listen("kills", events.onPlayerDied, Feedback.onKill, Feedback.capture)
     Feedback.listen("spawns", events.onPlayerSpawned, Killcam.close)
     Feedback.listen("rounds", (mods.RoundSystemClientEvents or {}).onRoundEnded, Killcam.clear)
 end
@@ -7965,7 +7971,7 @@ Silent.ringFill = Draw.new("Circle", { NumSides = 64, Filled = true, Visible = f
 
 function Silent.fovCenter(screen)
     local L = Legit.L
-    return L.silentFovBarrel and Barrel.point(L.silentFovAttach, screen) or screen
+    return L.silentFovBarrel and Barrel.center(L.silentFovAttach, screen) or screen
 end
 
 function Silent.step(dt, cam, weapon, screen)
@@ -8256,7 +8262,7 @@ function Legit.stepPoints(cam, center)
     for index = shown + 1, #Legit.dots do Legit.dots[index].Visible = false end
 end
 
-function Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
+function Legit.runAim(dt, cam, now, records, center, weapon, origin, barrelLook)
     local L = Legit.L
     local active = L.semi or (L.aim and Util.keyActive("legit_aim_key") and not Util.menuOpen() and not Util.typing())
     if not (active and weapon and Game.isFirearm(weapon)) then Legit.target = nil return end
@@ -8315,7 +8321,7 @@ function Legit.runAim(dt, cam, now, records, center, weapon, origin, useBarrel)
     end
     aimPoint = aimPoint or Legit.lead(origin, cand.pos, Aim.velocity(record), weapon)
     if snap then Legit.snapDone = true end
-    Legit.moved = Legit.turn(gameCam, origin, aimPoint, dt, now, cam, useBarrel and Barrel.look or nil, snap)
+    Legit.moved = Legit.turn(gameCam, origin, aimPoint, dt, now, cam, barrelLook, snap)
 end
 
 function Legit.onPress()
@@ -8324,7 +8330,7 @@ function Legit.onPress()
     Legit.pressAt, Legit.snapDone = os.clock(), false
     if not (L.semi and L.onfire and last.cam) then return end
     Legit.target = nil
-    Legit.runAim(0, last.cam, Legit.pressAt, last.records, last.center, last.weapon, last.origin, last.useBarrel)
+    Legit.runAim(0, last.cam, Legit.pressAt, last.records, last.center, last.weapon, last.origin, last.barrelLook)
     if Legit.snapShown then Legit.snapline.Visible = true end
 end
 
@@ -8335,19 +8341,25 @@ end))
 function Legit.stepAim(dt, cam, now, records, screen)
     local L = Legit.L
     Legit.moved, Legit.cand = false, nil
-    local center = L.fovBarrel and Barrel.point(L.fovAttach, screen) or screen
+    local center = L.fovBarrel and Barrel.center(L.fovAttach, screen) or screen
     local weapon = Game.weapon()
     Legit.stepRadius(dt, weapon, cam)
     Legit.drawFov(center)
     Legit.snapShown = false
     Silent.step(dt, cam, weapon, screen)
     Aim.opts.depth = L.wallbang and weapon and Aim.depth(weapon, L.safety) or nil
-    local useBarrel = L.barrel and Barrel.valid
-    local origin = useBarrel and Barrel.fire or Game.eye(cam).Position
+    local eye = Game.eye(cam)
+    local origin, barrelLook = eye.Position, nil
+    if L.barrel then
+        local gameCam = Game.gameCamera()
+        local camLook = gameCam and gameCam:getLookVector()
+        if typeof(camLook) ~= "Vector3" then camLook = eye.LookVector end
+        origin, barrelLook = Barrel.mix(eye.Position, camLook)
+    end
     Legit.origin = origin
     local last = Legit.last
-    last.cam, last.records, last.center, last.weapon, last.origin, last.useBarrel = cam, records, center, weapon, origin, useBarrel
-    local ok, problem = pcall(Legit.runAim, dt, cam, now, records, center, weapon, origin, useBarrel)
+    last.cam, last.records, last.center, last.weapon, last.origin, last.barrelLook = cam, records, center, weapon, origin, barrelLook
+    local ok, problem = pcall(Legit.runAim, dt, cam, now, records, center, weapon, origin, barrelLook)
     Legit.snapline.Visible = ok and Legit.snapShown
     if not ok then error(problem, 0) end
     Legit.stepPredict(cam, center, records)
@@ -8806,9 +8818,9 @@ function Local.restoreItem(item)
     item.wrote = nil
 end
 
-function Local.applyItem(item, spec, hide, noglass)
+function Local.applyItem(item, spec, hide, noglass, glassOff)
     if item.glass and not hide then
-        if not (spec and noglass) then
+        if not (glassOff or (spec and noglass)) then
             if item.orig then Local.restoreItem(item) end
             return
         end
@@ -8872,6 +8884,8 @@ function Local.settings()
         glove = on("local_rm_gloves") == true, gun = on("local_rm_gun") == true,
     } }
     state.noglass = on("local_gun_noglass") == true
+    state.glassOff = on("local_noglass") == true
+    if state.glassOff then state.any = true end
     for _, cat in ipairs(Local.cats) do
         local spec = Local.spec(cat)
         state.specs[cat] = spec
@@ -8887,7 +8901,7 @@ function Local.styleRec(rec, state)
     for _, item in ipairs(rec.items) do
         local cat = item.cat
         local hide = state.rm[(cat == "glove" or cat == "gun") and cat or cat .. (rec.side or "")]
-        Local.applyItem(item, state.specs[cat], hide, state.noglass)
+        Local.applyItem(item, state.specs[cat], hide, state.noglass, state.glassOff)
     end
 end
 
@@ -10224,8 +10238,10 @@ local KillFx = {
     events = {}, pending = {}, kept = {}, fired = setmetatable({}, { __mode = "k" }), maxEvents = 6, fx = {}, window = 2, near = 6,
     names = { "Dissolve", "Lightning", "Shockwave", "Sparks", "Pillar", "Screen flash", "Soul rip", "Pixelate", "Glitch", "Tombstone", "Blackout ring", "Firework", "Crystallize", "Holo-scan", "Anime slash" },
     glow = "rbxasset://textures/particles/sparkles_main.dds",
-    corpseNames = { "Zero-G float", "Ascend", "Ragdoll launch", "Black hole", "Disintegrate", "Ghost", "Freeze", "Confetti" },
-    movers = { ["Zero-G float"] = true, Ascend = true, ["Ragdoll launch"] = true, ["Black hole"] = true },
+    corpseNames = { "Zero-G float", "Ascend", "Ragdoll launch", "Black hole", "Disintegrate", "Ghost", "Freeze", "Confetti",
+        "Melt", "Spaghettify", "Balloon", "Orbit", "Glass shatter", "Magnetize", "Puppet", "Time freeze", "Implode", "Vaporize" },
+    movers = { ["Zero-G float"] = true, Ascend = true, ["Ragdoll launch"] = true, ["Black hole"] = true, Melt = true, Spaghettify = true, Balloon = true,
+        Orbit = true, ["Glass shatter"] = true, Magnetize = true, Puppet = true, ["Time freeze"] = true, Implode = true },
     settle = 5, ice = Color3.fromRGB(170, 220, 255),
 }
 
@@ -10557,7 +10573,7 @@ function KillFx.body(ev, corpse)
                 local item = {
                     inst = object, cf = frame, at = frame, group = group, offset = group.cf:Inverse() * frame, top = top == object, name = propGet(object, "Name"),
                     anchored = propGet(object, "Anchored") == true, ltm = KillFx.modifier(object), alpha = propGet(object, "Transparency"), color = propGet(object, "Color"),
-                    fade = 0, sink = 0,
+                    size = propGet(object, "Size"), fade = 0, sink = 0,
                 }
                 body.parts[#body.parts + 1], byInst[object] = item, item
             end
@@ -10569,7 +10585,13 @@ function KillFx.body(ev, corpse)
         end
     end
     body.unhide = function()
-        for _, item in ipairs(body.parts) do propSet(item.inst, "LocalTransparencyModifier", item.ltm) end
+        for _, item in ipairs(body.parts) do
+            propSet(item.inst, "LocalTransparencyModifier", item.ltm)
+            if item.sized then
+                item.sized = nil
+                propSet(item.inst, "Size", item.size)
+            end
+        end
         for _, item in ipairs(body.decals) do propSet(item.inst, "LocalTransparencyModifier", item.ltm) end
     end
     ev.undo[#ev.undo + 1] = function()
@@ -10602,6 +10624,12 @@ function KillFx.rigid(body, pivot, target, turn)
     local move = CFrame.new(target) * turn * CFrame.new(-pivot)
     body.center = target
     KillFx.pose(body, function(item) return move * item.cf end)
+end
+
+function KillFx.resize(item, size)
+    if typeof(item.size) ~= "Vector3" or size == item.sized then return end
+    item.sized = size
+    propSet(item.inst, "Size", size)
 end
 
 function KillFx.paint(body)
@@ -11338,6 +11366,525 @@ KillFx.fx["Anime slash"] = {
     end,
 }
 
+function KillFx.skin(ev, corpse, items)
+    local list = {}
+    for _, item in ipairs(items) do
+        if typeof(item.color) == "Color3" then
+            list[#list + 1] = { inst = item.inst, color = item.color, material = propGet(item.inst, "Material"), refl = propGet(item.inst, "Reflectance") }
+        end
+    end
+    if #list == 0 then return nil end
+    Corpse.owned[corpse] = true
+    local skin = { list = list, finished = false, restored = false }
+    function skin.restore()
+        if skin.restored then return end
+        skin.restored = true
+        for _, entry in ipairs(list) do
+            Local.setIf(entry.inst, "Material", entry.material)
+            Local.setIf(entry.inst, "Color", entry.color)
+            Local.setIf(entry.inst, "Reflectance", entry.refl)
+        end
+        Corpse.release(corpse)
+    end
+    function skin.paint(material, refl, color, k)
+        if k == skin.shown then return end
+        skin.shown = k
+        for _, entry in ipairs(list) do
+            propSet(entry.inst, "Material", material)
+            propSet(entry.inst, "Reflectance", refl)
+            propSet(entry.inst, "Color", Util.lerpColor(entry.color, color(entry.color), k))
+        end
+    end
+    function skin.finish()
+        if skin.finished then return end
+        skin.finished = true
+        KillFx.keep(corpse, skin.restore)
+    end
+    ev.undo[#ev.undo + 1] = function()
+        if not skin.finished then skin.restore() end
+    end
+    return skin
+end
+
+function KillFx.groupList(body)
+    local list = {}
+    for top, group in pairs(body.groups) do
+        local start = group.cf.Position
+        group.start, group.turn, group.name = start, CFrame.new(-start) * group.cf, propGet(top, "Name")
+        list[#list + 1] = group
+    end
+    table.sort(list, function(a, b) return a.start.Y > b.start.Y end)
+    return list
+end
+
+function KillFx.posed(body)
+    KillFx.pose(body, function(item) return item.group.frame * item.offset end)
+end
+
+function KillFx.flat(vector, fallback)
+    local level = Vector3.new(vector.X, 0, vector.Z)
+    return level.Magnitude > 1e-3 and level.Unit or fallback
+end
+
+function KillFx.noise(ev, holder, id, volume)
+    return KillFx.make(ev, "Sound", { SoundId = id, Volume = volume }, holder)
+end
+
+KillFx.fx.Melt = {
+    start = function(ev, corpse, pos, opts)
+        local body = KillFx.body(ev, corpse)
+        if #body.parts == 0 then return end
+        local ground = KillFx.ground(pos)
+        local hot = Util.lerpColor(opts.color, Color3.fromRGB(255, 140, 50), 0.5)
+        local flat = CFrame.new(ground + Vector3.new(0, 0.04, 0)) * CFrame.Angles(0, 0, math.pi / 2)
+        local puddle = KillFx.make(ev, "Part", KillFx.solid({
+            Shape = Enum.PartType.Cylinder, Material = Enum.Material.Neon, Color = hot, Transparency = 0.2, Size = Vector3.new(0.08, 0.2, 0.2), CFrame = flat,
+        }))
+        local light = KillFx.make(ev, "PointLight", { Color = hot, Brightness = 0, Range = 12 }, puddle)
+        local steam = KillFx.emitter(ev, puddle, {
+            Texture = SMOKE, LightEmission = 0.4, Rate = math.floor(10 * opts.cint), Enabled = true, Lifetime = NumberRange.new(0.8, 1.6), Speed = NumberRange.new(1, 3),
+            EmissionDirection = Enum.NormalId.Right, SpreadAngle = Vector2.new(25, 25), Size = NumberSequence.new(0.6, 2), Transparency = NumberSequence.new(0.6, 1), Color = ColorSequence.new(hot),
+        })
+        local drips = KillFx.emitter(ev, puddle, {
+            Rate = math.floor(16 * opts.cint), Enabled = true, Lifetime = NumberRange.new(0.3, 0.7), Speed = NumberRange.new(1, 3),
+            EmissionDirection = Enum.NormalId.Right, SpreadAngle = Vector2.new(60, 60), Acceleration = Vector3.new(0, -12, 0), Size = KillFx.shrink(0.2), Color = ColorSequence.new(WHITE, hot),
+        })
+        local floor = ground.Y - 0.6
+        KillFx.drive(ev, corpse, body, opts.cdur, 0.4, function(t, progress)
+            local k = progress ^ 1.4
+            KillFx.pose(body, function(item)
+                local at = item.cf.Position
+                item.sink = math.clamp((k - 0.55) / 0.4, 0, 1)
+                local spread = Vector3.new(at.X - pos.X, 0, at.Z - pos.Z) * (0.5 * k)
+                return CFrame.new(spread + Vector3.new(0, (floor - at.Y) * k, 0)) * item.cf
+            end)
+            KillFx.paint(body)
+            local wide = math.clamp(progress / 0.5, 0, 1) * (1 - math.clamp((progress - 0.85) / 0.15, 0, 1))
+            local across = 0.2 + 5.5 * (1 - (1 - wide) ^ 2)
+            puddle.Size = Vector3.new(0.08, across, across)
+            puddle.Transparency = 0.2 + 0.8 * (1 - wide)
+            light.Brightness = 2.5 * wide
+            if progress >= 0.85 then steam.Enabled, drips.Enabled = false, false end
+        end)
+    end,
+}
+
+KillFx.fx.Spaghettify = {
+    start = function(ev, corpse, pos, opts)
+        local body = KillFx.body(ev, corpse)
+        if #body.parts == 0 then return end
+        local side = KillFx.flat(Vector3.new(fxRand(-1, 1), 0, fxRand(-1, 1)), Vector3.new(1, 0, 0))
+        local point = pos + side * (4 + opts.height * 0.4) + Vector3.new(0, 2.5, 0)
+        local core = KillFx.make(ev, "Part", KillFx.solid({
+            Shape = Enum.PartType.Ball, Material = Enum.Material.Neon, Color = BLACK, Transparency = 0, Size = Vector3.new(0.2, 0.2, 0.2), Position = point,
+        }))
+        local swirl = KillFx.emitter(ev, KillFx.anchor(ev, point, Vector3.new(5, 5, 5)), {
+            Rate = math.floor(30 * opts.cint), Enabled = true, Lifetime = NumberRange.new(0.35, 0.45), Speed = NumberRange.new(9, 11),
+            Size = KillFx.shrink(0.25), Color = ColorSequence.new(opts.color2, opts.color),
+        })
+        propSet(swirl, "Shape", Enum.ParticleEmitterShape.Sphere)
+        propSet(swirl, "ShapeStyle", Enum.ParticleEmitterShapeStyle.Surface)
+        propSet(swirl, "ShapeInOut", Enum.ParticleEmitterShapeInOut.Inward)
+        for _, item in ipairs(body.parts) do
+            local from = item.cf.Position
+            item.delay = math.clamp((from - point).Magnitude / 40, 0, 0.3)
+            item.aim = (point - from).Magnitude > 0.05 and CFrame.new(Vector3.zero, point - from) or CFrame.new()
+        end
+        KillFx.drive(ev, corpse, body, opts.cdur, 0.4, function(t, progress)
+            KillFx.pose(body, function(item)
+                local k = math.clamp((progress - item.delay) / (1 - item.delay), 0, 1) ^ 2
+                local from = item.cf.Position
+                local spot = from + (point - from) * k
+                local thin = math.max(0.08, 1 - 0.85 * k)
+                if item.size then KillFx.resize(item, Vector3.new(item.size.X * thin, item.size.Y * thin, item.size.Z * (1 + 7 * k * (1 - k) * 2))) end
+                item.sink = math.clamp(1 - (1 - k) / 0.2, 0, 1)
+                if k < 0.15 then return CFrame.new(spot - from) * item.cf end
+                return CFrame.new(spot) * item.aim
+            end)
+            KillFx.paint(body)
+            local size = 0.2 + 1.4 * math.clamp(t / 0.4, 0, 1) * (1 - math.clamp((progress - 0.9) / 0.1, 0, 1))
+            core.Size = Vector3.new(size, size, size)
+            if progress >= 0.9 then swirl.Enabled = false end
+        end)
+    end,
+}
+
+KillFx.fx.Balloon = {
+    start = function(ev, corpse, pos, opts)
+        local body = KillFx.body(ev, corpse)
+        if #body.parts == 0 then return end
+        local holder = KillFx.anchor(ev, pos, Vector3.new(3, 4, 2))
+        local burst = KillFx.emitter(ev, holder, {
+            Lifetime = NumberRange.new(0.3, 0.7), Speed = NumberRange.new(18, 30), SpreadAngle = Vector2.new(180, 180), Drag = 4,
+            Size = KillFx.shrink(0.45), Color = ColorSequence.new(opts.color, opts.color2),
+        })
+        local pop = KillFx.noise(ev, holder, HIT_SOUNDS["Bubble Pop"], 1.2)
+        local phase, popped = fxRand(0, math.pi * 2), false
+        KillFx.drive(ev, corpse, body, opts.cdur, 0.6, function(t, progress)
+            local swell = math.clamp(progress / 0.6, 0, 1)
+            local wobble = progress > 0.7 and 0.12 * math.sin(t * 45) * (progress - 0.7) / 0.3 or 0
+            local grow = 1 + 0.9 * (1 - (1 - swell) ^ 2) + wobble
+            local rise = opts.height * math.clamp((progress - 0.2) / 0.8, 0, 1) ^ 1.5
+            local center = pos + Vector3.new(0.6 * math.sin(t * 1.7 + phase), rise, 0.6 * math.cos(t * 1.3 + phase))
+            body.center = center
+            KillFx.pose(body, function(item)
+                if item.size then KillFx.resize(item, item.size * grow) end
+                local at = item.cf.Position
+                return CFrame.new(center + (at - pos) * grow - at) * item.cf
+            end)
+            holder.CFrame = CFrame.new(center)
+            if progress >= 0.92 and not popped then
+                popped = true
+                body.fade = 1
+                KillFx.burst(burst, 40 * opts.cint)
+                pcall(pop.Play, pop)
+            end
+            KillFx.paint(body)
+        end)
+    end,
+}
+
+KillFx.fx.Orbit = {
+    start = function(ev, corpse, pos, opts)
+        local body = KillFx.body(ev, corpse)
+        if #body.parts == 0 then return end
+        local core, limbs = nil, {}
+        for _, group in ipairs(KillFx.groupList(body)) do
+            if group.name == "Torso" and not core then core = group else limbs[#limbs + 1] = group end
+        end
+        local base = core and core.start or pos
+        for index, group in ipairs(limbs) do
+            group.angle = (index - 1) / math.max(#limbs, 1) * math.pi * 2
+            group.radius = 3 + fxRand(0, 1.2)
+            group.tilt = fxRand(-0.4, 0.4)
+            group.spin = Vector3.new(fxRand(-3, 3), fxRand(-3, 3), fxRand(-3, 3))
+        end
+        local holder = KillFx.anchor(ev, base, Vector3.new(6, 2, 6))
+        local trail = KillFx.emitter(ev, holder, {
+            Rate = math.floor(24 * opts.cint), Enabled = true, Lifetime = NumberRange.new(0.5, 1), Speed = NumberRange.new(0.2, 0.8),
+            SpreadAngle = Vector2.new(180, 180), Size = KillFx.shrink(0.25), Color = ColorSequence.new(opts.color2, opts.color),
+        })
+        propSet(trail, "Shape", Enum.ParticleEmitterShape.Cylinder)
+        propSet(trail, "ShapeStyle", Enum.ParticleEmitterShapeStyle.Surface)
+        local rise = math.min(opts.height * 0.3, 3)
+        KillFx.drive(ev, corpse, body, opts.cdur, 0.5, function(t, progress)
+            local free = math.clamp(progress / 0.2, 0, 1)
+            free = free * free * (3 - 2 * free)
+            local center = base + Vector3.new(0, rise * (1 - (1 - progress) ^ 2), 0)
+            body.center = center
+            if core then core.frame = CFrame.new(center) * CFrame.Angles(0, t * 0.8 * free, 0) * core.turn end
+            for _, group in ipairs(limbs) do
+                local angle = group.angle + t * 2.4 * (1 + progress)
+                local ring = center + Vector3.new(math.cos(angle) * group.radius, math.sin(angle * 2) * group.tilt * group.radius, math.sin(angle) * group.radius)
+                local spot = group.start + (ring - group.start) * free
+                group.frame = CFrame.new(spot) * CFrame.Angles(group.spin.X * t * free, group.spin.Y * t * free, group.spin.Z * t * free) * group.turn
+            end
+            KillFx.posed(body)
+            holder.CFrame = CFrame.new(center)
+            body.fade = math.clamp(1 - (1 - progress) / 0.2, 0, 1)
+            KillFx.paint(body)
+            if progress >= 0.85 then trail.Enabled = false end
+        end)
+    end,
+}
+
+KillFx.fx["Glass shatter"] = {
+    start = function(ev, corpse, pos, opts)
+        local body = KillFx.body(ev, corpse)
+        local skin = KillFx.skin(ev, corpse, KillFx.visible(body))
+        if not skin then return end
+        local glass = Util.lerpColor(opts.color2, KillFx.ice, 0.5)
+        local floor = KillFx.ground(pos).Y + 0.3
+        local holder = KillFx.anchor(ev, pos, Vector3.new(3, 4, 2))
+        local chips = KillFx.emitter(ev, holder, {
+            Lifetime = NumberRange.new(0.5, 1), Speed = NumberRange.new(6, 14), SpreadAngle = Vector2.new(180, 180), Acceleration = Vector3.new(0, -30, 0),
+            RotSpeed = NumberRange.new(-360, 360), Size = KillFx.shrink(0.25), Color = ColorSequence.new(WHITE, glass),
+        })
+        local tink = KillFx.noise(ev, holder, HIT_SOUNDS["Glass Tink"], 1.2)
+        local groups = KillFx.groupList(body)
+        for _, group in ipairs(groups) do
+            local away = KillFx.flat(group.start - pos, KillFx.flat(Vector3.new(fxRand(-1, 1), 0, fxRand(-1, 1)), Vector3.new(1, 0, 0)))
+            group.vel = away * fxRand(2, 5) + Vector3.new(0, fxRand(1, 4), 0)
+            group.spin = Vector3.new(fxRand(-6, 6), fxRand(-6, 6), fxRand(-6, 6))
+        end
+        local hold, cracked = math.min(0.5, opts.cdur * 0.2), false
+        KillFx.drive(ev, corpse, body, opts.cdur, 0.6, function(t, progress)
+            skin.paint(Enum.Material.Glass, 0.4, function() return glass end, math.clamp(t / 0.3, 0, 1))
+            local age = t - hold
+            if age >= 0 and not cracked then
+                cracked = true
+                KillFx.burst(chips, 24 * opts.cint)
+                pcall(tink.Play, tink)
+            end
+            for _, group in ipairs(groups) do
+                local spot, turn = group.start, 0
+                if age > 0 then
+                    spot = spot + group.vel * age + Vector3.new(0, -30 * age * age, 0)
+                    if spot.Y < floor then spot = Vector3.new(spot.X, floor, spot.Z) end
+                    turn = math.min(age, 0.6)
+                end
+                group.frame = CFrame.new(spot) * CFrame.Angles(group.spin.X * turn, group.spin.Y * turn, group.spin.Z * turn) * group.turn
+            end
+            KillFx.posed(body)
+            body.fade = math.clamp((progress - 0.75) / 0.25, 0, 1)
+            KillFx.paint(body)
+            if progress >= 1 then skin.finish() end
+        end)
+    end,
+}
+
+KillFx.fx.Magnetize = {
+    start = function(ev, corpse, pos, opts)
+        local body = KillFx.body(ev, corpse)
+        if #body.parts == 0 then return end
+        local groups = KillFx.groupList(body)
+        local center, cell = pos + Vector3.new(0, 1.5, 0), 0.9
+        local side = math.max(1, math.ceil((#groups) ^ (1 / 3) - 1e-9))
+        local middle = Vector3.new(side - 1, side - 1, side - 1) * 0.5
+        for index, group in ipairs(groups) do
+            local slot = index - 1
+            group.slot = center + (Vector3.new(slot % side, math.floor(slot / side) % side, math.floor(slot / (side * side))) - middle) * cell
+            group.delay = (index - 1) / #groups * 0.3
+        end
+        local box = KillFx.anchor(ev, center, Vector3.new(side * cell + 0.2, side * cell + 0.2, side * cell + 0.2))
+        local outline = KillFx.make(ev, "SelectionBox", { Adornee = box, Color3 = opts.color, LineThickness = 0.05, SurfaceTransparency = 1, Transparency = 1 }, box)
+        local sparks = KillFx.emitter(ev, box, {
+            Lifetime = NumberRange.new(0.2, 0.5), Speed = NumberRange.new(6, 12), SpreadAngle = Vector2.new(180, 180), Size = KillFx.shrink(0.25), Color = ColorSequence.new(WHITE, opts.color),
+        })
+        local dust = KillFx.emitter(ev, box, {
+            Lifetime = NumberRange.new(0.6, 1.2), Speed = NumberRange.new(1, 3), SpreadAngle = Vector2.new(180, 180), Acceleration = Vector3.new(0, 3, 0),
+            Size = KillFx.shrink(0.3), Color = ColorSequence.new(opts.color2, opts.color),
+        })
+        local snapped, dissolving = false, false
+        KillFx.drive(ev, corpse, body, opts.cdur, 0.5, function(t, progress)
+            local pull = math.clamp(progress / 0.45, 0, 1)
+            for _, group in ipairs(groups) do
+                local k = math.clamp((pull - group.delay) / (1 - group.delay), 0, 1) ^ 3
+                if k >= 1 then
+                    local shake = progress < 0.6 and Vector3.new(fxRand(-0.04, 0.04), fxRand(-0.04, 0.04), fxRand(-0.04, 0.04)) or Vector3.zero
+                    group.frame = CFrame.new(group.slot + shake)
+                    group.locked = true
+                else
+                    group.frame = CFrame.new(group.start + (group.slot - group.start) * k) * CFrame.Angles(k * 4, k * 6, 0) * group.turn
+                end
+            end
+            KillFx.pose(body, function(item)
+                if item.top and item.size then KillFx.resize(item, item.group.locked and Vector3.new(cell, cell, cell) or item.size) end
+                return item.group.frame * (item.top and item.group.locked and CFrame.new() or item.offset)
+            end)
+            if pull >= 1 and not snapped then
+                snapped = true
+                outline.Transparency = 0
+                KillFx.burst(sparks, 30 * opts.cint)
+            end
+            if progress >= 0.6 then
+                if not dissolving then
+                    dissolving = true
+                    KillFx.burst(dust, 30 * opts.cint)
+                end
+                body.fade = math.clamp((progress - 0.6) / 0.35, 0, 1)
+                outline.Transparency = body.fade
+            end
+            KillFx.paint(body)
+        end)
+    end,
+}
+
+KillFx.fx.Puppet = {
+    start = function(ev, corpse, pos, opts)
+        local body = KillFx.body(ev, corpse)
+        if #body.parts == 0 then return end
+        local groups = KillFx.groupList(body)
+        local floor = KillFx.ground(pos).Y
+        local lift = math.max(3, opts.height * 0.5)
+        local holder = KillFx.anchor(ev, pos + Vector3.new(0, lift + 14, 0))
+        local strings = {}
+        for index, group in ipairs(groups) do
+            group.phase = fxRand(0, math.pi * 2)
+            if index <= 5 then
+                local hook = KillFx.make(ev, "Attachment", {}, holder)
+                hook.WorldPosition = Vector3.new(group.start.X, pos.Y + lift + 14, group.start.Z)
+                local tie = KillFx.make(ev, "Attachment", {}, holder)
+                tie.WorldPosition = group.start
+                strings[#strings + 1] = { group = group, tie = tie, beam = KillFx.beam(ev, holder, hook, tie, WHITE, 0.05, 0.05) }
+            end
+        end
+        local snap = KillFx.emitter(ev, holder, {
+            Lifetime = NumberRange.new(0.3, 0.6), Speed = NumberRange.new(4, 8), SpreadAngle = Vector2.new(180, 180), Size = KillFx.shrink(0.2), Color = ColorSequence.new(WHITE, opts.color),
+        })
+        local hang, cut, landed = 0.6, false, false
+        KillFx.drive(ev, corpse, body, opts.cdur, 0.4, function(t, progress)
+            local height
+            if progress < hang then
+                local x = progress / hang * 3
+                local step = math.min(math.floor(x), 2)
+                local jerk = math.clamp((x - step) * 4, 0, 1) ^ 0.5
+                height = lift * (step + jerk) / 3
+            else
+                if not cut then
+                    cut = true
+                    for _, line in ipairs(strings) do line.beam.Transparency = NumberSequence.new(1) end
+                    holder.CFrame = CFrame.new((body.center or pos) + Vector3.new(0, lift, 0))
+                    KillFx.burst(snap, 12 * opts.cint)
+                end
+                local age = (progress - hang) * opts.cdur
+                height = math.max(0, lift - 30 * age * age)
+                landed = landed or height <= 0
+            end
+            local dangle = landed and 0 or math.min(1, height)
+            for _, group in ipairs(groups) do
+                local swing = 0.35 * math.sin(t * 6 + group.phase) * dangle
+                local spot = group.start + Vector3.new(swing, height, 0.6 * swing)
+                if spot.Y < floor then spot = Vector3.new(spot.X, floor, spot.Z) end
+                group.frame = CFrame.new(spot) * CFrame.Angles(swing * 0.6, 0, swing) * group.turn
+            end
+            body.center = pos + Vector3.new(0, height, 0)
+            KillFx.posed(body)
+            if not cut then
+                for _, line in ipairs(strings) do line.tie.WorldPosition = line.group.frame.Position end
+            end
+            body.fade = math.clamp((progress - 0.85) / 0.15, 0, 1)
+            KillFx.paint(body)
+        end)
+    end,
+}
+
+KillFx.fx["Time freeze"] = {
+    start = function(ev, corpse, pos, opts)
+        local body = KillFx.body(ev, corpse)
+        local skin = KillFx.skin(ev, corpse, KillFx.visible(body))
+        if not skin then return end
+        local center = pos + Vector3.new(0, 1, 0)
+        local eye = propGet(ev.root, "CFrame")
+        local face = KillFx.flat(typeof(eye) == "CFrame" and eye.Position - center or Vector3.new(0, 0, 1), Vector3.new(0, 0, 1))
+        local dial = CFrame.new(center, center + face)
+        local holder = KillFx.anchor(ev, center)
+        holder.CFrame = dial
+        local count, radius, points, ring = 24, 3.2, {}, {}
+        for index = 1, count do
+            local angle = (index - 1) / count * math.pi * 2
+            points[index] = KillFx.make(ev, "Attachment", {}, holder)
+            points[index].WorldPosition = dial * Vector3.new(math.cos(angle) * radius, math.sin(angle) * radius, 0)
+        end
+        for index = 1, count do ring[index] = KillFx.beam(ev, holder, points[index], points[index % count + 1], opts.color2, 0.12, 0.12) end
+        local hub = KillFx.make(ev, "Attachment", {}, holder)
+        hub.WorldPosition = center
+        local long, short = KillFx.make(ev, "Attachment", {}, holder), KillFx.make(ev, "Attachment", {}, holder)
+        local hands = { KillFx.beam(ev, holder, hub, long, opts.color, 0.14, 0.06), KillFx.beam(ev, holder, hub, short, opts.color, 0.2, 0.1) }
+        local runner = KillFx.make(ev, "Attachment", {}, holder)
+        local motes = KillFx.emitter(ev, runner, {
+            Rate = math.floor(60 * opts.cint), Enabled = true, Lifetime = NumberRange.new(0.8, 1.2), Speed = NumberRange.new(0, 0.2),
+            Size = KillFx.shrink(0.3), Color = ColorSequence.new(WHITE, opts.color2),
+        })
+        local function gray(color)
+            local level = 0.3 * color.R + 0.59 * color.G + 0.11 * color.B
+            return Util.lerpColor(Color3.new(level, level, level), Color3.fromRGB(160, 160, 168), 0.4)
+        end
+        local length, frozen = math.max(1.5, opts.cdur), false
+        KillFx.drive(ev, corpse, body, length, 0.6, function(t, progress)
+            if not frozen then
+                frozen = true
+                KillFx.pose(body, function(item) return item.cf end)
+            end
+            skin.paint(Enum.Material.Marble, 0, gray, math.clamp(t / 0.4, 0, 1))
+            local stop = math.min(t, 0.5)
+            local spin = stop * (1 - stop) * 40
+            long.WorldPosition = dial * Vector3.new(math.sin(spin) * radius * 0.85, math.cos(spin) * radius * 0.85, 0)
+            short.WorldPosition = dial * Vector3.new(math.sin(spin / 12) * radius * 0.5, math.cos(spin / 12) * radius * 0.5, 0)
+            local sweep = t * 5
+            runner.WorldPosition = dial * Vector3.new(math.cos(sweep) * radius, math.sin(sweep) * radius, 0)
+            local fade = NumberSequence.new(math.clamp((progress - 0.75) / 0.25, 0, 1))
+            for _, beam in ipairs(ring) do beam.Transparency = fade end
+            for _, beam in ipairs(hands) do beam.Transparency = fade end
+            if progress >= 0.75 then motes.Enabled = false end
+            if progress >= 1 then skin.finish() end
+        end)
+    end,
+}
+
+KillFx.fx.Implode = {
+    start = function(ev, corpse, pos, opts)
+        local body = KillFx.body(ev, corpse)
+        if #body.parts == 0 then return end
+        local center = pos + Vector3.new(0, 1, 0)
+        local flash = KillFx.make(ev, "Part", KillFx.solid({
+            Shape = Enum.PartType.Ball, Material = Enum.Material.Neon, Color = opts.color2, Transparency = 1, Size = Vector3.new(0.2, 0.2, 0.2), Position = center,
+        }))
+        local holder = KillFx.anchor(ev, center, Vector3.new(8, 8, 8))
+        local pull = KillFx.emitter(ev, holder, {
+            Rate = math.floor(30 * opts.cint), Enabled = true, Lifetime = NumberRange.new(0.35, 0.45), Speed = NumberRange.new(9, 11),
+            Size = KillFx.shrink(0.3), Color = ColorSequence.new(opts.color2, opts.color),
+        })
+        propSet(pull, "Shape", Enum.ParticleEmitterShape.Sphere)
+        propSet(pull, "ShapeStyle", Enum.ParticleEmitterShapeStyle.Surface)
+        propSet(pull, "ShapeInOut", Enum.ParticleEmitterShapeInOut.Inward)
+        local blast = KillFx.emitter(ev, holder, {
+            Lifetime = NumberRange.new(0.3, 0.7), Speed = NumberRange.new(25, 45), SpreadAngle = Vector2.new(180, 180), Drag = 4, Size = KillFx.shrink(0.5), Color = ColorSequence.new(WHITE, opts.color),
+        })
+        local length, popped = math.max(0.8, opts.cdur * 0.5), false
+        KillFx.drive(ev, corpse, body, length, 0.6, function(t, progress)
+            local tremble = progress < 0.35 and 0.06 * math.sin(t * 70) or 0
+            local k = math.clamp((progress - 0.35) / 0.45, 0, 1) ^ 3
+            KillFx.pose(body, function(item)
+                local at = item.cf.Position
+                if item.size then KillFx.resize(item, item.size * (1 - 0.9 * k)) end
+                item.sink = math.clamp((k - 0.7) / 0.3, 0, 1)
+                return CFrame.new(center + (at - center) * (1 - k + tremble) - at) * item.cf
+            end)
+            if progress >= 0.8 and not popped then
+                popped = true
+                body.fade = 1
+                pull.Enabled = false
+                flash.Transparency = 0
+                KillFx.burst(blast, 40 * opts.cint)
+            end
+            if popped then
+                local age = math.clamp((progress - 0.8) / 0.2, 0, 1)
+                local size = 0.2 + 3.5 * age
+                flash.Size = Vector3.new(size, size, size)
+                flash.Transparency = age
+            end
+            KillFx.paint(body)
+        end)
+    end,
+}
+
+KillFx.fx.Vaporize = {
+    start = function(ev, corpse, pos, opts)
+        local body = KillFx.body(ev, corpse)
+        local list = KillFx.visible(body)
+        if #list == 0 then return end
+        local haze = KillFx.copies(ev, body, { Material = Enum.Material.Glass, Color = WHITE, Transparency = 0.75, Reflectance = 0 })
+        local holder = KillFx.anchor(ev, pos, Vector3.new(3, 4, 2))
+        local heat = KillFx.emitter(ev, holder, {
+            Texture = SMOKE, LightEmission = 0.1, Rate = math.floor(14 * opts.cint), Enabled = true, Lifetime = NumberRange.new(0.8, 1.4), Speed = NumberRange.new(2, 4),
+            EmissionDirection = Enum.NormalId.Top, SpreadAngle = Vector2.new(15, 15), Size = NumberSequence.new(1, 3), Transparency = NumberSequence.new(0.85, 1), Color = ColorSequence.new(WHITE),
+        })
+        local embers = KillFx.emitter(ev, holder, {
+            Lifetime = NumberRange.new(0.6, 1.2), Speed = NumberRange.new(2, 6), SpreadAngle = Vector2.new(180, 180), Acceleration = Vector3.new(0, 6, 0),
+            Size = KillFx.shrink(0.25), Color = ColorSequence.new(Color3.fromRGB(255, 200, 120), opts.color),
+        })
+        for _, item in ipairs(list) do item.key = 0.5 + fxRand(0, 0.15) end
+        local flashed = false
+        KillFx.drive(ev, corpse, body, opts.cdur, 1, function(t, progress)
+            local shimmer = math.clamp(progress / 0.2, 0, 1)
+            for _, copy in ipairs(haze) do
+                local wave = Vector3.new(0.05 * math.sin(t * 31 + copy.cf.Position.Y), 0.04 * math.sin(t * 23), 0.05 * math.cos(t * 27))
+                copy.part.CFrame = CFrame.new(wave) * copy.cf
+                copy.part.Size = copy.size * (1 + 0.06 * shimmer)
+                copy.part.Transparency = 0.75 + 0.25 * math.clamp((progress - 0.6) / 0.35, 0, 1)
+            end
+            if progress >= 0.5 and not flashed then
+                flashed = true
+                KillFx.burst(embers, 30 * opts.cint)
+            end
+            for _, item in ipairs(list) do item.fade = math.clamp((progress - item.key) / 0.25, 0, 1) end
+            if progress >= 0.9 then heat.Enabled = false end
+            KillFx.paint(body)
+        end)
+    end,
+}
+
 function KillFx.settings()
     return {
         color = val("kill_fx_color") or Color3.fromRGB(102, 204, 255), color2 = val("kill_fx_color2") or WHITE,
@@ -11570,7 +12117,8 @@ do
     Pred:Toggle({ Name = "Aim at prediction", Flag = "legit_pred_aim", Tooltip = "Aims at the solved intercept point (full lead and drop) instead of the strength-limited lead below" })
     Master:Toggle({ Name = "Only while aiming down sights", Flag = "legit_ads" })
     Master:Toggle({ Name = "Only while shooting", Flag = "legit_shooting" })
-    Master:Toggle({ Name = "Aim from barrel", Flag = "legit_barrel", Default = true, Tooltip = "Uses the weapon's bullet origin and direction (as the game computes them) for visibility, prediction and aiming; the camera is still the only thing that moves" })
+    local FromBarrel = Master:Toggle({ Name = "Aim from barrel", Flag = "legit_barrel", Default = true, Tooltip = "Uses the weapon's bullet origin and direction (as the game computes them) for visibility, prediction and aiming; the camera is still the only thing that moves" }):Settings("Aim from barrel", 230)
+    FromBarrel:Slider({ Name = "Scoped-in threshold", Flag = "legit_barrel_ads", Min = 0, Max = 1, Default = 0.9, Decimals = 0.01, Tooltip = "While aiming down sights the camera is used until the aim-in reaches this point, then it blends to the barrel; hip fire stays on the barrel. Also moves the FOV circles and the prediction dot. 0 = always the barrel" })
     Master:Dropdown({ Name = "Hitbox priority", Flag = "legit_priority", Items = { "Closest", "Head", "Torso" }, Default = "Closest", Tooltip = "Closest picks the part nearest the crosshair; Head/Torso prefer that part when it qualifies" })
     Master:Dropdown({ Name = "Hitboxes", Flag = "legit_parts", Items = { "Head", "Torso", "Arms", "Legs" }, Multi = true, Default = { "Head", "Torso" } })
     Master:Dropdown({ Name = "Target by", Flag = "legit_target_by", Items = { "Crosshair", "Distance", "Lowest health" }, Default = "Crosshair" })
@@ -11817,6 +12365,7 @@ do
     Remove:Toggle({ Name = "Remove right sleeve", Flag = "local_rm_rsleeve" })
     Remove:Toggle({ Name = "Remove gloves", Flag = "local_rm_gloves", Tooltip = "Both hands' gloves and accessories" })
     Remove:Toggle({ Name = "Remove gun", Flag = "local_rm_gun", Tooltip = "Hides the viewmodel weapon" })
+    Remove:Toggle({ Name = "Remove scope glass", Flag = "local_noglass", Tooltip = "Hides sight lenses and glass on the weapon in your hands, with or without gun chams; reticles stay visible" })
 
     local Changer = LocalSub:Section({ Name = "Viewmodel changer", Column = 3, Icon = "camera" })
     local Offset = Changer:Toggle({ Name = "Viewmodel offset", Flag = "local_vm", Tooltip = "Moves and tilts the weapon and arms after the game positions them; bullets and your aim are not affected" }):Settings("Viewmodel offset", 230)
@@ -11966,8 +12515,22 @@ do
             pickColor(Cham, "Style colour 2", "chams_style_color2", Color3.fromRGB(255, 60, 200))
             Cham:Slider({ Name = "Style speed", Flag = "chams_style_speed", Min = 0.1, Max = 4, Default = 1, Decimals = 0.05 })
             Cham:Slider({ Name = "Style intensity", Flag = "chams_style_int", Min = 0.2, Max = 1.5, Default = 1, Decimals = 0.05 })
-            Cham:Toggle({ Name = "Style through walls", Flag = "chams_style_walls", Default = true, Tooltip = "Hologram edges, Glow shells, Toon and Rainbow flow can show through walls; the other styles are copies in the world and stay behind cover" })
+            Cham:Toggle({ Name = "Style through walls", Flag = "chams_style_walls", Default = true, Tooltip = "Toon, Ghost and Glow shells show through walls; off hides styled players behind cover" })
             Cham:Slider({ Name = "Style cap", Flag = "chams_style_cap", Min = 1, Max = 20, Default = 8, Decimals = 1, Tooltip = "Most players styled at once, nearest first; the rest use Classic" })
+            Cham:Toggle({ Name = "Style visibility colours", Flag = "chams_style_vis", Tooltip = "Replaces Style colour with the visible or behind-walls colour below, from the shared visibility check (Visibility check interval)" })
+            pickColor(Cham, "Style visible", "chams_style_vis_color", Color3.fromRGB(80, 255, 140))
+            pickColor(Cham, "Style behind walls", "chams_style_occ_color", Color3.fromRGB(255, 70, 110), 0.25)
+            Cham:Slider({ Name = "Toon outline", Flag = "chams_toon_outline", Min = 0.05, Max = 0.8, Default = 0.3, Decimals = 0.01, Suffix = " studs" })
+            pickColor(Cham, "Toon outline colour", "chams_toon_outline_color", Color3.fromRGB(12, 12, 18))
+            Cham:Slider({ Name = "Toon shading", Flag = "chams_toon_shade", Min = 0, Max = 0.9, Default = 0.45, Decimals = 0.01, Tooltip = "How much darker the faces turned away from the light are" })
+            Cham:Toggle({ Name = "Toon rim light", Flag = "chams_toon_rim", Default = true, Tooltip = "Lights the outline edges facing away from the camera in Style colour 2" })
+            Cham:Slider({ Name = "Ghost copies", Flag = "chams_ghost_count", Min = 1, Max = 8, Default = 5, Decimals = 1 })
+            Cham:Slider({ Name = "Ghost spacing", Flag = "chams_ghost_spacing", Min = 0.3, Max = 4, Default = 1.2, Decimals = 0.1, Suffix = " studs", Tooltip = "A copy is left each time the player moves this far, so standing players leave none" })
+            Cham:Slider({ Name = "Ghost trail length", Flag = "chams_ghost_length", Min = 0.15, Max = 1.5, Default = 0.6, Decimals = 0.05, Suffix = " s" })
+            Cham:Toggle({ Name = "Ghost colour gradient", Flag = "chams_ghost_gradient", Default = true, Tooltip = "Copies blend from Style colour to Style colour 2 as they fade" })
+            Cham:Slider({ Name = "Glow shells", Flag = "chams_glow_shells", Min = 1, Max = 3, Default = 3, Decimals = 1 })
+            Cham:Slider({ Name = "Glow breathing", Flag = "chams_glow_pulse", Min = 0, Max = 1, Default = 0.5, Decimals = 0.05 })
+            Cham:Toggle({ Name = "Glow outline", Flag = "chams_glow_outline" })
         end
         if shared then
             local Vis = Body:Toggle({ Name = "Colour by visibility", Flag = "esp_vis", Tooltip = "Box, skeleton, snapline, dot, view line and arrows use the popup colours" }):Settings("Visibility colours", 200)
@@ -12311,10 +12874,10 @@ do
     Fx:Slider({ Name = "Screen flash only near", Flag = "kill_fx_flash_dist", Min = 20, Max = 500, Default = 150, Decimals = 1, Suffix = " studs" })
     Fx:Toggle({ Name = "Play sound", Flag = "kill_fx_sound" })
     Fx:Input({ Name = "Sound id", Flag = "kill_fx_sound_id", Placeholder = "rbxassetid or number" })
-    Kill:Dropdown({ Name = "Corpse effects", Flag = "kill_fx_corpse", Items = KillFx.corpseNames, Multi = true, Tooltip = "Act on the body itself, locally. Only one movement effect (Zero-G float, Ascend, Ragdoll launch, Black hole) runs per corpse: the first one in this list" })
+    Kill:Dropdown({ Name = "Corpse effects", Flag = "kill_fx_corpse", Items = KillFx.corpseNames, Multi = true, Tooltip = "Act on the body itself, locally. Only one movement effect (everything except Disintegrate, Ghost, Freeze, Confetti and Vaporize) runs per corpse: the first one in this list" })
     Kill:Slider({ Name = "Corpse effect time", Flag = "kill_fx_corpse_dur", Min = 1, Max = 8, Default = 3, Decimals = 0.1, Suffix = " s" })
     Kill:Slider({ Name = "Corpse particles", Flag = "kill_fx_corpse_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
-    Kill:Slider({ Name = "Float height", Flag = "kill_fx_corpse_height", Min = 2, Max = 30, Default = 10, Decimals = 1, Suffix = " studs", Tooltip = "How high Zero-G float, Ascend, Ghost and Ragdoll launch carry the body" })
+    Kill:Slider({ Name = "Float height", Flag = "kill_fx_corpse_height", Min = 2, Max = 30, Default = 10, Decimals = 1, Suffix = " studs", Tooltip = "How high Zero-G float, Ascend, Ghost, Ragdoll launch, Balloon and Puppet carry the body" })
     local Dead = Kills:Section({ Name = "Corpse chams", Column = 3, Icon = "ghost" })
     local Cham = Dead:Toggle({ Name = "Corpse chams", Flag = "chams_dead", Tooltip = "Restyles the ragdoll left behind when a player dies by changing its material, colour and transparency. The game removes corpses after about 30 seconds" }):Settings("Corpse chams", 260)
     Cham:Toggle({ Name = "Enemy corpses", Flag = "chams_dead_enemy", Default = true, Tooltip = "Corpses whose owner could not be matched count as enemy" })
@@ -12346,6 +12909,7 @@ do
     local Notice = Kills:Section({ Name = "Killcam", Column = 2, Icon = "eye" })
     Notice:Toggle({ Name = "Killcam notice", Flag = "killcam_notify", Default = true, Tooltip = "Estimate: the player you kill watches you on their killcam for up to 5 s, but they may skip it after 0.5 s and the game does not tell us. Closes early when they respawn, you die, they leave or the round ends" })
     Notice:Toggle({ Name = "Notice sound", Flag = "killcam_sound" })
+    Notice:Toggle({ Name = "Debug kill events", Flag = "misc_debug_kills", Tooltip = "Prints one line per death event to the console (F9): victim, attacker, forced, the game thread identity and which kill features fired" })
 
     local Bullets = Subs.Bullets
     local Trace = Bullets:Section({ Name = "Bullet tracers", Column = 1, Icon = "zap" })
@@ -13398,6 +13962,7 @@ function Loop.step()
         Silent.ring.Visible, Silent.ringFill.Visible = false, false
         ESP.clear()
         Util.guard("items", Items.step, cam, now)
+        Util.guard("pf-events", Feedback.drain)
         Util.guard("feedback", Feedback.step, cam, center, now)
         Util.guard("tracers", Tracers.step, now)
         Util.guard("impacts", Impacts.step, now)
@@ -13416,6 +13981,7 @@ function Loop.step()
         Util.guard("localhook", Local.hook)
         Util.guard("skinhook", Skins.hook)
     end
+    Util.guard("pf-events", Feedback.drain)
 
     local records = Entities.update()
     Util.guard("fov", World.stepFov, dt)

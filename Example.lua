@@ -40,7 +40,7 @@ local Window = Library:CreateWindow({
     Title = 'Aster Showcase',
     Center = true,
     AutoShow = false,
-    Size = UDim2.fromOffset(820, 560),
+    Size = UDim2.fromOffset(940, 620),
     TabPadding = 8,
     MenuFadeTime = 0.2,
 })
@@ -116,6 +116,19 @@ local function BuildAim(Sub, Class)
     Barrel:AddSlider(P .. 'BarrelPitch', { Text = 'Pitch', Default = 0, Min = -45, Max = 45, Rounding = 1 })
     Barrel:AddSlider(P .. 'BarrelYaw', { Text = 'Yaw', Default = 0, Min = -45, Max = 45, Rounding = 1 })
     Barrel:SetupDependencies({ { Toggles[P .. 'BarrelCorrection'], true } })
+
+    -- middle column; drag any card by its header to move it (see Library:GetLayout / SetLayout)
+    local Recoil = Sub:AddMiddleGroupbox('Recoil Control', 'activity')
+    Recoil:AddToggle(P .. 'RecoilEnabled', { Text = 'Enabled', Default = false })
+    Recoil:AddSlider(P .. 'RecoilX', { Text = 'Horizontal', Default = 75, Min = 0, Max = 100, Rounding = 0, Suffix = '%' })
+    Recoil:AddSlider(P .. 'RecoilY', { Text = 'Vertical', Default = 75, Min = 0, Max = 100, Rounding = 0, Suffix = '%' })
+    -- multi popup: header reads 'Pause when / multi-select', All / None footer, button shows 'Flash  +3'
+    Recoil:AddDropdown(P .. 'RecoilPause', {
+        Text = 'Pause when',
+        Values = { 'Flash', 'Smoke', 'Jumping', 'Reloading', 'Scoped', 'Low health' },
+        Default = { 'Flash', 'Smoke', 'Jumping', 'Reloading' },
+        Multi = true,
+    })
 
     local Right = Sub:AddRightTabbox()
     local Silent = Right:AddTab('Silent Aim')
@@ -256,6 +269,7 @@ do
     local General = Tabs.Misc:AddSubTab('General', 'package')
     local Weaponry = Tabs.Misc:AddSubTab('Weaponry', 'sword')
     local Demo = Tabs.Misc:AddSubTab('Elements', 'sparkles')
+    local Skins = Tabs.Misc:AddSubTab('Skins', 'paintbrush')
 
     -- General: groupboxes with sub-tabs
     local Move = General:AddLeftTabbox()
@@ -362,7 +376,8 @@ do
     Options.KeyToggle:OnClick(function() Log('KeyToggle state =', Options.KeyToggle:GetState()) end)
     Options.KeyHold:OnChanged(function() Log('KeyHold key changed to', Options.KeyHold.Value) end)
 
-    local Pick = Demo:AddLeftGroupbox('Dropdowns, inputs, colours', 'list')
+    -- Tab:AddGroupbox(Name, Column, Icon): column 1..3, here the middle one
+    local Pick = Demo:AddGroupbox('Dropdowns, inputs, colours', 2, 'list')
     Pick:AddDropdown('DropSingle', {
         Text = 'Single', Values = { 'Head', 'Torso', 'Arms', 'Legs' }, Default = 1, Tooltip = 'Single-select dropdown',
         Callback = function(Value) Log('DropSingle:', Value) end,
@@ -426,11 +441,40 @@ do
     Nested:SetupDependencies({ { Toggles.DepToggle, true } })
     DepBox:SetupDependencies({ { Toggles.DepMaster, true } })
 
+    -- card order is saved in configs by SaveManager; these buttons show the raw API
+    Misc:AddDivider()
+    local SavedLayout
+    Misc:AddButton({ Text = 'Remember layout', Func = function()
+        SavedLayout = Library:GetLayout()
+        Library:Notify('Layout remembered, drag some cards around', 3)
+    end }):AddButton({ Text = 'Restore layout', Func = function()
+        if SavedLayout then Library:SetLayout(SavedLayout) end
+    end })
+
     local Notif = Demo:AddRightGroupbox('Notifications and HUD', 'bell')
     Notif:AddButton({ Text = 'Notify (3s)', Func = function() Library:Notify('Short notification', 3) end })
     Notif:AddButton({ Text = 'Notify (8s)', Func = function() Library:Notify('Long notification, stays 8 seconds', 8) end })
-    Notif:AddButton({ Text = 'Spam 4 (queue)', Func = function()
-        for I = 1, 4 do Library:Notify('Queued notification #' .. I, 3) end
+    Notif:AddButton({ Text = 'Spam 8 (cap 6)', Func = function()
+        for I = 1, 8 do Library:Notify('Stacked notification #' .. I, 4) end
+    end })
+    Notif:AddButton({ Text = 'Titled + icon', Func = function()
+        Library:Notify({ Title = 'Config saved', Text = 'Your settings were written to Aster/configs/default.json', Icon = 'check', Duration = 4 })
+    end })
+    -- same Id updates the visible card in place: a countdown and a streak counter
+    Notif:AddButton({ Text = 'Killcam countdown', Func = function()
+        local Card = Library:Notify({ Id = 'killcam', Title = 'Killcam', Text = 'Killcam: Bob', Icon = 'skull', Duration = 5, Progress = true })
+        task.spawn(function()
+            for Left = 5, 1, -1 do
+                if Card.Closing then return end
+                Card:SetText('Killcam: Bob (' .. Left .. ')')
+                task.wait(1)
+            end
+        end)
+    end })
+    local Streak = 0
+    Notif:AddButton({ Text = 'Kill streak +1', Func = function()
+        Streak = Streak + 1
+        Library:Notify({ Id = 'streak', Title = 'Kill streak', Text = Streak .. ' kills', Icon = 'crosshair', Accent = Color3.fromRGB(244, 63, 94), Duration = 3 })
     end })
     Notif:AddDropdown('NotifySide', { Text = 'Notify side', Values = { 'Left', 'Right' }, Default = 1 })
     Options.NotifySide:OnChanged(function()
@@ -441,6 +485,69 @@ do
     Notif:AddToggle('ShowKeybinds', { Text = 'Keybind list', Default = true })
     Toggles.ShowWatermark:OnChanged(function() Library:SetWatermarkVisibility(Toggles.ShowWatermark.Value) end)
     Toggles.ShowKeybinds:OnChanged(function() Library:SetKeybindListVisibility(Toggles.ShowKeybinds.Value) end)
+
+    -- Skins: gallery (cases -> skins) driving a 3D viewport
+    local Rarity = {
+        Covert = Color3.fromRGB(235, 75, 75),
+        Classified = Color3.fromRGB(211, 44, 230),
+        Restricted = Color3.fromRGB(136, 71, 255),
+        MilSpec = Color3.fromRGB(75, 105, 255),
+    }
+    local function Skin(Id, Name, Grade, Tint)
+        return { Id = Id, Name = Name, Subtitle = Grade, Color = Rarity[Grade:gsub('%-', '')], Tint = Tint }
+    end
+    local Cases = {
+        { Id = 'case_ember', Name = 'Ember Case', Subtitle = 'Season 1', Children = {
+            Skin('ember_dragon', 'Dragon Lore', 'Covert', Color3.fromRGB(220, 160, 60)),
+            Skin('ember_ash', 'Ash Wood', 'Restricted', Color3.fromRGB(120, 90, 70)),
+            Skin('ember_coal', 'Coal', 'Mil-Spec', Color3.fromRGB(40, 40, 44)),
+        } },
+        { Id = 'case_frost', Name = 'Frost Case', Subtitle = 'Season 2', Children = {
+            Skin('frost_glacier', 'Glacier', 'Classified', Color3.fromRGB(150, 210, 255)),
+            Skin('frost_snow', 'Snowfall', 'Mil-Spec', Color3.fromRGB(235, 240, 245)),
+        } },
+        Skin('stock', 'Factory New', 'Mil-Spec', Color3.fromRGB(90, 90, 96)),
+    }
+
+    -- stand-in weapon built from parts; a real script would pass the game's weapon model
+    local function DemoGun(Tint)
+        local Gun = Instance.new('Model')
+        for _, P in ipairs({ { 0, 0, 0, 0.5, 0.6, 3 }, { 0, 0.05, -2.1, 0.18, 0.18, 1.4 }, { 0, -0.6, 0.6, 0.4, 0.9, 0.3 }, { 0, -0.1, 1.9, 0.35, 0.5, 1 } }) do
+            local Part = Instance.new('Part')
+            Part.Anchored = true
+            Part.Size = Vector3.new(P[4], P[5], P[6])
+            Part.CFrame = CFrame.new(P[1], P[2], P[3])
+            Part.Color = Tint
+            Part.Parent = Gun
+        end
+        return Gun
+    end
+
+    local Show = Skins:AddLeftGroupbox('Preview', 'box')
+    local Preview = Show:AddViewport('SkinPreview', {
+        Height = 220,
+        FOV = 35,
+        Yaw = 60,
+        Pitch = 12,
+        AutoRotate = true,
+        LightDirection = Vector3.new(-1, -1.5, -0.5),
+        Model = DemoGun(Rarity.MilSpec),
+    })
+    Show:AddToggle('SkinAutoRotate', { Text = 'Auto rotate', Default = true, Callback = function(Value) Preview:SetAutoRotate(Value) end })
+    Show:AddButton({ Text = 'Reset view', Func = function() Preview:ResetView() end })
+
+    local Pick = Skins:AddMiddleGroupbox('Cases', 'package')
+    Pick:AddGallery('SkinGallery', {
+        Height = 260,
+        TileSize = 72,
+        Search = true,
+        Title = 'All cases',
+        Items = Cases,
+        Callback = function(Item, Path, Selected)
+            Log('skin', Item.Name, Selected and 'applied' or 'removed', Path[#Path] and Path[#Path].Name or '-')
+            Preview:SetModel(DemoGun(Selected and Item.Tint or Rarity.MilSpec), true)
+        end,
+    })
 end
 
 local Frames, Clock, FPS = 0, os.clock(), 60
@@ -675,13 +782,13 @@ do
     Atmo:AddToggle('WorldSkybox', { Text = 'Sky preset', Default = false })
     Atmo:AddDropdown('WorldSkyboxPreset', { Text = 'Preset', Values = { 'Night', 'Sunset', 'Overcast', 'Dusk' }, Default = 1 })
 
-    local Quick = Tabs.World:AddRightGroupbox('Quick toggles', 'zap')
+    local Quick = Tabs.World:AddMiddleGroupbox('Quick toggles', 'zap')
     Quick:AddToggle('WorldFullBright', { Text = 'Full bright', Default = false, Tooltip = 'Overrides lighting values while on' })
     Quick:AddToggle('WorldNoFog', { Text = 'No fog', Default = false })
     Quick:AddToggle('WorldNoSky', { Text = 'Remove sky', Default = false })
     Quick:AddToggle('WorldNoShadows', { Text = 'Remove shadows', Default = false })
 
-    local Cm = Tabs.World:AddRightGroupbox('Camera and physics', 'camera')
+    local Cm = Tabs.World:AddMiddleGroupbox('Camera and physics', 'camera')
     Cm:AddToggle('WorldFov', { Text = 'Field of view', Default = false })
     Cm:AddSlider('WorldFovValue', { Text = 'FOV', Default = 90, Min = 30, Max = 120, Rounding = 0, Stepper = true })
     Cm:AddToggle('WorldGravity', { Text = 'Gravity', Default = false })
@@ -764,6 +871,8 @@ do
     local Menu = MenuSub:AddLeftGroupbox('Menu', 'keyboard')
     Menu:AddLabel('Menu bind'):AddKeyPicker('MenuKeybind', { Default = 'RightShift', NoUI = true, Text = 'Menu keybind' })
     Library.ToggleKeybind = Options.MenuKeybind
+    Menu:AddToggle('MenuHideGameCursor', { Text = 'Hide game cursor', Default = true, Tooltip = 'Hides the game cursor while the menu cursor is shown' })
+    Toggles.MenuHideGameCursor:OnChanged(function() Library:SetHideGameCursor(Toggles.MenuHideGameCursor.Value) end)
     Menu:AddToggle('MenuWatermark', { Text = 'Watermark', Default = true })
     Menu:AddToggle('MenuKeybindList', { Text = 'Keybind list', Default = true })
     Menu:AddDropdown('KeybindListFilter', {
@@ -805,7 +914,7 @@ do
     SaveManager:SetFolder('AsterShowcase')
     if ThemeManager.CreateColors then
         ThemeManager:CreateColors(ThemeSub:AddLeftGroupbox('Colors', 'palette'))
-        ThemeManager:CreatePresets(ThemeSub:AddLeftGroupbox('Presets', 'folder'))
+        ThemeManager:CreatePresets(ThemeSub:AddMiddleGroupbox('Presets', 'folder'))
         ThemeManager:CreateAppearance(ThemeSub:AddRightGroupbox('Appearance', 'monitor'))
 
         local Backdrop = ThemeSub:AddRightGroupbox('Backdrop and HUD', 'layers')

@@ -112,6 +112,7 @@ local Library = {
 
     OpenedFrames = {};
     DependencyBoxes = {};
+    ColumnScrollers = {};
 
     Signals = {};
     ScreenGui = ScreenGui;
@@ -4458,6 +4459,7 @@ do
 
                             Library:SafeCallback(Dropdown.Callback, Dropdown.Value);
                             Library:SafeCallback(Dropdown.Changed, Dropdown.Value);
+                            Library:UpdateDependencyBoxes();
 
                             Library:AttemptSave();
                         end;
@@ -4548,6 +4550,7 @@ do
 
             Library:SafeCallback(Dropdown.Callback, Dropdown.Value);
             Library:SafeCallback(Dropdown.Changed, Dropdown.Value);
+            Library:UpdateDependencyBoxes();
         end;
 
         DropdownOuter.InputBegan:Connect(function(Input)
@@ -4606,6 +4609,25 @@ do
 
         return Dropdown;
     end;
+    -- Want: a value (true/false for toggles, an option for dropdowns; any selected one counts in a multi),
+    -- a list of allowed values, or function(Value, Element) -> bool
+    local function DependencyMet(Elem, Want)
+        local Value = Elem.Value;
+        if type(Want) == 'function' then
+            return Want(Value, Elem) and true or false;
+        end;
+        if type(Want) == 'table' then
+            for _, Allowed in next, Want do
+                if DependencyMet(Elem, Allowed) then return true end;
+            end;
+            return false;
+        end;
+        if Elem.Type == 'Dropdown' and type(Value) == 'table' then
+            return Value[Want] == true;
+        end;
+        return Value == Want;
+    end;
+
     function Funcs:AddDependencyBox()
         local Depbox = {
             Dependencies = {};
@@ -4631,8 +4653,15 @@ do
             SortOrder = Enum.SortOrder.LayoutOrder;
             Parent = Frame;
         });
+        -- summed offsets like Groupbox:Resize; AbsoluteContentSize is in screen pixels and drifts under UIScale
         function Depbox:Resize()
-            Holder.Size = UDim2.new(1, 0, 0, Layout.AbsoluteContentSize.Y);
+            local Size = 0;
+            for _, Element in next, Frame:GetChildren() do
+                if Element:IsA('GuiObject') and Element.Visible then
+                    Size = Size + Element.Size.Y.Offset;
+                end;
+            end;
+            Holder.Size = UDim2.new(1, 0, 0, Size);
             Groupbox:Resize();
         end;
 
@@ -4643,18 +4672,16 @@ do
             Depbox:Resize();
         end);
         function Depbox:Update()
+            local Show = true;
             for _, Dependency in next, Depbox.Dependencies do
-                local Elem = Dependency[1];
-                local Value = Dependency[2];
-
-                if Elem.Type == 'Toggle' and Elem.Value ~= Value then
-                    Holder.Visible = false;
-                    Depbox:Resize();
-                    return;
+                if not DependencyMet(Dependency[1], Dependency[2]) then
+                    Show = false;
+                    break;
                 end;
             end;
 
-            Holder.Visible = true;
+            Depbox.Visible = Show;
+            Holder.Visible = Show;
             Depbox:Resize();
         end;
 
@@ -4670,6 +4697,7 @@ do
         end;
 
         Depbox.Container = Frame;
+        Depbox.Holder = Holder;
         Depbox.Root = Groupbox.Root or Groupbox;
 
         setmetatable(Depbox, BaseGroupbox);
@@ -4795,7 +4823,8 @@ do
     -- While the pointer is over Frame the scrolling frames around it stop scrolling, so the wheel belongs to Frame.
     -- Counted per frame: two widgets entering/leaving in the same hover pass must not leave a column locked.
     local WheelHolds = setmetatable({}, { __mode = 'k' });
-    local function HoldWheel(Frame, Should)
+    -- Extra: optional function returning more scrolling frames to hold (a popup has no window ancestors)
+    local function HoldWheel(Frame, Should, Extra)
         local Held = {};
         local function Release()
             for Side in next, Held do
@@ -4810,26 +4839,32 @@ do
             end;
             Held = {};
         end;
+        local function Take(Side)
+            if Held[Side] then return end;
+            Held[Side] = true;
+            local Hold = WheelHolds[Side];
+            if not Hold then
+                Hold = { Count = 0; Was = Side.ScrollingEnabled ~= false };
+                WheelHolds[Side] = Hold;
+                Side.ScrollingEnabled = false;
+            end;
+            Hold.Count = Hold.Count + 1;
+        end;
         Library:Hover(Frame, function()
             if Should and not Should() then return end;
             local Cur = Frame.Parent;
             while Cur and Cur:IsA('GuiObject') do
-                if Cur:IsA('ScrollingFrame') and not Held[Cur] then
-                    Held[Cur] = true;
-                    local Hold = WheelHolds[Cur];
-                    if not Hold then
-                        Hold = { Count = 0; Was = Cur.ScrollingEnabled ~= false };
-                        WheelHolds[Cur] = Hold;
-                        Cur.ScrollingEnabled = false;
-                    end;
-                    Hold.Count = Hold.Count + 1;
-                end;
+                if Cur:IsA('ScrollingFrame') then Take(Cur) end;
                 Cur = Cur.Parent;
+            end;
+            for _, Side in ipairs(Extra and Extra() or {}) do
+                if Side.Parent then Take(Side) end;
             end;
         end, Release);
         Library:GiveSignal(Release);
         return Release;
     end;
+    Library.HoldWheel = HoldWheel;
 
     local function IsPointer(Type)
         return Type == Enum.UserInputType.MouseButton1 or Type == Enum.UserInputType.Touch;
@@ -6144,12 +6179,31 @@ BaseAddons.__index.AddSettings = function(self, Name, Info)
         ZIndex = 4;
         Parent = Frame;
     });
-    local Content = Library:Create('Frame', {
+    -- content scrolls once the popup hits its cap (MaxHeight, or 70% of the screen)
+    local TOP, PAD, BOTTOM = 26, 2, 8;
+    local Content = Library:Create('ScrollingFrame', {
+        Active = true;
         BackgroundTransparency = 1;
-        Position = UDim2.fromOffset(10, 28);
-        Size = UDim2.new(1, -20, 1, -34);
+        BorderSizePixel = 0;
+        CanvasSize = UDim2.new(0, 0, 0, 0);
+        Position = UDim2.fromOffset(0, TOP);
+        Size = UDim2.new(1, 0, 1, -(TOP + BOTTOM));
+        TopImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+        BottomImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+        MidImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+        ScrollBarThickness = 2;
+        ScrollBarImageColor3 = Library.AccentColor;
+        ScrollingDirection = Enum.ScrollingDirection.Y;
         ZIndex = 4;
         Parent = Frame;
+    });
+    Library:AddToRegistry(Content, { ScrollBarImageColor3 = 'AccentColor' });
+    Library:Create('UIPadding', {
+        PaddingLeft = UDim.new(0, 10);
+        PaddingRight = UDim.new(0, 10);
+        PaddingTop = UDim.new(0, PAD);
+        PaddingBottom = UDim.new(0, PAD);
+        Parent = Content;
     });
     local Layout = Library:Create('UIListLayout', {
         FillDirection = Enum.FillDirection.Vertical;
@@ -6157,19 +6211,41 @@ BaseAddons.__index.AddSettings = function(self, Name, Info)
         Parent = Content;
     });
 
+    -- sizes in popup units; Gui is in screen pixels, so divide by the scale
+    local function ScaleOf() return math.max(Scale.Scale, 0.1) end;
+    function Popup:GetMaxHeight()
+        local ViewY = Gui.AbsoluteSize.Y;
+        local Cap = ViewY > 0 and math.max(80, math.floor(ViewY * 0.7 / ScaleOf())) or math.huge;
+        return Info.MaxHeight and math.min(Info.MaxHeight, Cap) or Cap;
+    end;
+
     local function Place()
+        local S = ScaleOf();
         local Pos, Size = Gear.AbsolutePosition, Gear.AbsoluteSize;
-        local View, Box = Gui.AbsoluteSize, Frame.AbsoluteSize;
-        local X = math.clamp(Pos.X + Size.X - Box.X, 4, math.max(4, View.X - Box.X - 4));
+        local View = Gui.AbsoluteSize;
+        local BoxX, BoxY = Frame.Size.X.Offset * S, Frame.Size.Y.Offset * S;
+        local X = math.clamp(Pos.X + Size.X - BoxX, 4, math.max(4, View.X - BoxX - 4));
         local Y = Pos.Y + Size.Y + 6;
-        if Y + Box.Y > View.Y - 4 and Pos.Y - Box.Y - 6 > 4 then
-            Y = Pos.Y - Box.Y - 6;
+        if View.Y > 0 and Y + BoxY > View.Y - 4 then
+            local Above = Pos.Y - BoxY - 6;
+            Y = Above >= 4 and Above or math.clamp(Y, 4, math.max(4, View.Y - BoxY - 4));
         end;
-        Frame.Position = UDim2.fromOffset(X, Y);
+        Frame.Position = UDim2.fromOffset(math.floor(X), math.floor(Y));
     end;
 
     function Popup:Resize()
-        Frame.Size = UDim2.fromOffset(Width, 34 + Layout.AbsoluteContentSize.Y + 6);
+        local Height = 0;
+        for _, Element in next, Content:GetChildren() do
+            if Element:IsA('GuiObject') and Element.Visible then
+                Height = Height + Element.Size.Y.Offset;
+            end;
+        end;
+        Height = Height + PAD * 2;
+        local View = math.min(Height, Popup:GetMaxHeight() - TOP - BOTTOM);
+        Content.CanvasSize = UDim2.fromOffset(0, Height);
+        Popup.ContentHeight = Height;
+        Popup.Scrolls = Height > View;
+        Frame.Size = UDim2.fromOffset(Width, TOP + View + BOTTOM);
         if Popup.Open then Place() end;
     end;
     function Popup:Show()
@@ -6208,6 +6284,11 @@ BaseAddons.__index.AddSettings = function(self, Name, Info)
     Gear:GetPropertyChangedSignal('AbsolutePosition'):Connect(function()
         if Popup.Open then Place() end;
     end);
+    Library:GiveSignal(Gui:GetPropertyChangedSignal('AbsoluteSize'):Connect(function()
+        if Popup.Open then Popup:Resize() end;
+    end));
+    -- the window columns are not ancestors of the popup, so hold them explicitly
+    Library.HoldWheel(Frame, nil, function() return Library.ColumnScrollers end);
 
     Gear.InputBegan:Connect(function(Input)
         if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
@@ -6233,6 +6314,7 @@ BaseAddons.__index.AddSettings = function(self, Name, Info)
     end));
 
     Popup.Container = Content;
+    Popup.Scroller = Content;
     Popup.Frame = Frame;
     Popup.Button = Gear;
     setmetatable(Popup, BaseGroupbox);
@@ -8367,6 +8449,7 @@ function Library:CreateWindow(...)
                 Parent = TabFrame;
             });
             Library:AddToRegistry(Side, { ScrollBarImageColor3 = 'OutlineColor' });
+            table.insert(Library.ColumnScrollers, Side);
             Library:Create('UIPadding', { PaddingRight = UDim.new(0, 5); Parent = Side });
             local Layout = Library:Create('UIListLayout', {
                 Padding = UDim.new(0, 10);

@@ -373,6 +373,23 @@ function wrapGroup(group, page, side)
         bump()
         return group:AddGallery(info.Flag, info)
     end
+    function wrapped:Depends(conds, build)
+        local target, box = wrapped, nil
+        if type(group.AddDependencyBox) == "function" then
+            local ok, made = pcall(group.AddDependencyBox, group)
+            if ok and type(made) == "table" then target, box = wrapGroup(made, page, side), made end
+        end
+        build(target)
+        if box then
+            local list = {}
+            for _, cond in ipairs(conds) do
+                local control = Toggles[cond[1]] or Options[cond[1]]
+                if control then list[#list + 1] = { control, cond[2] } end
+            end
+            pcall(box.SetupDependencies, box, list)
+        end
+        return target
+    end
     return wrapped
 end
 
@@ -889,6 +906,27 @@ function Entities.track(record, position, now)
     end
 end
 
+function Entities.live(entry)
+    local okAlive, alive = pcall(entry.isAlive, entry)
+    if not (okAlive and alive) then return false end
+    if type(entry.isReady) == "function" then
+        local okReady, ready = pcall(entry.isReady, entry)
+        if okReady and not ready then return false end
+    end
+    return true
+end
+
+function Entities.parked(position)
+    if position == Vector3.zero then return true end
+    local now = os.clock()
+    if Entities.floor == nil or now - (Entities.floorAt or 0) > 5 then
+        Entities.floorAt = now
+        local ok, floor = pcall(function() return Workspace.FallenPartsDestroyHeight end)
+        Entities.floor = ok and type(floor) == "number" and floor or false
+    end
+    return Entities.floor and position.Y < Entities.floor or false
+end
+
 function Entities.update()
     if Entities.frame == Game.frame then return Entities.list end
     Entities.frame = Game.frame
@@ -900,8 +938,7 @@ function Entities.update()
 
     pcall(interface.operateOnAllEntries, function(player, entry)
         if player == LocalPlayer or type(entry) ~= "table" then return end
-        local okAlive, alive = pcall(entry.isAlive, entry)
-        if not (okAlive and alive) then return end
+        if not Entities.live(entry) then return end
         local object = entry._thirdPersonObject
         if not object then return end
         local okHash, hash = pcall(object.getCharacterHash, object)
@@ -921,6 +958,11 @@ function Entities.update()
             if not (okPosition and typeof(value) == "Vector3" and value == value) then return end
             position = value
         end
+        if Entities.parked(position) then return end
+
+        local health, maxHealth = 100, 100
+        local okHealth, current, maximum = pcall(entry.getHealth, entry)
+        if okHealth and type(current) == "number" then health, maxHealth = current, maximum or 100 end
 
         local record = Entities.byPlayer[player]
         if not record then
@@ -931,10 +973,6 @@ function Entities.update()
         record.entry, record.hash, record.torso, record.head, record.object = entry, hash, torso, head, object
         record.rendered, record.pos = rendered, position
         record.enemy = Game.isEnemy(entry, player)
-
-        local health, maxHealth = 100, 100
-        local okHealth, current, maximum = pcall(entry.getHealth, entry)
-        if okHealth and type(current) == "number" then health, maxHealth = current, maximum or 100 end
         record.health, record.maxHealth = health, maxHealth
 
         local spring = entry._velspring
@@ -973,6 +1011,10 @@ Visible.params = RaycastParams.new()
 Visible.params.FilterType = Enum.RaycastFilterType.Exclude
 pcall(function() Visible.params.RespectCanCollide = true end)
 pcall(function() Visible.params.IgnoreWater = true end)
+Visible.espParams = RaycastParams.new()
+Visible.espParams.FilterType = Enum.RaycastFilterType.Exclude
+pcall(function() Visible.espParams.RespectCanCollide = true end)
+pcall(function() Visible.espParams.IgnoreWater = true end)
 Visible.exitParams = RaycastParams.new()
 Visible.exitParams.FilterType = Enum.RaycastFilterType.Include
 pcall(function() Visible.exitParams.IgnoreWater = true end)
@@ -986,11 +1028,12 @@ function Visible.refresh(now)
         if typeof(instance) == "Instance" then list[#list + 1] = instance end
     end
     add(Game.camera())
-    add(Workspace.Terrain)
     for _, name in ipairs({ "Ignore", "Players", "Roots" }) do add(Workspace:FindFirstChild(name)) end
     local root = Game.rootPart()
     if root then add(root.Parent) end
     pcall(function() add(LocalPlayer.Character) end)
+    Visible.espParams.FilterDescendantsInstances = table.clone(list)
+    add(Workspace.Terrain)
     Visible.params.FilterDescendantsInstances = list
 end
 
@@ -1018,7 +1061,8 @@ function Visible.exit(position, unit, instance)
     return Workspace:Raycast(position + unit * size, -unit * size, Visible.exitParams)
 end
 
-function Visible.trace(origin, point, depth)
+function Visible.trace(origin, point, depth, params)
+    params = params or Visible.params
     local vector = (point - origin) * 0.998
     local length = vector.Magnitude
     if length < 0.05 then return 0, 0 end
@@ -1026,7 +1070,7 @@ function Visible.trace(origin, point, depth)
     local from, remaining = origin, vector
     local left, total, walls, seen = depth or 0, 0, 0, {}
     for _ = 1, 12 do
-        local hit = Workspace:Raycast(from, remaining, Visible.params)
+        local hit = Workspace:Raycast(from, remaining, params)
         if not hit then return total, walls end
         local instance = hit.Instance
         if instance == nil or (not seen[instance] and not Visible.skip(instance)) then
@@ -1059,7 +1103,7 @@ function Visible.entity(record, origin, now, interval)
     if record.rendered then
         for index = 1, math.clamp(math.floor(flag("vis_rays", 3)), 1, #VIS_ORDER) do
             local part = record.hash[VIS_ORDER[index]]
-            if part and part.Parent and Visible.trace(origin, part.Position) then
+            if part and part.Parent and Visible.trace(origin, part.Position, nil, Visible.espParams) then
                 value = true
                 break
             end
@@ -1890,7 +1934,7 @@ function Chams.headDimensions()
     return size.X / 2 - 0.4, size.Y
 end
 
-function Chams.style(slot, part, name, cfg, S)
+function Chams.style(slot, part, name, cfg, S, seen)
     local layers = slot.layers
     local grow = S.chamGrow
     for _, adornment in pairs(layers) do adornment.Adornee = part end
@@ -1910,7 +1954,11 @@ function Chams.style(slot, part, name, cfg, S)
         layers.behind.Size = size
         layers.visible.Size = size + Vector3.new(grow, grow, grow)
     end
-    layers.behind.Color3, layers.behind.Transparency = cfg.chamHid, cfg.chamHidT
+    if seen then
+        layers.behind.Color3, layers.behind.Transparency = cfg.chamVis, cfg.chamVisT
+    else
+        layers.behind.Color3, layers.behind.Transparency = cfg.chamHid, cfg.chamHidT
+    end
     layers.behind.Visible = S.chamMode == "Through walls"
     layers.visible.Color3, layers.visible.Transparency, layers.visible.Visible = cfg.chamVis, cfg.chamVisT, true
     layers.visible.AlwaysOnTop = false
@@ -1940,6 +1988,8 @@ end
 
 function ChamStyle.nearer(a, b) return a.styleDist < b.styleDist end
 
+ChamStyle.sigKeys = { "c1", "c2", "int", "walls", "visColor", "visAlpha", "occColor", "occAlpha", "toonGrow", "ghostCount", "ghostGradient", "glowShells", "glowOutline" }
+
 function ChamStyle.read()
     local c = ChamStyle.cfg
     c.style = flag("chams_style", "Classic")
@@ -1965,8 +2015,12 @@ function ChamStyle.read()
     c.glowShells = math.clamp(math.floor(flag("chams_glow_shells", 3)), 1, ChamStyle.shellMax)
     c.glowPulse = flag("chams_glow_pulse", 0.5)
     c.glowOutline = flag("chams_glow_outline", false)
-    c.sig = table.concat({ tostring(c.c1), tostring(c.c2), c.int, tostring(c.walls), tostring(c.visColor), c.visAlpha, tostring(c.occColor), c.occAlpha,
-        c.toonGrow, c.ghostCount, tostring(c.ghostGradient), c.glowShells, tostring(c.glowOutline) }, "|")
+    local seen, changed = c.seen or {}, false
+    c.seen = seen
+    for _, key in ipairs(ChamStyle.sigKeys) do
+        if seen[key] ~= c[key] then seen[key], changed = c[key], true end
+    end
+    if changed or not c.sig then c.sig = (c.sig or 0) + 1 end
     return c
 end
 
@@ -2314,12 +2368,21 @@ end
 
 function ChamStyle.pose(rig, rec)
     local hash, parts, frames, count = rec.hash, rig.parts, rig.frames, 0
+    local posed = rig.posed
+    if not posed then
+        posed = setmetatable({}, { __mode = "k" })
+        rig.posed = posed
+    end
     for _, set in ipairs(rig.sets) do
         for name, part in pairs(set) do
             local real = hash[name]
             if real and real.Parent then
-                count = count + 1
-                parts[count], frames[count] = part, real.CFrame
+                local frame = real.CFrame
+                if rig.world or posed[part] ~= frame then
+                    posed[part] = frame
+                    count = count + 1
+                    parts[count], frames[count] = part, frame
+                end
             end
         end
     end
@@ -2433,6 +2496,10 @@ function Chams.update(rec, cfg, S)
     end
     ChamStyle.drop(rec.player)
     entry.muted = nil
+    local seen = false
+    if S.chamMode == "Through walls" and rec.rendered and ChamStyle.origin then
+        seen = Visible.entity(rec, ChamStyle.origin, os.clock(), flag("vis_interval", 100) / 1000)
+    end
     for _, name in ipairs(CHAM_PARTS) do
         local part = rec.hash[name]
         local slot = entry.parts[name]
@@ -2455,9 +2522,9 @@ function Chams.update(rec, cfg, S)
             local built = slot.layers.visible
             if built and not (built.Parent and slot.layers.behind.Parent) then slot.layers, slot.sig = {}, nil end
             if not slot.layers.visible and not Chams.build(slot) then return end
-            if slot.adornee ~= part or slot.sig ~= sig then
-                slot.adornee, slot.sig = part, sig
-                Chams.style(slot, part, name, cfg, S)
+            if slot.adornee ~= part or slot.sig ~= sig or slot.seen ~= seen then
+                slot.adornee, slot.sig, slot.seen = part, sig, seen
+                Chams.style(slot, part, name, cfg, S, seen)
             else
                 local layers = slot.layers
                 if layers.visible.Adornee ~= part then layers.visible.Adornee = part end
@@ -2889,7 +2956,7 @@ local SKY_PRESETS = {
     ["Night"] = { "12064131", "12064152", "12064121", "12064107", "12063984", "12064115" },
     ["Ocean Sky"] = { "11854708161", "11854687121", "11854693863", "11854686548", "11854696162", "11854698541" },
     ["Pink Clouds"] = { "271077958", "271077243", "271042556", "271042516", "271042310", "271042467" },
-    ["Purple Night"] = { "5084576400", "5260653793", "5260817288", "5260808177", "5260800833", "5260800833" },
+    ["Purple Night"] = { "5084576400", "5260653793", "5260817288", "5260808177", "5260800833", "5260811073" },
     ["Red Dusk"] = { "136208328681929", "123407860042117", "132624761762466", "85146619291315", "102069641249982", "136526747107728" },
     ["Redshift"] = { "401664936", "401664862", "401664960", "401664839", "401664881", "401664901" },
     ["Saturn"] = { "1898736761", "1898727189", "1898722814", "1898724755", "1898729298", "1898741025" },
@@ -3035,7 +3102,7 @@ local function tune(key, class, flagName, set)
 end
 
 local SKY_FIELDS = { "world_sky_f_up", "world_sky_f_dn", "world_sky_f_ft", "world_sky_f_bk", "world_sky_f_lf", "world_sky_f_rt" }
-World.skyTex, World.hidden, World.skyFail, World.skyTries = {}, {}, {}, {}
+World.skyTex, World.hidden = {}, {}
 
 function World.parseAsset(text)
     local s = tostring(text or ""):match("^%s*(.-)%s*$")
@@ -3123,7 +3190,34 @@ function World.notify(text)
     pcall(function() Library:Notify(text, 6) end)
 end
 
-World.models = {}
+World.models, World.modelJobs = {}, {}
+
+function World.skyNote(id, text, duration)
+    Util.notify({ Title = "Skybox", Text = text, Duration = duration or 6, Id = "sky_asset_" .. tostring(id) })
+end
+
+function World.skyDebug(text)
+    if on("world_sky_debug") or on("misc_debug_kills") then print("[Aster sky] " .. text) end
+end
+
+function World.fetchAsset(url)
+    local loaders = {
+        { "GetObjects", function() return game:GetObjects(url) end },
+        { "LoadLocalAsset", function() return game:GetService("InsertService"):LoadLocalAsset(url) end },
+    }
+    if type(getobjects) == "function" then
+        loaders[3] = { "getobjects", function() return getobjects(url) end }
+    end
+    local reasons = {}
+    for _, loader in ipairs(loaders) do
+        local ok, result = pcall(loader[2])
+        if ok and result ~= nil and propGet(result, "ClassName") ~= nil then result = { result } end
+        if ok and type(result) == "table" and result[1] ~= nil then return result, loader[1] end
+        local reason = ok and "empty" or tostring(result):gsub("^.-:%d+: ", "")
+        reasons[#reasons + 1] = loader[1] .. " " .. reason:sub(1, 60)
+    end
+    return nil, table.concat(reasons, "; ")
+end
 
 function World.assetId(text)
     local s = tostring(text or ""):lower()
@@ -3135,8 +3229,15 @@ function World.assetId(text)
     return number
 end
 
+function World.storeId()
+    local text = tostring(val("world_sky_asset") or "")
+    if text ~= World.assetText then World.assetText, World.assetAt = text, os.clock() end
+    if World.storePick == nil and os.clock() - World.assetAt >= 1 then World.storePick = World.assetId(text) end
+    return World.storePick
+end
+
 function World.modelId(choice)
-    if choice == "Store asset" then return World.assetId(val("world_sky_asset")) end
+    if choice == "Store asset" then return World.storeId() end
     return SKY_MODELS[choice]
 end
 
@@ -3154,9 +3255,13 @@ function World.findIn(objects, class)
 end
 
 function World.loadModel(id)
-    local ok, objects = pcall(function() return game:GetObjects("rbxassetid://" .. id) end)
-    if not (ok and type(objects) == "table") then objects = {} end
-    local sky, entry = World.findIn(objects, "Sky"), nil
+    local started = os.clock()
+    local objects, how = World.fetchAsset("rbxassetid://" .. id)
+    local loaded = objects ~= nil
+    objects = objects or {}
+    local sky, entry, why = World.findIn(objects, "Sky"), nil, nil
+    local decal = not sky and (World.findIn(objects, "Decal") or World.findIn(objects, "Texture"))
+    local image = decal and propGet(decal, "Texture")
     if sky then
         entry = { id = id, faces = {}, props = {}, light = {}, kinds = {} }
         for index, face in ipairs(SKY_FACES) do
@@ -3174,26 +3279,42 @@ function World.loadModel(id)
             end
         end
         table.sort(entry.kinds)
+    elseif type(image) == "string" and image ~= "" then
+        entry = { id = id, faces = { image, image, image, image, image, image }, props = {}, light = {}, kinds = {}, single = true }
+    elseif not loaded then
+        why = "download failed (" .. how .. ")"
+    else
+        local classes = {}
+        for index = 1, math.min(#objects, 3) do classes[index] = tostring(propGet(objects[index], "ClassName")) end
+        why = "no Sky or Decal inside (" .. table.concat(classes, ", ") .. ")"
     end
     for _, object in ipairs(objects) do pcall(function() object:Destroy() end) end
-    if not entry then
-        World.notify("Skybox: could not load a Sky from asset " .. id .. ", keeping the current sky")
-    elseif #entry.kinds > 0 and not on("world_sky_asset_light") then
-        World.notify("Skybox: asset " .. id .. " also has " .. table.concat(entry.kinds, ", ") .. "; turn on Apply model lighting to use it")
-    end
-    return entry
+    local found = entry and (entry.single and "Decal image " .. image or "Sky " .. #entry.kinds .. " extras") or why
+    World.skyDebug(string.format("asset %s loader=%s found=%s (%.2fs)", id, loaded and how or "none", found, os.clock() - started))
+    return entry, why
+end
+
+function World.loadSky(id)
+    if World.modelJobs[id] then return end
+    World.modelJobs[id], World.models[id] = true, nil
+    World.skyNote(id, "Loading sky " .. id .. "…", 30)
+    task.spawn(function()
+        local ok, entry, why = pcall(World.loadModel, id)
+        if not ok then entry, why = nil, tostring(entry) end
+        World.models[id], World.modelJobs[id] = entry or false, nil
+        if not entry then
+            World.skyNote(id, "Could not load sky " .. id .. ": " .. tostring(why) .. "; keeping the current sky", 8)
+        elseif #entry.kinds > 0 and not on("world_sky_asset_light") then
+            World.skyNote(id, "Loaded sky " .. id .. "; it also has " .. table.concat(entry.kinds, ", ") .. "; turn on Apply model lighting to use it", 6)
+        else
+            World.skyNote(id, "Loaded sky " .. id .. (entry.single and " (one image on all faces)" or ""), 4)
+        end
+    end)
 end
 
 function World.skyModel(id)
+    if World.models[id] == nil then World.loadSky(id) end
     local entry = World.models[id]
-    if entry == nil then
-        World.models[id] = true
-        task.spawn(function()
-            local ok, result = pcall(World.loadModel, id)
-            World.models[id] = ok and result or false
-        end)
-        entry = World.models[id]
-    end
     return type(entry) == "table" and entry or nil
 end
 
@@ -3221,9 +3342,15 @@ function World.applyAsset()
         World.notify("Skybox: paste an asset id or a create.roblox.com/store/asset link")
         return
     end
+    World.storePick = id
     if World.models[id] == false then World.models[id] = nil end
     pcall(function() Options.world_sky_box:SetValue("Store asset") end)
     pcall(function() Toggles.world_skybox:SetValue(true) end)
+    if World.modelJobs[id] then
+        World.skyNote(id, "Still loading sky " .. id .. "…", 30)
+    elseif World.models[id] then
+        World.skyNote(id, "Applied sky " .. id, 3)
+    end
     World.skyModel(id)
 end
 
@@ -3235,10 +3362,14 @@ function World.saveAsset()
     end
     local entry = World.models[id]
     if type(entry) ~= "table" then
-        entry = World.loadModel(id)
-        World.models[id] = entry or false
+        if entry == false then World.models[id] = nil end
+        World.loadSky(id)
+        entry = World.models[id]
     end
-    if not entry then return end
+    if type(entry) ~= "table" then
+        if World.modelJobs[id] then World.skyNote(id, "Loading sky " .. id .. "…; press Save again once it has loaded", 30) end
+        return
+    end
     local list, count = {}, 0
     for index = 1, 6 do
         list[index] = entry.faces[index]
@@ -3274,21 +3405,14 @@ end
 
 function World.skyJob(url)
     local final = url
-    World.skyFail[url] = nil
     if on("world_sky_resolve") ~= false and url:match("^rbxassetid://%d+$") then
-        local ok, objects = pcall(function() return game:GetObjects(url) end)
-        local first = ok and type(objects) == "table" and objects[1]
-        if not first then
-            local tries = (World.skyTries[url] or 0) + 1
-            World.skyTries[url] = tries
-            if tries < 3 then World.skyFail[url] = os.clock() + 10 end
-        end
-        if first then
-            local class = propGet(first, "ClassName")
-            local texture = (class == "Decal" or class == "Texture") and propGet(first, "Texture")
-            if type(texture) == "string" and texture ~= "" then final = texture end
-            pcall(function() first:Destroy() end)
-        end
+        local objects, how = World.fetchAsset(url)
+        objects = objects or {}
+        local decal = World.findIn(objects, "Decal") or World.findIn(objects, "Texture")
+        local texture = decal and propGet(decal, "Texture")
+        if type(texture) == "string" and texture ~= "" then final = texture end
+        for _, object in ipairs(objects) do pcall(function() object:Destroy() end) end
+        World.skyDebug("face " .. url .. " loader=" .. (objects[1] and how or "none") .. " image=" .. final)
     end
     World.skyTex[url] = final
     local failed = false
@@ -3306,11 +3430,6 @@ end
 
 function World.skyTexture(url)
     local entry = World.skyTex[url]
-    local retry = World.skyFail[url]
-    if retry and os.clock() >= retry then
-        World.skyFail[url] = nil
-        entry = nil
-    end
     if entry == nil then
         World.skyTex[url] = false
         task.spawn(World.skyJob, url)
@@ -3742,25 +3861,43 @@ function DynSky.tinted(color, tint)
     return Color3.new(color.R * tint.R, color.G * tint.G, color.B * tint.B)
 end
 
+DynSky.cfgKeys = { "preset", "speed", "int", "stars", "shoot", "tint" }
+
 function DynSky.settings()
-    return {
-        preset = val("world_dsky_preset") or "Aurora", speed = val("world_dsky_speed") or 1, int = val("world_dsky_int") or 1,
-        stars = val("world_dsky_stars") or 1, shoot = val("world_dsky_shoot") or 6, tint = val("world_dsky_tint") or WHITE,
-    }
+    local cfg = DynSky.cfg or {}
+    DynSky.cfg = cfg
+    cfg.preset, cfg.speed, cfg.int = val("world_dsky_preset") or "Aurora", val("world_dsky_speed") or 1, val("world_dsky_int") or 1
+    cfg.stars, cfg.shoot, cfg.tint = val("world_dsky_stars") or 1, val("world_dsky_shoot") or 6, val("world_dsky_tint") or WHITE
+    return cfg
+end
+
+function DynSky.same(cfg)
+    local sig = DynSky.sig
+    if not sig then return false end
+    for _, key in ipairs(DynSky.cfgKeys) do
+        if sig[key] ~= cfg[key] then return false end
+    end
+    return true
 end
 
 function DynSky.make(class, props, parent)
+    local rate = class == "ParticleEmitter" and props.Rate or 0
+    if rate > 0 then props.Rate = 0 end
     local object = Instance.new(class)
     object.Name = Util.randomName()
     for key, value in pairs(props) do object[key] = value end
     object.Parent = parent
     DynSky.objects[#DynSky.objects + 1] = object
+    if rate > 0 then
+        DynSky.streams = DynSky.streams or {}
+        DynSky.streams[#DynSky.streams + 1] = { emitter = object, rate = rate, acc = 1 }
+    end
     return object
 end
 
 function DynSky.drop()
     for index = #DynSky.objects, 1, -1 do pcall(DynSky.objects[index].Destroy, DynSky.objects[index]) end
-    DynSky.objects, DynSky.beams, DynSky.curtains, DynSky.bolt, DynSky.boltBeams = {}, {}, {}, {}, {}
+    DynSky.objects, DynSky.beams, DynSky.curtains, DynSky.bolt, DynSky.boltBeams, DynSky.streams = {}, {}, {}, {}, {}, {}
     DynSky.root, DynSky.dust, DynSky.shooter, DynSky.shootPoint, DynSky.sig, DynSky.def, DynSky.boltLit = nil, nil, nil, nil, nil, nil, nil
     DynSky.flashAt = -math.huge
 end
@@ -3892,11 +4029,10 @@ function DynSky.step(cam, now, dt)
     local cfg = DynSky.settings()
     local def = DynSky.presets[cfg.preset]
     if not def then return end
-    local sig = table.concat({ cfg.preset, cfg.speed, cfg.int, cfg.stars, cfg.shoot, tostring(cfg.tint) }, "|")
-    if not (DynSky.root and DynSky.root.Parent) or sig ~= DynSky.sig then
+    if not (DynSky.root and DynSky.root.Parent) or not DynSky.same(cfg) then
         DynSky.drop()
         DynSky.build(cam, cfg, def)
-        DynSky.sig = sig
+        DynSky.sig = table.clone(cfg)
         DynSky.boltAt = now + 1.5
         DynSky.shootAt = now + 1
     end
@@ -3904,6 +4040,14 @@ function DynSky.step(cam, now, dt)
     DynSky.angle = (DynSky.angle + (def.spin or 0) * cfg.speed * dt) % (math.pi * 2)
     DynSky.root.CFrame = CFrame.new(origin) * CFrame.Angles(0, DynSky.angle, 0)
     if DynSky.dust then DynSky.dust.CFrame = CFrame.new(origin) end
+    for _, stream in ipairs(DynSky.streams or {}) do
+        stream.acc = stream.acc + stream.rate * dt
+        if stream.acc >= 1 then
+            local count = math.floor(stream.acc)
+            stream.acc = stream.acc - count
+            pcall(stream.emitter.Emit, stream.emitter, math.min(count, 40))
+        end
+    end
     if #DynSky.curtains > 0 and now >= DynSky.waveAt then
         DynSky.waveAt = now + 0.1
         for index, curtain in ipairs(DynSky.curtains) do
@@ -4546,7 +4690,8 @@ end)
 local Tracers = {
     list = {}, fade = 0.5, fx = {}, particle = {},
     particleNames = { "Comet", "Plasma", "Smoke ribbon", "Frost", "Railgun", "Laser", "Ion bolt", "Tracer round", "Neon streak", "Void" },
-    caps = { records = 20, emitters = 20, rate = 120, life = 2.5, burst = 40, beams = 360 },
+    caps = { records = 20, enemy = 12, emitters = 32, rate = 120, life = 2.5, burst = 40, beams = 360, rays = 160, builds = 6, queue = 48 },
+    owner = setmetatable({}, { __mode = "k" }), queue = {}, rays = 0, minSize = 0.3,
     fire = "rbxasset://textures/particles/fire_main.dds", ice = Color3.fromRGB(190, 235, 255),
     ring = "rbxassetid://5857851812", flare = "rbxassetid://8983307836", bolt = "rbxassetid://5833323391",
 }
@@ -4623,10 +4768,10 @@ function Tracers.nodes(path, cumulative, total, count)
     return nodes
 end
 
-function Tracers.spawn(path, color, hit, speed)
+function Tracers.spawn(path, color, hit, speed, mine)
     local presets = Tracers.presets()
     local name = flag("trace_texture", "Lightning")
-    if Tracers.particle[name] then return Tracers.spawnFx(name, path, color, hit, speed) end
+    if Tracers.particle[name] then return Tracers.spawnFx(name, path, color, hit, speed, mine) end
     local preset = presets[name] or presets.Lightning
     local scale = flag("trace_width", 1)
     local terrain = Workspace.Terrain
@@ -4735,14 +4880,16 @@ function Tracers.spawn(path, color, hit, speed)
     return true
 end
 
-function Tracers.trajectory(origin, position, velocity, acceleration, life)
+function Tracers.trajectory(origin, position, velocity, acceleration, life, segments)
     local flight = math.clamp(type(life) == "number" and life or 2, 0.1, 5)
-    local step = math.max(0.04, flight / 47)
+    segments = segments or 47
+    local step = math.max(0.04, flight / segments)
     local path = { origin }
     local previous, hit, cast = position, nil, nil
     local time = 0
     while time < flight - 1e-6 do
         time = math.min(time + step, flight)
+        Tracers.rays = Tracers.rays - 1
         local point = position + velocity * time + acceleration * (0.5 * time * time)
         local result = Game.cast(previous, point - previous, Barrel.params)
         if result then
@@ -4766,8 +4913,15 @@ function Tracers.solve(info, mine)
     local origin = Tracers.origin(info, mine)
     if typeof(origin) ~= "Vector3" then return nil end
     local acceleration = typeof(info.acceleration) == "Vector3" and info.acceleration or Game.accel
+    local life, segments = info.life, nil
+    if not mine then
+        if Tracers.rays <= 0 then return nil end
+        local settings = Game.mods.PublicSettings
+        local limit = settings and type(settings.bulletLifeTime) == "number" and settings.bulletLifeTime or 2
+        life, segments = math.min(type(life) == "number" and life or limit, limit), 16
+    end
     Barrel.refreshParams(os.clock())
-    local path, hit, cast, time = Tracers.trajectory(origin, position, velocity, acceleration, info.life)
+    local path, hit, cast, time = Tracers.trajectory(origin, position, velocity, acceleration, life, segments)
     shot = { origin = origin, path = path, hit = hit, cast = cast, time = time, speed = velocity.Magnitude }
     Tracers.solved[info] = shot
     return shot
@@ -4798,6 +4952,7 @@ function Tracers.isTeam(info)
 end
 
 function Tracers.origin(info, mine)
+    if typeof(info.traceOrigin) == "Vector3" then return info.traceOrigin end
     local origin = info.visualorigin
     if not mine then return typeof(origin) == "Vector3" and origin or info.position end
     local extra = type(info.extra) == "table" and info.extra
@@ -4822,11 +4977,72 @@ function Tracers.fromBullet(info, mine)
         if not flag("trace_enemy_on", false) then return false end
         color = flag("trace_enemy_color", Color3.fromRGB(94, 160, 255))
     end
+    if Tracers.particle[flag("trace_texture", "Lightning")] and not Tracers.room(mine, os.clock()) then return false end
     local shot = Tracers.solve(info, mine)
     if not shot then return false end
     local path = shot.path
     if #path < 2 or (path[#path] - shot.origin).Magnitude < 0.5 then return false end
-    return Tracers.spawn(path, color, shot.hit, shot.speed)
+    return Tracers.spawn(path, color, shot.hit, shot.speed, mine)
+end
+
+function Tracers.enqueue(info, bullet, mine)
+    if not (flag("trace_on", false) or flag("trace_enemy_on", false) or flag("trace_team_on", false) or flag("impact_on", false)) then return end
+    local queue = Tracers.queue
+    if #queue >= Tracers.caps.queue then
+        local drop = 1
+        for index, item in ipairs(queue) do
+            if not item.mine then
+                drop = index
+                break
+            end
+        end
+        table.remove(queue, drop)
+    end
+    queue[#queue + 1] = {
+        info = { position = info.position, velocity = info.velocity, acceleration = info.acceleration, life = info.life, visualorigin = info.visualorigin, extra = info.extra,
+            traceOrigin = mine and Tracers.origin(info, true) or nil },
+        bullet = bullet, mine = mine, at = os.clock(),
+    }
+end
+
+function Tracers.drain(now)
+    local queue = Tracers.queue
+    if #queue == 0 then return end
+    Tracers.rays = Tracers.caps.rays
+    for _ = 1, Tracers.caps.builds do
+        if #queue == 0 then break end
+        local pick = 1
+        for index, item in ipairs(queue) do
+            if item.mine then
+                pick = index
+                break
+            end
+        end
+        local item = table.remove(queue, pick)
+        local late = now - item.at
+        if item.mine or late < 0.5 then
+            pcall(function()
+                if Tracers.fromBullet(item.info, item.mine) and flag("trace_hide_beam", true) then Tracers.hideBeam(item.bullet) end
+            end)
+            if Tracers.onShot then pcall(Tracers.onShot, item.info, item.mine, late) end
+        end
+    end
+end
+
+function Tracers.settled(rec, now)
+    return now >= (rec.quietAt or 0)
+end
+
+function Tracers.room(mine, now)
+    local enemy, oldest = 0, nil
+    for _, rec in ipairs(Tracers.fx) do
+        if not rec.mine then
+            enemy = enemy + 1
+            oldest = oldest or rec
+        end
+    end
+    if mine or enemy < Tracers.caps.enemy then return true end
+    return now - oldest.born >= (oldest.travel or 0) + 0.3
 end
 
 function Tracers.step(now)
@@ -4848,7 +5064,7 @@ function Tracers.step(now)
     for index = #Tracers.fx, 1, -1 do
         local rec = Tracers.fx[index]
         local age = now - rec.born
-        if not active or age >= rec.life then
+        if not active or (age >= rec.life and Tracers.settled(rec, now)) then
             Tracers.dropFx(rec)
             table.remove(Tracers.fx, index)
         else
@@ -4911,6 +5127,32 @@ function Tracers.nodePoints(rec, ctx)
     return points
 end
 
+function Tracers.distScale(position)
+    local camera = propGet(Workspace, "CurrentCamera")
+    local frame = camera and propGet(camera, "CFrame")
+    if typeof(frame) ~= "CFrame" or typeof(position) ~= "Vector3" then return 1 end
+    return math.clamp((position - frame.Position).Magnitude / 35, 1, 6)
+end
+
+function Tracers.sized(size, k, floor)
+    if type(size) == "number" then size = NumberSequence.new(size) end
+    local keys = typeof(size) == "NumberSequence" and size.Keypoints
+    if type(keys) ~= "table" or #keys == 0 then return size end
+    floor = (floor or Tracers.minSize) * k
+    local out = {}
+    local function value(key) return key.Time < 0.7 and math.max(key.Value * k, floor) or key.Value * k end
+    for index, key in ipairs(keys) do
+        local previous = keys[index - 1]
+        if previous and previous.Time < 0.7 and key.Time > 0.7 then
+            local span = key.Time - previous.Time
+            local at = previous.Value + (key.Value - previous.Value) * (0.7 - previous.Time) / span
+            out[#out + 1] = NumberSequenceKeypoint.new(0.7, math.max(at * k, floor), 0)
+        end
+        out[#out + 1] = NumberSequenceKeypoint.new(key.Time, value(key), (key.Envelope or 0) * k)
+    end
+    return NumberSequence.new(out)
+end
+
 function Tracers.emitter(rec, parent, props)
     local caps = Tracers.caps
     if rec.emitters >= caps.emitters then return nil end
@@ -4920,22 +5162,52 @@ function Tracers.emitter(rec, parent, props)
         Rotation = NumberRange.new(0, 360), Transparency = Tracers.curve(0, 0, 1, 1),
     }
     for key, value in pairs(props) do base[key] = value end
-    base.Rate = math.min(base.Rate, caps.rate)
+    local rate = math.min(base.Rate, caps.rate)
+    base.Rate = 0
     local life = base.Lifetime
     if life == nil or life.Max > caps.life then base.Lifetime = NumberRange.new(math.min(life and life.Min or 1, caps.life), caps.life) end
+    if base.Lifetime.Max < 0.25 then base.Lifetime = NumberRange.new(math.max(base.Lifetime.Min, 0.15), 0.25) end
+    if base.Size ~= nil then base.Size = Tracers.sized(base.Size, rec.sizeScale or 1) end
     local emitter = Tracers.make(rec, "ParticleEmitter", base, parent)
     if rec.bright ~= 1 then propSet(emitter, "Brightness", rec.bright) end
+    Tracers.owner[emitter] = { rec = rec, life = base.Lifetime.Max }
+    if rate > 0 then Tracers.stream(rec, emitter, rate) end
     return emitter
 end
 
 function Tracers.burst(emitter, count)
-    local amount = math.min(math.floor(count + 0.5), Tracers.caps.burst)
-    if emitter and amount >= 1 then pcall(emitter.Emit, emitter, amount) end
+    if not emitter or not (count > 0) then return end
+    local amount = math.min(math.max(1, math.floor(count + 0.5)), Tracers.caps.burst)
+    if pcall(emitter.Emit, emitter, amount) then
+        local own = Tracers.owner[emitter]
+        if own then own.rec.quietAt = math.max(own.rec.quietAt or 0, os.clock() + own.life) end
+    end
+end
+
+function Tracers.stream(rec, emitter, rate)
+    local acc, last = 1, nil
+    rec.ticks[#rec.ticks + 1] = function(age)
+        if emitter.Parent == nil then return true end
+        if emitter.Enabled then
+            acc = acc + rate * (age - (last or age))
+            if acc >= 1 then
+                local count = math.floor(acc)
+                acc = acc - count
+                Tracers.burst(emitter, count)
+            end
+        end
+        last = age
+        return false
+    end
 end
 
 function Tracers.perNode(rec, ctx, points, build)
-    local list = {}
-    for index, point in ipairs(points) do list[index] = Tracers.emitter(rec, point, build(ctx.t[index], index)) or false end
+    local list, scale = {}, rec.sizeScale
+    for index, point in ipairs(points) do
+        rec.sizeScale = ctx.scales and ctx.scales[index] or scale
+        list[index] = Tracers.emitter(rec, point, build(ctx.t[index], index)) or false
+    end
+    rec.sizeScale = scale
     return list
 end
 
@@ -5004,9 +5276,11 @@ end
 
 function Tracers.impact(rec, ctx, specs)
     if not ctx.hit then return end
-    local point = Tracers.point(rec, ctx.hit)
-    local list = {}
+    local point = Tracers.make(rec, "Part", Tracers.solid(CFrame.new(ctx.hit), Vector3.new(0.05, 0.05, 0.05)))
+    local list, scale = {}, rec.sizeScale
+    rec.sizeScale = Tracers.distScale(ctx.hit)
     for _, spec in ipairs(specs) do list[#list + 1] = { emitter = Tracers.emitter(rec, point, spec.props), count = spec.count } end
+    rec.sizeScale = scale
     rec.ticks[#rec.ticks + 1] = function(age)
         if age < ctx.travel then return false end
         for _, item in ipairs(list) do Tracers.burst(item.emitter, item.count * ctx.density) end
@@ -5014,12 +5288,12 @@ function Tracers.impact(rec, ctx, specs)
     end
 end
 
-function Tracers.spawnFx(name, path, color, hit, speed)
+function Tracers.spawnFx(name, path, color, hit, speed, mine)
     local camera = propGet(Workspace, "CurrentCamera")
     if not camera then return false end
     local cumulative, total = Tracers.measure(path)
     if total < 1 then return false end
-    local nodes = Tracers.nodes(path, cumulative, total, math.clamp(math.ceil(total / 16), 3, 11))
+    local nodes = Tracers.nodes(path, cumulative, total, mine == false and 1 or math.clamp(math.ceil(total / 16), 3, 11))
     local gradient = flag("trace_gradient", false)
     local rainbow = gradient and flag("trace_rainbow", false)
     local start = flag("trace_grad_start", Color3.fromRGB(255, 94, 94))
@@ -5033,31 +5307,64 @@ function Tracers.spawnFx(name, path, color, hit, speed)
         fade = gradient and math.clamp(flag("trace_grad_fade", 0), 0, 1) or 0,
     }
     if ctx.chord.Magnitude < 1e-6 then ctx.chord = Vector3.new(0, 0, -1) end
-    for index = 1, #nodes do ctx.t[index] = (index - 1) / (#nodes - 1) end
+    ctx.scales = {}
+    for index = 1, #nodes do
+        ctx.t[index] = (index - 1) / (#nodes - 1)
+        ctx.scales[index] = Tracers.distScale(nodes[index])
+    end
     function ctx.colorAt(t)
         if rainbow then return Color3.fromHSV((t * 0.8) % 1, 0.85, 1) end
         if gradient then return Util.lerpColor(start, finish, t) end
         return color
     end
     local glow = flag("trace_glow", false)
-    local rec = { objects = {}, ticks = {}, emitters = 0, beams = 0, born = os.clock(), bright = glow and 1 + 0.2 * math.clamp(flag("trace_glow_strength", 4), 0, 10) or 1 }
+    local rec = { objects = {}, ticks = {}, emitters = 0, beams = 0, born = os.clock(), bright = glow and 1 + 0.2 * math.clamp(flag("trace_glow_strength", 4), 0, 10) or 1,
+        mine = mine ~= false, travel = ctx.travel, sizeScale = Tracers.distScale(path[math.ceil(#path / 2)]) }
+    local build = rec.mine and Tracers.particle[name] or Tracers.cheap
     local ok = Util.guard("tracer fx " .. name, function()
         rec.holder = Tracers.make(rec, "Part", Tracers.solid(CFrame.new()), camera)
-        rec.life = ctx.travel + Tracers.particle[name](rec, ctx) + 0.2
+        rec.life = ctx.travel + build(rec, ctx) + 0.2
     end)
     if not ok then
         Tracers.dropFx(rec)
         return false
     end
-    local beams = rec.beams
-    for _, other in ipairs(Tracers.fx) do beams = beams + other.beams end
-    while #Tracers.fx > 0 and (#Tracers.fx >= Tracers.caps.records or beams > Tracers.caps.beams) do
-        local oldest = table.remove(Tracers.fx, 1)
-        beams = beams - oldest.beams
-        Tracers.dropFx(oldest)
-    end
+    Tracers.evict(rec)
     Tracers.fx[#Tracers.fx + 1] = rec
     return true
+end
+
+function Tracers.evict(rec)
+    local list, caps = Tracers.fx, Tracers.caps
+    local beams, enemy = rec.beams, rec.mine and 0 or 1
+    for _, other in ipairs(list) do
+        beams = beams + other.beams
+        if not other.mine then enemy = enemy + 1 end
+    end
+    local function over() return #list >= caps.records or beams > caps.beams or enemy > caps.enemy end
+    while #list > 0 and over() do
+        local pick
+        for index, other in ipairs(list) do
+            if not other.mine then
+                pick = index
+                break
+            end
+        end
+        pick = pick or 1
+        local oldest = table.remove(list, pick)
+        beams = beams - oldest.beams
+        if not oldest.mine then enemy = enemy - 1 end
+        Tracers.dropFx(oldest)
+    end
+end
+
+function Tracers.cheap(rec, ctx)
+    local _, finish = Tracers.streak(rec, ctx, 0.2 * ctx.scale, 0.25, Tracers.plain, { hold = math.min(ctx.keep, 1), fade = 0.3 })
+    Tracers.impact(rec, ctx, { { count = 6, props = {
+        Lifetime = NumberRange.new(0.25, 0.4), Speed = NumberRange.new(6, 14), Drag = 2, Acceleration = Vector3.new(0, -40, 0),
+        Size = Tracers.curve(0, 0.35 * ctx.psize, 1, 0), Color = ColorSequence.new(WHITE, ctx.color), Orientation = Enum.ParticleOrientation.VelocityParallel,
+    } } })
+    return finish
 end
 
 function Tracers.plain(color)
@@ -5409,7 +5716,7 @@ Util.onUnload(function()
     for _, record in ipairs(Tracers.list) do Tracers.drop(record) end
     Tracers.list = {}
     for _, rec in ipairs(Tracers.fx) do Tracers.dropFx(rec) end
-    Tracers.fx = {}
+    Tracers.fx, Tracers.queue = {}, {}
 end)
 
 local Impacts = {
@@ -5457,7 +5764,7 @@ function Impacts.normal(shot)
     return normal.Unit, direction
 end
 
-function Impacts.fromBullet(info, mine)
+function Impacts.fromBullet(info, mine, late)
     if not flag("impact_on", false) then return false end
     if not mine and not (flag("impact_enemy", false) and not Tracers.isTeam(info)) then return false end
     local shot = Tracers.solve(info, mine)
@@ -5465,8 +5772,10 @@ function Impacts.fromBullet(info, mine)
     local instance = shot.cast and propGet(shot.cast, "Instance")
     if instance and Impacts.onBody(instance) then return false end
     local normal, direction = Impacts.normal(shot)
-    return Impacts.add(shot.hit, normal, direction, math.clamp(shot.time or 0, 0, 2))
+    return Impacts.add(shot.hit, normal, direction, math.clamp((shot.time or 0) - (late or 0), 0, 2))
 end
+
+Tracers.onShot = Impacts.fromBullet
 
 function Impacts.add(position, normal, direction, delay)
     local chosen, names = Util.set("impact_list", { "Spark burst" }), {}
@@ -5475,7 +5784,12 @@ function Impacts.add(position, normal, direction, delay)
     end
     if #names == 0 then return false end
     local cap = math.clamp(math.floor(flag("impact_max", Impacts.cap)), 1, Impacts.cap)
-    while #Impacts.list >= cap do Tracers.dropFx(table.remove(Impacts.list, 1)) end
+    while #Impacts.list > cap do Tracers.dropFx(table.remove(Impacts.list, 1)) end
+    if #Impacts.list == cap then
+        local oldest = Impacts.list[1]
+        if oldest.built and not Tracers.settled(oldest, os.clock()) then return false end
+        Tracers.dropFx(table.remove(Impacts.list, 1))
+    end
     local rec = { objects = {}, ticks = {}, emitters = 0, bright = 1, at = os.clock() + delay, names = names, pos = position, normal = normal, direction = direction }
     Impacts.list[#Impacts.list + 1] = rec
     if delay <= 0 then Impacts.spawn(rec) end
@@ -5486,6 +5800,7 @@ function Impacts.spawn(rec)
     rec.built, rec.born, rec.life = true, os.clock(), 0
     local camera = propGet(Workspace, "CurrentCamera")
     if not camera then return end
+    rec.sizeScale = Tracers.distScale(rec.pos)
     local up = flag("impact_align", true) and rec.normal or Vector3.new(0, 1, 0)
     local ctx = {
         frame = Impacts.surface(rec.pos, up), up = up, direction = rec.direction,
@@ -5513,7 +5828,7 @@ function Impacts.step(now)
         if not rec.built and now >= rec.at then Impacts.spawn(rec) end
         if rec.built then
             local age = now - rec.born
-            if age >= rec.life then
+            if age >= rec.life and Tracers.settled(rec, now) then
                 Tracers.dropFx(rec)
                 table.remove(Impacts.list, index)
             else
@@ -5529,6 +5844,22 @@ function Impacts.clear()
 end
 
 Util.onUnload(Impacts.clear)
+
+function Impacts.preload()
+    local list, seen = {}, {}
+    local function add(id)
+        if type(id) == "string" and id:find("^rbxassetid://") and not seen[id] then
+            seen[id] = true
+            list[#list + 1] = id
+        end
+    end
+    for _, id in ipairs({ Tracers.ring, Tracers.flare, Tracers.bolt, Impacts.ring, Impacts.bolt, Impacts.shard, Impacts.dust, Impacts.heart, Impacts.flare, DynSky.flare, DynSky.clouds, DynSky.galaxy, DynSky.nebula }) do add(id) end
+    for _, preset in pairs(Tracers.presets()) do add(preset.Texture) end
+    local ok, provider = pcall(game.GetService, game, "ContentProvider")
+    if ok and provider then pcall(provider.PreloadAsync, provider, list) end
+end
+
+task.spawn(function() pcall(Impacts.preload) end)
 
 function Impacts.adorn(rec, class, props, parent)
     local base = { Adornee = parent or rec.holder, AlwaysOnTop = false, ZIndex = 0, AdornCullingMode = Enum.AdornCullingMode.Never }
@@ -6978,11 +7309,10 @@ function Feedback.onKill(info)
     end
 end
 
-Feedback.queue = {}
+Feedback.queue, Feedback.hits = {}, {}
 
-function Feedback.defer(fn, capture, ...)
-    local queue = Feedback.queue
-    if #queue >= 64 then table.remove(queue, 1) end
+function Feedback.push(queue, cap, fn, capture, ...)
+    if #queue >= cap then table.remove(queue, 1) end
     if capture then
         queue[#queue + 1] = { fn = fn, args = { n = 1, capture(...) } }
     else
@@ -6990,11 +7320,24 @@ function Feedback.defer(fn, capture, ...)
     end
 end
 
-function Feedback.drain()
-    local queue = Feedback.queue
+function Feedback.defer(fn, capture, ...)
+    Feedback.push(Feedback.queue, 64, fn, capture, ...)
+end
+
+function Feedback.deferHit(fn, ...)
+    Feedback.push(Feedback.hits, 32, fn, nil, ...)
+end
+
+function Feedback.run(name)
+    local queue = Feedback[name]
     if #queue == 0 then return end
-    Feedback.queue = {}
+    Feedback[name] = {}
     for _, item in ipairs(queue) do Util.guard("pf-event", item.fn, table.unpack(item.args, 1, item.args.n)) end
+end
+
+function Feedback.drain()
+    Feedback.run("queue")
+    Feedback.run("hits")
 end
 
 function Feedback.listen(key, event, fn, capture)
@@ -7055,10 +7398,7 @@ function Feedback.hook()
                 local bullet = original(info, ...)
                 if bullet and type(info) == "table" then
                     local mine = type(info.extra) == "table" and info.extra.firearmObject ~= nil
-                    pcall(function()
-                        if Tracers.fromBullet(info, mine) and flag("trace_hide_beam", true) then Tracers.hideBeam(bullet) end
-                    end)
-                    pcall(Impacts.fromBullet, info, mine)
+                    pcall(Tracers.enqueue, info, bullet, mine)
                 end
                 return bullet
             end
@@ -7335,6 +7675,9 @@ function HitCham.curve(style, k)
 end
 
 function HitCham.paint(rec, fade, scale)
+    fade, scale = math.floor(fade * 30 + 0.5) / 30, math.floor(scale * 60 + 0.5) / 60
+    if fade == rec.fadeShown and scale == rec.scale then return end
+    rec.fadeShown = fade
     local resize = scale ~= rec.scale
     for _, slot in ipairs(rec.slots) do
         for _, layer in ipairs(slot.layers) do
@@ -7681,7 +8024,11 @@ function HitFx.onHit(player, position, partName)
         color = flag("hit_fx_color", Color3.fromRGB(255, 120, 80)), alpha = Util.alpha("hit_fx_color", 0), size = math.clamp(flag("hit_fx_size", 1), 0.25, 3),
         amount = math.clamp(flag("hit_fx_amount", 1), 0.25, 3), time = math.clamp(flag("hit_fx_time", 1), 0.3, 2.5), hash = hash, camera = camera, pos = spot, head = head,
     }
-    local rec = { objects = {}, ticks = {}, emitters = 0, bright = 1, born = os.clock(), life = 0 }
+    local now = os.clock()
+    local cap = math.clamp(math.floor(flag("hit_fx_max", 12)), 1, HitFx.cap)
+    while #HitFx.list > cap do Tracers.dropFx(table.remove(HitFx.list, 1)) end
+    if #HitFx.list == cap and not Tracers.settled(HitFx.list[1], now) then return end
+    local rec = { objects = {}, ticks = {}, emitters = 0, bright = 1, born = now, life = 0, sizeScale = Tracers.distScale(spot) }
     local ok = Util.guard("hit fx", function()
         rec.holder = Tracers.make(rec, "Part", Tracers.solid(CFrame.new(spot)), camera)
         for _, name in ipairs(names) do
@@ -7692,7 +8039,6 @@ function HitFx.onHit(player, position, partName)
         Tracers.dropFx(rec)
         return
     end
-    local cap = math.clamp(math.floor(flag("hit_fx_max", 12)), 1, HitFx.cap)
     while #HitFx.list >= cap do Tracers.dropFx(table.remove(HitFx.list, 1)) end
     HitFx.list[#HitFx.list + 1] = rec
 end
@@ -7721,7 +8067,7 @@ function HitFx.step(now)
     for index = #HitFx.list, 1, -1 do
         local rec = HitFx.list[index]
         local age = now - rec.born
-        if age >= rec.life then
+        if age >= rec.life and Tracers.settled(rec, now) then
             Tracers.dropFx(rec)
             table.remove(HitFx.list, index)
         else
@@ -7739,6 +8085,10 @@ Util.onUnload(HitFx.clear)
 
 function Game.onBulletHit(player, position, partName)
     Feedback.noteHit(position, os.clock())
+    if flag("hit_cham_on", false) or flag("hit_fx_on", false) then Feedback.deferHit(Game.buildHit, player, position, partName) end
+end
+
+function Game.buildHit(player, position, partName)
     Util.guard("hit chams", HitCham.onHit, player, position, partName)
     Util.guard("hit fx", HitFx.onHit, player, position, partName)
 end
@@ -7829,7 +8179,7 @@ function Aim.gather(record, cam, center, radius, opts)
                         local point, front = Draw.project(cam, position)
                         local screen = front and (point - center).Magnitude or 1e5
                         if (radius == nil and front) or screen <= (radius or 0) then
-                            list[#list + 1] = { pos = position, screen = screen, group = group, part = part, key = screen + penalty + index * 0.001 }
+                            list[#list + 1] = { pos = position, screen = screen, group = group, part = part, index = index, key = screen + penalty + index * 0.001 }
                         end
                     end
                 end
@@ -7841,24 +8191,68 @@ end
 
 local function byKey(a, b) return a.key < b.key end
 
+function Aim.cell(v)
+    return string.format("%d,%d,%d", math.floor(v.X * 10 + 0.5), math.floor(v.Y * 10 + 0.5), math.floor(v.Z * 10 + 0.5))
+end
+
+function Aim.trace(record, cand, eye, origin, depth)
+    local memo = record.aimVis
+    if not memo or memo.frame ~= Game.frame then
+        memo = { frame = Game.frame }
+        record.aimVis = memo
+    end
+    local key = Aim.cell(cand.pos) .. "|" .. Aim.cell(eye)
+    if depth then key = key .. "|" .. Aim.cell(origin) .. "|" .. depth end
+    local entry = memo[key]
+    if entry then return true, entry.thickness, entry.walls end
+    if Visible.budget <= 0 then return false end
+    Visible.budget = Visible.budget - 1
+    local thickness, walls = Visible.trace(eye, cand.pos)
+    if not thickness and depth then
+        thickness, walls = Visible.trace(origin, cand.pos, depth)
+        if thickness then walls = math.max(walls, 1) end
+    end
+    memo[key] = { thickness = thickness, walls = walls }
+    return true, thickness, walls
+end
+
+function Aim.remember(record, cand)
+    local last = record.aimLast or {}
+    record.aimLast = last
+    last.at, last.part, last.mode, last.thickness = os.clock(), cand and cand.part, cand and cand.mode, cand and cand.thickness
+    return cand
+end
+
+function Aim.recall(record, list)
+    local last = record.aimLast
+    if not (last and last.mode and os.clock() - last.at <= 0.1) then return nil end
+    for _, cand in ipairs(list) do
+        if cand.part == last.part then
+            cand.mode, cand.thickness = last.mode, last.thickness
+            return cand
+        end
+    end
+    return nil
+end
+
 function Aim.select(record, cam, origin, center, radius, opts)
     local list = Aim.gather(record, cam, center, radius, opts)
     if not list or #list == 0 then return nil end
     table.sort(list, byKey)
+    if not opts.visible then
+        list[1].mode = "open"
+        return list[1]
+    end
+    local eye = opts.eye or origin
     local fallback
     for _, cand in ipairs(list) do
-        if not opts.visible then
-            cand.mode = "open"
-            return cand
-        end
-        if Visible.budget <= 0 then break end
-        Visible.budget = Visible.budget - 1
-        local thickness, walls = Visible.trace(origin, cand.pos, opts.depth)
+        local known, thickness, walls = Aim.trace(record, cand, eye, origin, opts.depth)
+        if not known then return fallback or Aim.recall(record, list) end
         if thickness then
             cand.thickness = thickness
             if walls == 0 then
                 cand.mode = "visible"
-                return cand
+                return Aim.remember(record, cand)
             end
             if not fallback then
                 cand.mode = "pen"
@@ -7866,7 +8260,7 @@ function Aim.select(record, cam, origin, center, radius, opts)
             end
         end
     end
-    return fallback
+    return Aim.remember(record, fallback)
 end
 
 function Silent.acquire(origin, weapon)
@@ -7884,6 +8278,7 @@ function Silent.select(cam, origin, weapon)
     local L = Legit.L
     Visible.budget = 48
     local opts = Silent.opts
+    opts.eye = Game.eye(cam).Position
     opts.visible, opts.parts, opts.choice = L.silentVisible, L.silentParts, L.silentChoice
     opts.multi, opts.scale, opts.max = L.silentMulti, L.silentMultiScale, L.silentMultiMax
     opts.depth = L.silentWallbang and Aim.depth(weapon, L.silentSafety) or nil
@@ -8095,21 +8490,33 @@ function Legit.lead(origin, position, velocity, weapon)
     return aim
 end
 
+Legit.order = {}
+
+function Legit.nearer(a, b) return a.aimScreen < b.aimScreen end
+
 function Legit.choose(records, cam, origin, center, now)
     local L = Legit.L
-    local bestRecord, bestCand, bestScore
+    local order = Legit.order
+    for index = #order, 1, -1 do order[index] = nil end
     for _, record in ipairs(records) do
         if record.rendered and (record.enemy or not L.teamCheck) then
             local distance = (record.torso.Position - origin).Magnitude
             if distance <= L.maxdist then
-                local cand = Aim.select(record, cam, origin, center, Legit.radius, Aim.opts)
-                if cand then
-                    local score = cand.screen
-                    if L.targetBy == "Distance" then score = distance
-                    elseif L.targetBy == "Lowest health" then score = record.health * 1000 + cand.screen end
-                    if not bestScore or score < bestScore then bestRecord, bestCand, bestScore = record, cand, score end
-                end
+                local point, front = Draw.project(cam, record.torso.Position)
+                record.aimDist, record.aimScreen = distance, front and (point - center).Magnitude or math.huge
+                order[#order + 1] = record
             end
+        end
+    end
+    table.sort(order, Legit.nearer)
+    local bestRecord, bestCand, bestScore
+    for _, record in ipairs(order) do
+        local cand = Aim.select(record, cam, origin, center, Legit.radius, Aim.opts)
+        if cand then
+            local score = cand.screen
+            if L.targetBy == "Distance" then score = record.aimDist
+            elseif L.targetBy == "Lowest health" then score = record.health * 1000 + cand.screen end
+            if not bestScore or score < bestScore then bestRecord, bestCand, bestScore = record, cand, score end
         end
     end
     return bestRecord, bestCand
@@ -8350,6 +8757,7 @@ function Legit.stepAim(dt, cam, now, records, screen)
     Aim.opts.depth = L.wallbang and weapon and Aim.depth(weapon, L.safety) or nil
     local eye = Game.eye(cam)
     local origin, barrelLook = eye.Position, nil
+    Aim.opts.eye = eye.Position
     if L.barrel then
         local gameCam = Game.gameCamera()
         local camLook = gameCam and gameCam:getLookVector()
@@ -8467,7 +8875,7 @@ function Legit.stepTrigger(cam, now, records)
                     local part = record.hash[partName]
                     if part and part.Parent and PART_SIZES[partName]
                         and Legit.rayBox(origin, direction, part.CFrame, PART_SIZES[partName] * scale, maxDistance)
-                        and (not wantVisible or Visible.check(part, origin, now)) then
+                        and (not wantVisible or Visible.check(part, eye.Position, now)) then
                         onTarget = true
                     end
                 end
@@ -8745,6 +9153,27 @@ function Local.isGlass(object, model)
     return false
 end
 
+function Local.isAperture(object)
+    local name = propGet(object, "Name")
+    if type(name) == "string" and string.sub(name, 1, 12) == "BlurAperture" then return true end
+    local ok, inner, outer = pcall(function() return object:FindFirstChild("I1"), object:FindFirstChild("O1") end)
+    if not (ok and inner and outer) then return false end
+    local okBone, bone = pcall(function() return inner:IsA("Bone") end)
+    return okBone and bone == true
+end
+
+function Local.apertures(weapon)
+    local list = {}
+    local components = weapon._activeComponents
+    if type(components) ~= "table" then return list end
+    for _, component in pairs(components) do
+        local lens = type(component) == "table" and component._aperturelens
+        local model = type(lens) == "table" and lens.model
+        if model then list[#list + 1] = model end
+    end
+    return list
+end
+
 function Local.build(model, kind)
     local items = {}
     local ok, list = pcall(function() return model:GetDescendants() end)
@@ -8761,6 +9190,8 @@ function Local.build(model, kind)
                     local okPart, isPart = pcall(function() return parent:IsA("BasePart") end)
                     item.keep = okPart and isPart and Local.isGlass(parent, model) or false
                 end
+            elseif item.cat == "gun" and class == "mesh" and Local.isAperture(object) then
+                item.aperture = true
             elseif item.cat == "gun" and (class == "part" or class == "mesh" or class == "union") and object ~= model and Local.isGlass(object, model) then
                 item.glass = true
             end
@@ -8818,9 +9249,11 @@ function Local.restoreItem(item)
     item.wrote = nil
 end
 
-function Local.applyItem(item, spec, hide, noglass, glassOff)
-    if item.glass and not hide then
-        if not (glassOff or (spec and noglass)) then
+function Local.applyItem(item, spec, hide, noglass, glassOff, interiorOff)
+    if (item.glass or item.aperture) and not hide then
+        local off
+        if item.aperture then off = interiorOff else off = glassOff or (spec and noglass) end
+        if not off then
             if item.orig then Local.restoreItem(item) end
             return
         end
@@ -8885,7 +9318,8 @@ function Local.settings()
     } }
     state.noglass = on("local_gun_noglass") == true
     state.glassOff = on("local_noglass") == true
-    if state.glassOff then state.any = true end
+    state.interiorOff = on("local_noaperture") == true
+    if state.glassOff or state.interiorOff then state.any = true end
     for _, cat in ipairs(Local.cats) do
         local spec = Local.spec(cat)
         state.specs[cat] = spec
@@ -8901,7 +9335,7 @@ function Local.styleRec(rec, state)
     for _, item in ipairs(rec.items) do
         local cat = item.cat
         local hide = state.rm[(cat == "glove" or cat == "gun") and cat or cat .. (rec.side or "")]
-        Local.applyItem(item, state.specs[cat], hide, state.noglass, state.glassOff)
+        Local.applyItem(item, state.specs[cat], hide, state.noglass, state.glassOff, state.interiorOff)
     end
 end
 
@@ -8961,13 +9395,22 @@ function Local.offset(weapon)
         scale = 1 - math.clamp(weapon._aimArmSpring.p, 0, 1)
     end
     local base = main.C0
-    local relative = character:getRootPart().CFrame:Inverse() * Stretch.cf(cam)
+    local root = character:getRootPart().CFrame
+    local relative = root:Inverse() * Stretch.cf(cam)
     local axes = CFrame.new(relative.Position):Inverse() * relative
     local spin = axes * CFrame.Angles(math.rad(pitch) * scale, math.rad(yaw) * scale, math.rad(roll) * scale) * axes:Inverse()
     local pivot = CFrame.new(base.Position)
     local shift = CFrame.new(axes * Vector3.new(x * scale, y * scale, -z * scale))
     local change = shift * pivot * spin * pivot:Inverse()
     main.C0 = change * base
+    local apertures = Local.apertures(weapon)
+    if #apertures > 0 then
+        local carry = root * change * root:Inverse()
+        for _, aperture in ipairs(apertures) do
+            local at = propGet(aperture, "CFrame")
+            if typeof(at) == "CFrame" then propSet(aperture, "CFrame", carry * at) end
+        end
+    end
     local left, right = character:getArmWelds()
     if left then left.C0 = change * left.C0 end
     if right then right.C0 = change * right.C0 end
@@ -9912,8 +10355,8 @@ Util.onUnload(function()
 end)
 
 local Watch = {
-    log = {}, seen = {}, skip = {}, conns = {}, cap = 200, shown = 8, period = 5, gen = 0, on = false, notifyAt = -math.huge, file = "Aster/PhantomForces/watch_log.txt",
-    scripts = { ModuleScript = true, LocalScript = true, Script = true }, busy = { ModuleScript = true, LocalScript = true },
+    log = {}, seen = {}, skip = {}, conns = {}, cap = 200, shown = 8, period = 5, nilEvery = 3, gen = 0, on = false, notifyAt = -math.huge, file = "Aster/PhantomForces/watch_log.txt",
+    scripts = { ModuleScript = true, LocalScript = true, Script = true },
     databases = { "WeaponDatabase", "AttachmentDatabase" },
     idleText = "No new scripts or modules since the baseline", offText = "Off: turn on to take a baseline and log new scripts",
 }
@@ -9990,8 +10433,8 @@ function Watch.children(object)
     return ok and type(list) == "table" and list or {}
 end
 
-function Watch.each(fn)
-    for _, source in ipairs({ { "getloadedmodules", getloadedmodules }, { "getrunningscripts", getrunningscripts }, { "getnilinstances", getnilinstances } }) do
+function Watch.each(fn, skipNil)
+    for _, source in ipairs({ { "getloadedmodules", getloadedmodules }, { "getrunningscripts", getrunningscripts }, { "getnilinstances", not skipNil and getnilinstances } }) do
         local ok, list = false, nil
         if type(source[2]) == "function" then ok, list = pcall(source[2]) end
         for _, object in ipairs(ok and type(list) == "table" and list or {}) do
@@ -10030,11 +10473,12 @@ function Watch.watchCharacter(character)
     if character then Watch.charConn = Watch.listen(character, Watch.scripts, "Character") end
 end
 
-function Watch.schedule(gen)
+function Watch.schedule(gen, count)
     task.delay(Watch.period, function()
         if Watch.gen ~= gen or not Watch.on then return end
-        Util.guard("watch", Watch.each, Watch.check)
-        Watch.schedule(gen)
+        count = (count or 0) + 1
+        Util.guard("watch", Watch.each, Watch.check, count % Watch.nilEvery ~= 0)
+        Watch.schedule(gen, count)
     end)
 end
 
@@ -10055,7 +10499,6 @@ function Watch.start()
     Watch.listen(service("ReplicatedFirst"), Watch.scripts, "ReplicatedFirst")
     Watch.listen(child("PlayerScripts"), Watch.scripts, "PlayerScripts")
     Watch.listen(child("PlayerGui"), Watch.scripts, "PlayerGui")
-    Watch.listen(Workspace, Watch.busy, "Workspace")
     Watch.watchCharacter(propGet(LocalPlayer, "Character"))
     pcall(function()
         Watch.conns[#Watch.conns + 1] = LocalPlayer.CharacterAdded:Connect(function(character) Watch.watchCharacter(character) end)
@@ -10141,17 +10584,32 @@ function Corpse.add(model, now)
     Corpse.recs[model] = { items = items, kind = Corpse.kindOf(model), born = now, sig = nil }
 end
 
+Corpse.kindFlags = {
+    { kind = "enemy", on = "chams_dead_enemy", color = "chams_dead_enemy_color" },
+    { kind = "team", on = "chams_dead_team", color = "chams_dead_team_color" },
+    { kind = "local", on = "chams_dead_local", color = "chams_dead_local_color" },
+}
+
 function Corpse.state()
-    local state = { materialName = val("chams_dead_mat") or "ForceField", texture = val("chams_dead_tex") or "None", refl = val("chams_dead_refl") or 0,
-        hide = on("chams_dead_hide") == true, fade = val("chams_dead_fade") or 0, kinds = {} }
-    local parts = { state.materialName, state.texture, state.refl, tostring(state.hide), state.fade }
-    for _, kind in ipairs({ "enemy", "team", "local" }) do
-        local flagName = "chams_dead_" .. kind .. "_color"
-        local entry = { enabled = on("chams_dead_" .. kind) == true, color = val(flagName) or WHITE, alpha = Util.alpha(flagName, 0) }
-        state.kinds[kind] = entry
-        parts[#parts + 1] = tostring(entry.enabled) .. tostring(entry.color) .. entry.alpha
+    local last = Corpse.last
+    local materialName, texture, refl = val("chams_dead_mat") or "ForceField", val("chams_dead_tex") or "None", val("chams_dead_refl") or 0
+    local hide, fade = on("chams_dead_hide") == true, val("chams_dead_fade") or 0
+    local same = last and last.materialName == materialName and last.texture == texture and last.refl == refl and last.hide == hide and last.fade == fade
+    if same then
+        for _, spec in ipairs(Corpse.kindFlags) do
+            local entry = last.kinds[spec.kind]
+            if entry.enabled ~= (on(spec.on) == true) or entry.color ~= (val(spec.color) or WHITE) or entry.alpha ~= Util.alpha(spec.color, 0) then
+                same = false
+                break
+            end
+        end
     end
-    state.sig = table.concat(parts, "|")
+    if same then return last end
+    local state = { materialName = materialName, texture = texture, refl = refl, hide = hide, fade = fade, kinds = {}, sig = (last and last.sig or 0) + 1 }
+    for _, spec in ipairs(Corpse.kindFlags) do
+        state.kinds[spec.kind] = { enabled = on(spec.on) == true, color = val(spec.color) or WHITE, alpha = Util.alpha(spec.color, 0) }
+    end
+    Corpse.last = state
     local okMaterial, material = pcall(function() return Enum.Material[state.materialName] end)
     state.material = okMaterial and material or nil
     state.textureId = state.materialName == "ForceField" and Local.textures[state.texture] or ""
@@ -10276,7 +10734,19 @@ function KillFx.emitter(ev, parent, props)
         Rotation = NumberRange.new(0, 360), Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(1, 1) }),
     }
     for key, value in pairs(props) do base[key] = value end
-    return KillFx.make(ev, "ParticleEmitter", base, parent)
+    local rate = base.Rate
+    base.Rate = 0
+    if base.Size ~= nil then base.Size = Tracers.sized(base.Size, ev.sizeScale or 1) end
+    local emitter = KillFx.make(ev, "ParticleEmitter", base, parent)
+    local group, life = ev.group, base.Lifetime
+    group.life = math.max(group.life or 0, life and life.Max or 1)
+    group.emitters = group.emitters or {}
+    group.emitters[#group.emitters + 1] = emitter
+    if rate > 0 then
+        ev.streams = ev.streams or {}
+        ev.streams[#ev.streams + 1] = { emitter = emitter, rate = rate, acc = 1 }
+    end
+    return emitter
 end
 
 function KillFx.shrink(size)
@@ -10476,6 +10946,7 @@ KillFx.fx.Sparks = {
         })
         local count = math.floor(40 * opts.int)
         local burst = pcall(function() emitter:Emit(count) end)
+        if burst then KillFx.emitted[emitter] = os.clock() end
         if not burst then
             propSet(emitter, "Rate", count * 8)
             propSet(emitter, "Enabled", true)
@@ -10531,9 +11002,11 @@ KillFx.fx["Screen flash"] = {
     end,
 }
 
+KillFx.emitted = setmetatable({}, { __mode = "k" })
+
 function KillFx.burst(emitter, count)
-    local amount = math.floor(count + 0.5)
-    if emitter and amount >= 1 then pcall(emitter.Emit, emitter, amount) end
+    if not emitter or not (count > 0) then return end
+    if pcall(emitter.Emit, emitter, math.max(1, math.floor(count + 0.5))) then KillFx.emitted[emitter] = os.clock() end
 end
 
 function KillFx.modifier(object)
@@ -11915,6 +12388,41 @@ function KillFx.run(ev, name, fn, ...)
     ev.groups[#ev.groups + 1] = group
     Util.guard("killfx " .. name, fn, ev, ...)
     for slot = first, #ev.ticks do ev.ticks[slot] = { fn = ev.ticks[slot], group = group } end
+    group.pending = #ev.ticks - first + 1
+end
+
+function KillFx.retire(ev, group, now)
+    local last
+    for _, emitter in ipairs(group.emitters or {}) do
+        propSet(emitter, "Enabled", false)
+        last = math.max(last or -math.huge, KillFx.emitted[emitter] or -math.huge)
+    end
+    local at = last and last + (group.life or 0)
+    if at and at > now then
+        ev.lingering[#ev.lingering + 1] = { group = group, at = at }
+    else
+        KillFx.free(group)
+    end
+end
+
+function KillFx.flow(ev, age)
+    local dt = age - (ev.age or age)
+    ev.age = age
+    local streams = ev.streams
+    for index = #streams, 1, -1 do
+        local stream = streams[index]
+        local emitter = stream.emitter
+        if propGet(emitter, "Parent") == nil then
+            table.remove(streams, index)
+        elseif propGet(emitter, "Enabled") then
+            stream.acc = stream.acc + stream.rate * dt
+            if stream.acc >= 1 then
+                local count = math.floor(stream.acc)
+                stream.acc = stream.acc - count
+                KillFx.burst(emitter, math.min(count, 40))
+            end
+        end
+    end
 end
 
 function KillFx.keep(corpse, restore)
@@ -11994,7 +12502,8 @@ function KillFx.launch(model, pos, now, born)
     local root = propGet(Workspace, "CurrentCamera")
     if not root then return end
     while #KillFx.events >= KillFx.maxEvents do KillFx.destroy(table.remove(KillFx.events, 1)) end
-    local ev = { born = now, groups = {}, ticks = {}, undo = {}, root = root, limit = math.max(opts.dur, opts.cdur) + 4, settle = (born or now) + KillFx.settle }
+    local ev = { born = now, groups = {}, ticks = {}, undo = {}, root = root, limit = math.max(opts.dur, opts.cdur) + 4, settle = (born or now) + KillFx.settle,
+        streams = {}, lingering = {}, sizeScale = Tracers.distScale(pos) }
     KillFx.events[#KillFx.events + 1] = ev
     for _, name in ipairs(KillFx.names) do
         if opts.list[name] then KillFx.run(ev, name, KillFx.fx[name].start, model, pos, opts) end
@@ -12054,14 +12563,25 @@ function KillFx.step(now)
         local age, ticks = now - ev.born, ev.ticks
         for slot = #ticks, 1, -1 do
             local entry = ticks[slot]
+            ev.group = entry.group
             local ok, finished = pcall(entry.fn, age)
             if not ok then Util.note("killfx tick" .. tostring(finished), "killfx:", finished) end
             if not ok or finished == true then
-                KillFx.free(entry.group)
                 table.remove(ticks, slot)
+                local group = entry.group
+                group.pending = (group.pending or 1) - 1
+                if group.pending <= 0 then KillFx.retire(ev, group, now) end
             end
         end
-        if #ticks == 0 or age > ev.limit then
+        if next(ev.streams) then KillFx.flow(ev, age) end
+        local lingering = ev.lingering
+        for slot = #lingering, 1, -1 do
+            if now >= lingering[slot].at then
+                KillFx.free(lingering[slot].group)
+                table.remove(lingering, slot)
+            end
+        end
+        if (#ticks == 0 and #lingering == 0) or age > ev.limit then
             KillFx.destroy(ev)
             table.remove(events, index)
         end
@@ -12366,6 +12886,7 @@ do
     Remove:Toggle({ Name = "Remove gloves", Flag = "local_rm_gloves", Tooltip = "Both hands' gloves and accessories" })
     Remove:Toggle({ Name = "Remove gun", Flag = "local_rm_gun", Tooltip = "Hides the viewmodel weapon" })
     Remove:Toggle({ Name = "Remove scope glass", Flag = "local_noglass", Tooltip = "Hides sight lenses and glass on the weapon in your hands, with or without gun chams; reticles stay visible" })
+    Remove:Toggle({ Name = "Remove scope interior", Flag = "local_noaperture", Tooltip = "Hides the dark eyepiece shadow some magnified scopes draw over the lens (ACOG, C79, VCOG style); the reticle stays" })
 
     local Changer = LocalSub:Section({ Name = "Viewmodel changer", Column = 3, Icon = "camera" })
     local Offset = Changer:Toggle({ Name = "Viewmodel offset", Flag = "local_vm", Tooltip = "Moves and tilts the weapon and arms after the game positions them; bullets and your aim are not affected" }):Settings("Viewmodel offset", 230)
@@ -12502,35 +13023,49 @@ do
             Cham:Dropdown({ Name = "Mode", Flag = "cham_mode", Items = { "Through walls", "Visible only" }, Default = "Through walls", Tooltip = "Through walls switches between the two colours by line of sight" })
             Cham:Slider({ Name = "Thickness", Flag = "cham_grow", Min = 0, Max = 1, Default = 0.1, Decimals = 0.01, Suffix = " studs" })
             Cham:Toggle({ Name = "Glow", Flag = "cham_glow", Tooltip = "Draws the visible layer on top, brighter and more opaque, so bloom picks it up" })
-            Cham:Slider({ Name = "Glow strength", Flag = "cham_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
+            Cham:Depends({ { "cham_glow", true } }, function(box)
+                box:Slider({ Name = "Glow strength", Flag = "cham_glow_size", Min = 1, Max = 2.5, Default = 1.75, Decimals = 0.01 })
+            end)
             Cham:Toggle({ Name = "Bloom", Flag = "cham_bloom", Default = true, Tooltip = "Drives a bloom effect while the glow is on; the World bloom settings win if that is enabled" })
-            Cham:Slider({ Name = "Bloom intensity", Flag = "cham_bloom_i", Min = 0, Max = 3, Default = 0.4, Decimals = 0.01 })
-            Cham:Slider({ Name = "Bloom size", Flag = "cham_bloom_s", Min = 0, Max = 56, Default = 24, Decimals = 0.1 })
-            Cham:Slider({ Name = "Bloom threshold", Flag = "cham_bloom_t", Min = 0, Max = 2, Default = 0.95, Decimals = 0.01 })
+            Cham:Depends({ { "cham_bloom", true } }, function(box)
+                box:Slider({ Name = "Bloom intensity", Flag = "cham_bloom_i", Min = 0, Max = 3, Default = 0.4, Decimals = 0.01 })
+                box:Slider({ Name = "Bloom size", Flag = "cham_bloom_s", Min = 0, Max = 56, Default = 24, Decimals = 0.1 })
+                box:Slider({ Name = "Bloom threshold", Flag = "cham_bloom_t", Min = 0, Max = 2, Default = 0.95, Decimals = 0.01 })
+            end)
             Cham:Slider({ Name = "Head size", Flag = "cham_head_size", Min = 0.8, Max = 1.6, Default = 1.15, Decimals = 0.01 })
             Cham:Toggle({ Name = "Round head", Flag = "cham_round_head", Default = true })
             Cham:Toggle({ Name = "Remove armor/gear", Flag = "chams_remove_gear", Default = true, Tooltip = "Hides helmets, armor and other cosmetics on players with chams so the body is covered cleanly; restored when chams stop" })
             Cham:Dropdown({ Name = "Style", Flag = "chams_style", Items = ChamStyle.names, Default = "Classic", Tooltip = "Classic is the adornment chams above. The other styles draw local copies posed to the player; players past the style cap use Classic" })
-            pickColor(Cham, "Style colour", "chams_style_color", Color3.fromRGB(0, 220, 255))
-            pickColor(Cham, "Style colour 2", "chams_style_color2", Color3.fromRGB(255, 60, 200))
-            Cham:Slider({ Name = "Style speed", Flag = "chams_style_speed", Min = 0.1, Max = 4, Default = 1, Decimals = 0.05 })
-            Cham:Slider({ Name = "Style intensity", Flag = "chams_style_int", Min = 0.2, Max = 1.5, Default = 1, Decimals = 0.05 })
-            Cham:Toggle({ Name = "Style through walls", Flag = "chams_style_walls", Default = true, Tooltip = "Toon, Ghost and Glow shells show through walls; off hides styled players behind cover" })
-            Cham:Slider({ Name = "Style cap", Flag = "chams_style_cap", Min = 1, Max = 20, Default = 8, Decimals = 1, Tooltip = "Most players styled at once, nearest first; the rest use Classic" })
-            Cham:Toggle({ Name = "Style visibility colours", Flag = "chams_style_vis", Tooltip = "Replaces Style colour with the visible or behind-walls colour below, from the shared visibility check (Visibility check interval)" })
-            pickColor(Cham, "Style visible", "chams_style_vis_color", Color3.fromRGB(80, 255, 140))
-            pickColor(Cham, "Style behind walls", "chams_style_occ_color", Color3.fromRGB(255, 70, 110), 0.25)
-            Cham:Slider({ Name = "Toon outline", Flag = "chams_toon_outline", Min = 0.05, Max = 0.8, Default = 0.3, Decimals = 0.01, Suffix = " studs" })
-            pickColor(Cham, "Toon outline colour", "chams_toon_outline_color", Color3.fromRGB(12, 12, 18))
-            Cham:Slider({ Name = "Toon shading", Flag = "chams_toon_shade", Min = 0, Max = 0.9, Default = 0.45, Decimals = 0.01, Tooltip = "How much darker the faces turned away from the light are" })
-            Cham:Toggle({ Name = "Toon rim light", Flag = "chams_toon_rim", Default = true, Tooltip = "Lights the outline edges facing away from the camera in Style colour 2" })
-            Cham:Slider({ Name = "Ghost copies", Flag = "chams_ghost_count", Min = 1, Max = 8, Default = 5, Decimals = 1 })
-            Cham:Slider({ Name = "Ghost spacing", Flag = "chams_ghost_spacing", Min = 0.3, Max = 4, Default = 1.2, Decimals = 0.1, Suffix = " studs", Tooltip = "A copy is left each time the player moves this far, so standing players leave none" })
-            Cham:Slider({ Name = "Ghost trail length", Flag = "chams_ghost_length", Min = 0.15, Max = 1.5, Default = 0.6, Decimals = 0.05, Suffix = " s" })
-            Cham:Toggle({ Name = "Ghost colour gradient", Flag = "chams_ghost_gradient", Default = true, Tooltip = "Copies blend from Style colour to Style colour 2 as they fade" })
-            Cham:Slider({ Name = "Glow shells", Flag = "chams_glow_shells", Min = 1, Max = 3, Default = 3, Decimals = 1 })
-            Cham:Slider({ Name = "Glow breathing", Flag = "chams_glow_pulse", Min = 0, Max = 1, Default = 0.5, Decimals = 0.05 })
-            Cham:Toggle({ Name = "Glow outline", Flag = "chams_glow_outline" })
+            Cham:Depends({ { "chams_style", function(value) return value ~= "Classic" end } }, function(styled)
+                pickColor(styled, "Style colour", "chams_style_color", Color3.fromRGB(0, 220, 255))
+                pickColor(styled, "Style colour 2", "chams_style_color2", Color3.fromRGB(255, 60, 200))
+                styled:Slider({ Name = "Style speed", Flag = "chams_style_speed", Min = 0.1, Max = 4, Default = 1, Decimals = 0.05 })
+                styled:Slider({ Name = "Style intensity", Flag = "chams_style_int", Min = 0.2, Max = 1.5, Default = 1, Decimals = 0.05 })
+                styled:Toggle({ Name = "Style through walls", Flag = "chams_style_walls", Default = true, Tooltip = "Toon, Ghost and Glow shells show through walls; off hides styled players behind cover" })
+                styled:Slider({ Name = "Style cap", Flag = "chams_style_cap", Min = 1, Max = 20, Default = 8, Decimals = 1, Tooltip = "Most players styled at once, nearest first; the rest use Classic" })
+                styled:Toggle({ Name = "Style visibility colours", Flag = "chams_style_vis", Tooltip = "Replaces Style colour with the visible or behind-walls colour below, from the shared visibility check (Visibility check interval)" })
+                styled:Depends({ { "chams_style_vis", true } }, function(box)
+                    pickColor(box, "Style visible", "chams_style_vis_color", Color3.fromRGB(80, 255, 140))
+                    pickColor(box, "Style behind walls", "chams_style_occ_color", Color3.fromRGB(255, 70, 110), 0.25)
+                end)
+            end)
+            Cham:Depends({ { "chams_style", "Toon" } }, function(box)
+                box:Slider({ Name = "Toon outline", Flag = "chams_toon_outline", Min = 0.05, Max = 0.8, Default = 0.3, Decimals = 0.01, Suffix = " studs" })
+                pickColor(box, "Toon outline colour", "chams_toon_outline_color", Color3.fromRGB(12, 12, 18))
+                box:Slider({ Name = "Toon shading", Flag = "chams_toon_shade", Min = 0, Max = 0.9, Default = 0.45, Decimals = 0.01, Tooltip = "How much darker the faces turned away from the light are" })
+                box:Toggle({ Name = "Toon rim light", Flag = "chams_toon_rim", Default = true, Tooltip = "Lights the outline edges facing away from the camera in Style colour 2" })
+            end)
+            Cham:Depends({ { "chams_style", "Ghost" } }, function(box)
+                box:Slider({ Name = "Ghost copies", Flag = "chams_ghost_count", Min = 1, Max = 8, Default = 5, Decimals = 1 })
+                box:Slider({ Name = "Ghost spacing", Flag = "chams_ghost_spacing", Min = 0.3, Max = 4, Default = 1.2, Decimals = 0.1, Suffix = " studs", Tooltip = "A copy is left each time the player moves this far, so standing players leave none" })
+                box:Slider({ Name = "Ghost trail length", Flag = "chams_ghost_length", Min = 0.15, Max = 1.5, Default = 0.6, Decimals = 0.05, Suffix = " s" })
+                box:Toggle({ Name = "Ghost colour gradient", Flag = "chams_ghost_gradient", Default = true, Tooltip = "Copies blend from Style colour to Style colour 2 as they fade" })
+            end)
+            Cham:Depends({ { "chams_style", "Glow shells" } }, function(box)
+                box:Slider({ Name = "Glow shells", Flag = "chams_glow_shells", Min = 1, Max = 3, Default = 3, Decimals = 1 })
+                box:Slider({ Name = "Glow breathing", Flag = "chams_glow_pulse", Min = 0, Max = 1, Default = 0.5, Decimals = 0.05 })
+                box:Toggle({ Name = "Glow outline", Flag = "chams_glow_outline" })
+            end)
         end
         if shared then
             local Vis = Body:Toggle({ Name = "Colour by visibility", Flag = "esp_vis", Tooltip = "Box, skeleton, snapline, dot, view line and arrows use the popup colours" }):Settings("Visibility colours", 200)
@@ -12660,6 +13195,7 @@ do
     Asset:Button({ Name = "Apply", Callback = function() Util.guard("sky-asset", World.applyAsset) end })
     Asset:Toggle({ Name = "Apply model lighting", Flag = "world_sky_asset_light", Tooltip = "Also uses the Atmosphere, Bloom, Colour correction and Sun rays inside the sky model; they are undone when this or the skybox is off" })
     Asset:Button({ Name = "Save", Callback = function() task.spawn(Util.guard, "sky-asset-save", World.saveAsset) end })
+    Asset:Toggle({ Name = "Debug sky loads", Flag = "world_sky_debug", Tooltip = "Prints which loader fetched each sky asset and what was inside it to the console (F9)" })
     local Cloud = SkySub:Section({ Name = "Clouds", Column = 1, Icon = "cloud" })
     local Clouds = Cloud:Toggle({ Name = "Clouds", Flag = "world_clouds" }):Settings("Clouds", 230)
     pickColor(Clouds, "Clouds", "world_clouds_color", WHITE)
@@ -12810,7 +13346,9 @@ do
     MarkerMore:Slider({ Name = "Thickness", Flag = "hit_marker_thick", Min = 1, Max = 5, Default = 1, Decimals = 1, Suffix = " px" })
     MarkerMore:Slider({ Name = "Gap", Flag = "hit_marker_gap", Min = 0, Max = 20, Default = 3, Decimals = 1, Suffix = " px" })
     MarkerMore:Toggle({ Name = "Outline", Flag = "hit_marker_outline", Default = true })
-    MarkerMore:Slider({ Name = "Kill marker size", Flag = "hit_marker_kill_size", Min = 1, Max = 3, Default = 1.5, Decimals = 0.05, Suffix = "x" })
+    MarkerMore:Depends({ { "hit_marker_kill", true } }, function(box)
+        box:Slider({ Name = "Kill marker size", Flag = "hit_marker_kill_size", Min = 1, Max = 3, Default = 1.5, Decimals = 0.05, Suffix = "x" })
+    end)
     MarkerMore:Toggle({ Name = "Skull on kill", Flag = "hit_marker_skull", Tooltip = "Replaces the marker with a skull when the hit kills" })
     local Hc = Hits:Section({ Name = "Hit chams", Column = 1, Icon = "user" })
     local HcMore = Hc:Toggle({ Name = "Hit chams", Flag = "hit_cham_on", Tooltip = "Flashes a local copy of the body you hit, built from adornments. Only your own bullet hits on enemies" }):Colorpicker({ Name = "Hit cham", Flag = "hit_cham_color", Default = Color3.fromRGB(255, 70, 110), Alpha = 0.35 }):Settings("Hit chams", 240)
@@ -12821,7 +13359,9 @@ do
     Hc:Toggle({ Name = "Follow player", Flag = "hit_cham_follow", Tooltip = "Off keeps the pose from the moment of the hit; on moves with the player while it fades" })
     HcMore:Toggle({ Name = "Always on top", Flag = "hit_cham_top", Default = true })
     HcMore:Toggle({ Name = "Outline", Flag = "hit_cham_outline", Tooltip = "A second, slightly larger layer around each part" })
-    pickColor(HcMore, "Outline colour", "hit_cham_outline_color", WHITE, 0.4)
+    HcMore:Depends({ { "hit_cham_outline", true } }, function(box)
+        pickColor(box, "Outline colour", "hit_cham_outline_color", WHITE, 0.4)
+    end)
     HcMore:Slider({ Name = "Max at once", Flag = "hit_cham_max", Min = 1, Max = 12, Default = 12, Decimals = 1, Tooltip = "The oldest cham is removed first" })
     hidden("hit_cham_fx", "Dropdown", {}, HitFx.legacy):OnChanged(function(value)
         if next(value) ~= nil then HitFx.pending = true end
@@ -12873,7 +13413,9 @@ do
     Fx:Slider({ Name = "Duration", Flag = "kill_fx_dur", Min = 0.5, Max = 6, Default = 2.5, Decimals = 0.1, Suffix = " s", Tooltip = "Length of Dissolve, Pillar, Tombstone, Crystallize and Holo-scan" })
     Fx:Slider({ Name = "Screen flash only near", Flag = "kill_fx_flash_dist", Min = 20, Max = 500, Default = 150, Decimals = 1, Suffix = " studs" })
     Fx:Toggle({ Name = "Play sound", Flag = "kill_fx_sound" })
-    Fx:Input({ Name = "Sound id", Flag = "kill_fx_sound_id", Placeholder = "rbxassetid or number" })
+    Fx:Depends({ { "kill_fx_sound", true } }, function(box)
+        box:Input({ Name = "Sound id", Flag = "kill_fx_sound_id", Placeholder = "rbxassetid or number" })
+    end)
     Kill:Dropdown({ Name = "Corpse effects", Flag = "kill_fx_corpse", Items = KillFx.corpseNames, Multi = true, Tooltip = "Act on the body itself, locally. Only one movement effect (everything except Disintegrate, Ghost, Freeze, Confetti and Vaporize) runs per corpse: the first one in this list" })
     Kill:Slider({ Name = "Corpse effect time", Flag = "kill_fx_corpse_dur", Min = 1, Max = 8, Default = 3, Decimals = 0.1, Suffix = " s" })
     Kill:Slider({ Name = "Corpse particles", Flag = "kill_fx_corpse_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
@@ -12905,7 +13447,9 @@ do
     RunMore:Slider({ Name = "Duration", Flag = "streak_time", Min = 0.5, Max = 5, Default = 2.2, Decimals = 0.1, Suffix = " s" })
     RunMore:Toggle({ Name = "Show total streak", Flag = "streak_total", Default = true, Tooltip = "Kills since your last death, under the banner" })
     RunMore:Toggle({ Name = "Milestone notifications", Flag = "streak_milestone" })
-    RunMore:Slider({ Name = "Milestone every", Flag = "streak_milestone_every", Min = 2, Max = 25, Default = 5, Decimals = 1, Suffix = " kills" })
+    RunMore:Depends({ { "streak_milestone", true } }, function(box)
+        box:Slider({ Name = "Milestone every", Flag = "streak_milestone_every", Min = 2, Max = 25, Default = 5, Decimals = 1, Suffix = " kills" })
+    end)
     local Notice = Kills:Section({ Name = "Killcam", Column = 2, Icon = "eye" })
     Notice:Toggle({ Name = "Killcam notice", Flag = "killcam_notify", Default = true, Tooltip = "Estimate: the player you kill watches you on their killcam for up to 5 s, but they may skip it after 0.5 s and the game does not tell us. Closes early when they respawn, you die, they leave or the round ends" })
     Notice:Toggle({ Name = "Notice sound", Flag = "killcam_sound" })
@@ -12926,15 +13470,19 @@ do
     local Glow = Style:Toggle({ Name = "Tracer glow", Flag = "trace_glow", Tooltip = "Full-bright beam plus a wider additive halo behind it" }):Settings("Tracer glow", 230)
     Glow:Slider({ Name = "Glow strength", Flag = "trace_glow_strength", Min = 0, Max = 10, Default = 4, Decimals = 0.1 })
     Glow:Toggle({ Name = "Glow uses tracer colour", Flag = "trace_glow_same", Default = true })
-    Glow:Label({ Name = "Glow colour" }):Colorpicker({ Name = "Glow colour", Flag = "trace_glow_color", Default = Color3.fromRGB(255, 255, 255) })
+    Glow:Depends({ { "trace_glow_same", false } }, function(box)
+        box:Label({ Name = "Glow colour" }):Colorpicker({ Name = "Glow colour", Flag = "trace_glow_color", Default = Color3.fromRGB(255, 255, 255) })
+    end)
     local Grad = Style:Toggle({ Name = "Tracer gradient", Flag = "trace_gradient", Tooltip = "Colours the tracer from start to end along its whole length, replacing the single tracer colour" }):Settings("Tracer gradient", 230)
     Grad:Label({ Name = "Gradient start" }):Colorpicker({ Name = "Gradient start", Flag = "trace_grad_start", Default = Color3.fromRGB(255, 94, 94) })
     Grad:Label({ Name = "Gradient end" }):Colorpicker({ Name = "Gradient end", Flag = "trace_grad_end", Default = Color3.fromRGB(94, 160, 255) })
     Grad:Slider({ Name = "Gradient fade", Flag = "trace_grad_fade", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Tooltip = "Fades the tracer toward its far end" })
     Grad:Toggle({ Name = "Rainbow", Flag = "trace_rainbow", Tooltip = "Cycles hue along the tracer instead of the two colours" })
-    Style:Slider({ Name = "Particle size", Flag = "trace_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only; Tracer width sets their core beam" })
-    Style:Slider({ Name = "Particle density", Flag = "trace_fx_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only" })
-    Style:Toggle({ Name = "Particle impact burst", Flag = "trace_fx_impact", Default = true, Tooltip = "Particle tracers burst where the bullet hits" })
+    Style:Depends({ { "trace_texture", Tracers.particleNames } }, function(box)
+        box:Slider({ Name = "Particle size", Flag = "trace_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only; Tracer width sets their core beam" })
+        box:Slider({ Name = "Particle density", Flag = "trace_fx_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only" })
+        box:Toggle({ Name = "Particle impact burst", Flag = "trace_fx_impact", Default = true, Tooltip = "Particle tracers burst where the bullet hits" })
+    end)
     local Imp = Bullets:Section({ Name = "Bullet impacts", Column = 3, Icon = "flame" })
     local ImpMore = Imp:Toggle({ Name = "Bullet impacts", Flag = "impact_on", Tooltip = "Local effects where your bullets hit the world, at the same hit point the tracers use" }):Colorpicker({ Name = "Impact", Flag = "impact_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 }):Settings("Bullet impacts", 240)
     Imp:Toggle({ Name = "Enemy bullets too", Flag = "impact_enemy", Tooltip = "Same bullets the enemy tracers use; teammates are skipped" })
@@ -13964,6 +14512,7 @@ function Loop.step()
         Util.guard("items", Items.step, cam, now)
         Util.guard("pf-events", Feedback.drain)
         Util.guard("feedback", Feedback.step, cam, center, now)
+        Util.guard("bulletfx", Tracers.drain, now)
         Util.guard("tracers", Tracers.step, now)
         Util.guard("impacts", Impacts.step, now)
         Util.guard("hitchams", HitCham.step, now)
@@ -13997,6 +14546,7 @@ function Loop.step()
     Util.guard("esp", ESP.step, cam, now, records)
     Util.guard("items", Items.step, cam, now)
     Util.guard("feedback", Feedback.step, cam, center, now)
+    Util.guard("bulletfx", Tracers.drain, now)
     Util.guard("tracers", Tracers.step, now)
     Util.guard("impacts", Impacts.step, now)
     Util.guard("hitchams", HitCham.step, now)

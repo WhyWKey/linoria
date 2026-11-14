@@ -1934,7 +1934,7 @@ function Chams.headDimensions()
     return size.X / 2 - 0.4, size.Y
 end
 
-function Chams.style(slot, part, name, cfg, S, seen)
+function Chams.style(slot, part, name, cfg, S)
     local layers = slot.layers
     local grow = S.chamGrow
     for _, adornment in pairs(layers) do adornment.Adornee = part end
@@ -1954,11 +1954,7 @@ function Chams.style(slot, part, name, cfg, S, seen)
         layers.behind.Size = size
         layers.visible.Size = size + Vector3.new(grow, grow, grow)
     end
-    if seen then
-        layers.behind.Color3, layers.behind.Transparency = cfg.chamVis, cfg.chamVisT
-    else
-        layers.behind.Color3, layers.behind.Transparency = cfg.chamHid, cfg.chamHidT
-    end
+    layers.behind.Color3, layers.behind.Transparency = cfg.chamHid, cfg.chamHidT
     layers.behind.Visible = S.chamMode == "Through walls"
     layers.visible.Color3, layers.visible.Transparency, layers.visible.Visible = cfg.chamVis, cfg.chamVisT, true
     layers.visible.AlwaysOnTop = false
@@ -2496,10 +2492,6 @@ function Chams.update(rec, cfg, S)
     end
     ChamStyle.drop(rec.player)
     entry.muted = nil
-    local seen = false
-    if S.chamMode == "Through walls" and rec.rendered and ChamStyle.origin then
-        seen = Visible.entity(rec, ChamStyle.origin, os.clock(), flag("vis_interval", 100) / 1000)
-    end
     for _, name in ipairs(CHAM_PARTS) do
         local part = rec.hash[name]
         local slot = entry.parts[name]
@@ -2522,9 +2514,9 @@ function Chams.update(rec, cfg, S)
             local built = slot.layers.visible
             if built and not (built.Parent and slot.layers.behind.Parent) then slot.layers, slot.sig = {}, nil end
             if not slot.layers.visible and not Chams.build(slot) then return end
-            if slot.adornee ~= part or slot.sig ~= sig or slot.seen ~= seen then
-                slot.adornee, slot.sig, slot.seen = part, sig, seen
-                Chams.style(slot, part, name, cfg, S, seen)
+            if slot.adornee ~= part or slot.sig ~= sig then
+                slot.adornee, slot.sig = part, sig
+                Chams.style(slot, part, name, cfg, S)
             else
                 local layers = slot.layers
                 if layers.visible.Adornee ~= part then layers.visible.Adornee = part end

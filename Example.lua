@@ -73,6 +73,8 @@ local Tabs = {
     Visuals = Window:AddTab('Visuals', 'eye'),
     World = Window:AddTab('World', 'globe'),
     Misc = Window:AddTab('Misc', 'shapes'),
+    Avatar = Window:AddTab('Avatar', 'user'),
+    Effects = Window:AddTab('Effects', 'sparkles'),
     Players = Window:AddTab('Players', 'users'),
     Settings = Window:AddTab('Settings', 'settings'),
 }
@@ -546,6 +548,241 @@ do
         Callback = function(Item, Path, Selected)
             Log('skin', Item.Name, Selected and 'applied' or 'removed', Path[#Path] and Path[#Path].Name or '-')
             Preview:SetModel(DemoGun(Selected and Item.Tint or Rarity.MilSpec), true)
+        end,
+    })
+end
+
+----------------------------------------------------------------------
+-- Avatar: full-area canvas. Pages + catalog on the left, a 250 px preview column on the right.
+-- Fake data; a real script fills the gallery from a catalog search.
+----------------------------------------------------------------------
+do
+    local Kinds = { 'Hat', 'Hair', 'Face', 'Back', 'Shirt', 'Pants' }
+    local function CatalogPage(Page)
+        local Items = {}
+        for I = 1, 12 do
+            local N = (Page - 1) * 12 + I
+            Items[I] = {
+                Id = 'cat' .. N,
+                Name = Kinds[N % #Kinds + 1] .. ' #' .. N,
+                Subtitle = Kinds[N % #Kinds + 1],
+                Badge = N % 5 == 0 and 'Free' or ((N * 15) .. ' R$'),
+                Star = N % 7 == 0,
+            }
+        end
+        return Items
+    end
+
+    Tabs.Avatar:AddCanvas({
+        Build = function(Canvas)
+            local Main, Side = Canvas:Split({ Side = 'Right', Size = 250, Gap = 12 })
+
+            -- right column: rig switch, preview, what is worn, actions
+            local Wearing
+            Library:CreateSegmented(Side, { Items = { 'R6', 'R15' }, Default = 'R6', Fill = true, Callback = function(Rig) Log('rig', Rig) end })
+            local ViewHost = Instance.new('Frame')
+            ViewHost.BackgroundTransparency = 1
+            ViewHost.Position = UDim2.fromOffset(0, 36)
+            ViewHost.Size = UDim2.new(1, 0, 1, -(36 + 110))
+            ViewHost.Parent = Side.Frame
+            local View = Library:CreateViewport(ViewHost, {
+                Idx = 'AvatarPreview',
+                Height = 'Fill',
+                FOV = 35,
+                AutoRotate = true,
+                Hint = 'drag to rotate',
+                Fallback = 'rbxthumb://type=Avatar&id=%d&w=420&h=420',
+            })
+            View:SetStatus('My avatar')
+            Wearing = Library:CreateStrip(Side, {
+                Position = UDim2.new(0, 0, 1, -102),
+                Remove = true,
+                EmptyText = 'Nothing worn',
+                Items = { { Id = 'w1', Name = 'Hat' }, { Id = 'w2', Name = 'Shirt', Swatch = Color3.fromRGB(70, 110, 200) } },
+                Callback = function(Item)
+                    local Left = {}
+                    for _, Other in ipairs(Wearing.Items) do
+                        if Other ~= Item then table.insert(Left, Other) end
+                    end
+                    Wearing:SetItems(Left)
+                    Log('took off', Item.Name)
+                end,
+            })
+            local Actions = Instance.new('Frame')
+            Actions.BackgroundTransparency = 1
+            Actions.Position = UDim2.new(0, 0, 1, -24)
+            Actions.Size = UDim2.new(1, 0, 0, 24)
+            Actions.Parent = Side.Frame
+            local Row = Instance.new('UIListLayout')
+            Row.FillDirection = Enum.FillDirection.Horizontal
+            Row.Padding = UDim.new(0, 6)
+            Row.SortOrder = Enum.SortOrder.LayoutOrder
+            Row.Parent = Actions
+            local Respawn
+            for Order, Pill in ipairs({
+                Library:CreatePill(Actions, 'Apply to me', function() Log('apply', #Wearing.Items, 'items') end, { Height = 24 }),
+                Library:CreatePill(Actions, 'Reset', function() Wearing:SetItems({}) end, { Height = 24 }),
+                Library:CreatePill(Actions, 'Respawn: off', function()
+                    Respawn:SetActive(not Respawn.Active)
+                    Respawn:SetText(Respawn.Active and 'Respawn: on' or 'Respawn: off')
+                end, { Height = 24 }),
+            }) do
+                Pill.Frame.LayoutOrder = Order
+                Respawn = Pill
+            end
+
+            -- left: pages
+            local Pages = Main:AddPages({ 'Catalog', 'Body', 'Outfits' }, { Style = 'Underline' })
+
+            local Top = Instance.new('Frame')
+            Top.BackgroundTransparency = 1
+            Top.Size = UDim2.new(1, 0, 0, 26)
+            Top.Parent = Pages.Catalog.Frame
+            local Results = Instance.new('Frame')
+            Results.BackgroundTransparency = 1
+            Results.Position = UDim2.fromOffset(0, 34)
+            Results.Size = UDim2.new(1, 0, 1, -34)
+            Results.Parent = Pages.Catalog.Frame
+
+            local Loaded = 1
+            local Catalog
+            Catalog = Library:CreateGallery(Results, {
+                Idx = 'AvatarCatalog',
+                Height = 'Fill',
+                View = 'List',
+                Title = 'Catalog',
+                Items = CatalogPage(1),
+                OnEnd = function()
+                    if Loaded >= 4 then
+                        Catalog:SetStatus('End of results')
+                        return
+                    end
+                    Catalog:SetStatus('Loading...')
+                    task.delay(0.3, function()
+                        Loaded = Loaded + 1
+                        Catalog:AppendItems(CatalogPage(Loaded))
+                        Catalog:SetStatus(nil)
+                    end)
+                end,
+                Callback = function(Item, _, Selected)
+                    if not Selected then return end
+                    local List = { Item }
+                    for _, Other in ipairs(Wearing.Items) do
+                        if Other.Id ~= Item.Id then table.insert(List, Other) end
+                    end
+                    Wearing:SetItems(List)
+                end,
+            })
+            Library:CreateInput(Top, 'Search the catalog', {
+                Icon = 'search',
+                Size = UDim2.new(1, -118, 0, 26),
+                Callback = function(Text, Enter)
+                    if Enter then Catalog:SetFilter(Text) end
+                end,
+            })
+            Library:CreateSegmented(Top, {
+                Items = { 'List', 'Grid' },
+                Style = 'Chip',
+                Height = 26,
+                Position = UDim2.new(1, -110, 0, 0),
+                Size = UDim2.fromOffset(110, 26),
+                Fill = true,
+                Callback = function(Mode) Catalog:SetView(Mode) end,
+            })
+
+            local Palette = {}
+            for I = 0, 23 do
+                Palette[#Palette + 1] = { Id = 'c' .. I, Name = 'Tone ' .. (I + 1), Swatch = Color3.fromHSV(I / 24, 0.55, 0.85) }
+            end
+            Library:CreateGallery(Pages.Body.Frame, {
+                Height = 'Fill',
+                MinTile = 56,
+                Title = 'Body colours',
+                Items = Palette,
+                Callback = function(Item) Log('body colour', Item.Name) end,
+            })
+
+            local Outfits
+            local function OutfitItems()
+                local List = {}
+                for I = 1, 6 do
+                    List[I] = { Id = 'o' .. I, Name = 'Outfit ' .. I, Subtitle = (I + 3) .. ' items', Actions = {
+                        { Text = 'Apply', Callback = function(Item) Log('apply outfit', Item.Name) end },
+                        { Text = 'Delete', Callback = function(Item) Log('delete outfit', Item.Name) end },
+                    } }
+                end
+                return List
+            end
+            Outfits = Library:CreateGallery(Pages.Outfits.Frame, { Height = 'Fill', View = 'List', Title = 'Saved outfits', Items = OutfitItems() })
+            Pages.Outfits:OnShow(function(_, First)
+                if First then Log('outfits page opened, ' .. #Outfits.Items .. ' outfits') end
+            end)
+        end,
+    })
+end
+
+----------------------------------------------------------------------
+-- Effects: one canvas per sub-tab, settings (42%) | preview (58%)
+----------------------------------------------------------------------
+do
+    local Sounds = {}
+    for I = 1, 240 do
+        Sounds[I] = { Id = 'snd' .. I, Name = ({ 'Bell', 'Click', 'Pop', 'Bonk', 'Chime', 'Ding' })[I % 6 + 1] .. ' ' .. I, Subtitle = 'rbxassetid://' .. (1000 + I) }
+    end
+
+    local Hits = Tabs.Effects:AddSubTab('Hits', 'crosshair')
+    Hits:AddCanvas({
+        Build = function(Canvas)
+            local Settings, Preview = Canvas:Split({ Ratio = 0.42, Gap = 10 })
+            local Box = Settings:AddGroupbox('Hit sound', 'bell')
+            Box:AddToggle('FxHitSound', { Text = 'Hit sound', Default = true })
+            Box:AddInput('FxHitSoundId', { Text = 'Sound', Default = Sounds[1].Name, Finished = true })
+            Box:AddSlider('FxHitVolume', { Text = 'Volume', Default = 70, Min = 0, Max = 100, Rounding = 0, Suffix = '%' })
+
+            local Card
+            local Target = Settings:AddGroupbox('Target info', 'user')
+            Target:AddToggle('FxTargetCard', { Text = 'Show target card', Default = false, Callback = function(On)
+                Card = Card or Library:CreateInfoCard({ Title = 'Target' })
+                Card:Update({ Name = 'Guest_1337', UserId = 1, Health = 64, MaxHealth = 100, Distance = 48.2, Team = 'Criminals', TeamColor = Color3.fromRGB(196, 40, 28), Weapon = 'Remington 870' })
+                Card:SetVisible(On)
+            end })
+
+            Library:CreateGallery(Preview, {
+                Idx = 'FxSoundList',
+                Virtual = true,
+                RowHeight = 32,
+                Height = 'Fill',
+                Search = true,
+                Title = 'Sounds',
+                Items = Sounds,
+                HoverButton = { Text = 'Play', Callback = function(Item) Log('play', Item.Name) end },
+                Callback = function(Item, _, Selected)
+                    if Selected then Options.FxHitSoundId:SetValue(Item.Name) end
+                end,
+            })
+        end,
+    })
+
+    local Bullets = Tabs.Effects:AddSubTab('Bullets', 'zap')
+    Bullets:AddCanvas({
+        Build = function(Canvas)
+            local Settings, Preview = Canvas:Split({ Ratio = 0.42, Gap = 10 })
+            local Box = Settings:AddGroupbox('Tracers', 'zap')
+            Box:AddToggle('FxTracers', { Text = 'Bullet tracers', Default = false })
+                :AddColorPicker('FxTracerColor', { Default = Color3.fromRGB(139, 92, 246), Title = 'Tracer colour' })
+            Box:AddSlider('FxTracerWidth', { Text = 'Width', Default = 2, Min = 1, Max = 8, Rounding = 0 })
+
+            local Presets = Library:CreateGallery(Preview, { Height = 'Fill', View = 'List', RowHeight = 40, Title = 'Presets' })
+            local function Fill()
+                local Color = Options.FxTracerColor.Value
+                local List = {}
+                for I, Name in ipairs({ 'Beam', 'Lightning', 'Smoke', 'Sparks', 'Pulse' }) do
+                    List[I] = { Id = Name, Name = Name, Subtitle = 'width ' .. Options.FxTracerWidth.Value, Swatch = Color:Lerp(Color3.new(1, 1, 1), (I - 1) * 0.12) }
+                end
+                Presets:SetItems(List)
+            end
+            Options.FxTracerColor:OnChanged(Fill)
+            Options.FxTracerWidth:OnChanged(Fill)
         end,
     })
 end

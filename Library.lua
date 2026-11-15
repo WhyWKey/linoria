@@ -1,9 +1,52 @@
 local Env = (type(getgenv) == 'function' and getgenv()) or _G;
 
+-- Executor functions under every name the supported executors document (first one that is a function wins).
+local function FirstFn(...)
+    for Index = 1, select('#', ...) do
+        local Value = select(Index, ...);
+        if type(Value) == 'function' then
+            return Value;
+        end;
+    end;
+    return nil;
+end;
+
+local function SafeField(Owner, Key)
+    if type(Owner) ~= 'table' and type(Owner) ~= 'userdata' then
+        return nil;
+    end;
+    local Ok, Value = pcall(function() return Owner[Key]; end);
+    return Ok and Value or nil;
+end;
+
+local Exec = {
+    cloneref = FirstFn(cloneref, clonereference);
+    gethui = FirstFn(gethui, get_hidden_gui, gethiddenui);
+    isactive = FirstFn(isrbxactive, iswindowactive, isgameactive);
+    clipboard = FirstFn(setclipboard, toclipboard, setrbxclipboard);
+    customasset = FirstFn(getcustomasset, getsynasset);
+    protect = FirstFn(protectgui, SafeField(syn, 'protect_gui'));
+    request = FirstFn(request, http_request, SafeField(http, 'request'), SafeField(syn, 'request'));
+};
+
+function Exec.HttpGet(Url)
+    local Ok, Body = pcall(function() return game:HttpGet(Url); end);
+    if Ok and type(Body) == 'string' then
+        return Body;
+    end;
+    if Exec.request then
+        local Sent, Response = pcall(Exec.request, { Url = Url, Method = 'GET' });
+        if Sent and type(Response) == 'table' and type(Response.Body) == 'string' then
+            return Response.Body;
+        end;
+    end;
+    return nil;
+end;
+
 local function GetService(Name)
     local Service = game:GetService(Name);
-    if type(cloneref) == 'function' then
-        local Ok, Cloned = pcall(cloneref, Service);
+    if Exec.cloneref then
+        local Ok, Cloned = pcall(Exec.cloneref, Service);
         if Ok and Cloned then
             return Cloned;
         end;
@@ -32,14 +75,18 @@ if type(OldLibrary) == 'table' and OldLibrary.ScreenGui then
     Env.Library = nil;
 end
 
-local ProtectGui = protectgui or (syn and syn.protect_gui) or (function() end);
+local ProtectGui = Exec.protect or (function() end);
 
 local function GetGuiParent()
     local Ok, Hui = pcall(function()
-        return type(gethui) == 'function' and gethui() or nil;
+        return Exec.gethui and Exec.gethui() or nil;
     end);
-    if Ok and Hui then
-        return Hui;
+    if Ok and typeof(Hui) == 'Instance' then
+        -- Real's gethui is CoreGui.RobloxGui: a ScreenGui nested in a ScreenGui does not render
+        local OkLayer, Layer = pcall(function() return Hui:IsA('LayerCollector'); end);
+        if true then
+            return Hui;
+        end;
     end;
     return CoreGui;
 end;
@@ -534,6 +581,9 @@ function Library:AddToolTip(InfoStr, HoverInstance)
         BackgroundColor3 = 'MainColor';
     });
     local Follow
+    Library:GiveSignal(function()
+        if Follow then Follow:Disconnect(); Follow = nil end
+    end)
 
     Library:Hover(HoverInstance, function()
         if Library:MouseIsOverOpenedFrame() then
@@ -627,13 +677,18 @@ function Library:DetectSideMouse()
     return Library.SideMouseSupported;
 end;
 
+-- MB4/MB5 are hidden (shown as unbound) while no key-state function exists; the bound value is kept for configs.
+function Library:SideKeyHidden(Key)
+    return Library.SideKeys[Key] ~= nil and not Library.SideMouseSupported;
+end;
+
 function Library:SideDown(Key)
     local Code = Library.SideKeys[Key];
     if not SidePollFn or not Code then
         return false;
     end;
-    if type(isrbxactive) == 'function' then
-        local Ok, Active = pcall(isrbxactive);
+    if Exec.isactive then
+        local Ok, Active = pcall(Exec.isactive);
         if Ok and Active == false then
             return false;
         end;
@@ -1498,7 +1553,7 @@ function Library:GetIcon(Name)
     if type(Name) ~= 'string' or Name == '' then
         return nil;
     end;
-    if Name:find('rbxasset', 1, true) or Name:find('http', 1, true) == 1 then
+    if Name:find('rbxasset', 1, true) or Name:find('rbxthumb', 1, true) == 1 or Name:find('http', 1, true) == 1 then
         return { Image = Name; ImageRectOffset = Vector2.new(0, 0); ImageRectSize = Vector2.new(0, 0) };
     end;
     local Key = Name:lower();
@@ -1561,7 +1616,7 @@ Library.LogoListeners = {};
 
 task.spawn(function()
     pcall(function()
-        if type(writefile) ~= 'function' or type(getcustomasset) ~= 'function' then
+        if type(writefile) ~= 'function' or not Exec.customasset then
             return;
         end;
         local Path = 'Aster/aster_logo_v5.png';
@@ -1571,7 +1626,7 @@ task.spawn(function()
             end;
         end);
         local Base = Env.AsterRepo or 'https://raw.githubusercontent.com/WhyWKey/linoria/main/';
-        local Ok, Data = pcall(function() return game:HttpGet(Base .. 'aster_logo.png'); end);
+        local Ok, Data = pcall(Exec.HttpGet, Base .. 'aster_logo.png');
         local FromCache = false;
         if not (Ok and type(Data) == 'string' and #Data > 64 and string.sub(Data, 2, 4) == 'PNG') then
             Data = nil;
@@ -1588,7 +1643,7 @@ task.spawn(function()
         if not FromCache then
             writefile(Path, Data);
         end;
-        local Asset = getcustomasset(Path);
+        local Asset = Exec.customasset(Path);
         if type(Asset) ~= 'string' or Asset == '' then
             return;
         end;
@@ -2349,12 +2404,12 @@ do
             end)
 
             ContextMenu:AddOption('Copy HEX', function()
-                pcall(setclipboard, ColorPicker.Value:ToHex())
+                pcall(Exec.clipboard, ColorPicker.Value:ToHex())
                 Library:Notify('Copied hex code to clipboard!', 2)
             end)
 
             ContextMenu:AddOption('Copy RGB', function()
-                pcall(setclipboard, table.concat({ math.floor(ColorPicker.Value.R * 255), math.floor(ColorPicker.Value.G * 255), math.floor(ColorPicker.Value.B * 255) }, ', '))
+                pcall(Exec.clipboard, table.concat({ math.floor(ColorPicker.Value.R * 255), math.floor(ColorPicker.Value.G * 255), math.floor(ColorPicker.Value.B * 255) }, ', '))
                 Library:Notify('Copied RGB values to clipboard!', 2)
             end)
         end
@@ -2771,7 +2826,7 @@ do
             end
 
             local Filter = Library.KeybindFilter;
-            if Filter.OnlyBound and KeyPicker.Value == 'None' then
+            if Filter.OnlyBound and (KeyPicker.Value == 'None' or Library:SideKeyHidden(KeyPicker.Value)) then
                 Want = false;
             end;
             if Filter.OnlyEnabled then
@@ -2888,11 +2943,6 @@ do
 
             -- steady '[...]': animated dots would resize the chip and re-lay the row every tick
             DisplayLabel.Text = '...';
-
-            if not Library.SideMouseSupported and not Library.SideNoticeShown then
-                Library.SideNoticeShown = true;
-                Library:Notify('Side mouse buttons need an executor with iskeypressed', 5);
-            end;
 
             wait(0.2);
 
@@ -4875,6 +4925,7 @@ do
         Info = type(Info) == 'table' and Info or {};
         local Groupbox = self;
         local Container = Groupbox.Container;
+        local Fill = Info.Height == 'Fill';
         local Height = math.max(40, tonumber(Info.Height) or 200);
         local LABEL_H = type(Info.Text) == 'string' and 17 or 0;
 
@@ -4911,7 +4962,7 @@ do
 
         local Holder = Library:Create('Frame', {
             BackgroundTransparency = 1;
-            Size = UDim2.new(1, 0, 0, LABEL_H + Height + 5);
+            Size = Fill and UDim2.new(1, 0, 1, 0) or UDim2.new(1, 0, 0, LABEL_H + Height + 5);
             ZIndex = 5;
             Parent = Container;
         });
@@ -4934,7 +4985,7 @@ do
             Active = true;
             BackgroundColor3 = BgFixed or Library[BgKey] or Library.InputColor;
             Position = UDim2.fromOffset(0, LABEL_H);
-            Size = UDim2.new(1, 0, 0, Height);
+            Size = Fill and UDim2.new(1, 0, 1, -LABEL_H) or UDim2.new(1, 0, 0, Height);
             ZIndex = 5;
             Parent = Holder;
         });
@@ -4985,6 +5036,33 @@ do
         end;
         if type(Info.Tooltip) == 'string' then
             Library:AddToolTip(Info.Tooltip, View);
+        end;
+        -- shown in place of the model while there is none (a thumbnail while the real avatar loads)
+        local Fallback = Library:Create('ImageLabel', {
+            Name = 'Fallback';
+            BackgroundTransparency = 1;
+            ScaleType = Enum.ScaleType.Fit;
+            Size = UDim2.fromScale(1, 1);
+            Visible = false;
+            ZIndex = 5;
+            Parent = View;
+        });
+        local Status = Library:CreateLabel({
+            Dim = true;
+            Position = UDim2.fromOffset(8, 6);
+            Size = UDim2.new(1, -16, 0, 14);
+            Text = '';
+            TextSize = Library.FontSize - 1;
+            TextTruncate = Enum.TextTruncate.AtEnd;
+            TextXAlignment = Enum.TextXAlignment.Left;
+            Visible = false;
+            ZIndex = 6;
+            Parent = View;
+        });
+        local function SyncEmpty()
+            local None = Viewport.Model == nil;
+            Fallback.Visible = None and Viewport.Fallback ~= nil;
+            Empty.Visible = None and Viewport.Fallback == nil;
         end;
 
         local function Apply()
@@ -5087,9 +5165,27 @@ do
                     end;
                 end;
             end;
-            Empty.Visible = Viewport.Model == nil;
+            SyncEmpty();
             Fit(KeepView, KeepView and Old ~= nil);
             return Viewport.Model;
+        end;
+
+        -- a '%d' in the image is filled with the local UserId (rbxthumb avatar urls)
+        function Viewport:SetFallback(Image)
+            if type(Image) == 'number' then Image = 'rbxassetid://' .. Image end;
+            if type(Image) ~= 'string' or Image == '' then Image = nil end;
+            if Image and Image:find('%d', 1, true) then
+                Image = Image:gsub('%%d', tostring(tonumber(LocalPlayer.UserId) or 0));
+            end;
+            Viewport.Fallback = Image;
+            Fallback.Image = Image or '';
+            SyncEmpty();
+        end;
+
+        function Viewport:SetStatus(Text)
+            Text = Text ~= nil and tostring(Text) or '';
+            Status.Text = Text;
+            Status.Visible = Text ~= '';
         end;
 
         function Viewport:GetModel()
@@ -5224,6 +5320,9 @@ do
         Viewport.Holder = Holder;
         Viewport.Frame = View;
         Viewport.Camera = Camera;
+        Viewport.FallbackImage = Fallback;
+        Viewport.StatusLabel = Status;
+        Viewport:SetFallback(Info.Fallback);
         Viewport:SetModel(Info.Model);
 
         Groupbox:Resize();
@@ -5236,22 +5335,33 @@ do
         Info = type(Info) == 'table' and Info or {};
         local Groupbox = self;
         local Container = Groupbox.Container;
-        local TILE = math.max(32, tonumber(Info.TileSize) or 72);
-        local GAP, NAME_H, HEAD_H, PAD_R = 6, 20, 22, 6;
+        local TILE = math.max(32, tonumber(Info.MinTile) or tonumber(Info.TileSize) or 72);
+        local Aspect = tonumber(Info.Aspect);
+        local GAP, NAME_H, PAD_R = 6, 20, 6;
+        local HEAD_H = Info.Header == false and 0 or 22;
+        local HEAD_GAP = HEAD_H > 0 and 4 or 0;
         local TILE_H = TILE + NAME_H;
+        local ROW_H, ROW_GAP = math.max(24, math.floor(tonumber(Info.RowHeight) or 52)), 4;
+        local Virtual = Info.Virtual == true;
+        local Fill = Info.Height == 'Fill';
         local Height = math.max(60, tonumber(Info.Height) or 240);
         local LABEL_H = type(Info.Text) == 'string' and 17 or 0;
         local SEARCH_H = Info.Search and 28 or 0;
+        local TOP = LABEL_H + HEAD_H + HEAD_GAP + SEARCH_H;
         local Multi = Info.Multi == true;
 
         local Gallery = {
             Type = 'Gallery';
             Multi = Multi;
+            Virtual = Virtual;
+            View = (Virtual or Info.View == 'List') and 'List' or 'Grid';
             Items = {};
+            Data = {};
             Path = {};
             Filter = '';
             Value = Multi and {} or nil;
             Tiles = {};
+            Pool = {};
             Columns = 1;
             Callback = Info.Callback or function(Item, Path, Selected) end;
         };
@@ -5313,7 +5423,7 @@ do
 
         local Holder = Library:Create('Frame', {
             BackgroundTransparency = 1;
-            Size = UDim2.new(1, 0, 0, LABEL_H + HEAD_H + 4 + SEARCH_H + Height + 5);
+            Size = Fill and UDim2.new(1, 0, 1, 0) or UDim2.new(1, 0, 0, TOP + Height + 5);
             ZIndex = 5;
             Parent = Container;
         });
@@ -5333,6 +5443,7 @@ do
             BackgroundTransparency = 1;
             Position = UDim2.fromOffset(0, LABEL_H);
             Size = UDim2.new(1, 0, 0, HEAD_H);
+            Visible = HEAD_H > 0;
             ZIndex = 5;
             Parent = Holder;
         });
@@ -5383,7 +5494,7 @@ do
         if Info.Search then
             local SearchOuter = Library:Create('Frame', {
                 BackgroundColor3 = Library.InputColor;
-                Position = UDim2.fromOffset(0, LABEL_H + HEAD_H + 4);
+                Position = UDim2.fromOffset(0, LABEL_H + HEAD_H + HEAD_GAP);
                 Size = UDim2.new(1, 0, 0, 24);
                 ZIndex = 5;
                 Parent = Holder;
@@ -5418,8 +5529,8 @@ do
         local ListOuter = Library:Create('Frame', {
             BackgroundTransparency = 1;
             ClipsDescendants = true;
-            Position = UDim2.fromOffset(0, LABEL_H + HEAD_H + 4 + SEARCH_H);
-            Size = UDim2.new(1, 0, 0, Height);
+            Position = UDim2.fromOffset(0, TOP);
+            Size = Fill and UDim2.new(1, 0, 1, -TOP) or UDim2.new(1, 0, 0, Height);
             ZIndex = 5;
             Parent = Holder;
         });
@@ -5444,12 +5555,13 @@ do
             PaddingRight = UDim.new(0, PAD_R);
             Parent = List;
         });
-        local Grid = Library:Create('UIGridLayout', {
+        -- a virtual list places its pooled rows itself
+        local Grid = (not Virtual) and Library:Create('UIGridLayout', {
             CellPadding = UDim2.fromOffset(GAP, GAP);
             CellSize = UDim2.fromOffset(TILE, TILE_H);
             SortOrder = Enum.SortOrder.LayoutOrder;
             Parent = List;
-        });
+        }) or nil;
         local Empty = Library:CreateLabel({
             Dim = true;
             AnchorPoint = Vector2.new(0.5, 0.5);
@@ -5464,23 +5576,89 @@ do
         HoldWheel(ListOuter, function()
             return List.CanvasSize.Y.Offset > ListOuter.AbsoluteSize.Y / math.max(Library.UIScale, 0.1);
         end);
+        -- status while items exist ('Loading...' under a filled list); with no items the empty label says it
+        local StatusChip = Library:Create('Frame', {
+            Name = 'Status';
+            AnchorPoint = Vector2.new(0.5, 1);
+            BackgroundColor3 = Library.MainColor;
+            Position = UDim2.new(0.5, 0, 1, -6);
+            Size = UDim2.fromOffset(80, 20);
+            Visible = false;
+            ZIndex = 12;
+            Parent = ListOuter;
+        });
+        Library:Round(StatusChip, 5);
+        Library:Stroke(StatusChip, 'OutlineColor');
+        Library:AddToRegistry(StatusChip, { BackgroundColor3 = 'MainColor' });
+        local StatusText = Library:CreateLabel({
+            Dim = true;
+            Size = UDim2.fromScale(1, 1);
+            Text = '';
+            TextSize = Library.FontSize - 1;
+            ZIndex = 13;
+            Parent = StatusChip;
+        });
 
+        local function ScrollY()
+            local Pos = List.CanvasPosition;
+            return Pos and Pos.Y or 0;
+        end;
+
+        -- OnEnd fires once per item count, so a page that adds nothing ends the paging
+        local EndAt;
+        local function CheckEnd()
+            if type(Info.OnEnd) ~= 'function' or #Gallery.Path > 0 or #Gallery.Items == 0 or EndAt == #Gallery.Items then return end;
+            local ViewH = ListOuter.AbsoluteSize.Y / math.max(Library.UIScale, 0.1);
+            local Margin = tonumber(Info.EndThreshold) or ROW_H;
+            if ScrollY() + ViewH < List.CanvasSize.Y.Offset - Margin then return end;
+            EndAt = #Gallery.Items;
+            task.spawn(Library.SafeCallback, Library, Info.OnEnd, Gallery);
+        end;
+
+        local Refresh;
         -- tiles stretch to fill the row; Info.Columns fixes the count, otherwise as many TileSize tiles as fit
         local function Layout()
             local W = List.AbsoluteSize.X / math.max(Library.UIScale, 0.1) - PAD_R - 1;
-            local Cols = tonumber(Info.Columns) and math.max(1, math.floor(Info.Columns))
-                or math.max(1, math.floor((W + GAP) / (TILE + GAP)));
-            local CellW = math.max(24, math.floor((W - GAP * (Cols - 1)) / Cols));
+            if Virtual then
+                Gallery.Columns = 1;
+                local Count = #Gallery.Data;
+                List.CanvasSize = UDim2.fromOffset(0, Count > 0 and (Count * (ROW_H + ROW_GAP) - ROW_GAP + 2) or 0);
+                Refresh();
+                CheckEnd();
+                return;
+            end;
+            local Cols, CellW, CellH, Gap;
+            if Gallery.View == 'List' then
+                Cols, CellW, CellH, Gap = 1, math.max(24, math.floor(W)), ROW_H, ROW_GAP;
+            else
+                Cols = tonumber(Info.Columns) and math.max(1, math.floor(Info.Columns))
+                    or math.max(1, math.floor((W + GAP) / (TILE + GAP)));
+                CellW = math.max(24, math.floor((W - GAP * (Cols - 1)) / Cols));
+                CellH = Aspect and math.max(NAME_H + 24, math.floor(CellW * Aspect)) or TILE_H;
+                Gap = GAP;
+            end;
             Gallery.Columns = Cols;
-            Grid.CellSize = UDim2.fromOffset(CellW, TILE_H);
+            Grid.CellPadding = UDim2.fromOffset(Gap, Gap);
+            Grid.CellSize = UDim2.fromOffset(CellW, CellH);
             local Shown = 0;
             for _, Tile in ipairs(Gallery.Tiles) do
                 if Tile.Frame.Visible then Shown = Shown + 1 end;
             end;
             local Rows = math.ceil(Shown / Cols);
-            List.CanvasSize = UDim2.fromOffset(0, Rows > 0 and (Rows * (TILE_H + GAP) - GAP + 2) or 0);
+            List.CanvasSize = UDim2.fromOffset(0, Rows > 0 and (Rows * (CellH + Gap) - Gap + 2) or 0);
+            CheckEnd();
         end;
         List:GetPropertyChangedSignal('AbsoluteSize'):Connect(Layout);
+        ListOuter:GetPropertyChangedSignal('AbsoluteSize'):Connect(function()
+            if Virtual then Layout() end;
+        end);
+        -- Render resets the scroll before the canvas is re-measured; that reset must not page
+        local Resetting = false;
+        List:GetPropertyChangedSignal('CanvasPosition'):Connect(function()
+            if Resetting then return end;
+            if Virtual then Refresh() end;
+            CheckEnd();
+        end);
 
         -- one tooltip per gallery (tiles are rebuilt on every navigation)
         local Tip, TipName, TipSub, TipConn, TipOwner;
@@ -5550,6 +5728,87 @@ do
             end;
         end;
 
+        local function CheckBadge(Parent)
+            local Badge = Library:Create('Frame', {
+                Name = 'Badge';
+                AnchorPoint = Vector2.new(1, 0);
+                BackgroundColor3 = Library.AccentColor;
+                Position = UDim2.new(1, -4, 0, 4);
+                Size = UDim2.fromOffset(16, 16);
+                Visible = false;
+                ZIndex = 10;
+                Parent = Parent;
+            });
+            Library:Round(Badge, 8);
+            Library:AddToRegistry(Badge, { BackgroundColor3 = 'AccentColor' });
+            local Check = Library:Create('ImageLabel', {
+                AnchorPoint = Vector2.new(0.5, 0.5);
+                BackgroundTransparency = 1;
+                ImageColor3 = Color3.new(1, 1, 1);
+                Position = UDim2.fromScale(0.5, 0.5);
+                Size = UDim2.fromOffset(10, 10);
+                ZIndex = 11;
+                Parent = Badge;
+            });
+            if not Library:ApplyIcon(Check, 'check') then
+                Check:Destroy();
+                Library:Create('TextLabel', {
+                    BackgroundTransparency = 1;
+                    Font = Library:BoldFont();
+                    Size = UDim2.fromScale(1, 1);
+                    Text = utf8 and utf8.char(0x2713) or 'v';
+                    TextColor3 = Color3.new(1, 1, 1);
+                    TextSize = Library.FontSize - 2;
+                    ZIndex = 11;
+                    Parent = Badge;
+                });
+            end;
+            return Badge;
+        end;
+
+        -- small MainColor chip with dim text (folder counts, Item.Badge); returns the chip and its width
+        local function TagChip(Parent, Name, Text, X)
+            local W = math.ceil(Library:GetTextBounds(Text, Library.Font, Library.FontSize - 2)) + 10;
+            local Chip = Library:Create('Frame', {
+                Name = Name;
+                BackgroundColor3 = Library.MainColor;
+                BackgroundTransparency = 0.15;
+                Position = UDim2.fromOffset(X, 4);
+                Size = UDim2.fromOffset(W, 14);
+                ZIndex = 10;
+                Parent = Parent;
+            });
+            Library:Round(Chip, 4);
+            Library:AddToRegistry(Chip, { BackgroundColor3 = 'MainColor' });
+            Library:CreateLabel({
+                Dim = true;
+                Size = UDim2.fromScale(1, 1);
+                Text = Text;
+                TextSize = Library.FontSize - 2;
+                ZIndex = 11;
+                Parent = Chip;
+            });
+            return Chip, W;
+        end;
+
+        local STAR = utf8 and utf8.char(0x2605) or '*';
+        local function StarMark(Parent, Props)
+            local Star = Library:Create('TextLabel', {
+                Name = 'Star';
+                BackgroundTransparency = 1;
+                Font = Library.Font;
+                Size = UDim2.fromOffset(14, 14);
+                Text = STAR;
+                TextColor3 = Library.AccentColor;
+                TextSize = Library.FontSize;
+                ZIndex = 10;
+                Parent = Parent;
+            });
+            Library:AddToRegistry(Star, { TextColor3 = 'AccentColor' });
+            for Key, Value in next, Props do Star[Key] = Value end;
+            return Star;
+        end;
+
         local Activate;
         local function BuildTile(Item, Order)
             local Tile = { Item = Item; Id = IdOf(Item); Folder = IsFolder(Item); Hovered = false };
@@ -5568,15 +5827,20 @@ do
             end;
             Library:AddToRegistry(Frame, { BackgroundColor3 = 'InputColor' });
 
+            -- relative to the cell so Aspect (cell height from width) keeps the name row at the bottom
             local Art = Library:Create('Frame', {
                 BackgroundTransparency = 1;
                 Position = UDim2.fromOffset(4, 4);
-                Size = UDim2.new(1, -8, 0, TILE - 6);
+                Size = UDim2.new(1, -8, 1, -(NAME_H + 6));
                 ZIndex = 8;
                 Parent = Frame;
             });
             local Icon = Library:GetIcon(Item.Image);
-            if Icon then
+            if typeof(Item.Swatch) == 'Color3' then
+                Art.BackgroundTransparency = 0;
+                Art.BackgroundColor3 = Item.Swatch;
+                Library:Round(Art, 4);
+            elseif Icon then
                 Library:Create('ImageLabel', {
                     BackgroundTransparency = 1;
                     Image = Icon.Image;
@@ -5613,7 +5877,7 @@ do
             end;
 
             Tile.Label = Library:CreateLabel({
-                Position = UDim2.fromOffset(6, TILE - 2);
+                Position = UDim2.new(0, 6, 1, -(NAME_H + 2));
                 Size = UDim2.new(1, -12, 0, NAME_H - 6);
                 Text = NameOf(Item);
                 TextSize = Library.FontSize - 1;
@@ -5639,63 +5903,21 @@ do
                 Library:Round(Bar, 1);
             end;
 
+            -- top-left, in order: folder count, favourite star, Item.Badge text
+            local X = 4;
             if Tile.Folder then
-                local Text = tostring(#Clean(Item.Children));
-                local Chip = Library:Create('Frame', {
-                    Name = 'Count';
-                    BackgroundColor3 = Library.MainColor;
-                    BackgroundTransparency = 0.15;
-                    Position = UDim2.fromOffset(4, 4);
-                    Size = UDim2.fromOffset(Library:GetTextBounds(Text, Library.Font, Library.FontSize - 2) + 10, 14);
-                    ZIndex = 10;
-                    Parent = Frame;
-                });
-                Library:Round(Chip, 4);
-                Library:AddToRegistry(Chip, { BackgroundColor3 = 'MainColor' });
-                Library:CreateLabel({
-                    Dim = true;
-                    Size = UDim2.fromScale(1, 1);
-                    Text = Text;
-                    TextSize = Library.FontSize - 2;
-                    ZIndex = 11;
-                    Parent = Chip;
-                });
+                local _, W = TagChip(Frame, 'Count', tostring(#Clean(Item.Children)), X);
+                X = X + W + 4;
+            end;
+            if Item.Star then
+                StarMark(Frame, { Position = UDim2.fromOffset(X, 4) });
+                X = X + 18;
+            end;
+            if Item.Badge ~= nil and tostring(Item.Badge) ~= '' then
+                TagChip(Frame, 'Tag', tostring(Item.Badge), X);
             end;
 
-            local Badge = Library:Create('Frame', {
-                Name = 'Badge';
-                AnchorPoint = Vector2.new(1, 0);
-                BackgroundColor3 = Library.AccentColor;
-                Position = UDim2.new(1, -4, 0, 4);
-                Size = UDim2.fromOffset(16, 16);
-                Visible = false;
-                ZIndex = 10;
-                Parent = Frame;
-            });
-            Library:Round(Badge, 8);
-            Library:AddToRegistry(Badge, { BackgroundColor3 = 'AccentColor' });
-            local Check = Library:Create('ImageLabel', {
-                AnchorPoint = Vector2.new(0.5, 0.5);
-                BackgroundTransparency = 1;
-                ImageColor3 = Color3.new(1, 1, 1);
-                Position = UDim2.fromScale(0.5, 0.5);
-                Size = UDim2.fromOffset(10, 10);
-                ZIndex = 11;
-                Parent = Badge;
-            });
-            if not Library:ApplyIcon(Check, 'check') then
-                Check:Destroy();
-                Library:Create('TextLabel', {
-                    BackgroundTransparency = 1;
-                    Font = Library:BoldFont();
-                    Size = UDim2.fromScale(1, 1);
-                    Text = utf8 and utf8.char(0x2713) or 'v';
-                    TextColor3 = Color3.new(1, 1, 1);
-                    TextSize = Library.FontSize - 2;
-                    ZIndex = 11;
-                    Parent = Badge;
-                });
-            end;
+            local Badge = CheckBadge(Frame);
 
             Library:Hover(Frame, function()
                 Tile.Hovered = true;
@@ -5719,38 +5941,316 @@ do
             return Tile;
         end;
 
-        local function ApplyFilter()
-            local Query, Shown, Total = Gallery.Filter, 0, #Gallery.Tiles;
-            for _, Tile in ipairs(Gallery.Tiles) do
-                local Item, Hit = Tile.Item, Query == '';
-                if not Hit then
-                    local Fields = { NameOf(Item), Item.Subtitle, type(Item.Id) ~= 'table' and Item.Id or nil };
-                    for Index = 1, 3 do
-                        local Field = Fields[Index];
-                        if Field ~= nil and string.find(string.lower(tostring(Field)), Query, 1, true) then
-                            Hit = true;
-                            break;
-                        end;
+        -- List view row: built once, re-bound to any item (the virtual list pools these)
+        local ART = ROW_H - 12;
+        local TEXT_X = 6 + ART + 10;
+        local HoverButton = type(Info.HoverButton) == 'table' and Info.HoverButton or nil;
+
+        local function ArrangeRow(Tile)
+            local W, N = 0, 0;
+            for _, Child in ipairs(Tile.Right:GetChildren()) do
+                if Child:IsA('GuiObject') and Child.Visible then
+                    W, N = W + Child.Size.X.Offset, N + 1;
+                end;
+            end;
+            W = W + math.max(0, N - 1) * 6;
+            Tile.Right.Size = UDim2.fromOffset(W, 20);
+            local Room = -(TEXT_X + 8 + (W > 0 and W + 10 or 0));
+            Tile.Label.Size = UDim2.new(1, Room, 0, 16);
+            Tile.Sub.Size = UDim2.new(1, Room, 0, 14);
+        end;
+
+        local function NewRow()
+            local Tile = { Hovered = false; Buttons = {}; Actions = {} };
+            local Frame = Library:Create('Frame', {
+                Name = 'Tile';
+                Active = true;
+                BackgroundColor3 = Library.InputColor;
+                Size = UDim2.new(1, 0, 0, ROW_H);
+                ZIndex = 7;
+                Parent = List;
+            });
+            Library:Round(Frame, 5);
+            local Stroke = Library:Stroke(Frame, 'OutlineColor');
+            Library.RegistryMap[Stroke].Properties.Color = function()
+                return (Tile.Hovered or IsSelected(Tile.Id)) and Library.AccentColor or Library.OutlineColor;
+            end;
+            Library:AddToRegistry(Frame, { BackgroundColor3 = 'InputColor' });
+
+            local Art = Library:Create('Frame', {
+                Name = 'Art';
+                BackgroundColor3 = Library.MainColor;
+                Position = UDim2.fromOffset(6, 6);
+                Size = UDim2.fromOffset(ART, ART);
+                ZIndex = 8;
+                Parent = Frame;
+            });
+            Library:Round(Art, 4);
+            Library:AddToRegistry(Art, { BackgroundColor3 = function()
+                local Swatch = Tile.Item and Tile.Item.Swatch;
+                return typeof(Swatch) == 'Color3' and Swatch or Library.MainColor;
+            end });
+            Tile.Image = Library:Create('ImageLabel', {
+                BackgroundTransparency = 1;
+                ScaleType = Enum.ScaleType.Fit;
+                Size = UDim2.fromScale(1, 1);
+                ZIndex = 9;
+                Parent = Art;
+            });
+            Tile.Letter = Library:CreateLabel({
+                Dim = true;
+                Size = UDim2.fromScale(1, 1);
+                Text = '';
+                TextSize = Library.FontSize + 2;
+                ZIndex = 9;
+                Parent = Art;
+            });
+            Tile.Label = Library:CreateLabel({
+                Position = UDim2.fromOffset(TEXT_X, 0);
+                Text = '';
+                TextSize = Library.FontSize;
+                TextTruncate = Enum.TextTruncate.AtEnd;
+                TextXAlignment = Enum.TextXAlignment.Left;
+                ZIndex = 9;
+                Parent = Frame;
+            });
+            Library.RegistryMap[Tile.Label].Properties.TextColor3 = function()
+                return IsSelected(Tile.Id) and Library.AccentColor or Library.FontColor;
+            end;
+            Tile.Sub = Library:CreateLabel({
+                Dim = true;
+                Position = UDim2.fromOffset(TEXT_X, 0);
+                Text = '';
+                TextSize = Library.FontSize - 1;
+                TextTruncate = Enum.TextTruncate.AtEnd;
+                TextXAlignment = Enum.TextXAlignment.Left;
+                ZIndex = 9;
+                Parent = Frame;
+            });
+            Tile.Rarity = Library:Create('Frame', {
+                Name = 'Rarity';
+                Position = UDim2.fromOffset(2, 8);
+                Size = UDim2.new(0, 2, 1, -16);
+                Visible = false;
+                ZIndex = 9;
+                Parent = Frame;
+            });
+            Library:Round(Tile.Rarity, 1);
+
+            -- right side, in order: Item.Badge text, star, Item.Actions, HoverButton, check
+            local Right = Library:Create('Frame', {
+                Name = 'Right';
+                AnchorPoint = Vector2.new(1, 0.5);
+                BackgroundTransparency = 1;
+                Position = UDim2.new(1, -8, 0.5, 0);
+                Size = UDim2.fromOffset(0, 20);
+                ZIndex = 9;
+                Parent = Frame;
+            });
+            Library:Create('UIListLayout', {
+                FillDirection = Enum.FillDirection.Horizontal;
+                HorizontalAlignment = Enum.HorizontalAlignment.Right;
+                VerticalAlignment = Enum.VerticalAlignment.Center;
+                Padding = UDim.new(0, 6);
+                SortOrder = Enum.SortOrder.LayoutOrder;
+                Parent = Right;
+            });
+            Tile.Right = Right;
+            Tile.Tag = Library:CreateLabel({
+                Dim = true;
+                Name = 'Tag';
+                LayoutOrder = 1;
+                Size = UDim2.fromOffset(0, 20);
+                Text = '';
+                TextSize = Library.FontSize - 1;
+                Visible = false;
+                ZIndex = 10;
+                Parent = Right;
+            });
+            Tile.Star = StarMark(Right, { LayoutOrder = 2; Size = UDim2.fromOffset(14, 20); Visible = false });
+            if HoverButton then
+                Tile.Hover = Library:CreatePill(Right, tostring(HoverButton.Text or 'Play'), function()
+                    if Tile.Item then Library:SafeCallback(HoverButton.Callback, Tile.Item, Tile) end;
+                end, { Height = 20; ZIndex = 10 });
+                Tile.Hover.Frame.LayoutOrder = 100;
+                Tile.Hover.Frame.Visible = false;
+                table.insert(Tile.Buttons, Tile.Hover);
+            end;
+            local Badge = CheckBadge(Right);
+            Badge.AnchorPoint = Vector2.new(0, 0);
+            Badge.LayoutOrder = 200;
+
+            Library:Hover(Frame, function()
+                Tile.Hovered = true;
+                Library:Tween(Stroke, { Color = Library.AccentColor }, 0.12);
+                Library:Tween(Frame, { BackgroundColor3 = Library.InputColor:Lerp(Library.FontColor, 0.06) }, 0.12);
+                if Tile.Hover then
+                    Tile.Hover.Frame.Visible = true;
+                    ArrangeRow(Tile);
+                end;
+            end, function()
+                Tile.Hovered = false;
+                Library:Tween(Stroke, { Color = IsSelected(Tile.Id) and Library.AccentColor or Library.OutlineColor }, 0.12);
+                Library:Tween(Frame, { BackgroundColor3 = Library.InputColor }, 0.12);
+                if Tile.Hover then
+                    Tile.Hover.Frame.Visible = false;
+                    ArrangeRow(Tile);
+                end;
+            end);
+            -- a press on one of the row's buttons belongs to that button, not to the row
+            Frame.InputBegan:Connect(function(Input)
+                if not Tile.Item or not IsPointer(Input.UserInputType) or Library:MouseIsOverOpenedFrame() then return end;
+                for _, Button in ipairs(Tile.Buttons) do
+                    if Button.Frame.Visible and Library:IsMouseOverFrame(Button.Frame) then return end;
+                end;
+                Activate(Tile);
+            end);
+
+            Tile.Frame, Tile.Stroke, Tile.Badge, Tile.Art = Frame, Stroke, Badge, Art;
+            return Tile;
+        end;
+
+        local function BindRow(Tile, Item, Order)
+            Tile.Item, Tile.Id, Tile.Folder = Item, IdOf(Item), IsFolder(Item);
+            Tile.Frame.LayoutOrder = Order;
+            local Swatch = typeof(Item.Swatch) == 'Color3' and Item.Swatch or nil;
+            Tile.Art.BackgroundColor3 = Swatch or Library.MainColor;
+            local Icon = (not Swatch) and Library:GetIcon(Item.Image) or nil;
+            Tile.Image.Visible = Icon ~= nil;
+            if Icon then
+                Tile.Image.Image = Icon.Image;
+                Tile.Image.ImageRectOffset = Icon.ImageRectOffset;
+                Tile.Image.ImageRectSize = Icon.ImageRectSize;
+            end;
+            Tile.Letter.Visible = Swatch == nil and Icon == nil;
+            Tile.Letter.Text = string.upper(string.sub(NameOf(Item), 1, 1));
+
+            local SubText = Item.Subtitle ~= nil and tostring(Item.Subtitle)
+                or (Tile.Folder and (#Clean(Item.Children) .. ' items') or nil);
+            local NameY = SubText and math.floor((ROW_H - 32) / 2) or math.floor((ROW_H - 16) / 2);
+            Tile.Label.Text = NameOf(Item);
+            Tile.Label.Position = UDim2.fromOffset(TEXT_X, NameY);
+            Tile.Sub.Text = SubText or '';
+            Tile.Sub.Visible = SubText ~= nil;
+            Tile.Sub.Position = UDim2.fromOffset(TEXT_X, NameY + 18);
+
+            Tile.Rarity.Visible = typeof(Item.Color) == 'Color3';
+            if Tile.Rarity.Visible then Tile.Rarity.BackgroundColor3 = Item.Color end;
+
+            local TagText = Item.Badge ~= nil and tostring(Item.Badge) or '';
+            Tile.Tag.Text = TagText;
+            Tile.Tag.Visible = TagText ~= '';
+            Tile.Tag.Size = UDim2.fromOffset(TagText ~= '' and math.ceil(Library:GetTextBounds(TagText, Library.Font, Library.FontSize - 1)) or 0, 20);
+            Tile.Star.Visible = Item.Star == true;
+
+            if Tile.ActionList ~= Item.Actions then
+                for _, Pill in ipairs(Tile.Actions) do
+                    local At = table.find(Tile.Buttons, Pill);
+                    if At then table.remove(Tile.Buttons, At) end;
+                    pcall(function() Pill.Frame:Destroy() end);
+                end;
+                Tile.Actions, Tile.ActionList = {}, Item.Actions;
+                for Index, Action in ipairs(type(Item.Actions) == 'table' and Item.Actions or {}) do
+                    if type(Action) == 'table' then
+                        local Pill = Library:CreatePill(Tile.Right, tostring(Action.Text or Action[1] or '?'), function()
+                            if Tile.Item then Library:SafeCallback(Action.Callback or Action[2], Tile.Item, Tile) end;
+                        end, { Height = 20; ZIndex = 10 });
+                        Pill.Frame.LayoutOrder = 10 + Index;
+                        table.insert(Tile.Actions, Pill);
+                        table.insert(Tile.Buttons, Pill);
                     end;
                 end;
-                Tile.Frame.Visible = Hit;
-                if Hit then Shown = Shown + 1 end;
             end;
+            ArrangeRow(Tile);
+            Paint(Tile);
+        end;
+
+        local function MakeTile(Item, Order)
+            if Gallery.View ~= 'List' then return BuildTile(Item, Order) end;
+            local Tile = NewRow();
+            BindRow(Tile, Item, Order);
+            return Tile;
+        end;
+
+        -- only the rows in view exist; they are re-bound as the list scrolls
+        function Refresh()
+            if not Virtual then return end;
+            local Stride = ROW_H + ROW_GAP;
+            local ViewH = ListOuter.AbsoluteSize.Y / math.max(Library.UIScale, 0.1);
+            local Need = math.max(1, math.ceil(ViewH / Stride) + 1);
+            while #Gallery.Pool < Need do
+                table.insert(Gallery.Pool, NewRow());
+            end;
+            local First = math.max(0, math.floor(ScrollY() / Stride));
+            local Tiles = {};
+            for Index, Row in ipairs(Gallery.Pool) do
+                local At = First + Index;
+                local Item = Index <= Need and Gallery.Data[At] or nil;
+                if Item then
+                    if Row.Item ~= Item then BindRow(Row, Item, At) end;
+                    Row.Frame.Position = UDim2.fromOffset(0, (At - 1) * Stride);
+                    Row.Frame.Visible = true;
+                    table.insert(Tiles, Row);
+                else
+                    Row.Item, Row.Id = nil, nil;
+                    Row.Frame.Visible = false;
+                end;
+            end;
+            Gallery.Tiles = Tiles;
+        end;
+
+        local function Hits(Item, Query)
+            local Fields = { NameOf(Item), Item.Subtitle, type(Item.Id) ~= 'table' and Item.Id or nil };
+            for Index = 1, 3 do
+                local Field = Fields[Index];
+                if Field ~= nil and string.find(string.lower(tostring(Field)), Query, 1, true) then
+                    return true;
+                end;
+            end;
+            return false;
+        end;
+
+        local function ApplyFilter()
+            local Query, Shown, Total = Gallery.Filter, 0, 0;
+            local Data = {};
+            if Virtual then
+                for _, Item in ipairs(Level()) do
+                    Total = Total + 1;
+                    if Query == '' or Hits(Item, Query) then table.insert(Data, Item) end;
+                end;
+            else
+                Total = #Gallery.Tiles;
+                for _, Tile in ipairs(Gallery.Tiles) do
+                    local Hit = Query == '' or Hits(Tile.Item, Query);
+                    Tile.Frame.Visible = Hit;
+                    if Hit then table.insert(Data, Tile.Item) end;
+                end;
+            end;
+            Gallery.Data = Data;
+            Shown = #Data;
             Count.Text = Query ~= '' and string.format('%d / %d', Shown, Total)
                 or string.format('%d %s', Total, Total == 1 and 'item' or 'items');
-            Empty.Text = Total == 0 and (type(Info.EmptyText) == 'string' and Info.EmptyText or 'No items') or 'No matches';
+            Empty.Text = Gallery.Status
+                or (Total == 0 and (type(Info.EmptyText) == 'string' and Info.EmptyText or 'No items') or 'No matches');
             Empty.Visible = Shown == 0;
+            StatusChip.Visible = Gallery.Status ~= nil and Shown > 0;
+            if StatusChip.Visible then
+                StatusText.Text = Gallery.Status;
+                StatusChip.Size = UDim2.fromOffset(math.ceil(Library:GetTextBounds(Gallery.Status, Library.Font, Library.FontSize - 1)) + 20, 20);
+            end;
             Layout();
         end;
 
         local function Render()
             HideTip();
-            for _, Tile in ipairs(Gallery.Tiles) do
-                pcall(function() Tile.Frame:Destroy() end);
-            end;
-            Gallery.Tiles = {};
-            for Order, Item in ipairs(Level()) do
-                table.insert(Gallery.Tiles, BuildTile(Item, Order));
+            if not Virtual then
+                for _, Tile in ipairs(Gallery.Tiles) do
+                    pcall(function() Tile.Frame:Destroy() end);
+                end;
+                Gallery.Tiles = {};
+                for Order, Item in ipairs(Level()) do
+                    table.insert(Gallery.Tiles, MakeTile(Item, Order));
+                end;
             end;
             local Top = Gallery.Path[#Gallery.Path];
             local X = Top and (BackW + 8) or 0;
@@ -5758,7 +6258,9 @@ do
             Title.Text = Top and NameOf(Top) or (type(Info.Title) == 'string' and Info.Title or 'All');
             Title.Position = UDim2.fromOffset(X, 0);
             Title.Size = UDim2.new(1, -X - 72, 1, 0);
+            Resetting = true;
             pcall(function() List.CanvasPosition = Vector2.new(0, 0) end);
+            Resetting = false;
             ApplyFilter();
         end;
 
@@ -5813,6 +6315,7 @@ do
 
         function Gallery:SetItems(Items)
             Gallery.Items = Clean(Items);
+            EndAt = nil;
             -- stay in the open folder while it still exists
             local Path, List = {}, Gallery.Items;
             for _, Old in ipairs(Gallery.Path) do
@@ -5929,6 +6432,43 @@ do
             Groupbox:Resize();
         end;
 
+        -- 'Grid' or 'List'; a virtual gallery is always a list
+        function Gallery:SetView(View)
+            View = View == 'List' and 'List' or 'Grid';
+            if Virtual or View == Gallery.View then return false end;
+            Gallery.View = View;
+            Render();
+            return true;
+        end;
+
+        -- adds to the root level without rebuilding the tiles already there (paged results); returns the count added
+        function Gallery:AppendItems(Items)
+            local Added = Clean(Items);
+            for _, Item in ipairs(Added) do
+                table.insert(Gallery.Items, Item);
+            end;
+            if #Added == 0 then return 0 end;
+            if #Gallery.Path == 0 and not Virtual then
+                local Base = #Gallery.Tiles;
+                for Index, Item in ipairs(Added) do
+                    table.insert(Gallery.Tiles, MakeTile(Item, Base + Index));
+                end;
+            end;
+            ApplyFilter();
+            return #Added;
+        end;
+
+        -- nil or '' clears it; shown in place of the empty text, or as a chip under the items
+        function Gallery:SetStatus(Text)
+            Text = Text ~= nil and tostring(Text) or '';
+            Gallery.Status = Text ~= '' and Text or nil;
+            ApplyFilter();
+        end;
+
+        function Gallery:Refresh()
+            ApplyFilter();
+        end;
+
         BackButton.InputBegan:Connect(function(Input)
             if IsPointer(Input.UserInputType) and not Library:MouseIsOverOpenedFrame() then
                 Gallery:Back();
@@ -5952,7 +6492,10 @@ do
         Gallery.EmptyLabel = Empty;
         Gallery.BackButton = BackButton;
         Gallery.SearchBox = SearchBox;
+        Gallery.ListOuter = ListOuter;
+        Gallery.StatusChip = StatusChip;
         Gallery:SetItems(Info.Items);
+        if Info.Status ~= nil then Gallery:SetStatus(Info.Status) end;
 
         Groupbox:Resize();
         if Idx ~= nil then Options[Idx] = Gallery end;
@@ -6000,6 +6543,23 @@ do
     WrapSearch('AddViewport', InfoText);
     WrapSearch('AddGallery', InfoText);
 
+    -- outside a groupbox (a canvas pane, any Frame): no search entry, nothing to resize
+    local function LooseHost(Parent, What)
+        local Wrapper = typeof(Parent) ~= 'Instance' and type(Parent) == 'table';
+        if Wrapper and Parent.Container and Parent.Resize then return Parent end;
+        local Frame = Wrapper and (Parent.Frame or Parent.Container) or Parent;
+        assert(typeof(Frame) == 'Instance', What .. ': missing parent');
+        return { Container = Frame; NoSearch = true; Resize = function() end };
+    end;
+    function Library:CreateViewport(Parent, Info)
+        Info = type(Info) == 'table' and Info or {};
+        return Funcs.AddViewport(LooseHost(Parent, 'CreateViewport'), Info.Idx, Info);
+    end;
+    function Library:CreateGallery(Parent, Info)
+        Info = type(Info) == 'table' and Info or {};
+        return Funcs.AddGallery(LooseHost(Parent, 'CreateGallery'), Info.Idx, Info);
+    end;
+
     BaseGroupbox.__index = Funcs;
     BaseGroupbox.__namecall = function(Table, Key, ...)
         return Funcs[Key](...);
@@ -6022,6 +6582,980 @@ function Library:AddChangedHook(Element, Hook)
         end;
     end;
     table.insert(Element.Hooks, Hook);
+end;
+
+-- Canvas widgets --------------------------------------------------------------
+-- Building blocks for full-area canvases (Tab:AddCanvas); each also works in any Frame.
+local function FrameOf(Parent)
+    if typeof(Parent) ~= 'Instance' and type(Parent) == 'table' then return Parent.Container or Parent.Frame end;
+    return Parent;
+end;
+
+local function IsClick(Input)
+    return (Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch)
+        and not Library:MouseIsOverOpenedFrame();
+end;
+
+-- Info: { Color = 'MainColor', Position, Size, Radius = 6, ZIndex = 5 }. Returns the frame and its stroke.
+function Library:CreateBevel(Parent, Info)
+    Info = type(Info) == 'table' and Info or {};
+    local Key = type(Info.Color) == 'string' and Info.Color or 'MainColor';
+    local Frame = Library:Create('Frame', {
+        BackgroundColor3 = Library[Key];
+        Position = Info.Position or UDim2.new(0, 0, 0, 0);
+        Size = Info.Size or UDim2.new(1, 0, 1, 0);
+        ZIndex = Info.ZIndex or 5;
+        Parent = FrameOf(Parent);
+    });
+    Library:Round(Frame, Info.Radius or 6);
+    local Stroke = Library:Stroke(Frame, 'OutlineColor');
+    Library:AddToRegistry(Frame, { BackgroundColor3 = Key });
+    return Frame, Stroke;
+end;
+
+-- Info: { Height = 22, Width = nil (fit text) | number | 'Fill', Position, ZIndex = 6, Active = false }
+function Library:CreatePill(Parent, Text, Callback, Info)
+    Info = type(Info) == 'table' and Info or {};
+    local H = math.max(14, math.floor(tonumber(Info.Height) or 22));
+    local Z = Info.ZIndex or 6;
+    local Pill = { Type = 'Pill'; Text = ''; Active = Info.Active == true; Hovered = false; Callback = Callback };
+    local Frame = Library:Create('Frame', {
+        Name = 'Pill';
+        Active = true;
+        BackgroundColor3 = Library.MainColor;
+        Position = Info.Position or UDim2.new(0, 0, 0, 0);
+        Size = UDim2.fromOffset(40, H);
+        ZIndex = Z;
+        Parent = FrameOf(Parent);
+    });
+    Library:Round(Frame, math.min(6, math.floor(H / 2)));
+    local Stroke = Library:Stroke(Frame, 'OutlineColor');
+    Library.RegistryMap[Stroke].Properties.Color = function()
+        return (Pill.Active or Pill.Hovered) and Library.AccentColor or Library.OutlineColor;
+    end;
+    Library:AddToRegistry(Frame, { BackgroundColor3 = 'MainColor' });
+    local Label = Library:CreateLabel({
+        Size = UDim2.fromScale(1, 1);
+        Text = '';
+        TextSize = Library.FontSize - 1;
+        TextTruncate = Enum.TextTruncate.AtEnd;
+        ZIndex = Z + 1;
+        Parent = Frame;
+    });
+    Library.RegistryMap[Label].Properties.TextColor3 = function()
+        return Pill.Active and Library.AccentColor or Library.FontColor;
+    end;
+
+    local function Paint()
+        Library:Tween(Stroke, { Color = (Pill.Active or Pill.Hovered) and Library.AccentColor or Library.OutlineColor }, 0.12);
+        Label.TextColor3 = Pill.Active and Library.AccentColor or Library.FontColor;
+    end;
+    function Pill:SetText(NewText)
+        Pill.Text = NewText ~= nil and tostring(NewText) or '';
+        Label.Text = Pill.Text;
+        if Info.Width == 'Fill' then
+            Frame.Size = UDim2.new(1, 0, 0, H);
+            Pill.Width = 0;
+        else
+            Pill.Width = tonumber(Info.Width) and math.floor(Info.Width)
+                or (math.ceil(Library:GetTextBounds(Pill.Text, Library.Font, Library.FontSize - 1)) + (H >= 22 and 20 or 16));
+            Frame.Size = UDim2.fromOffset(Pill.Width, H);
+        end;
+    end;
+    function Pill:SetActive(Bool)
+        Pill.Active = not not Bool;
+        Paint();
+    end;
+    function Pill:SetVisible(Bool)
+        Frame.Visible = not not Bool;
+    end;
+
+    Library:Hover(Frame, function()
+        Pill.Hovered = true;
+        Paint();
+    end, function()
+        Pill.Hovered = false;
+        Paint();
+    end);
+    Frame.InputBegan:Connect(function(Input)
+        if IsClick(Input) then Library:SafeCallback(Pill.Callback, Pill) end;
+    end);
+
+    Pill.Frame, Pill.Label, Pill.Stroke = Frame, Label, Stroke;
+    Pill:SetText(Text);
+    Paint();
+    return Pill;
+end;
+
+-- Info: { Height = 24, Icon = nil, Text = '', Position, Size, ZIndex = 6, Callback = fn(text, enter), Changed = fn(text) }
+function Library:CreateInput(Parent, Placeholder, Info)
+    Info = type(Info) == 'table' and Info or {};
+    local H = math.max(18, math.floor(tonumber(Info.Height) or 24));
+    local Z = Info.ZIndex or 6;
+    local Input = { Type = 'Input'; Callback = Info.Callback; Changed = Info.Changed };
+    local Frame = Library:Create('Frame', {
+        BackgroundColor3 = Library.InputColor;
+        Position = Info.Position or UDim2.new(0, 0, 0, 0);
+        Size = Info.Size or UDim2.new(1, 0, 0, H);
+        ZIndex = Z;
+        Parent = FrameOf(Parent);
+    });
+    Library:Round(Frame, 5);
+    local Stroke = Library:Stroke(Frame, 'OutlineColor');
+    Library:AddToRegistry(Frame, { BackgroundColor3 = 'InputColor' });
+    local X = 8;
+    if Info.Icon then
+        local Icon = Library:Create('ImageLabel', {
+            AnchorPoint = Vector2.new(0, 0.5);
+            BackgroundTransparency = 1;
+            ImageColor3 = Library:GetDimColor();
+            Position = UDim2.new(0, 8, 0.5, 0);
+            Size = UDim2.fromOffset(14, 14);
+            ZIndex = Z + 1;
+            Parent = Frame;
+        });
+        if Library:ApplyIcon(Icon, Info.Icon) then
+            Library:AddToRegistry(Icon, { ImageColor3 = function() return Library:GetDimColor() end });
+            X = 28;
+        else
+            Icon:Destroy();
+        end;
+    end;
+    local Box = Library:Create('TextBox', {
+        BackgroundTransparency = 1;
+        ClearTextOnFocus = false;
+        Font = Library.Font;
+        PlaceholderColor3 = Library:GetDimColor();
+        PlaceholderText = Placeholder ~= nil and tostring(Placeholder) or '';
+        Position = UDim2.fromOffset(X, 0);
+        Size = UDim2.new(1, -X - 8, 1, 0);
+        Text = Info.Text ~= nil and tostring(Info.Text) or '';
+        TextColor3 = Library.FontColor;
+        TextSize = Library.FontSize;
+        TextTruncate = Enum.TextTruncate.AtEnd;
+        TextXAlignment = Enum.TextXAlignment.Left;
+        ZIndex = Z + 1;
+        Parent = Frame;
+    });
+    Library:AddToRegistry(Box, { TextColor3 = 'FontColor'; PlaceholderColor3 = function() return Library:GetDimColor() end });
+    local Silent = false;
+    Box.Focused:Connect(function() Library:Tween(Stroke, { Color = Library.AccentColor }, 0.12) end);
+    Box.FocusLost:Connect(function(Enter)
+        Library:Tween(Stroke, { Color = Library.OutlineColor }, 0.12);
+        Library:SafeCallback(Input.Callback, Box.Text, Enter == true);
+    end);
+    Box:GetPropertyChangedSignal('Text'):Connect(function()
+        if not Silent then Library:SafeCallback(Input.Changed, Box.Text) end;
+    end);
+
+    function Input:GetText() return Box.Text end;
+    function Input:SetText(Text, Quiet)
+        Silent = Quiet == true;
+        Box.Text = Text ~= nil and tostring(Text) or '';
+        Silent = false;
+    end;
+    function Input:Focus() pcall(function() Box:CaptureFocus() end) end;
+
+    Input.Frame, Input.Box, Input.Stroke = Frame, Box, Stroke;
+    return Input;
+end;
+
+-- Info: { Items = { 'A', 'B' }, Default, Style = 'Pill'|'Underline'|'Chip', Scroll = false, Fill = false,
+--         Height = 28, Position, Size, ZIndex = 6, Callback = fn(name) }
+function Library:CreateSegmented(Parent, Info)
+    Info = type(Info) == 'table' and Info or {};
+    local Style = (Info.Style == 'Underline' or Info.Style == 'Chip') and Info.Style or 'Pill';
+    local H = math.max(18, math.floor(tonumber(Info.Height) or 28));
+    local Z = Info.ZIndex or 6;
+    local Inset = Style == 'Pill' and 3 or 0;
+    local PAD = Style == 'Chip' and 10 or 12;
+    local GAP = Style == 'Pill' and 2 or (Style == 'Chip' and 6 or 4);
+    local TEXT = Style == 'Chip' and Library.FontSize - 1 or Library.FontSize;
+    local BH = H - Inset * 2;
+    local Bar = { Type = 'Segmented'; Style = Style; Items = {}; Buttons = {}; Value = nil; Callback = Info.Callback };
+
+    local Holder = Library:Create('Frame', {
+        Name = 'Segmented';
+        BackgroundColor3 = Library.InputColor;
+        BackgroundTransparency = Style == 'Pill' and 0 or 1;
+        Position = Info.Position or UDim2.new(0, 0, 0, 0);
+        Size = Info.Size or UDim2.new(1, 0, 0, H);
+        ZIndex = Z;
+        Parent = FrameOf(Parent);
+    });
+    if Style == 'Pill' then
+        Library:Round(Holder, 6);
+        Library:Stroke(Holder, 'OutlineColor');
+        Library:AddToRegistry(Holder, { BackgroundColor3 = 'InputColor' });
+    elseif Style == 'Underline' then
+        local Line = Library:Create('Frame', {
+            BackgroundColor3 = Library.OutlineColor;
+            Position = UDim2.new(0, 0, 1, -1);
+            Size = UDim2.new(1, 0, 0, 1);
+            ZIndex = Z;
+            Parent = Holder;
+        });
+        Library:AddToRegistry(Line, { BackgroundColor3 = 'OutlineColor' });
+    end;
+    local Row = Library:Create(Info.Scroll and 'ScrollingFrame' or 'Frame', {
+        BackgroundTransparency = 1;
+        BorderSizePixel = 0;
+        ClipsDescendants = true;
+        Position = UDim2.fromOffset(Inset, Inset);
+        Size = UDim2.new(1, -Inset * 2, 1, -Inset * 2);
+        ZIndex = Z;
+        Parent = Holder;
+    });
+    if Info.Scroll then
+        Row.ScrollingDirection = Enum.ScrollingDirection.X;
+        Row.ScrollBarThickness = 0;
+        Row.CanvasSize = UDim2.new(0, 0, 0, 0);
+        Row.InputChanged:Connect(function(Input)
+            if Input.UserInputType ~= Enum.UserInputType.MouseWheel then return end;
+            local Max = math.max(0, Row.CanvasSize.X.Offset - Row.AbsoluteSize.X / math.max(Library.UIScale, 0.1));
+            local Pos = Row.CanvasPosition;
+            local Z0 = Input.Position and Input.Position.Z or 0;
+            Row.CanvasPosition = Vector2.new(math.clamp((Pos and Pos.X or 0) - Z0 * 40, 0, Max), 0);
+        end);
+        Library.HoldWheel(Row, function()
+            return Row.CanvasSize.X.Offset > Row.AbsoluteSize.X / math.max(Library.UIScale, 0.1);
+        end);
+    end;
+
+    local function IsOn(Button) return Button.Name == Bar.Value end;
+    local function Paint()
+        for _, Button in ipairs(Bar.Buttons) do
+            local On = IsOn(Button);
+            if Style == 'Pill' then
+                Library:Tween(Button.Frame, { BackgroundTransparency = On and 0.85 or 1 }, 0.12);
+            elseif Style == 'Underline' then
+                Button.Line.Visible = On;
+            else
+                Library:Tween(Button.Stroke, { Color = On and Library.AccentColor or Library.OutlineColor }, 0.12);
+            end;
+            Button.Label.TextColor3 = On and (Style == 'Chip' and Library.AccentColor or Library.FontColor) or Library:GetDimColor();
+        end;
+    end;
+
+    local function Build()
+        for _, Button in ipairs(Bar.Buttons) do
+            pcall(function() Button.Frame:Destroy() end);
+        end;
+        Bar.Buttons = {};
+        local X, N = 0, #Bar.Items;
+        for Index, Name in ipairs(Bar.Items) do
+            local Button = { Name = Name };
+            local TextW = math.ceil(Library:GetTextBounds(Name, Library.Font, TEXT));
+            local Frame = Library:Create('Frame', {
+                Name = 'Item';
+                Active = true;
+                BackgroundColor3 = Style == 'Chip' and Library.InputColor or Library.AccentColor;
+                BackgroundTransparency = Style == 'Chip' and 0 or 1;
+                LayoutOrder = Index;
+                ZIndex = Z + 1;
+                Parent = Row;
+            });
+            if Info.Fill and N > 0 then
+                local Gaps = GAP * (N - 1);
+                Frame.Position = UDim2.new((Index - 1) / N, math.floor((Index - 1) * (GAP - Gaps / N) + 0.5), 0, 0);
+                Frame.Size = UDim2.new(1 / N, -math.floor(Gaps / N + 0.5), 0, BH);
+            else
+                Frame.Position = UDim2.fromOffset(X, 0);
+                Frame.Size = UDim2.fromOffset(TextW + PAD * 2, BH);
+                X = X + TextW + PAD * 2 + GAP;
+            end;
+            Library:Round(Frame, 5);
+            if Style == 'Chip' then
+                Button.Stroke = Library:Stroke(Frame, 'OutlineColor');
+                Library.RegistryMap[Button.Stroke].Properties.Color = function()
+                    return IsOn(Button) and Library.AccentColor or Library.OutlineColor;
+                end;
+                Library:AddToRegistry(Frame, { BackgroundColor3 = 'InputColor' });
+            else
+                Library:AddToRegistry(Frame, { BackgroundColor3 = 'AccentColor' });
+            end;
+            Button.Label = Library:CreateLabel({
+                Size = UDim2.fromScale(1, 1);
+                Text = Name;
+                TextSize = TEXT;
+                TextTruncate = Enum.TextTruncate.AtEnd;
+                ZIndex = Z + 2;
+                Parent = Frame;
+            });
+            Library.RegistryMap[Button.Label].Properties.TextColor3 = function()
+                if not IsOn(Button) then return Library:GetDimColor() end;
+                return Style == 'Chip' and Library.AccentColor or Library.FontColor;
+            end;
+            if Style == 'Underline' then
+                Button.Line = Library:Create('Frame', {
+                    Name = 'Line';
+                    AnchorPoint = Vector2.new(0.5, 1);
+                    BackgroundColor3 = Library.AccentColor;
+                    Position = UDim2.new(0.5, 0, 1, 0);
+                    Size = UDim2.fromOffset(TextW + 4, 2);
+                    Visible = false;
+                    ZIndex = Z + 2;
+                    Parent = Frame;
+                });
+                Library:AddToRegistry(Button.Line, { BackgroundColor3 = 'AccentColor' });
+            end;
+            Library:Hover(Frame, function()
+                if IsOn(Button) then return end;
+                if Style == 'Pill' then
+                    Library:Tween(Frame, { BackgroundTransparency = 0.94 }, 0.1);
+                elseif Style == 'Chip' then
+                    Library:Tween(Button.Stroke, { Color = Library.AccentColor }, 0.1);
+                end;
+                Button.Label.TextColor3 = Library.FontColor;
+            end, Paint);
+            Frame.InputBegan:Connect(function(Input)
+                if IsClick(Input) then Bar:SetValue(Name) end;
+            end);
+            Button.Frame = Frame;
+            Bar.Buttons[Index] = Button;
+        end;
+        Bar.ContentWidth = math.max(0, X - GAP);
+        if Info.Scroll then Row.CanvasSize = UDim2.fromOffset(Bar.ContentWidth, 0) end;
+    end;
+
+    -- Silent skips Callback/OnChanged; returns true when the value changed
+    function Bar:SetValue(Name, Silent)
+        if Name == nil or not table.find(Bar.Items, Name) then return false end;
+        local Changed = Bar.Value ~= Name;
+        Bar.Value = Name;
+        Paint();
+        if Changed and not Silent then
+            Library:SafeCallback(Bar.Callback, Name);
+            Library:SafeCallback(Bar.Changed, Name);
+        end;
+        return Changed;
+    end;
+    function Bar:GetValue() return Bar.Value end;
+    -- keeps the value while it is still listed, otherwise falls back to the first item without a callback
+    function Bar:SetItems(List)
+        local Items = {};
+        for _, Name in ipairs(type(List) == 'table' and List or {}) do
+            if type(Name) == 'string' or type(Name) == 'number' then table.insert(Items, tostring(Name)) end;
+        end;
+        Bar.Items = Items;
+        Build();
+        if not table.find(Items, Bar.Value) then Bar.Value = Items[1] end;
+        Paint();
+    end;
+    function Bar:OnChanged(Func) Bar.Changed = Func end;
+    function Bar:SetVisible(Bool) Holder.Visible = not not Bool end;
+
+    Bar.Frame, Bar.Row = Holder, Row;
+    Bar:SetItems(Info.Items);
+    if Info.Default ~= nil and table.find(Bar.Items, tostring(Info.Default)) then
+        Bar.Value = tostring(Info.Default);
+        Paint();
+    end;
+    if typeof(Parent) ~= 'Instance' and type(Parent) == 'table' and Parent.Resize then Parent:Resize() end;
+    return Bar;
+end;
+
+-- Horizontal row of item tiles (gallery item shape). Info: { Height = 70, TileSize = 54, Items, EmptyText = 'Nothing here',
+--   Remove = false (hover shows a cross), Position, ZIndex = 6, Callback = fn(item, index) }
+function Library:CreateStrip(Parent, Info)
+    Info = type(Info) == 'table' and Info or {};
+    local H = math.max(24, math.floor(tonumber(Info.Height) or 70));
+    local T = math.min(H - 6, math.max(16, math.floor(tonumber(Info.TileSize) or 54)));
+    local GAP, Z = 6, Info.ZIndex or 6;
+    local Strip = { Type = 'Strip'; Items = {}; Tiles = {}; Callback = Info.Callback };
+    local Holder, HolderStroke = Library:CreateBevel(Parent, {
+        Color = 'InputColor';
+        Position = Info.Position;
+        Size = UDim2.new(1, 0, 0, H);
+        Radius = 5;
+        ZIndex = Z;
+    });
+    Holder.Name = 'Strip';
+    local Row = Library:Create('ScrollingFrame', {
+        BackgroundTransparency = 1;
+        BorderSizePixel = 0;
+        CanvasSize = UDim2.new(0, 0, 0, 0);
+        Position = UDim2.fromOffset(6, 0);
+        Size = UDim2.new(1, -12, 1, 0);
+        ScrollBarThickness = 2;
+        ScrollBarImageColor3 = Library.OutlineColor;
+        ScrollingDirection = Enum.ScrollingDirection.X;
+        TopImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+        BottomImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+        MidImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+        ZIndex = Z;
+        Parent = Holder;
+    });
+    Library:AddToRegistry(Row, { ScrollBarImageColor3 = 'OutlineColor' });
+    local Empty = Library:CreateLabel({
+        Dim = true;
+        Size = UDim2.fromScale(1, 1);
+        Text = type(Info.EmptyText) == 'string' and Info.EmptyText or 'Nothing here';
+        TextSize = Library.FontSize - 1;
+        ZIndex = Z + 1;
+        Parent = Holder;
+    });
+    Row.InputChanged:Connect(function(Input)
+        if Input.UserInputType ~= Enum.UserInputType.MouseWheel then return end;
+        local Max = math.max(0, Row.CanvasSize.X.Offset - Row.AbsoluteSize.X / math.max(Library.UIScale, 0.1));
+        local Pos = Row.CanvasPosition;
+        local Z0 = Input.Position and Input.Position.Z or 0;
+        Row.CanvasPosition = Vector2.new(math.clamp((Pos and Pos.X or 0) - Z0 * 40, 0, Max), 0);
+    end);
+    Library.HoldWheel(Holder, function()
+        return Row.CanvasSize.X.Offset > Row.AbsoluteSize.X / math.max(Library.UIScale, 0.1);
+    end);
+
+    local CROSS = utf8 and utf8.char(0xD7) or 'x';
+    local function BuildTile(Item, Index)
+        local Tile = { Item = Item; Hovered = false };
+        local Swatch = typeof(Item.Swatch) == 'Color3' and Item.Swatch or nil;
+        local Frame = Library:Create('Frame', {
+            Name = 'Tile';
+            Active = true;
+            BackgroundColor3 = Swatch or Library.MainColor;
+            Position = UDim2.fromOffset((Index - 1) * (T + GAP), math.floor((H - T) / 2));
+            Size = UDim2.fromOffset(T, T);
+            ZIndex = Z + 1;
+            Parent = Row;
+        });
+        Library:Round(Frame, 5);
+        local Stroke = Library:Stroke(Frame, 'OutlineColor');
+        Library.RegistryMap[Stroke].Properties.Color = function()
+            return Tile.Hovered and Library.AccentColor or Library.OutlineColor;
+        end;
+        if not Swatch then Library:AddToRegistry(Frame, { BackgroundColor3 = 'MainColor' }) end;
+        local Icon = (not Swatch) and Library:GetIcon(Item.Image) or nil;
+        if Icon then
+            Library:Create('ImageLabel', {
+                BackgroundTransparency = 1;
+                Image = Icon.Image;
+                ImageRectOffset = Icon.ImageRectOffset;
+                ImageRectSize = Icon.ImageRectSize;
+                Position = UDim2.fromOffset(4, 4);
+                ScaleType = Enum.ScaleType.Fit;
+                Size = UDim2.new(1, -8, 1, -8);
+                ZIndex = Z + 2;
+                Parent = Frame;
+            });
+        elseif not Swatch then
+            local Name = Item.Name ~= nil and tostring(Item.Name) or '?';
+            Library:CreateLabel({
+                Dim = true;
+                Size = UDim2.fromScale(1, 1);
+                Text = string.upper(string.sub(Name, 1, 1));
+                TextSize = Library.FontSize + 2;
+                ZIndex = Z + 2;
+                Parent = Frame;
+            });
+        end;
+        if typeof(Item.Color) == 'Color3' then
+            local Bar = Library:Create('Frame', {
+                Name = 'Rarity';
+                AnchorPoint = Vector2.new(0, 1);
+                BackgroundColor3 = Item.Color;
+                Position = UDim2.new(0, 6, 1, -2);
+                Size = UDim2.new(1, -12, 0, 2);
+                ZIndex = Z + 3;
+                Parent = Frame;
+            });
+            Library:Round(Bar, 1);
+        end;
+        local Cross;
+        if Info.Remove then
+            Cross = Library:Create('Frame', {
+                Name = 'Remove';
+                AnchorPoint = Vector2.new(1, 0);
+                BackgroundColor3 = Library.MainColor;
+                Position = UDim2.new(1, -2, 0, 2);
+                Size = UDim2.fromOffset(14, 14);
+                Visible = false;
+                ZIndex = Z + 3;
+                Parent = Frame;
+            });
+            Library:Round(Cross, 7);
+            Library:AddToRegistry(Cross, { BackgroundColor3 = 'MainColor' });
+            Library:CreateLabel({
+                Size = UDim2.fromScale(1, 1);
+                Text = CROSS;
+                TextSize = Library.FontSize;
+                ZIndex = Z + 4;
+                Parent = Cross;
+            });
+        end;
+        Library:Hover(Frame, function()
+            Tile.Hovered = true;
+            Library:Tween(Stroke, { Color = Library.AccentColor }, 0.12);
+            if Cross then Cross.Visible = true end;
+        end, function()
+            Tile.Hovered = false;
+            Library:Tween(Stroke, { Color = Library.OutlineColor }, 0.12);
+            if Cross then Cross.Visible = false end;
+        end);
+        Frame.InputBegan:Connect(function(Input)
+            if IsClick(Input) then Library:SafeCallback(Strip.Callback, Item, Index) end;
+        end);
+        Tile.Frame, Tile.Stroke = Frame, Stroke;
+        return Tile;
+    end;
+
+    function Strip:SetItems(Items)
+        for _, Tile in ipairs(Strip.Tiles) do
+            pcall(function() Tile.Frame:Destroy() end);
+        end;
+        Strip.Items, Strip.Tiles = {}, {};
+        for _, Item in ipairs(type(Items) == 'table' and Items or {}) do
+            if type(Item) == 'table' then
+                table.insert(Strip.Items, Item);
+                table.insert(Strip.Tiles, BuildTile(Item, #Strip.Items));
+            end;
+        end;
+        local N = #Strip.Items;
+        Row.CanvasSize = UDim2.fromOffset(N > 0 and (N * (T + GAP) - GAP) or 0, 0);
+        Empty.Visible = N == 0;
+    end;
+    function Strip:SetEmptyText(Text)
+        Empty.Text = Text ~= nil and tostring(Text) or 'Nothing here';
+    end;
+    function Strip:SetVisible(Bool) Holder.Visible = not not Bool end;
+
+    Strip.Frame, Strip.List, Strip.Stroke = Holder, Row, HolderStroke;
+    Strip:SetItems(Info.Items);
+    return Strip;
+end;
+
+-- Floating card (target info). Position is kept per Key in Library.CardPositions and saved with the layout.
+Library.CardPositions = {};
+Library.InfoCards = {};
+local function CardPosition(Saved)
+    if type(Saved) ~= 'table' then return nil end;
+    local XS, XO, YS, YO = tonumber(Saved[1]), tonumber(Saved[2]), tonumber(Saved[3]), tonumber(Saved[4]);
+    if not (XS and XO and YS and YO) then return nil end;
+    return UDim2.new(XS, math.floor(XO), YS, math.floor(YO));
+end;
+
+-- Info: { Title = 'Target', Key = Title, Rows = { 'Health', 'Distance', 'Team', 'Weapon' }, Image = true, Width = 220, Position = UDim2 }
+function Library:CreateInfoCard(Info)
+    Info = type(Info) == 'table' and Info or {};
+    local Rows = type(Info.Rows) == 'table' and Info.Rows or { 'Health', 'Distance', 'Team', 'Weapon' };
+    local W = math.max(140, math.floor(tonumber(Info.Width) or 220));
+    local PAD, ROW, Z = 10, 18, 150;
+    local IMG = Info.Image ~= false and 40 or 0;
+    local HEAD = math.max(IMG, 34);
+    local HasHealth = table.find(Rows, 'Health') ~= nil;
+    local BAR_Y = PAD + HEAD + 8;
+    local ROWS_Y = BAR_Y + (HasHealth and 10 or 0);
+    local H = ROWS_Y + #Rows * ROW + PAD - 2;
+    local Card = { Type = 'InfoCard'; Title = tostring(Info.Title or 'Target'); Rows = {}; Data = {}; Visible = false };
+    Card.Key = tostring(Info.Key or Card.Title);
+
+    local Frame = Library:Create('Frame', {
+        Name = 'InfoCard';
+        BackgroundColor3 = Library.MainColor;
+        Position = CardPosition(Library.CardPositions[Card.Key]) or Info.Position or UDim2.new(0, 24, 0.5, -math.floor(H / 2));
+        Size = UDim2.fromOffset(W, H);
+        Visible = false;
+        ZIndex = Z;
+        Parent = ScreenGui;
+    });
+    Library:Round(Frame, 6);
+    Library:Stroke(Frame, 'OutlineColor');
+    Library:AddToRegistry(Frame, { BackgroundColor3 = 'MainColor' });
+
+    local Image;
+    if IMG > 0 then
+        Image = Library:Create('ImageLabel', {
+            BackgroundColor3 = Library.InputColor;
+            Image = '';
+            Position = UDim2.fromOffset(PAD, PAD);
+            ScaleType = Enum.ScaleType.Crop;
+            Size = UDim2.fromOffset(IMG, IMG);
+            ZIndex = Z + 1;
+            Parent = Frame;
+        });
+        Library:Round(Image, 5);
+        Library:AddToRegistry(Image, { BackgroundColor3 = 'InputColor' });
+    end;
+    local TextX = PAD + (IMG > 0 and IMG + 10 or 0);
+    local TitleLabel = Library:CreateLabel({
+        Dim = true;
+        Position = UDim2.fromOffset(TextX, PAD + math.floor((HEAD - 34) / 2));
+        Size = UDim2.new(1, -TextX - PAD, 0, 14);
+        Text = Card.Title;
+        TextSize = Library.FontSize - 2;
+        TextXAlignment = Enum.TextXAlignment.Left;
+        ZIndex = Z + 1;
+        Parent = Frame;
+    });
+    local NameLabel = Library:CreateLabel({
+        Font = Library:BoldFont();
+        Position = UDim2.fromOffset(TextX, PAD + math.floor((HEAD - 34) / 2) + 16);
+        Size = UDim2.new(1, -TextX - PAD, 0, 18);
+        Text = '-';
+        TextSize = Library.FontSize + 1;
+        TextTruncate = Enum.TextTruncate.AtEnd;
+        TextXAlignment = Enum.TextXAlignment.Left;
+        ZIndex = Z + 1;
+        Parent = Frame;
+    });
+    local Fill, Low;
+    if HasHealth then
+        local Track = Library:Create('Frame', {
+            BackgroundColor3 = Library.TrackColor;
+            Position = UDim2.fromOffset(PAD, BAR_Y);
+            Size = UDim2.new(1, -PAD * 2, 0, 4);
+            ZIndex = Z + 1;
+            Parent = Frame;
+        });
+        Library:Round(Track, 2);
+        Library:AddToRegistry(Track, { BackgroundColor3 = 'TrackColor' });
+        Fill = Library:Create('Frame', {
+            Name = 'Health';
+            BackgroundColor3 = Library.AccentColor;
+            Size = UDim2.fromScale(1, 1);
+            ZIndex = Z + 2;
+            Parent = Track;
+        });
+        Library:Round(Fill, 2);
+        Library:AddToRegistry(Fill, { BackgroundColor3 = function() return Low and Library.RiskColor or Library.AccentColor end });
+    end;
+    for Index, Name in ipairs(Rows) do
+        Name = tostring(Name);
+        local Y = ROWS_Y + (Index - 1) * ROW;
+        local KeyLabel = Library:CreateLabel({
+            Dim = true;
+            Position = UDim2.fromOffset(PAD, Y);
+            Size = UDim2.new(0.45, -PAD, 0, ROW);
+            Text = Name;
+            TextSize = Library.FontSize - 1;
+            TextXAlignment = Enum.TextXAlignment.Left;
+            ZIndex = Z + 1;
+            Parent = Frame;
+        });
+        local Value = Library:CreateLabel({
+            Position = UDim2.new(0.45, 0, 0, Y);
+            Size = UDim2.new(0.55, -PAD, 0, ROW);
+            Text = '-';
+            TextSize = Library.FontSize - 1;
+            TextTruncate = Enum.TextTruncate.AtEnd;
+            TextXAlignment = Enum.TextXAlignment.Right;
+            ZIndex = Z + 1;
+            Parent = Frame;
+        });
+        local Dot;
+        if Name == 'Team' then
+            Dot = Library:Create('Frame', {
+                Name = 'TeamDot';
+                AnchorPoint = Vector2.new(1, 0.5);
+                BackgroundColor3 = Library.OutlineColor;
+                Position = UDim2.new(1, -PAD, 0, Y + math.floor(ROW / 2));
+                Size = UDim2.fromOffset(8, 8);
+                Visible = false;
+                ZIndex = Z + 2;
+                Parent = Frame;
+            });
+            Library:Round(Dot, 4);
+        end;
+        Card.Rows[Name] = { Key = KeyLabel; Value = Value; Dot = Dot };
+    end;
+
+    function Card:SetRow(Name, Text)
+        local Row = Card.Rows[Name];
+        if Row then Row.Value.Text = Text ~= nil and tostring(Text) or '-' end;
+    end;
+    -- Data: { Name, UserId, Health, MaxHealth, Distance, Team, TeamColor, Weapon, Visible, [any row name] = text }
+    function Card:Update(Data)
+        if type(Data) ~= 'table' then return end;
+        for Key, Value in next, Data do Card.Data[Key] = Value end;
+        local D = Card.Data;
+        if Data.Name ~= nil then NameLabel.Text = tostring(Data.Name) end;
+        if Image and Data.UserId ~= nil then
+            local Id = math.floor(tonumber(Data.UserId) or 0);
+            Image.Image = Id > 0 and ('rbxthumb://type=AvatarHeadShot&id=' .. Id .. '&w=150&h=150') or '';
+        end;
+        if Data.Health ~= nil or Data.MaxHealth ~= nil then
+            local Max = math.max(tonumber(D.MaxHealth) or 100, 1);
+            local Hp = math.clamp(tonumber(D.Health) or Max, 0, Max);
+            Card:SetRow('Health', math.floor(Hp + 0.5) .. ' / ' .. math.floor(Max + 0.5));
+            Low = Hp / Max < 0.3;
+            if Fill then
+                Fill.Size = UDim2.fromScale(Hp / Max, 1);
+                Fill.BackgroundColor3 = Low and Library.RiskColor or Library.AccentColor;
+            end;
+        end;
+        if Data.Distance ~= nil then
+            local Dist = tonumber(Data.Distance);
+            Card:SetRow('Distance', Dist and (math.floor(Dist + 0.5) .. ' studs') or tostring(Data.Distance));
+        end;
+        if Data.Team ~= nil then Card:SetRow('Team', Data.Team) end;
+        if Data.TeamColor ~= nil and Card.Rows.Team and Card.Rows.Team.Dot then
+            local Color = Data.TeamColor;
+            if typeof(Color) == 'BrickColor' then Color = Color.Color end;
+            local Row = Card.Rows.Team;
+            Row.Dot.Visible = typeof(Color) == 'Color3';
+            if Row.Dot.Visible then Row.Dot.BackgroundColor3 = Color end;
+            Row.Value.Size = UDim2.new(0.55, Row.Dot.Visible and -(PAD + 14) or -PAD, 0, ROW);
+        end;
+        for Name, Row in next, Card.Rows do
+            if Name ~= 'Health' and Name ~= 'Distance' and Name ~= 'Team' and Data[Name] ~= nil then
+                Row.Value.Text = tostring(Data[Name]);
+            end;
+        end;
+        if Data.Visible ~= nil then Card:SetVisible(Data.Visible) end;
+    end;
+    function Card:SetVisible(Bool)
+        Card.Visible = not not Bool;
+        Frame.Visible = Card.Visible;
+    end;
+    function Card:SetTitle(Text)
+        Card.Title = Text ~= nil and tostring(Text) or '';
+        TitleLabel.Text = Card.Title;
+    end;
+    function Card:SetPosition(Position)
+        if typeof(Position) ~= 'UDim2' then return end;
+        Frame.Position = Position;
+        Library.CardPositions[Card.Key] = { Position.X.Scale, Position.X.Offset, Position.Y.Scale, Position.Y.Offset };
+    end;
+    function Card:Destroy()
+        local At = table.find(Library.InfoCards, Card);
+        if At then table.remove(Library.InfoCards, At) end;
+        pcall(function() Frame:Destroy() end);
+    end;
+
+    -- dragged by the body while the menu is open; the drop is saved like a card move
+    Frame.InputBegan:Connect(function(Input)
+        if not Library.Toggled or not IsClick(Input) then return end;
+        local Start, From = Input.Position, Frame.Position;
+        local Moved, Ended;
+        Moved = InputService.InputChanged:Connect(function(Change)
+            if Change.UserInputType ~= Enum.UserInputType.MouseMovement and Change ~= Input then return end;
+            local Scale = math.max(Library.UIScale, 0.1);
+            local DX = math.floor((Change.Position.X - Start.X) / Scale + 0.5);
+            local DY = math.floor((Change.Position.Y - Start.Y) / Scale + 0.5);
+            Frame.Position = UDim2.new(From.X.Scale, From.X.Offset + DX, From.Y.Scale, From.Y.Offset + DY);
+        end);
+        Ended = InputService.InputEnded:Connect(function(EndInput)
+            if EndInput ~= Input and EndInput.UserInputType ~= Enum.UserInputType.MouseButton1 and EndInput.UserInputType ~= Enum.UserInputType.Touch then return end;
+            Moved:Disconnect();
+            Ended:Disconnect();
+            if Frame.Position ~= From then
+                Card:SetPosition(Frame.Position);
+                Library:SafeCallback(Library.OnLayoutChanged, Library:GetLayout());
+            end;
+        end);
+    end);
+
+    Card.Frame, Card.Image, Card.TitleLabel, Card.NameLabel, Card.HealthBar = Frame, Image, TitleLabel, NameLabel, Fill;
+    table.insert(Library.InfoCards, Card);
+    return Card;
+end;
+
+-- Panes: a canvas, each side of a Split and each page of AddPages. Shown state is derived
+-- (frame visible up the chain, tab active, menu open) and OnShow/OnHide fire on its edges.
+local PaneMethods = {};
+PaneMethods.__index = PaneMethods;
+
+local function MakePane(Frame, Parent)
+    local Pane = setmetatable({ Frame = Frame; Parent = Parent; Shown = false; ShowFns = {}; HideFns = {}; Groupboxes = {} }, PaneMethods);
+    if Parent then
+        Pane.Canvas, Pane.Tab = Parent.Canvas, Parent.Tab;
+        table.insert(Pane.Canvas.Nodes, Pane);
+        Pane.Shown = Pane:IsShown();
+    end;
+    return Pane;
+end;
+
+local function SyncNode(Node)
+    local Now = Node:IsShown();
+    if Now == Node.Shown then return end;
+    Node.Shown = Now;
+    if Now then
+        if Node.Build and not Node.Built then
+            Node.Built = true;
+            Library:SafeCallback(Node.Build, Node);
+        end;
+        for _, Entry in ipairs(Node.ShowFns) do
+            local First = not Entry.Seen;
+            Entry.Seen = true;
+            Library:SafeCallback(Entry.Fn, Node, First);
+        end;
+    else
+        for _, Fn in ipairs(Node.HideFns) do
+            Library:SafeCallback(Fn, Node);
+        end;
+    end;
+end;
+
+function PaneMethods:IsShown()
+    if not self.Frame.Parent or not self.Frame.Visible then return false end;
+    if self.Parent then return self.Parent:IsShown() end;
+    return self.Tab.Active == true and Library.Toggled == true and not Library.Unloaded;
+end;
+
+-- Fn(Pane, First): First is true the first time this handler sees the pane shown (build lazily there)
+function PaneMethods:OnShow(Fn)
+    local Entry = { Fn = Fn; Seen = false };
+    table.insert(self.ShowFns, Entry);
+    if self.Shown then
+        Entry.Seen = true;
+        Library:SafeCallback(Fn, self, true);
+    end;
+    return self;
+end;
+
+function PaneMethods:OnHide(Fn)
+    table.insert(self.HideFns, Fn);
+    return self;
+end;
+
+-- re-derives the shown state of the whole canvas this pane belongs to
+function PaneMethods:Sync()
+    local Canvas = self.Canvas;
+    SyncNode(Canvas);
+    for _, Node in ipairs(Canvas.Nodes) do SyncNode(Node) end;
+end;
+
+-- vertical stack that scrolls (groupboxes go here); Info: { Padding = 10 }
+function PaneMethods:AddScroll(Info)
+    Info = type(Info) == 'table' and Info or {};
+    local Scroll = Library:Create('ScrollingFrame', {
+        BackgroundTransparency = 1;
+        BorderSizePixel = 0;
+        CanvasSize = UDim2.new(0, 0, 0, 0);
+        Size = UDim2.new(1, 0, 1, 0);
+        BottomImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+        TopImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+        MidImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+        ScrollBarThickness = 2;
+        ScrollBarImageColor3 = Library.OutlineColor;
+        ZIndex = 2;
+        Parent = self.Frame;
+    });
+    Library:AddToRegistry(Scroll, { ScrollBarImageColor3 = 'OutlineColor' });
+    table.insert(Library.ColumnScrollers, Scroll);
+    Library:Create('UIPadding', { PaddingRight = UDim.new(0, 5); Parent = Scroll });
+    local Layout = Library:Create('UIListLayout', {
+        Padding = UDim.new(0, math.floor(tonumber(Info.Padding) or 10));
+        FillDirection = Enum.FillDirection.Vertical;
+        SortOrder = Enum.SortOrder.LayoutOrder;
+        HorizontalAlignment = Enum.HorizontalAlignment.Center;
+        Parent = Scroll;
+    });
+    Layout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()
+        Scroll.CanvasSize = UDim2.fromOffset(0, Layout.AbsoluteContentSize.Y + 2);
+    end);
+    if not self.Scroll then self.Scroll = Scroll end;
+    return Scroll;
+end;
+
+-- a real groupbox (every Add* method, flags, configs) stacked in the pane: not a movable card, not searched
+function PaneMethods:AddGroupbox(Info, Icon)
+    if type(Info) ~= 'table' then Info = { Name = tostring(Info); Icon = Icon } end;
+    if not self.Scroll then self:AddScroll() end;
+    local Copy = {};
+    for Key, Value in next, Info do Copy[Key] = Value end;
+    Copy.Host, Copy.SubTab = self.Scroll, nil;
+    local Box = self.Tab:AddGroupbox(Copy);
+    if Copy.Name ~= nil then self.Groupboxes[Copy.Name] = Box end;
+    return Box;
+end;
+
+-- Info: { Size = px (fixed side) | Ratio = 0.5, Side = 'Right'|'Left' (which side Size fixes), Gap = 10,
+--         Direction = 'Horizontal'|'Vertical' }. Returns the two panes (left/top first).
+function PaneMethods:Split(Info)
+    Info = type(Info) == 'table' and Info or {};
+    local Gap = math.max(0, math.floor(tonumber(Info.Gap) or 10));
+    local Vertical = Info.Direction == 'Vertical';
+    local Fixed = tonumber(Info.Size);
+    local APos, ASize, BPos, BSize;
+    if Fixed then
+        Fixed = math.max(0, math.floor(Fixed));
+        if Info.Side == 'Left' or Info.Side == 'Top' then
+            APos, ASize = { 0, 0 }, { 0, Fixed };
+            BPos, BSize = { 0, Fixed + Gap }, { 1, -(Fixed + Gap) };
+        else
+            APos, ASize = { 0, 0 }, { 1, -(Fixed + Gap) };
+            BPos, BSize = { 1, -Fixed }, { 0, Fixed };
+        end;
+    else
+        local Ratio = math.clamp(tonumber(Info.Ratio) or 0.5, 0.05, 0.95);
+        local Half = math.floor(Gap / 2);
+        APos, ASize = { 0, 0 }, { Ratio, -Half };
+        BPos, BSize = { Ratio, Gap - Half }, { 1 - Ratio, -(Gap - Half) };
+    end;
+    local function Side(Pos, Size, Name)
+        return Library:Create('Frame', {
+            Name = Name;
+            BackgroundTransparency = 1;
+            ClipsDescendants = true;
+            Position = Vertical and UDim2.new(0, 0, Pos[1], Pos[2]) or UDim2.new(Pos[1], Pos[2], 0, 0);
+            Size = Vertical and UDim2.new(1, 0, Size[1], Size[2]) or UDim2.new(Size[1], Size[2], 1, 0);
+            ZIndex = 2;
+            Parent = self.Frame;
+        });
+    end;
+    local A = MakePane(Side(APos, ASize, 'PaneA'), self);
+    local B = MakePane(Side(BPos, BSize, 'PaneB'), self);
+    self.Panes = { A, B };
+    return A, B;
+end;
+
+-- Segmented bar on top switching page panes. Opts: { Default, Style = 'Pill', Height = 28, Gap = 8, Scroll = true,
+--   Callback = fn(name) }. Returns Pages with Pages[name] = Page. The controller (Select, GetPage, GetCurrent, Bar,
+--   Current, List) is reached through __index, so a page name always wins over it.
+function PaneMethods:AddPages(Names, Opts)
+    Opts = type(Opts) == 'table' and Opts or {};
+    local BarH = math.max(18, math.floor(tonumber(Opts.Height) or 28));
+    local Top = BarH + math.max(0, math.floor(tonumber(Opts.Gap) or 8));
+    local Owner = self;
+    local List, ByName, Current = {}, {}, nil;
+    local Control = { List = List };
+    local Pages = setmetatable({}, { __index = function(_, Key)
+        if Key == 'Current' then return Current end;
+        return Control[Key];
+    end });
+    Control.Bar = Library:CreateSegmented(self.Frame, {
+        Items = Names;
+        Default = Opts.Default;
+        Style = Opts.Style or 'Pill';
+        Height = BarH;
+        Scroll = Opts.Scroll ~= false;
+        Callback = function(Name) Control.Select(Pages, Name) end;
+    });
+    for _, Name in ipairs(Control.Bar.Items) do
+        local Frame = Library:Create('Frame', {
+            Name = 'Page';
+            BackgroundTransparency = 1;
+            ClipsDescendants = true;
+            Position = UDim2.fromOffset(0, Top);
+            Size = UDim2.new(1, 0, 1, -Top);
+            Visible = false;
+            ZIndex = 2;
+            Parent = Owner.Frame;
+        });
+        local Page = MakePane(Frame, Owner);
+        Page.Name = Name;
+        rawset(Pages, Name, Page);
+        ByName[Name] = Page;
+        table.insert(List, Page);
+    end;
+    function Control.GetPage(_, Name) return ByName[Name] end;
+    function Control.GetCurrent() return Current end;
+    function Control.Select(_, Name)
+        local Page = ByName[Name];
+        if not Page then return false end;
+        for _, Other in ipairs(List) do
+            Other.Frame.Visible = Other == Page;
+        end;
+        local Changed = Current ~= Page;
+        Current = Page;
+        Control.Bar:SetValue(Name, true);
+        Owner:Sync();
+        if Changed then Library:SafeCallback(Opts.Callback, Name) end;
+        return true;
+    end;
+    if Control.Bar.Value then Control.Select(Pages, Control.Bar.Value) end;
+    return Pages;
 end;
 
 -- Popups --------------------------------------------------------------------
@@ -6085,13 +7619,31 @@ function Library:GetLayout()
             Layout[Tab.Name] = Cols;
         end;
     end;
+    -- floating info cards: { [Key] = { XScale, XOffset, YScale, YOffset } }
+    if next(Library.CardPositions) ~= nil then
+        local Cards = {};
+        for Key, Pos in next, Library.CardPositions do Cards[Key] = Pos end;
+        Layout.__cards = Cards;
+    end;
     return Layout;
 end;
 
 -- Listed cards move to their column in the given order; unlisted ones keep their place after them.
 function Library:SetLayout(Layout)
     local Window = Library.Window;
-    if type(Layout) ~= 'table' or not Window then return end;
+    if type(Layout) ~= 'table' then return end;
+    if type(Layout.__cards) == 'table' then
+        for Key, Pos in next, Layout.__cards do
+            local At = CardPosition(Pos);
+            if At then
+                Library.CardPositions[Key] = { At.X.Scale, At.X.Offset, At.Y.Scale, At.Y.Offset };
+                for _, Card in ipairs(Library.InfoCards) do
+                    if Card.Key == Key then Card.Frame.Position = At end;
+                end;
+            end;
+        end;
+    end;
+    if not Window then return end;
     for TabName, Cols in next, Layout do
         local Tab = Window.Tabs[TabName];
         if Tab and Tab.Cards and type(Cols) == 'table' then
@@ -8474,6 +10026,7 @@ function Library:CreateWindow(...)
         Tab.ColumnCount = COLS;
         Tab.Columns = Columns;
         Tab.Cards = {};
+        Tab.Canvases = {};
 
         -- Info.Column (1..3) wins; legacy Info.Side 2 means the right-most column
         local function ColumnOf(Info)
@@ -8672,6 +10225,7 @@ function Library:CreateWindow(...)
             TabFrame.Visible = true;
             Library:Tween(TabButton, { BackgroundTransparency = 0.86 }, 0.15);
             Library:Tween(IconInst, { [IconProp] = Library.AccentColor }, 0.15);
+            if Tab.SyncCanvases then Tab:SyncCanvases() end;
 
             if not First then
                 TabFrame.Position = UDim2.fromOffset(0, 12);
@@ -8692,6 +10246,7 @@ function Library:CreateWindow(...)
             TabFrame.Visible = false;
             Library:Tween(TabButton, { BackgroundTransparency = 1 }, 0.15);
             Library:Tween(IconInst, { [IconProp] = Library:GetDimColor() }, 0.15);
+            if Tab.SyncCanvases then Tab:SyncCanvases() end;
         end;
         function Tab:SetLayoutOrder(Position)
             Tab.LayoutOrder = Position;
@@ -8708,7 +10263,7 @@ function Library:CreateWindow(...)
                 BackgroundColor3 = Library.GroupboxColor;
                 Size = UDim2.new(1, 0, 0, 100);
                 ZIndex = 2;
-                Visible = Info.SubTab == nil or Info.SubTab.Active;
+                Visible = Info.Host ~= nil or Info.SubTab == nil or Info.SubTab.Active;
             });
             Library:Round(BoxOuter, 6);
             if Library.CardOutline then Library:Stroke(BoxOuter, 'OutlineColor'); end;
@@ -8784,12 +10339,21 @@ function Library:CreateWindow(...)
                 table.insert(Sub.Boxes, Groupbox);
                 Sub.Groupboxes[Info.Name] = Groupbox;
             end;
-            AddCard(Groupbox, BoxOuter, Info, DragHandle);
+            -- Info.Host (a canvas pane scroller): stacked there, outside the card layout and the search
+            if Info.Host then
+                Groupbox.NoSearch = true;
+                BoxOuter.LayoutOrder = #Info.Host:GetChildren();
+                BoxOuter.Parent = Info.Host;
+            else
+                AddCard(Groupbox, BoxOuter, Info, DragHandle);
+            end;
             setmetatable(Groupbox, BaseGroupbox);
             Groupbox:AddBlank(3);
             Groupbox:Resize();
 
-            if Info.SubTab and Tab.Groupboxes[Info.Name] then
+            if Info.Host then
+                return Groupbox;
+            elseif Info.SubTab and Tab.Groupboxes[Info.Name] then
                 Tab.Groupboxes[Info.SubTab.Name .. '/' .. Info.Name] = Groupbox;
             else
                 Tab.Groupboxes[Info.Name] = Groupbox;
@@ -9069,6 +10633,10 @@ function Library:CreateWindow(...)
                 Side.Position = UDim2.new(Side.Position.X.Scale, Side.Position.X.Offset, 0, SUB_H + 8);
                 Side.Size = UDim2.new(Side.Size.X.Scale, Side.Size.X.Offset, 1, -(SUB_H + 8));
             end;
+            for _, Canvas in ipairs(Tab.Canvases) do
+                Canvas.Frame.Position = UDim2.fromOffset(0, SUB_H + 8);
+                Canvas.Frame.Size = UDim2.new(1, 0, 1, -(SUB_H + 8));
+            end;
             Tab.SubBar = SubBar;
         end;
 
@@ -9169,6 +10737,7 @@ function Library:CreateWindow(...)
                     Other:SetActive(Other == Sub);
                 end;
                 Tab.ActiveSub = Sub;
+                Tab:SyncCanvases();
                 -- re-run the filter so search hits never un-hide a box of another sub-tab
                 Library:ApplySearch(Library.SearchQuery or '');
                 Library:SafeCallback(Sub.Callback, Sub.Name);
@@ -9201,6 +10770,12 @@ function Library:CreateWindow(...)
             function Sub:AddRightTabbox(BoxName, BoxOpts)
                 return Sub:AddTabbox(BoxName, 3, BoxOpts);
             end;
+            -- full-area canvas shown only while this sub-tab is active
+            function Sub:AddCanvas(CanvasInfo)
+                CanvasInfo = type(CanvasInfo) == 'table' and CanvasInfo or {};
+                CanvasInfo.SubTab = Sub;
+                return Tab:AddCanvas(CanvasInfo);
+            end;
 
             Button.InputBegan:Connect(function(Input)
                 if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
@@ -9228,6 +10803,72 @@ function Library:CreateWindow(...)
             end;
             Paint();
             return Sub;
+        end;
+
+        -- Full-area canvas (Info.SubTab: only while that sub-tab is active). While one shows, the three columns hide.
+        -- Info: { Name, Padding = 0, Lazy = true, Build = fn(Canvas) }: Build runs on the first show (at once with Lazy = false)
+        function Tab:AddCanvas(Info)
+            Info = type(Info) == 'table' and Info or {};
+            local Sub = Info.SubTab;
+            local Top = SubBar and (SUB_H + 8) or 0;
+            local Frame = Library:Create('Frame', {
+                Name = 'Canvas';
+                BackgroundTransparency = 1;
+                ClipsDescendants = true;
+                Position = UDim2.fromOffset(0, Top);
+                Size = UDim2.new(1, 0, 1, -Top);
+                Visible = false;
+                ZIndex = 2;
+                Parent = TabFrame;
+            });
+            local Pad = math.floor(tonumber(Info.Padding) or 0);
+            if Pad > 0 then
+                Library:Create('UIPadding', {
+                    PaddingLeft = UDim.new(0, Pad);
+                    PaddingRight = UDim.new(0, Pad);
+                    PaddingTop = UDim.new(0, Pad);
+                    PaddingBottom = UDim.new(0, Pad);
+                    Parent = Frame;
+                });
+            end;
+            local Canvas = MakePane(Frame, nil);
+            Canvas.Canvas, Canvas.Tab, Canvas.Sub, Canvas.Nodes = Canvas, Tab, Sub, {};
+            Canvas.Name = Info.Name or (Sub and Sub.Name) or Name;
+            Canvas.Build = type(Info.Build) == 'function' and Info.Build or nil;
+            function Canvas:Destroy()
+                local At = table.find(Tab.Canvases, Canvas);
+                if At then table.remove(Tab.Canvases, At) end;
+                if Sub and Sub.Canvas == Canvas then Sub.Canvas = nil end;
+                if Canvas.Shown then
+                    Canvas.Shown = false;
+                    for _, Fn in ipairs(Canvas.HideFns) do Library:SafeCallback(Fn, Canvas) end;
+                end;
+                pcall(function() Frame:Destroy() end);
+                Tab:SyncCanvases();
+            end;
+            table.insert(Tab.Canvases, Canvas);
+            if Sub then Sub.Canvas = Canvas end;
+            if Canvas.Build and Info.Lazy == false then
+                Canvas.Built = true;
+                Library:SafeCallback(Canvas.Build, Canvas);
+            end;
+            Tab:SyncCanvases();
+            return Canvas;
+        end;
+
+        function Tab:SyncCanvases()
+            local Covered = false;
+            for _, Canvas in ipairs(Tab.Canvases) do
+                local On = Canvas.Sub == nil or Canvas.Sub.Active == true;
+                Canvas.Frame.Visible = On;
+                if On then Covered = true end;
+            end;
+            for _, Side in ipairs(Columns) do
+                Side.Visible = not Covered;
+            end;
+            for _, Canvas in ipairs(Tab.Canvases) do
+                Canvas:Sync();
+            end;
         end;
 
         function Tab:SelectSubTab(Target)
@@ -9363,6 +11004,9 @@ function Library:CreateWindow(...)
     function Library:Toggle()
         Library.Toggled = not Library.Toggled;
         Library:SyncInputSink();
+        for _, Tab in ipairs(Window.TabList) do
+            Tab:SyncCanvases();
+        end;
         Library.ToggleToken = (Library.ToggleToken or 0) + 1;
         local Token = Library.ToggleToken;
         local Fade = Library.MenuFadeTime or 0.2;

@@ -591,11 +591,11 @@ do
             { "Camera", { "Camera FOV / zoom" }, { "Crosshair" }, { "Crosshair motion" } },
         } },
         { "Effects", "sparkles", {
-            { "Hits", effects = { "Hit marker", "Hit chams", "Hit effects", "Damage numbers", "Hit sound" } },
-            { "Kills", effects = { "Kill sound", "Kill effects", "Corpse", "Killcam", "Kill streak" } },
-            { "Bullets", effects = { "Tracers", "Particle preset", "Impacts" } },
-            { "Sky", effects = { "Skyboxes", "Creator Store skies", "Atmosphere presets" } },
-            { "Gun sounds", effects = { "Gun sounds" } },
+            { "Hits", effects = { { "Hit marker", "Hit sound" }, { "Hit chams", "Hit effects", "Damage numbers" } } },
+            { "Kills", effects = { { "Kill sound", "Kill effects" }, { "Kill notice", "Kill streak", "Corpse" } } },
+            { "Bullets", effects = { { "Tracers", "Tracer style" }, { "Impacts" } } },
+            { "Gun sounds", effects = { { "Gun sounds" } } },
+            { "Sky", effects = { { "Skyboxes" }, { "Creator Store skies", "Atmosphere presets" } } },
         } },
         { "Misc", "box", {
             { "Movement", { "Fly", "Speed", "Walk speed" }, { "High / long jump", "Phase", "Jump mult" }, { "Spider", "Movement extras", "Click TP" } },
@@ -642,13 +642,24 @@ do
         local out = { surface = surf, key = key }
         local canvas = surf:Canvas({ Name = spec[1], Lazy = false })
         if canvas then
-            local left, right = canvas:Split({ Ratio = 0.42 })
-            out.canvas, out.left, out.right = canvas, left, right
-            for _, name in ipairs(spec.effects) do paneSection(left, out, name) end
-            paneSection(right, out, "Preview")
+            local main, side
+            if #spec.effects > 1 then
+                main, side = canvas:Split({ Size = 270, Side = "Right" })
+                out.columns = { main:Split({ Ratio = 0.5 }) }
+            else
+                main, side = canvas:Split({ Ratio = 0.46 })
+                out.columns = { main }
+            end
+            out.canvas, out.left, out.right = canvas, main, side
+            for index, names in ipairs(spec.effects) do
+                for _, name in ipairs(names) do paneSection(out.columns[index], out, name) end
+            end
+            paneSection(side, out, "Preview")
             return out
         end
-        for index, name in ipairs(spec.effects) do section(surf, out, name, index % 2 == 1 and 1 or 2) end
+        for index, names in ipairs(spec.effects) do
+            for _, name in ipairs(names) do section(surf, out, name, index) end
+        end
         section(surf, out, "Preview", 3, CANVAS_ONLY)
         return out
     end
@@ -657,7 +668,7 @@ do
         local out = { surface = surf, key = key }
         local canvas = surf:Canvas({ Name = spec[1], Lazy = false })
         if canvas then
-            local left, right = canvas:Split({ Size = 250, Side = "Right" })
+            local left, right = canvas:Split({ Size = 264, Side = "Right" })
             local pages = left:AddPages(spec.avatar)
             out.canvas, out.left, out.right, out.pages = canvas, left, right, pages
             for _, name in ipairs(spec.avatar) do paneSection(pages[name], out, name) end
@@ -904,63 +915,83 @@ do
         return node
     end
 
-    Entities = { list = {}, byPlayer = {}, calls = 0, frame = -1 }
+    Entities = { list = {}, shown = {}, byPlayer = {}, calls = 0, frame = -1 }
 
     local function partsOf(record, model)
-        if record.model == model and record.parts then return record.parts end
-        local parts = {}
-        for _, name in ipairs(R6_PARTS) do parts[name] = model:FindFirstChild(name) end
-        record.model, record.parts = model, parts
+        local parts = record.parts
+        if record.model ~= model or not parts then
+            parts = {}
+            record.model, record.parts, record.visCache = model, parts, nil
+        end
+        for _, name in ipairs(R6_PARTS) do
+            local part = parts[name]
+            if not part or part.Parent ~= model then parts[name] = model:FindFirstChild(name) end
+        end
         return parts
     end
 
-    function Entities.live(record)
+    function Entities.present(record)
         if not record or not record.model or not record.root or not record.humanoid then return false end
-        if not record.model:IsDescendantOf(Workspace) then return false end
-        if record.humanoid.Health <= 0 then return false end
-        local floor = Workspace.FallenPartsDestroyHeight
-        if type(floor) == "number" and record.root.Position.Y < floor then return false end
-        return true
+        if record.humanoid.Health <= 0 or record.humanoid.Parent ~= record.model then return false end
+        return record.model:IsDescendantOf(Workspace)
+    end
+
+    function Entities.live(record)
+        return Entities.present(record) and not record.parked
+    end
+
+    local function refresh(player, model, humanoid, floor)
+        local record = Entities.byPlayer[player] or { player = player, name = player.Name }
+        Entities.byPlayer[player] = record
+        local parts = partsOf(record, model)
+        local tool = model:FindFirstChildOfClass("Tool")
+        record.root = parts.HumanoidRootPart or parts.Torso
+        record.torso = parts.Torso or record.root
+        record.head = parts.Head
+        record.humanoid, record.health, record.maxHealth = humanoid, humanoid.Health, humanoid.MaxHealth
+        record.team = Game.team(player)
+        record.teamColor = player.TeamColor
+        record.enemy = Game.isEnemy(player)
+        record.state = Game.state(player)
+        record.weaponTool = tool
+        record.weaponName = tool and tool.Name or nil
+        local anchor = record.root
+        record.pos = anchor and anchor.Position or nil
+        record.vel = anchor and anchor.AssemblyLinearVelocity or nil
+        record.parked = record.pos ~= nil and type(floor) == "number" and record.pos.Y < floor
+        record.rendered = true
+        return record
     end
 
     function Entities.update()
         if Entities.frame == Game.frame then return Entities.list end
         Entities.frame = Game.frame
         Entities.calls = Entities.calls + 1
-        local list, seen = {}, {}
+        local list, shown, seen = {}, {}, {}
+        local floor = Workspace.FallenPartsDestroyHeight
         for _, player in ipairs(Players:GetPlayers()) do
             local model = player ~= LocalPlayer and player.Character or nil
             local humanoid = Game.humanoid(model)
             if model and humanoid then
-                local record = Entities.byPlayer[player] or { player = player, name = player.Name }
-                Entities.byPlayer[player] = record
                 seen[player] = true
-                local parts = partsOf(record, model)
-                local tool = model:FindFirstChildOfClass("Tool")
-                record.head, record.torso, record.root = parts.Head, parts.Torso, parts.HumanoidRootPart
-                record.humanoid, record.health, record.maxHealth = humanoid, humanoid.Health, humanoid.MaxHealth
-                record.team = Game.team(player)
-                record.teamColor = player.TeamColor
-                record.enemy = Game.isEnemy(player)
-                record.state = Game.state(player)
-                record.weaponTool = tool
-                record.weaponName = tool and tool.Name or nil
-                local anchor = record.root or record.torso
-                record.pos = anchor and anchor.Position or nil
-                record.vel = anchor and anchor.AssemblyLinearVelocity or nil
-                record.rendered = true
-                if Entities.live(record) then list[#list + 1] = record end
+                local ok, record = pcall(refresh, player, model, humanoid, floor)
+                if not ok then
+                    Util.note("entity" .. tostring(record), "entity (" .. tostring(player.Name) .. "):", record)
+                elseif Entities.present(record) then
+                    shown[#shown + 1] = record
+                    if not record.parked then list[#list + 1] = record end
+                end
             end
         end
         for player in pairs(Entities.byPlayer) do
             if not seen[player] then Entities.byPlayer[player] = nil end
         end
-        Entities.list = list
+        Entities.list, Entities.shown = list, shown
         return list
     end
 
     function Entities.clear()
-        Entities.list, Entities.byPlayer = {}, {}
+        Entities.list, Entities.shown, Entities.byPlayer = {}, {}, {}
     end
 
     local function watchCharacter(character)
@@ -1010,23 +1041,57 @@ do
         return nil
     end
 
-    local function muzzleOf(tool)
-        return tool and (tool:FindFirstChild("Muzzle") or tool:FindFirstChild("Handle")) or nil
+    local function pointOf(object)
+        if not object then return nil end
+        if object:IsA("Attachment") then return object.WorldPosition end
+        if object:IsA("BasePart") then return object.Position end
+        return nil
+    end
+
+    function Game.muzzlePosition(tool)
+        if not tool then return nil end
+        local handle = tool:FindFirstChild("Handle")
+        return pointOf(tool:FindFirstChild("Muzzle")) or pointOf(handle and handle:FindFirstChild("Muzzle"))
+    end
+
+    local function barrelOf(tool)
+        return Game.muzzlePosition(tool) or pointOf(tool and tool:FindFirstChild("Handle"))
+    end
+
+    function Game.shotOrigin(player, fallback)
+        local character = player and player.Character
+        if not character then return fallback end
+        local muzzle = Game.muzzlePosition(character:FindFirstChildOfClass("Tool"))
+        if muzzle then return muzzle end
+        local head = character:FindFirstChild("Head")
+        return head and head.Position or fallback
     end
 
     function Game.isLocalShot(origin)
-        local muzzle = muzzleOf(Game.weapon())
-        return muzzle ~= nil and (muzzle.Position - origin).Magnitude <= 1.5
+        local barrel = barrelOf(Game.weapon())
+        return barrel ~= nil and (barrel - origin).Magnitude <= 1.5
+    end
+
+    function Game.isOwnEcho(origin, shooter)
+        if not Game.lastOwnShot or os.clock() - Game.lastOwnShot > 1 then return false end
+        local character = Game.localCharacter()
+        local head = character and character:FindFirstChild("Head")
+        local distance = head and (head.Position - origin).Magnitude
+        if not distance or distance > 2.5 then return false end
+        local other = shooter and shooter.Character and shooter.Character:FindFirstChild("Head")
+        return not other or distance < (other.Position - origin).Magnitude
     end
 
     function Game.guessShooter(origin)
-        local best, bestDistance = nil, 6
+        local best, bestDistance = nil, 8
         for _, player in ipairs(Players:GetPlayers()) do
             local character = player ~= LocalPlayer and player.Character
             if character then
-                local anchor = muzzleOf(character:FindFirstChildOfClass("Tool")) or character:FindFirstChild("Head")
-                local distance = anchor and (anchor.Position - origin).Magnitude
-                if distance and distance < bestDistance then best, bestDistance = player, distance end
+                local head = character:FindFirstChild("Head")
+                local distance = head and (head.Position - origin).Magnitude or math.huge
+                local barrel = barrelOf(character:FindFirstChildOfClass("Tool"))
+                if barrel then distance = math.min(distance, (barrel - origin).Magnitude) end
+                if distance < bestDistance then best, bestDistance = player, distance end
             end
         end
         return best
@@ -1169,7 +1234,8 @@ do
             for _, shot in ipairs(list) do
                 local origin, hitPos, behavior = type(shot) == "table" and shot[1], type(shot) == "table" and shot[2], type(shot) == "table" and shot[3]
                 if typeof(origin) == "Vector3" and typeof(hitPos) == "Vector3" and not Game.isLocalShot(origin) then
-                    Game.events.onEnemyShot:Fire(Game.guessShooter(origin), origin, hitPos, behavior)
+                    local shooter = Game.guessShooter(origin)
+                    if not Game.isOwnEcho(origin, shooter) then Game.events.onEnemyShot:Fire(shooter, origin, hitPos, behavior) end
                 end
             end
         end))
@@ -1319,6 +1385,7 @@ do
     local DARK = Color3.fromRGB(20, 20, 20)
     local STUDS_TO_M = 0.28
     local NEAR_PLANE = 0.1
+    local MAX_RANGE = 5000
     local PART_SIZES = {
         Head = Vector3.new(2, 1, 1), Torso = Vector3.new(2, 2, 1),
         ["Left Arm"] = Vector3.new(1, 2, 1), ["Right Arm"] = Vector3.new(1, 2, 1),
@@ -1418,14 +1485,20 @@ do
                 end
             end
         end
-        if behind or minX == math.huge then return nil end
+        if minX == math.huge then return nil end
+        if behind and not (cam:WorldToViewportPoint(center).Z > 0) then return nil end
+        local size = cam.ViewportSize
+        minX, maxX = math.clamp(minX, -size.X, size.X * 2), math.clamp(maxX, -size.X, size.X * 2)
+        minY, maxY = math.clamp(minY, -size.Y, size.Y * 2), math.clamp(maxY, -size.Y, size.Y * 2)
         return math.floor(minX), math.floor(minY), math.floor(maxX - minX), math.floor(maxY - minY)
     end
 
     function ESP.readTeam(prefix, c)
         local function r(name, default) return flag(prefix .. name, default) end
         local function color(name, default) return r(name, default), Util.opacity(prefix .. name) end
-        c.enabled, c.maxdist = r("on", false), r("dist", 1500)
+        c.enabled, c.maxdist = r("on", false), r("dist", MAX_RANGE)
+        if c.maxdist >= MAX_RANGE then c.maxdist = math.huge end
+        c.hostileOnly, c.hostileTres = r("hostile_only", false), r("hostile_tres", false)
         c.teamColor = r("team_color", false)
         c.box = r("box", false)
         c.boxColor, c.boxA = color("box_color", WHITE)
@@ -1523,6 +1596,7 @@ do
     function ESP.hide(o)
         if o.hidden then return end
         o.hidden, o.arrowOnly = true, false
+        for drawing in pairs(o.on) do o.on[drawing] = nil end
         for _, drawing in ipairs(o.all) do drawing.Visible = false end
     end
 
@@ -2486,7 +2560,8 @@ do
             end
         end
 
-        local headPoint, headFront = Draw.project(cam, rec.head.Position)
+        local head = rec.head or rec.torso
+        local headPoint, headFront = Draw.project(cam, head.Position)
         if cfg.dot and headFront then
             local radius = math.clamp(h * 0.09, 2, 12)
             o.dot.Position, o.dot.Radius, o.dot.Color, o.dot.Transparency = headPoint, radius, espTint(S, visible, tint or cfg.dotColor), cfg.dotA
@@ -2495,7 +2570,7 @@ do
             if S.outline then on[o.dotEdge] = true end
         end
         if cfg.view and headFront then
-            local tip, tipFront = Draw.project(cam, rec.head.Position + rec.head.CFrame.LookVector * S.viewLen)
+            local tip, tipFront = Draw.project(cam, head.Position + head.CFrame.LookVector * S.viewLen)
             if tipFront then setLine(on, o.view, headPoint, tip, espTint(S, visible, cfg.viewColor), cfg.viewA, 1) end
         end
 
@@ -2523,27 +2598,38 @@ do
         if not ok then Util.note("cham:" .. tostring(problem), "chams (" .. tostring(rec.name) .. "):", problem) end
     end
 
+    function ESP.wanted(rec, cfg, dist)
+        if not cfg.enabled or dist > cfg.maxdist then return false end
+        if cfg.hostileOnly and rec.team == "Inmates" then
+            local state = rec.state or {}
+            return state.hostile == true or (cfg.hostileTres and state.trespassing == true)
+        end
+        return true
+    end
+
     function ESP.processRecord(cam, rec, now, origin, viewport, center)
         local S = ESP.S
         local cfg = rec.enemy and ESP.enemy or ESP.team
         local o = ESP.objects[rec.player]
-        if not o then
-            o = ESP.make()
-            ESP.objects[rec.player] = o
-        end
         ESP.seen[rec.player] = true
-        o.lastSeen = now
+        if o then o.lastSeen = now end
 
         local dist = (rec.pos - origin).Magnitude
-        if not cfg.enabled or dist > cfg.maxdist then
-            ESP.hide(o)
+        if not ESP.wanted(rec, cfg, dist) then
+            if o then ESP.hide(o) end
             ESP.chams(rec, nil, S)
             return
         end
         local visible = false
         if S.visOverride then visible = Visible.entity(rec, origin, now, S.visInterval) end
         ESP.chams(rec, cfg, S)
-        if Draw.hasApi then ESP.draw(cam, o, rec, cfg, S, visible, dist, viewport, center) end
+        if not Draw.hasApi then return end
+        if not o then
+            o = ESP.make()
+            o.lastSeen = now
+            ESP.objects[rec.player] = o
+        end
+        ESP.draw(cam, o, rec, cfg, S, visible, dist, viewport, center)
     end
 
     function ESP.step(dt, now, records)
@@ -2558,6 +2644,7 @@ do
             cfg.chamSig = ok and sig or nil
         end
         local origin = Game.eye(cam)
+        records = Entities.frame == Game.frame and Entities.shown or records or {}
         Util.guard("chamstyle", ChamStyle.plan, records, origin)
         local viewport = cam.ViewportSize
         local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
@@ -2748,7 +2835,11 @@ do
         local Main, Body = sub["Players ESP"], sub.Chams
         local Marks = shared and sub.Arrows or sub["Team indicator"]
         local On = Main:Toggle({ Name = "Enabled", Flag = key("on"), Tooltip = "Master switch for " .. string.lower(label) .. " ESP" }):Settings("Range", 230)
-        On:Slider({ Name = "Max distance", Flag = key("dist"), Min = 50, Max = 3000, Default = 1500, Decimals = 1, Suffix = " studs" })
+        On:Slider({ Name = "Max distance", Flag = key("dist"), Min = 50, Max = MAX_RANGE, Default = MAX_RANGE, Decimals = 1, Suffix = " studs", Tooltip = "At the maximum there is no limit" })
+        if shared then
+            On:Toggle({ Name = "Hostile inmates only", Flag = key("hostile_only"), Tooltip = "Inmates get ESP and chams only while they are Hostile" })
+            On:Toggle({ Name = "Trespassing counts as hostile", Flag = key("hostile_tres"), Tooltip = "With Hostile inmates only, trespassing inmates are shown too" })
+        end
 
         local Box = Main:Toggle({ Name = "Boxes", Flag = key("box") }):Settings("Boxes", 230)
         pickColor(Box, "Box", key("box_color"), tint)
@@ -3116,6 +3207,15 @@ do
         } },
     }
     local WEATHER_NAMES = { "Snow", "Rain", "Blizzard", "Ash", "Leaves", "Petals", "Fireflies", "Sandstorm", "Embers", "Fog bank" }
+
+    local function fadeCurve(alpha)
+        return NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.15, alpha),
+            NumberSequenceKeypoint.new(0.85, alpha),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+    end
 
     local function propGet(object, prop)
         local ok, value = pcall(function() return object[prop] end)
@@ -3626,8 +3726,9 @@ do
             put(sky, "CelestialBodiesShown", val("world_sky_bodies") ~= false)
         end
         if on("world_sky_spin") then
+            if World.orientOk == nil then World.orientOk = pcall(function() return sky.SkyboxOrientation end) end
             World.angle = (World.angle + val("world_sky_spin_speed") * dt) % 360
-            put(sky, "SkyboxOrientation", Vector3.new(0, World.angle, 0))
+            if World.orientOk then put(sky, "SkyboxOrientation", Vector3.new(val("world_fx_sky_tilt") or 0, World.angle, 0)) end
         end
     end
 
@@ -4205,8 +4306,10 @@ do
             for prop in pairs(props) do props[prop] = nil end
         end
 
+        World.stepCycle(dt)
         local light = World.modelLight()
-        local needAtmos = on("world_atmos") or (light and light.Atmosphere) ~= nil or on("world_dsky")
+        local cycle = World.skyfx.cycle
+        local needAtmos = on("world_atmos") or (light and light.Atmosphere) ~= nil or on("world_dsky") or on("world_fx_pulse") or (cycle and cycle.Atmosphere) ~= nil
         local atmos = World.atmos
         if not (atmos and atmos.Parent) then
             atmos = Lighting:FindFirstChildOfClass("Atmosphere")
@@ -4306,6 +4409,7 @@ do
             if targets["Colour shift"] then put(Lighting, "ColorShift_Top", colour) end
             if targets.Atmosphere and atmos then put(atmos, "Color", colour) end
         end
+        if atmos then World.stepPulse(atmos, dt) end
         DynSky.flashLight(now)
 
         Util.guard("sky", World.stepSky, dt)
@@ -4441,12 +4545,7 @@ do
                 emitter.Rotation = NumberRange.new(0, 360)
                 emitter.RotSpeed = NumberRange.new(-40, 40)
             end
-            emitter.Transparency = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(0.15, layer.alpha),
-                NumberSequenceKeypoint.new(0.85, layer.alpha),
-                NumberSequenceKeypoint.new(1, 1),
-            })
+            emitter.Transparency = fadeCurve(layer.alpha)
             emitter.LightEmission = layer.light or 0
             emitter.LockedToPart = false
             emitter.EmissionDirection = def.rise and Enum.NormalId.Top or Enum.NormalId.Bottom
@@ -4794,12 +4893,288 @@ do
         for part in pairs(state.parts) do World.xrayPart(part, nil) end
     end
 
+    local ARC_POOL, FADE_STEPS = 16, 20
+    local FX_AREA, FX_HEIGHT = 70, 18
+    local UP = Vector3.new(0, 1, 0)
+    local ARC_CORE, ARC_GLOW = Color3.fromRGB(207, 230, 255), Color3.fromRGB(61, 139, 255)
+    local FX_PARTICLES = {
+        Snow = { layer = WEATHER.Snow.layers[2], speed = { 2, 5 } },
+        Rain = { layer = WEATHER.Rain.layers[1] },
+        Embers = { layer = WEATHER.Embers.layers[1], rise = true },
+        Fireflies = { layer = WEATHER.Fireflies.layers[1], rise = true },
+        Ash = { layer = WEATHER.Ash.layers[1] },
+        Dust = { layer = { texture = SMOKE, color = rgb(200, 190, 165), alpha = 0.7, speed = { 0.3, 1 }, spin = true, life = { 4, 7 } }, rise = true },
+    }
+    local FX_PARTICLE_NAMES = { "Snow", "Rain", "Embers", "Fireflies", "Ash", "Dust" }
+    local PULSE = { Density = { 0, 1, 0.5 }, Haze = { 0, 10, 3 }, Glare = { 0, 10, 3 } }
+
+    World.skyfx = { arcs = {}, fades = { core = {}, glow = {} }, hue = 0, phase = 0, spawns = 0, builds = 0 }
+
+    local function holder(cam, size)
+        local part = Instance.new("Part")
+        for key, value in pairs(DynSky.solid({ Size = size })) do part[key] = value end
+        part.Name = Util.randomName()
+        part.Parent = cam
+        return part
+    end
+
+    function World.hueShift(color, shift)
+        local h, s, v = Color3.toHSV(color)
+        return Color3.fromHSV((h + shift) % 1, s, v)
+    end
+
+    function World.baseOf(object, prop)
+        local wanted = want[object]
+        if wanted and wanted[prop] ~= nil then return wanted[prop] end
+        local saved = World.orig[object]
+        if saved and saved[prop] ~= nil then return saved[prop] end
+        return propGet(object, prop)
+    end
+
+    function World.stepCycle(dt)
+        local state = World.skyfx
+        if on("world_fx_cycle") then
+            state.hue = (state.hue + (val("world_fx_cycle_speed") or 0.05) * dt) % 1
+            state.cycle = Util.set("world_fx_cycle_targets", {})
+        else
+            state.hue, state.cycle = 0, nil
+        end
+    end
+
+    function World.stepPulse(atmos, dt)
+        local state = World.skyfx
+        if on("world_fx_pulse") then
+            state.phase = (state.phase + (val("world_fx_pulse_speed") or 0.25) * dt) % 1
+            local wave = math.sin(state.phase * math.pi * 2) * (val("world_fx_pulse_amount") or 0.5)
+            local prop = val("world_fx_pulse_prop") or "Density"
+            local range = PULSE[prop]
+            if range then
+                local base = World.baseOf(atmos, prop)
+                if type(base) == "number" then put(atmos, prop, math.clamp(base + wave * range[3], range[1], range[2])) end
+            else
+                local base = World.baseOf(atmos, "Color")
+                if typeof(base) == "Color3" then put(atmos, "Color", World.hueShift(base, wave * 0.5)) end
+            end
+        else
+            state.phase = 0
+        end
+        if state.cycle and state.cycle.Atmosphere then
+            local base = World.baseOf(atmos, "Color")
+            if typeof(base) == "Color3" then put(atmos, "Color", World.hueShift(base, state.hue)) end
+        end
+    end
+
+    function World.arcSettings()
+        local state = World.skyfx
+        local cfg = state.cfg or {}
+        state.cfg = cfg
+        cfg.count = math.clamp(math.floor(val("world_fx_arcs_count") or 6), 0, ARC_POOL)
+        cfg.radius, cfg.height = val("world_fx_arcs_radius") or 7, val("world_fx_arcs_height") or 5
+        cfg.speed, cfg.curve = math.rad(val("world_fx_arcs_speed") or 60), val("world_fx_arcs_curve") or 1
+        cfg.length, cfg.width = math.rad(val("world_fx_arcs_length") or 80), val("world_fx_arcs_width") or 0.3
+        cfg.life, cfg.light = math.max(val("world_fx_arcs_life") or 3, 0.2), val("world_fx_arcs_light") or 1
+        cfg.core, cfg.glow = val("world_fx_arcs_core") or ARC_CORE, val("world_fx_arcs_glow") or ARC_GLOW
+        return cfg
+    end
+
+    function World.arcFade(kind, level)
+        local list = World.skyfx.fades[kind]
+        local seq = list[level]
+        if not seq then
+            local base = kind == "core" and 0 or 0.5
+            local alpha = 1 - (1 - base) * level / FADE_STEPS
+            seq = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1),
+                NumberSequenceKeypoint.new(0.2, alpha),
+                NumberSequenceKeypoint.new(0.6, alpha),
+                NumberSequenceKeypoint.new(1, 1),
+            })
+            list[level] = seq
+        end
+        return seq
+    end
+
+    function World.buildArcs(cam)
+        local state = World.skyfx
+        state.holder, state.arcs, state.style = holder(cam, Vector3.new(1, 1, 1)), {}, nil
+        state.builds = state.builds + 1
+        for index = 1, ARC_POOL do
+            local a0, a1 = Instance.new("Attachment"), Instance.new("Attachment")
+            a0.Name, a1.Name = Util.randomName(), Util.randomName()
+            a0.Parent, a1.Parent = state.holder, state.holder
+            local glow, core = Instance.new("Beam"), Instance.new("Beam")
+            for _, beam in ipairs({ glow, core }) do
+                beam.Name = Util.randomName()
+                beam.Attachment0, beam.Attachment1 = a0, a1
+                beam.FaceCamera, beam.Segments, beam.LightInfluence, beam.Enabled = true, 20, 0, false
+                beam.Parent = state.holder
+            end
+            glow.Texture, glow.TextureMode, glow.TextureLength, glow.LightEmission = SMOKE, Enum.TextureMode.Stretch, 1, 1
+            state.arcs[index] = { a0 = a0, a1 = a1, core = core, glow = glow, born = 0, life = 0, level = -1, on = false }
+        end
+    end
+
+    function World.dropArcs()
+        local state = World.skyfx
+        if state.holder then pcall(function() state.holder:Destroy() end) end
+        state.holder, state.arcs, state.style = nil, {}, nil
+    end
+
+    function World.spawnArc(arc, cfg, now, into)
+        local rand = DynSky.rand
+        arc.life = cfg.life * rand(0.7, 1.3)
+        arc.born = now - (into or 0) * arc.life
+        arc.radius = cfg.radius * rand(0.6, 1.25)
+        arc.y = rand(-0.5, 0.5) * cfg.height + 1
+        arc.rise = rand(-0.35, 0.35) * cfg.height
+        arc.theta = rand(0, math.pi * 2)
+        arc.span = cfg.length * rand(0.7, 1.3)
+        arc.spin = rand(0.6, 1.4)
+        arc.level, arc.bend = -1, nil
+        World.skyfx.spawns = World.skyfx.spawns + 1
+    end
+
+    function World.arcStyle(state, cfg)
+        local shift = state.cycle and state.cycle.Arcs and math.floor(state.hue * 60) / 60 or 0
+        local style = state.style
+        if style and style.width == cfg.width and style.light == cfg.light and style.core == cfg.core and style.glow == cfg.glow and style.shift == shift then return end
+        state.style = { width = cfg.width, light = cfg.light, core = cfg.core, glow = cfg.glow, shift = shift }
+        local core, glow = cfg.core, cfg.glow
+        if shift ~= 0 then core, glow = World.hueShift(core, shift), World.hueShift(glow, shift) end
+        local coreSeq, glowSeq = ColorSequence.new(core), ColorSequence.new(glow)
+        for _, arc in ipairs(state.arcs) do
+            arc.core.Color, arc.core.LightEmission = coreSeq, cfg.light
+            arc.core.Width0, arc.core.Width1 = cfg.width * 0.35, cfg.width
+            arc.glow.Color = glowSeq
+            arc.glow.Width0, arc.glow.Width1 = cfg.width * 1.4, cfg.width * 4
+        end
+    end
+
+    function World.stepArcs(cam, now)
+        local state = World.skyfx
+        if not on("world_fx_arcs") then
+            if state.holder then World.dropArcs() end
+            return
+        end
+        if not (state.holder and state.holder.Parent) then
+            World.dropArcs()
+            World.buildArcs(cam)
+        end
+        local cfg = World.arcSettings()
+        World.arcStyle(state, cfg)
+        local root = Game.rootPart()
+        state.holder.CFrame = CFrame.new(root and root.Position or cam.CFrame.Position)
+        for index, arc in ipairs(state.arcs) do
+            local active = index <= cfg.count
+            if active then
+                if arc.life <= 0 then
+                    World.spawnArc(arc, cfg, now, math.random())
+                elseif now - arc.born >= arc.life then
+                    World.spawnArc(arc, cfg, now)
+                end
+                local age = now - arc.born
+                local k = age / arc.life
+                local level = math.floor(math.clamp(math.min(k / 0.25, (1 - k) / 0.35, 1), 0, 1) * FADE_STEPS + 0.5)
+                if level ~= arc.level then
+                    arc.level = level
+                    arc.core.Transparency, arc.glow.Transparency = World.arcFade("core", level), World.arcFade("glow", level)
+                end
+                local a = arc.theta + cfg.speed * arc.spin * age
+                local b, r = a + arc.span, arc.radius
+                local ca, sa, cb, sb = math.cos(a), math.sin(a), math.cos(b), math.sin(b)
+                arc.a0.CFrame = CFrame.fromMatrix(Vector3.new(ca * r, arc.y, sa * r), Vector3.new(-sa, 0, ca), UP)
+                arc.a1.CFrame = CFrame.fromMatrix(Vector3.new(cb * r, arc.y + arc.rise, sb * r), Vector3.new(-sb, 0, cb), UP)
+                local bend = 4 / 3 * math.tan(arc.span / 4) * r * cfg.curve
+                if arc.bend ~= bend then
+                    arc.bend = bend
+                    arc.core.CurveSize0, arc.core.CurveSize1 = bend, bend
+                    arc.glow.CurveSize0, arc.glow.CurveSize1 = bend, bend
+                end
+            end
+            if arc.on ~= active then
+                arc.on = active
+                arc.core.Enabled, arc.glow.Enabled = active, active
+                if not active then arc.life = 0 end
+            end
+        end
+    end
+
+    function World.dropParticles()
+        local state = World.skyfx
+        if state.snow then pcall(function() state.snow:Destroy() end) end
+        state.snow, state.emitter, state.pcfg = nil, nil, nil
+    end
+
+    function World.shapeParticles(emitter, def, cfg)
+        local layer = def.layer
+        emitter.Texture = World.parseAsset(cfg.tex) or layer.texture
+        emitter.Color = ColorSequence.new(layer.color)
+        emitter.LightEmission = layer.light or 0
+        emitter.LightInfluence = layer.light and 0 or 1
+        emitter.Transparency = fadeCurve(layer.alpha)
+        emitter.Rate = cfg.rate
+        local low, high = math.min(cfg.low, cfg.high), math.max(cfg.low, cfg.high)
+        local mid, spread = (low + high) / 2, (high - low) / 2
+        emitter.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, mid, spread), NumberSequenceKeypoint.new(1, mid, spread) })
+        local range = def.speed or layer.speed
+        local slow, fast = range[1] * cfg.speed, range[2] * cfg.speed
+        emitter.Speed = NumberRange.new(slow, fast)
+        emitter.SpreadAngle = Vector2.new(cfg.spread, cfg.spread)
+        if layer.life then
+            emitter.Lifetime = NumberRange.new(layer.life[1], layer.life[2])
+        else
+            local life = math.clamp(FX_HEIGHT * 2 / math.max((slow + fast) / 2, 0.1), 0.5, 14)
+            emitter.Lifetime = NumberRange.new(life * 0.8, life)
+        end
+        emitter.EmissionDirection = def.rise and Enum.NormalId.Top or Enum.NormalId.Bottom
+        emitter.Orientation = layer.parallel and Enum.ParticleOrientation.VelocityParallel or Enum.ParticleOrientation.FacingCamera
+        emitter.Rotation = layer.spin and NumberRange.new(0, 360) or NumberRange.new(0)
+        emitter.RotSpeed = layer.spin and NumberRange.new(-40, 40) or NumberRange.new(0)
+        emitter.Enabled = true
+    end
+
+    function World.stepParticles(cam)
+        local state = World.skyfx
+        if not on("world_fx_particles") then
+            if state.snow then World.dropParticles() end
+            return
+        end
+        local kind = val("world_fx_particles_type")
+        local def = FX_PARTICLES[kind] or FX_PARTICLES.Snow
+        if not (state.snow and state.snow.Parent) then
+            World.dropParticles()
+            state.snow = holder(cam, Vector3.new(FX_AREA, 1, FX_AREA))
+            local emitter = Instance.new("ParticleEmitter")
+            emitter.Name = Util.randomName()
+            emitter.LockedToPart = false
+            emitter.Enabled = false
+            emitter.Parent = state.snow
+            state.emitter = emitter
+        end
+        local rate, low, high = val("world_fx_particles_rate") or 40, val("world_fx_particles_min") or 0.15, val("world_fx_particles_max") or 1.5
+        local speed, spread, tex = val("world_fx_particles_speed") or 1, val("world_fx_particles_spread") or 25, val("world_fx_particles_tex") or ""
+        local cfg = state.pcfg
+        if not (cfg and cfg.def == def and cfg.rate == rate and cfg.low == low and cfg.high == high and cfg.speed == speed and cfg.spread == spread and cfg.tex == tex) then
+            cfg = { def = def, rate = rate, low = low, high = high, speed = speed, spread = spread, tex = tex }
+            state.pcfg = cfg
+            World.shapeParticles(state.emitter, def, cfg)
+        end
+        local offset = state.offset
+        if not offset or state.offsetRise ~= def.rise then
+            offset = Vector3.new(0, def.rise and -FX_HEIGHT or FX_HEIGHT, 0)
+            state.offset, state.offsetRise = offset, def.rise
+        end
+        state.snow.CFrame = CFrame.new(cam.CFrame.Position + offset)
+    end
+
     function World.step(dt, now)
         local cam = Game.camera()
         if not cam then return end
         Util.guard("world", World.apply, dt, now)
         Util.guard("weather", World.stepWeather, cam, now)
         Util.guard("dsky", DynSky.step, cam, now, dt)
+        Util.guard("sky-arcs", World.stepArcs, cam, now)
+        Util.guard("sky-particles", World.stepParticles, cam)
         Util.guard("fov", World.stepFov, dt)
         Util.guard("xray", World.stepXray)
         local size = cam.ViewportSize
@@ -4833,6 +5208,8 @@ do
         World.cloudObject(false)
         World.dropWeather()
         DynSky.drop()
+        World.dropArcs()
+        World.dropParticles()
         for _, object in pairs(World.fx) do pcall(function() object:Destroy() end) end
         World.fx = {}
         if World.ownAtmos and World.atmos then pcall(function() World.atmos:Destroy() end) end
@@ -4910,6 +5287,7 @@ do
     Skybox:Dropdown({ Name = "Skybox", Flag = "world_sky_box", Items = SKY_CHOICES, Default = SKY_CHOICES[1], Searchable = true })
     Skybox:Toggle({ Name = "Rotate skybox", Flag = "world_sky_spin" })
     Skybox:Slider({ Name = "Rotation speed", Flag = "world_sky_spin_speed", Min = -60, Max = 60, Default = 6, Decimals = 0.1, Suffix = " deg/s" })
+    Skybox:Slider({ Name = "Tilt", Flag = "world_fx_sky_tilt", Min = -90, Max = 90, Default = 0, Decimals = 1, Suffix = " deg", Tooltip = "Tips the spinning sky over; older clients without sky orientation skip rotation" })
     Box:Toggle({ Name = "Remove sky", Flag = "world_nosky" })
     local Mood = Box:Toggle({ Name = "Mood preset", Flag = "world_sky", Tooltip = "Sets the time of day and atmosphere colours together" }):Settings("Mood preset", 200)
     Mood:Dropdown({ Name = "Preset", Flag = "world_sky_preset", Items = { "Night", "Sunset", "Overcast", "Dusk" }, Default = "Night" })
@@ -4936,6 +5314,37 @@ do
     DynSet:Slider({ Name = "Shooting stars", Flag = "world_dsky_shoot", Min = 0, Max = 30, Default = 6, Decimals = 1, Suffix = " /min" })
     pickColor(DynSet, "Colour tint", "world_dsky_tint", WHITE)
     Dyn:Dropdown({ Name = "Sky preset", Flag = "world_dsky_preset", Items = DynSky.names, Default = "Aurora" })
+
+    local Arcs = Dyn:Toggle({ Name = "Swirl arcs", Flag = "world_fx_arcs", Tooltip = "Glowing curved streaks that swirl around your character, only on your screen" }):Settings("Swirl arcs", 240)
+    Arcs:Slider({ Name = "Count", Flag = "world_fx_arcs_count", Min = 1, Max = ARC_POOL, Default = 6, Decimals = 1 })
+    Arcs:Slider({ Name = "Radius", Flag = "world_fx_arcs_radius", Min = 2, Max = 30, Default = 7, Decimals = 0.1, Suffix = " studs" })
+    Arcs:Slider({ Name = "Height spread", Flag = "world_fx_arcs_height", Min = 0, Max = 20, Default = 5, Decimals = 0.1, Suffix = " studs" })
+    Arcs:Slider({ Name = "Swirl speed", Flag = "world_fx_arcs_speed", Min = -360, Max = 360, Default = 60, Decimals = 1, Suffix = " deg/s" })
+    Arcs:Slider({ Name = "Curvature", Flag = "world_fx_arcs_curve", Min = 0, Max = 3, Default = 1, Decimals = 0.05, Tooltip = "1 follows the circle, lower flattens, higher bulges" })
+    Arcs:Slider({ Name = "Length", Flag = "world_fx_arcs_length", Min = 10, Max = 200, Default = 80, Decimals = 1, Suffix = " deg" })
+    Arcs:Slider({ Name = "Width", Flag = "world_fx_arcs_width", Min = 0.05, Max = 3, Default = 0.3, Decimals = 0.01, Suffix = " studs" })
+    Arcs:Slider({ Name = "Lifetime", Flag = "world_fx_arcs_life", Min = 0.5, Max = 10, Default = 3, Decimals = 0.1, Suffix = " s" })
+    Arcs:Slider({ Name = "Glow", Flag = "world_fx_arcs_light", Min = 0, Max = 1, Default = 1, Decimals = 0.01 })
+    pickColor(Arcs, "Core", "world_fx_arcs_core", ARC_CORE)
+    pickColor(Arcs, "Glow colour", "world_fx_arcs_glow", ARC_GLOW)
+
+    local Parts = Dyn:Toggle({ Name = "Sky particles", Flag = "world_fx_particles", Tooltip = "Particles around the camera everywhere, roofs included; World > Weather is the roof-aware version" }):Settings("Sky particles", 240)
+    Parts:Dropdown({ Name = "Type", Flag = "world_fx_particles_type", Items = FX_PARTICLE_NAMES, Default = "Snow" })
+    Parts:Input({ Name = "Custom texture", Flag = "world_fx_particles_tex", Placeholder = "image id; empty = type's texture" })
+    Parts:Slider({ Name = "Rate", Flag = "world_fx_particles_rate", Min = 1, Max = 300, Default = 40, Decimals = 1, Suffix = " /s" })
+    Parts:Slider({ Name = "Min size", Flag = "world_fx_particles_min", Min = 0.05, Max = 5, Default = 0.15, Decimals = 0.01 })
+    Parts:Slider({ Name = "Max size", Flag = "world_fx_particles_max", Min = 0.05, Max = 5, Default = 1.5, Decimals = 0.01 })
+    Parts:Slider({ Name = "Speed", Flag = "world_fx_particles_speed", Min = 0.1, Max = 4, Default = 1, Decimals = 0.05, Suffix = "x" })
+    Parts:Slider({ Name = "Spread", Flag = "world_fx_particles_spread", Min = 0, Max = 180, Default = 25, Decimals = 1, Suffix = " deg" })
+
+    local AtmosPulse = Dyn:Toggle({ Name = "Atmosphere pulse", Flag = "world_fx_pulse", Tooltip = "Swings one atmosphere value around its current setting" }):Settings("Atmosphere pulse", 230)
+    AtmosPulse:Dropdown({ Name = "Property", Flag = "world_fx_pulse_prop", Items = { "Density", "Haze", "Glare", "Color hue" }, Default = "Density" })
+    AtmosPulse:Slider({ Name = "Speed", Flag = "world_fx_pulse_speed", Min = 0.02, Max = 2, Default = 0.25, Decimals = 0.01, Suffix = " Hz" })
+    AtmosPulse:Slider({ Name = "Amount", Flag = "world_fx_pulse_amount", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
+
+    local Cycle = Dyn:Toggle({ Name = "Colour cycle", Flag = "world_fx_cycle", Tooltip = "Rotates the hue of the arcs and/or the atmosphere colour" }):Settings("Colour cycle", 230)
+    Cycle:Dropdown({ Name = "Applies to", Flag = "world_fx_cycle_targets", Items = { "Arcs", "Atmosphere" }, Multi = true, Default = { "Arcs" } })
+    Cycle:Slider({ Name = "Speed", Flag = "world_fx_cycle_speed", Min = 0.01, Max = 1, Default = 0.05, Decimals = 0.01 })
 
     local Cloud = SkySub["Clouds / wind"]
     local Clouds = Cloud:Toggle({ Name = "Clouds", Flag = "world_clouds" }):Settings("Clouds", 230)
@@ -5142,10 +5551,10 @@ do
         return nodes
     end
 
-    function Tracers.spawn(path, color, hit, speed, mine)
+    function Tracers.spawn(path, color, hit, speed, mine, timing)
         local presets = Tracers.presets()
         local name = flag("trace_texture", "Lightning")
-        if Tracers.particle[name] then return Tracers.spawnFx(name, path, color, hit, speed, mine) end
+        if Tracers.particle[name] then return Tracers.spawnFx(name, path, color, hit, speed, mine, timing) end
         local preset = presets[name] or presets.Lightning
         local scale = flag("trace_width", 1)
         local terrain = Workspace.Terrain
@@ -5180,7 +5589,7 @@ do
         end
 
         local segment = total / count
-        local record = { beams = {}, points = {}, parts = {}, born = os.clock() }
+        local record = { beams = {}, points = {}, parts = {}, born = os.clock(), life = timing and timing.hold, fade = timing and timing.fade, ease = timing and timing.ease }
         local ok = pcall(function()
             for index, position in ipairs(nodes) do
                 local point = Instance.new("Attachment")
@@ -5255,6 +5664,16 @@ do
     end
 
     Tracers.SPEED = 1200
+    Tracers.GAME_TIMING = {
+        Bullet = { hold = 0.05, fade = 0.05 },
+        Sniper = { hold = 0, fade = 2.8, ease = true },
+        Taser = { hold = 0, fade = 0.8, ease = true },
+    }
+
+    function Tracers.timing(behavior)
+        if not flag("trace_game_timing", true) then return nil end
+        return Tracers.GAME_TIMING[behavior] or Tracers.GAME_TIMING.Bullet
+    end
 
     function Tracers.wanted()
         return flag("trace_on", false) or flag("trace_enemy_on", false) or flag("trace_team_on", false) or flag("impact_on", false)
@@ -5273,6 +5692,7 @@ do
 
     function Tracers.enqueue(origin, hitPos, part, behavior, mine, shooter)
         if typeof(origin) ~= "Vector3" or typeof(hitPos) ~= "Vector3" or not Tracers.wanted() then return end
+        if not mine and shooter then origin = Game.shotOrigin(shooter, origin) end
         local queue = Tracers.queue
         if #queue >= Tracers.caps.queue then
             local drop = 1
@@ -5314,7 +5734,8 @@ do
         if Tracers.particle[flag("trace_texture", "Lightning")] and not Tracers.room(item.mine, os.clock()) then return false end
         if (item.hitPos - item.origin).Magnitude < 0.5 then return false end
         local hit = (item.part ~= nil or Tracers.probe(item) ~= nil) and item.hitPos or nil
-        return Tracers.spawn({ item.origin, item.hitPos }, color, hit, Tracers.SPEED, item.mine)
+        local timing = Tracers.timing(item.behavior)
+        return Tracers.spawn({ item.origin, item.hitPos }, color, hit, timing and math.huge or Tracers.SPEED, item.mine, timing)
     end
 
     function Tracers.drain(now)
@@ -5356,15 +5777,17 @@ do
     end
 
     function Tracers.step(now)
-        local life = flag("trace_time", 4)
+        local keep = flag("trace_time", 4)
         for index = #Tracers.list, 1, -1 do
             local record = Tracers.list[index]
             local age = now - record.born
-            if age >= life + Tracers.fade then
+            local life, fade = record.life or keep, record.fade or Tracers.fade
+            if age >= life + fade then
                 Tracers.drop(record)
                 table.remove(Tracers.list, index)
             elseif age > life then
-                local k = (age - life) / Tracers.fade
+                local k = fade > 0 and (age - life) / fade or 1
+                if record.ease then k = k * k end
                 for _, part in ipairs(record.parts) do
                     propSet(part.beam, "Transparency", NumberSequence.new(part.a0 + (1 - part.a0) * k, part.a1 + (1 - part.a1) * k))
                 end
@@ -5598,7 +6021,7 @@ do
         end
     end
 
-    function Tracers.spawnFx(name, path, color, hit, speed, mine)
+    function Tracers.spawnFx(name, path, color, hit, speed, mine, timing)
         local camera = propGet(Workspace, "CurrentCamera")
         if not camera then return false end
         local cumulative, total = Tracers.measure(path)
@@ -5612,7 +6035,7 @@ do
             path = path, cumulative = cumulative, total = total, nodes = nodes, t = {}, color = color, chord = path[#path] - path[1],
             hit = flag("trace_fx_impact", true) and hit or nil,
             travel = math.clamp(total / math.max(type(speed) == "number" and speed or 0, 300), 0.03, 1.2),
-            keep = math.clamp(flag("trace_time", 4), 0.5, 10), density = math.clamp(flag("trace_fx_density", 1), 0.25, 3),
+            keep = timing and math.clamp(timing.hold + timing.fade, 0.05, 10) or math.clamp(flag("trace_time", 4), 0.5, 10), density = math.clamp(flag("trace_fx_density", 1), 0.25, 3),
             scale = math.clamp(flag("trace_width", 1), 0.2, 3), psize = math.clamp(flag("trace_fx_size", 1), 0.25, 3),
             fade = gradient and math.clamp(flag("trace_grad_fade", 0), 0, 1) or 0,
         }
@@ -10084,15 +10507,26 @@ do
         popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
     end
 
+    local function anyOf(names)
+        return function()
+            for _, name in ipairs(names) do
+                if flag(name, false) then return true end
+            end
+            return false
+        end
+    end
+
     local Hits = Effects.Hits
     local Marker = Hits["Hit marker"]
     local MarkerMore = Marker:Toggle({ Name = "Hit marker", Flag = "hit_marker", Tooltip = "Drawn at the crosshair whenever one of your shots lowers a player's health" }):Colorpicker({ Name = "Marker", Flag = "hit_marker_color", Default = WHITE, Alpha = 0 }):Colorpicker({ Name = "Headshot", Flag = "hit_marker_head", Default = Color3.fromRGB(255, 70, 70), Alpha = 0 }):Settings("Hit marker", 240)
-    Marker:Dropdown({ Name = "Style", Flag = "hit_marker_style", Items = Feedback.styles, Default = "Classic X" })
-    Marker:Dropdown({ Name = "Animation", Flag = "hit_marker_anim", Items = Feedback.anims, Default = "Expand" })
-    Marker:Slider({ Name = "Size", Flag = "hit_marker_size", Min = 4, Max = 24, Default = 9, Decimals = 1, Suffix = " px" })
-    Marker:Slider({ Name = "Duration", Flag = "hit_marker_time", Min = 0.1, Max = 1.2, Default = 0.4, Decimals = 0.01, Suffix = " s" })
-    Marker:Toggle({ Name = "Kill marker", Flag = "hit_marker_kill", Tooltip = "Bigger marker in its own colour when the hit kills" }):Colorpicker({ Name = "Kill", Flag = "hit_marker_kill_color", Default = Color3.fromRGB(255, 190, 60), Alpha = 0 })
-    Marker:Toggle({ Name = "3D at hit position", Flag = "hit_marker_3d", Tooltip = "Draws each marker where the bullet hit the player instead of at the crosshair" })
+    Marker:Depends({ { "hit_marker", true } }, function(box)
+        box:Dropdown({ Name = "Style", Flag = "hit_marker_style", Items = Feedback.styles, Default = "Classic X" })
+        box:Dropdown({ Name = "Animation", Flag = "hit_marker_anim", Items = Feedback.anims, Default = "Expand" })
+        box:Slider({ Name = "Size", Flag = "hit_marker_size", Min = 4, Max = 24, Default = 9, Decimals = 1, Suffix = " px" })
+        box:Slider({ Name = "Duration", Flag = "hit_marker_time", Min = 0.1, Max = 1.2, Default = 0.4, Decimals = 0.01, Suffix = " s" })
+        box:Toggle({ Name = "Kill marker", Flag = "hit_marker_kill", Tooltip = "Bigger marker in its own colour when the hit kills" }):Colorpicker({ Name = "Kill", Flag = "hit_marker_kill_color", Default = Color3.fromRGB(255, 190, 60), Alpha = 0 })
+        box:Toggle({ Name = "3D at hit position", Flag = "hit_marker_3d", Tooltip = "Draws each marker where the bullet hit the player instead of at the crosshair" })
+    end)
     MarkerMore:Slider({ Name = "Thickness", Flag = "hit_marker_thick", Min = 1, Max = 5, Default = 1, Decimals = 1, Suffix = " px" })
     MarkerMore:Slider({ Name = "Gap", Flag = "hit_marker_gap", Min = 0, Max = 20, Default = 3, Decimals = 1, Suffix = " px" })
     MarkerMore:Toggle({ Name = "Outline", Flag = "hit_marker_outline", Default = true })
@@ -10102,13 +10536,31 @@ do
     MarkerMore:Toggle({ Name = "Skull on kill", Flag = "hit_marker_skull", Tooltip = "Replaces the marker with a skull when the hit kills" })
     MarkerMore:Toggle({ Name = "Follow mouse", Flag = "hit_marker_mouse", Default = true, Tooltip = "Prison Life aims at the mouse; off draws the marker at the screen centre" })
 
+    local HitSnd = Hits["Hit sound"]
+    HitSnd:Toggle({ Name = "Hit sound", Flag = "hit_snd", Tooltip = "Pick and audition sounds in the list on the right" })
+    HitSnd:Depends({ { "hit_snd", true } }, function(box)
+        box:Dropdown({ Name = "Sound", Flag = "hit_snd_id", Items = Feedback.HIT_SOUND_ORDER, Default = "Gamesense", Searchable = true })
+        box:Slider({ Name = "Volume", Flag = "hit_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
+        box:Slider({ Name = "Pitch", Flag = "hit_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+        box:Slider({ Name = "Max length", Flag = "hit_snd_max", Min = 0, Max = 3, Default = 0.6, Decimals = 0.05, Suffix = " s", Tooltip = "Stops long sounds after this long; 0 plays the whole sound" })
+        box:Toggle({ Name = "Different on headshot", Flag = "hit_snd_head" })
+        box:Depends({ { "hit_snd_head", true } }, function(head)
+            head:Dropdown({ Name = "Headshot sound", Flag = "hit_snd_head_id", Items = Feedback.HIT_SOUND_ORDER, Default = "Alt Headshot kill", Searchable = true })
+        end)
+        box:Depends({ { "hit_snd_id", function(value) return value == "Custom" or flag("hit_snd_head_id", nil) == "Custom" end } }, function(custom)
+            custom:Input({ Name = "Custom sound id", Flag = "hit_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
+        end)
+    end)
+
     local Hc = Hits["Hit chams"]
     local HcMore = Hc:Toggle({ Name = "Hit chams", Flag = "hit_cham_on", Tooltip = "Flashes a local copy of the body you hit, built from adornments. Only your own hits on enemies" }):Colorpicker({ Name = "Hit cham", Flag = "hit_cham_color", Default = Color3.fromRGB(255, 70, 110), Alpha = 0.35 }):Settings("Hit chams", 240)
-    Hc:Dropdown({ Name = "Look", Flag = "hit_cham_look", Items = { "Solid", "Glow", "Wireframe" }, Default = "Solid" })
-    Hc:Dropdown({ Name = "Fade style", Flag = "hit_cham_fade", Items = { "Linear", "Pop", "Pulse" }, Default = "Linear" })
-    Hc:Slider({ Name = "Duration", Flag = "hit_cham_time", Min = 0.1, Max = 3, Default = 0.8, Decimals = 0.05, Suffix = " s" })
-    Hc:Toggle({ Name = "Hit part only", Flag = "hit_cham_part", Tooltip = "Only the body part the bullet hit instead of the whole body" })
-    Hc:Toggle({ Name = "Follow player", Flag = "hit_cham_follow", Tooltip = "Off keeps the pose from the moment of the hit; on moves with the player while it fades" })
+    Hc:Depends({ { "hit_cham_on", true } }, function(box)
+        box:Dropdown({ Name = "Look", Flag = "hit_cham_look", Items = { "Solid", "Glow", "Wireframe" }, Default = "Solid" })
+        box:Dropdown({ Name = "Fade style", Flag = "hit_cham_fade", Items = { "Linear", "Pop", "Pulse" }, Default = "Linear" })
+        box:Slider({ Name = "Duration", Flag = "hit_cham_time", Min = 0.1, Max = 3, Default = 0.8, Decimals = 0.05, Suffix = " s" })
+        box:Toggle({ Name = "Hit part only", Flag = "hit_cham_part", Tooltip = "Only the body part the bullet hit instead of the whole body" })
+        box:Toggle({ Name = "Follow player", Flag = "hit_cham_follow", Tooltip = "Off keeps the pose from the moment of the hit; on moves with the player while it fades" })
+    end)
     HcMore:Toggle({ Name = "Always on top", Flag = "hit_cham_top", Default = true })
     HcMore:Toggle({ Name = "Outline", Flag = "hit_cham_outline", Tooltip = "A second, slightly larger layer around each part" })
     HcMore:Depends({ { "hit_cham_outline", true } }, function(box)
@@ -10118,52 +10570,47 @@ do
 
     local HitEffects = Hits["Hit effects"]
     local HfMore = HitEffects:Toggle({ Name = "Hit effects", Flag = "hit_fx_on", Tooltip = "Local particle effects where your bullets hit enemies, separate from hit chams" }):Colorpicker({ Name = "Hit effect", Flag = "hit_fx_color", Default = Color3.fromRGB(255, 120, 80), Alpha = 0 }):Settings("Hit effects", 240)
-    HitEffects:Dropdown({ Name = "Effects", Flag = "hit_fx_list", Items = HitFx.names, Multi = true, Default = { "Sparks", "Glow burst" }, Tooltip = "Pick several to layer them" })
-    HitEffects:Slider({ Name = "Size", Flag = "hit_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
-    HitEffects:Slider({ Name = "Amount", Flag = "hit_fx_amount", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
-    HitEffects:Slider({ Name = "Lifetime", Flag = "hit_fx_time", Min = 0.3, Max = 2.5, Default = 1, Decimals = 0.05, Suffix = "x" })
-    HitEffects:Toggle({ Name = "Headshots only", Flag = "hit_fx_head" })
-    HitEffects:Dropdown({ Name = "Position", Flag = "hit_fx_at", Items = { "Hit point", "Body centre" }, Default = "Hit point" })
+    HitEffects:Depends({ { "hit_fx_on", true } }, function(box)
+        box:Dropdown({ Name = "Effects", Flag = "hit_fx_list", Items = HitFx.names, Multi = true, Default = { "Sparks", "Glow burst" }, Tooltip = "Pick several to layer them" })
+        box:Slider({ Name = "Size", Flag = "hit_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
+        box:Slider({ Name = "Amount", Flag = "hit_fx_amount", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
+        box:Toggle({ Name = "Headshots only", Flag = "hit_fx_head" })
+    end)
+    HfMore:Slider({ Name = "Lifetime", Flag = "hit_fx_time", Min = 0.3, Max = 2.5, Default = 1, Decimals = 0.05, Suffix = "x" })
+    HfMore:Dropdown({ Name = "Position", Flag = "hit_fx_at", Items = { "Hit point", "Body centre" }, Default = "Hit point" })
     HfMore:Slider({ Name = "Max at once", Flag = "hit_fx_max", Min = 1, Max = 16, Default = 12, Decimals = 1, Tooltip = "The oldest effect is removed first" })
 
     local Dmg = Hits["Damage numbers"]
-    Dmg:Toggle({ Name = "Damage numbers", Flag = "dmg_on", Tooltip = "Floating numbers with the health each of your hits took" })
-    Dmg:Label({ Name = "Head" }):Colorpicker({ Name = "Head", Flag = "dmg_head", Default = Color3.fromRGB(255, 102, 102) })
-    Dmg:Label({ Name = "Torso" }):Colorpicker({ Name = "Torso", Flag = "dmg_torso", Default = Color3.fromRGB(255, 150, 0) })
-    Dmg:Label({ Name = "Limbs" }):Colorpicker({ Name = "Limbs", Flag = "dmg_limb", Default = Color3.fromRGB(255, 255, 0) })
-    Dmg:Slider({ Name = "Size", Flag = "dmg_size", Min = 8, Max = 32, Default = 16, Decimals = 1, Suffix = " px" })
-    Dmg:Slider({ Name = "Rise", Flag = "dmg_rise", Min = 10, Max = 150, Default = 60, Decimals = 1, Suffix = " px" })
-    Dmg:Slider({ Name = "Duration", Flag = "dmg_time", Min = 0.4, Max = 3, Default = 1.1, Decimals = 0.01, Suffix = " s" })
-
-    local HitSnd = Hits["Hit sound"]
-    HitSnd:Toggle({ Name = "Hit sound", Flag = "hit_snd" })
-    HitSnd:Dropdown({ Name = "Sound", Flag = "hit_snd_id", Items = Feedback.HIT_SOUND_ORDER, Default = "Gamesense", Searchable = true })
-    HitSnd:Slider({ Name = "Volume", Flag = "hit_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
-    HitSnd:Slider({ Name = "Pitch", Flag = "hit_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
-    HitSnd:Toggle({ Name = "Different on headshot", Flag = "hit_snd_head" })
-    HitSnd:Dropdown({ Name = "Headshot sound", Flag = "hit_snd_head_id", Items = Feedback.HIT_SOUND_ORDER, Default = "Alt Headshot kill", Searchable = true })
-    HitSnd:Slider({ Name = "Max length", Flag = "hit_snd_max", Min = 0, Max = 3, Default = 0.6, Decimals = 0.05, Suffix = " s", Tooltip = "Stops long sounds after this long; 0 plays the whole sound" })
-    HitSnd:Input({ Name = "Custom sound id", Flag = "hit_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
-    HitSnd:Button({ Name = "Preview", Callback = function() Util.guard("hit-preview", Feedback.preview, "hit_snd", "Gamesense") end })
+    local DmgMore = Dmg:Toggle({ Name = "Damage numbers", Flag = "dmg_on", Tooltip = "Floating numbers with the health each of your hits took" }):Colorpicker({ Name = "Head", Flag = "dmg_head", Default = Color3.fromRGB(255, 102, 102) }):Colorpicker({ Name = "Torso", Flag = "dmg_torso", Default = Color3.fromRGB(255, 150, 0) }):Colorpicker({ Name = "Limbs", Flag = "dmg_limb", Default = Color3.fromRGB(255, 255, 0) }):Settings("Damage numbers", 230)
+    Dmg:Depends({ { "dmg_on", true } }, function(box)
+        box:Slider({ Name = "Size", Flag = "dmg_size", Min = 8, Max = 32, Default = 16, Decimals = 1, Suffix = " px" })
+    end)
+    DmgMore:Slider({ Name = "Rise", Flag = "dmg_rise", Min = 10, Max = 150, Default = 60, Decimals = 1, Suffix = " px" })
+    DmgMore:Slider({ Name = "Duration", Flag = "dmg_time", Min = 0.4, Max = 3, Default = 1.1, Decimals = 0.01, Suffix = " s" })
 
     local Kills = Effects.Kills
     local KillSnd = Kills["Kill sound"]
-    KillSnd:Toggle({ Name = "Kill sound", Flag = "kill_snd", Tooltip = "Plays when a player dies within 0.8 s of your hit" })
-    KillSnd:Dropdown({ Name = "Sound", Flag = "kill_snd_id", Items = Feedback.KILL_SOUND_ORDER, Default = "Alt Killshot", Searchable = true })
-    KillSnd:Slider({ Name = "Volume", Flag = "kill_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
-    KillSnd:Slider({ Name = "Pitch", Flag = "kill_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
-    KillSnd:Slider({ Name = "Max length", Flag = "kill_snd_max", Min = 0, Max = 6, Default = 2.5, Decimals = 0.05, Suffix = " s", Tooltip = "Stops long sounds after this long; 0 plays the whole sound" })
-    KillSnd:Input({ Name = "Custom sound id", Flag = "kill_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
-    KillSnd:Button({ Name = "Preview", Callback = function() Util.guard("kill-preview", Feedback.preview, "kill_snd", "Alt Killshot") end })
+    KillSnd:Toggle({ Name = "Kill sound", Flag = "kill_snd", Tooltip = "Plays when a player dies within 0.8 s of your hit. Pick and audition sounds in the list on the right" })
+    KillSnd:Depends({ { "kill_snd", true } }, function(box)
+        box:Dropdown({ Name = "Sound", Flag = "kill_snd_id", Items = Feedback.KILL_SOUND_ORDER, Default = "Alt Killshot", Searchable = true })
+        box:Slider({ Name = "Volume", Flag = "kill_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
+        box:Slider({ Name = "Pitch", Flag = "kill_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+        box:Slider({ Name = "Max length", Flag = "kill_snd_max", Min = 0, Max = 6, Default = 2.5, Decimals = 0.05, Suffix = " s", Tooltip = "Stops long sounds after this long; 0 plays the whole sound" })
+        box:Depends({ { "kill_snd_id", "Custom" } }, function(custom)
+            custom:Input({ Name = "Custom sound id", Flag = "kill_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
+        end)
+    end)
 
     local Kill = Kills["Kill effects"]
     local KfMore = Kill:Toggle({ Name = "Kill effects", Flag = "kill_fx", Tooltip = "Plays local effects on the body of players you kill. Visual only, nothing is sent to the server" }):Settings("Kill effects", 260)
-    Kill:Dropdown({ Name = "Effects", Flag = "kill_fx_list", Items = KillFx.names, Multi = true, Default = { "Dissolve", "Lightning" } })
-    Kill:Dropdown({ Name = "Body effects", Flag = "kill_fx_corpse", Items = KillFx.corpseNames, Multi = true, Tooltip = "Act on the body itself, locally. Only one movement effect runs per body: the first one in this list" })
+    Kill:Depends({ { "kill_fx", true } }, function(box)
+        box:Dropdown({ Name = "Effects", Flag = "kill_fx_list", Items = KillFx.names, Multi = true, Default = { "Dissolve", "Lightning" } })
+        box:Dropdown({ Name = "Body effects", Flag = "kill_fx_corpse", Items = KillFx.corpseNames, Multi = true, Tooltip = "Act on the body itself, locally. Only one movement effect runs per body: the first one in this list" })
+        box:Slider({ Name = "Intensity", Flag = "kill_fx_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
+        box:Slider({ Name = "Duration", Flag = "kill_fx_dur", Min = 0.5, Max = 6, Default = 2.5, Decimals = 0.1, Suffix = " s", Tooltip = "Length of Dissolve, Pillar, Tombstone, Crystallize and Holo-scan" })
+    end)
     pickColor(KfMore, "Colour", "kill_fx_color", Color3.fromRGB(102, 204, 255))
     pickColor(KfMore, "Secondary", "kill_fx_color2", Color3.fromRGB(235, 248, 255))
-    KfMore:Slider({ Name = "Intensity", Flag = "kill_fx_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
-    KfMore:Slider({ Name = "Duration", Flag = "kill_fx_dur", Min = 0.5, Max = 6, Default = 2.5, Decimals = 0.1, Suffix = " s", Tooltip = "Length of Dissolve, Pillar, Tombstone, Crystallize and Holo-scan" })
     KfMore:Slider({ Name = "Screen flash only near", Flag = "kill_fx_flash_dist", Min = 20, Max = 500, Default = 150, Decimals = 1, Suffix = " studs" })
     KfMore:Slider({ Name = "Body effect time", Flag = "kill_fx_corpse_dur", Min = 1, Max = 8, Default = 3, Decimals = 0.1, Suffix = " s" })
     KfMore:Slider({ Name = "Body particles", Flag = "kill_fx_corpse_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
@@ -10172,35 +10619,25 @@ do
     KfMore:Depends({ { "kill_fx_sound", true } }, function(box)
         box:Input({ Name = "Sound id", Flag = "kill_fx_sound_id", Placeholder = "rbxassetid or number" })
     end)
-    Kill:Button({ Name = "Preview effect", Callback = function()
-        if not flag("kill_fx", false) then return Feedback.notify("Kill effects: turn them on first") end
-        Util.guard("killfx-preview", KillFx.preview)
-    end })
 
-    local Dead = Kills.Corpse
-    local Cham = Dead:Toggle({ Name = "Corpse chams", Flag = "chams_dead", Tooltip = "Restyles dead players' bodies (material, colour, transparency) until they respawn" }):Settings("Corpse chams", 260)
-    Dead:Toggle({ Name = "Enemy corpses", Flag = "chams_dead_enemy", Default = true }):Colorpicker({ Name = "Enemy", Flag = "chams_dead_enemy_color", Default = Color3.fromRGB(255, 70, 90), Alpha = 0 })
-    Dead:Toggle({ Name = "Team corpses", Flag = "chams_dead_team" }):Colorpicker({ Name = "Team", Flag = "chams_dead_team_color", Default = Color3.fromRGB(90, 220, 130), Alpha = 0 })
-    Dead:Toggle({ Name = "My corpse", Flag = "chams_dead_local" }):Colorpicker({ Name = "Mine", Flag = "chams_dead_local_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 })
-    Dead:Dropdown({ Name = "Material", Flag = "chams_dead_mat", Items = KillFx.Body.materials, Default = "ForceField" })
-    Cham:Dropdown({ Name = "Texture", Flag = "chams_dead_tex", Items = KillFx.Body.names, Default = "None", Tooltip = "Pattern drawn by the ForceField material" })
-    Cham:Slider({ Name = "Reflectance", Flag = "chams_dead_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
-    Cham:Toggle({ Name = "Hide clothing/accessories", Flag = "chams_dead_hide", Tooltip = "Hides everything on the body except the body parts" })
-    Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 10, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the body out over this long after death; 0 is off" })
-
-    local Notice = Kills.Killcam
+    local Notice = Kills["Kill notice"]
     Notice:Toggle({ Name = "Kill notice", Flag = "killcam_notify", Default = true, Tooltip = "Notification naming the player you just eliminated" })
-    Notice:Toggle({ Name = "Notice sound", Flag = "killcam_sound" })
+    Notice:Depends({ { "killcam_notify", true } }, function(box)
+        box:Toggle({ Name = "Notice sound", Flag = "killcam_sound" })
+    end)
     Notice:Toggle({ Name = "Debug kill events", Flag = "misc_debug_kills", Tooltip = "Prints one line per inferred kill to the console (F9)" })
 
     local Run = Kills["Kill streak"]
     local RunMore = Run:Toggle({ Name = "Kill streak", Flag = "streak_on", Tooltip = "Banner and announcer for kills in quick succession: each kill within the window of the previous one raises the count" }):Colorpicker({ Name = "Streak", Flag = "streak_color", Default = Color3.fromRGB(255, 80, 90), Alpha = 0 }):Colorpicker({ Name = "Peak", Flag = "streak_color2", Default = Color3.fromRGB(255, 200, 70), Alpha = 0 }):Settings("Kill streak", 250)
-    Run:Dropdown({ Name = "Style", Flag = "streak_style", Items = Streak.styles, Default = "Valorant bars" })
-    Run:Slider({ Name = "Window", Flag = "streak_window", Min = 1, Max = 15, Default = 4, Decimals = 0.1, Suffix = " s", Tooltip = "Longest gap between two kills that still continues the streak" })
-    Run:Dropdown({ Name = "Streak sound set", Flag = "streak_snd_set", Items = Feedback.STREAK_SET_ORDER, Default = "Valorant", Searchable = true, Tooltip = "Counts past the end of a set repeat its last line. Spree sets (UT Spree, Halo, CoD) follow kills since your last death and only play on their thresholds" })
-    Run:Slider({ Name = "Streak volume", Flag = "streak_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
-    Run:Toggle({ Name = "Mute kill sound", Flag = "streak_mute_kill", Default = true, Tooltip = "Skips the normal kill sound when a streak sound plays for that kill" })
-    Run:Button({ Name = "Test streak", Callback = function() Util.guard("streak-test", Streak.test) end })
+    Run:Depends({ { "streak_on", true } }, function(box)
+        box:Dropdown({ Name = "Style", Flag = "streak_style", Items = Streak.styles, Default = "Valorant bars" })
+        box:Slider({ Name = "Window", Flag = "streak_window", Min = 1, Max = 15, Default = 4, Decimals = 0.1, Suffix = " s", Tooltip = "Longest gap between two kills that still continues the streak" })
+        box:Dropdown({ Name = "Streak sound set", Flag = "streak_snd_set", Items = Feedback.STREAK_SET_ORDER, Default = "Valorant", Searchable = true, Tooltip = "Counts past the end of a set repeat its last line. Spree sets (UT Spree, Halo, CoD) follow kills since your last death and only play on their thresholds" })
+        box:Depends({ { "streak_snd_set", function(value) return value ~= "None" end } }, function(sound)
+            sound:Slider({ Name = "Streak volume", Flag = "streak_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
+            sound:Toggle({ Name = "Mute kill sound", Flag = "streak_mute_kill", Default = true, Tooltip = "Skips the normal kill sound when a streak sound plays for that kill" })
+        end)
+    end)
     RunMore:Toggle({ Name = "Reset on death", Flag = "streak_reset_death", Default = true })
     RunMore:Slider({ Name = "Scale", Flag = "streak_scale", Min = 0.5, Max = 2, Default = 1, Decimals = 0.05, Suffix = "x" })
     RunMore:Slider({ Name = "Position Y", Flag = "streak_y", Min = 0.1, Max = 0.95, Default = 0.72, Decimals = 0.01, Tooltip = "Fraction of the screen height" })
@@ -10211,41 +10648,63 @@ do
         box:Slider({ Name = "Milestone every", Flag = "streak_milestone_every", Min = 2, Max = 25, Default = 5, Decimals = 1, Suffix = " kills" })
     end)
 
+    local Dead = Kills.Corpse
+    local Cham = Dead:Toggle({ Name = "Corpse chams", Flag = "chams_dead", Tooltip = "Restyles dead players' bodies (material, colour, transparency) until they respawn" }):Settings("Corpse chams", 260)
+    Dead:Depends({ { "chams_dead", true } }, function(box)
+        box:Toggle({ Name = "Enemy corpses", Flag = "chams_dead_enemy", Default = true }):Colorpicker({ Name = "Enemy", Flag = "chams_dead_enemy_color", Default = Color3.fromRGB(255, 70, 90), Alpha = 0 })
+        box:Toggle({ Name = "Team corpses", Flag = "chams_dead_team" }):Colorpicker({ Name = "Team", Flag = "chams_dead_team_color", Default = Color3.fromRGB(90, 220, 130), Alpha = 0 })
+        box:Toggle({ Name = "My corpse", Flag = "chams_dead_local" }):Colorpicker({ Name = "Mine", Flag = "chams_dead_local_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 })
+        box:Dropdown({ Name = "Material", Flag = "chams_dead_mat", Items = KillFx.Body.materials, Default = "ForceField" })
+    end)
+    Cham:Dropdown({ Name = "Texture", Flag = "chams_dead_tex", Items = KillFx.Body.names, Default = "None", Tooltip = "Pattern drawn by the ForceField material" })
+    Cham:Slider({ Name = "Reflectance", Flag = "chams_dead_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
+    Cham:Toggle({ Name = "Hide clothing/accessories", Flag = "chams_dead_hide", Tooltip = "Hides everything on the body except the body parts" })
+    Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 10, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the body out over this long after death; 0 is off" })
+
     local Bullets = Effects.Bullets
     local Trace = Bullets.Tracers
+    local tracing = anyOf({ "trace_on", "trace_enemy_on", "trace_team_on" })
     Trace:Toggle({ Name = "Own bullets", Flag = "trace_on", Tooltip = "Draws a tracer from your barrel to where the shot lands" }):Colorpicker({ Name = "Tracer", Flag = "trace_color", Default = Color3.fromRGB(255, 94, 94) })
     Trace:Toggle({ Name = "Enemy bullets", Flag = "trace_enemy_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
     Trace:Toggle({ Name = "Team bullets", Flag = "trace_team_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_team_color", Default = Color3.fromRGB(90, 220, 130) })
     local traceItems = { "Obelus", "Lightning", "DNA", "Beam", "Bolt", "Trail", "Zigzag", "Heartrate", "Chain", "Glitch", "Swirl" }
     for _, name in ipairs(Tracers.particleNames) do traceItems[#traceItems + 1] = name end
     Tracers.textureNames = traceItems
-    Trace:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = traceItems, Default = "Lightning", Tooltip = "Comet to Void are particle tracers" })
-    Trace:Slider({ Name = "Tracer lifetime", Flag = "trace_time", Min = 0.5, Max = 10, Default = 4, Decimals = 0.1, Suffix = " s" })
-    Trace:Slider({ Name = "Tracer width", Flag = "trace_width", Min = 0.2, Max = 3, Default = 1, Decimals = 0.1, Suffix = "x" })
-    Trace:Toggle({ Name = "Hide the game's tracer", Flag = "trace_hide_beam", Default = true, Tooltip = "Skips the game's yellow tracer on shots that get a custom tracer" })
+    Trace:Depends({ { "trace_on", tracing } }, function(box)
+        box:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = traceItems, Default = "Lightning", Tooltip = "Comet to Void are particle tracers; the list on the right shows which is which" })
+        box:Toggle({ Name = "Match game timing", Flag = "trace_game_timing", Default = true, Tooltip = "Tracers last as long as the game's own tracer; off uses Tracer lifetime" })
+        box:Depends({ { "trace_game_timing", false } }, function(timing)
+            timing:Slider({ Name = "Tracer lifetime", Flag = "trace_time", Min = 0.5, Max = 10, Default = 4, Decimals = 0.1, Suffix = " s" })
+        end)
+        box:Slider({ Name = "Tracer width", Flag = "trace_width", Min = 0.2, Max = 3, Default = 1, Decimals = 0.1, Suffix = "x" })
+        box:Toggle({ Name = "Hide the game's tracer", Flag = "trace_hide_beam", Default = true, Tooltip = "Skips the game's yellow tracer on shots that get a custom tracer" })
+    end)
 
-    local Style = Bullets["Particle preset"]
+    local Style = Bullets["Tracer style"]
+    local particles = Util.toSet(Tracers.particleNames)
     local Glow = Style:Toggle({ Name = "Tracer glow", Flag = "trace_glow", Tooltip = "Full-bright beam plus a wider additive halo behind it" }):Settings("Tracer glow", 230)
     Glow:Slider({ Name = "Glow strength", Flag = "trace_glow_strength", Min = 0, Max = 10, Default = 4, Decimals = 0.1 })
     Glow:Toggle({ Name = "Glow uses tracer colour", Flag = "trace_glow_same", Default = true })
     Glow:Depends({ { "trace_glow_same", false } }, function(box)
         box:Label({ Name = "Glow colour" }):Colorpicker({ Name = "Glow colour", Flag = "trace_glow_color", Default = Color3.fromRGB(255, 255, 255) })
     end)
-    local Grad = Style:Toggle({ Name = "Tracer gradient", Flag = "trace_gradient", Tooltip = "Colours the tracer from start to end along its whole length, replacing the single tracer colour" }):Settings("Tracer gradient", 230)
-    Grad:Label({ Name = "Gradient start" }):Colorpicker({ Name = "Gradient start", Flag = "trace_grad_start", Default = Color3.fromRGB(255, 94, 94) })
-    Grad:Label({ Name = "Gradient end" }):Colorpicker({ Name = "Gradient end", Flag = "trace_grad_end", Default = Color3.fromRGB(94, 160, 255) })
+    local Grad = Style:Toggle({ Name = "Tracer gradient", Flag = "trace_gradient", Tooltip = "Colours the tracer from start to end along its whole length, replacing the single tracer colour" }):Colorpicker({ Name = "Gradient start", Flag = "trace_grad_start", Default = Color3.fromRGB(255, 94, 94) }):Colorpicker({ Name = "Gradient end", Flag = "trace_grad_end", Default = Color3.fromRGB(94, 160, 255) }):Settings("Tracer gradient", 230)
     Grad:Slider({ Name = "Gradient fade", Flag = "trace_grad_fade", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Tooltip = "Fades the tracer toward its far end" })
     Grad:Toggle({ Name = "Rainbow", Flag = "trace_rainbow", Tooltip = "Cycles hue along the tracer instead of the two colours" })
-    Style:Slider({ Name = "Particle size", Flag = "trace_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only; Tracer width sets their core beam" })
-    Style:Slider({ Name = "Particle density", Flag = "trace_fx_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only" })
-    Style:Toggle({ Name = "Particle impact burst", Flag = "trace_fx_impact", Default = true, Tooltip = "Particle tracers burst where the bullet hits" })
+    Style:Depends({ { "trace_texture", function(value) return particles[value] == true end } }, function(box)
+        box:Slider({ Name = "Particle size", Flag = "trace_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only; Tracer width sets their core beam" })
+        box:Slider({ Name = "Particle density", Flag = "trace_fx_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only" })
+        box:Toggle({ Name = "Particle impact burst", Flag = "trace_fx_impact", Default = true, Tooltip = "Particle tracers burst where the bullet hits" })
+    end)
 
     local Imp = Bullets.Impacts
     local ImpMore = Imp:Toggle({ Name = "Bullet impacts", Flag = "impact_on", Tooltip = "Local effects where your bullets hit the world" }):Colorpicker({ Name = "Impact", Flag = "impact_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 }):Settings("Bullet impacts", 240)
-    Imp:Toggle({ Name = "Enemy bullets too", Flag = "impact_enemy", Tooltip = "Same shots the enemy tracers use; teammates are skipped" })
-    Imp:Dropdown({ Name = "Effects", Flag = "impact_list", Items = Impacts.names, Multi = true, Default = { "Spark burst", "Glow ring" }, Tooltip = "Pick several to layer them" })
-    Imp:Slider({ Name = "Size", Flag = "impact_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
-    Imp:Slider({ Name = "Lifetime", Flag = "impact_time", Min = 0.2, Max = 5, Default = 1.2, Decimals = 0.05, Suffix = " s" })
+    Imp:Depends({ { "impact_on", true } }, function(box)
+        box:Dropdown({ Name = "Effects", Flag = "impact_list", Items = Impacts.names, Multi = true, Default = { "Spark burst", "Glow ring" }, Tooltip = "Pick several to layer them" })
+        box:Slider({ Name = "Size", Flag = "impact_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
+        box:Slider({ Name = "Lifetime", Flag = "impact_time", Min = 0.2, Max = 5, Default = 1.2, Decimals = 0.05, Suffix = " s" })
+        box:Toggle({ Name = "Enemy bullets too", Flag = "impact_enemy", Tooltip = "Same shots the enemy tracers use; teammates are skipped" })
+    end)
     ImpMore:Slider({ Name = "Particle density", Flag = "impact_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
     ImpMore:Toggle({ Name = "Surface aligned", Flag = "impact_align", Default = true, Tooltip = "Lays the effect on the surface using the hit normal; off keeps it flat" })
     ImpMore:Slider({ Name = "Max at once", Flag = "impact_max", Min = 1, Max = 30, Default = 30, Decimals = 1, Tooltip = "The oldest impact is removed first" })
@@ -15525,7 +15984,7 @@ do
     if not okEditor then AvatarEditorService = nil end
 
     local Avatar = { busy = false, wornKeys = {}, Http = {}, store = { recent = {}, favorites = {}, outfits = {} } }
-    local Builder = { rig = "R6", desc = nil, stamp = 0 }
+    local Builder = { rig = "R6", desc = nil, stamp = 0, rigSet = false }
     Avatar.Builder = Builder
 
     local HEADLESS_IDS = { [15093053680] = true, [134082579] = true, [4562128874] = true }
@@ -16221,6 +16680,13 @@ do
         Avatar.save()
     end
 
+    function Avatar.removeRecent(uid)
+        for index = #store.recent, 1, -1 do
+            if store.recent[index].uid == uid then table.remove(store.recent, index) end
+        end
+        Avatar.save()
+    end
+
     local PROXY_HOSTS = { "roproxy.com", "rprxy.xyz" }
     local BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
     local workingKey
@@ -16524,6 +16990,7 @@ do
         { "Back", { "BackAccessory" }, nil, false, true }, { "Waist", { "WaistAccessory" }, nil, false, true },
         { "Shirts", { "Shirt" }, nil, false, true }, { "T-Shirts", { "TShirt" }, nil, false, true }, { "Pants", { "Pants" }, nil, false, true },
         { "Heads", { "DynamicHead" }, nil, false, true }, { "Bodies", {}, "BodyParts", true, false },
+        { "Animations", {}, "Animations", false, false }, { "Emotes", { "EmoteAnimation" }, nil, true, false },
     }
     do
         local everything = {}
@@ -16539,20 +17006,52 @@ do
         CATEGORY_NAMES[index] = entry[1]
         CATEGORY_BY_NAME[entry[1]] = entry
     end
-    local KIND_NAMES = { "Any", "Limited", "Roblox", "UGC", "Free" }
+    local KIND_NAMES = { "Any", "Limited", "Roblox", "UGC", "Premium", "Free" }
     local SORTS = {
         { "Relevance", "Relevance", 0 }, { "Most favorited", "MostFavorited", 1 }, { "Best selling", "Bestselling", 2 },
         { "Newest", "RecentlyCreated", 3 }, { "Price low", "PriceLowToHigh", 4 }, { "Price high", "PriceHighToLow", 5 },
     }
     Avatar.CATEGORY_NAMES, Avatar.KIND_NAMES, Avatar.SORTS = CATEGORY_NAMES, KIND_NAMES, SORTS
 
-    local Catalog = { gen = 0, entries = {}, count = 0, F = { keyword = "", types = CATEGORIES[1][2], kind = "Any", sort = "Relevance", catName = "All" } }
+    local Catalog = { gen = 0, entries = {}, count = 0, F = { keyword = "", types = CATEGORIES[1][2], kind = "Any", sort = "Relevance", sortLabel = "Relevance", catName = "All", onSale = false } }
     Avatar.Catalog = Catalog
 
     function Avatar.setCategory(name)
         local entry = CATEGORY_BY_NAME[name] or CATEGORIES[1]
         local F = Catalog.F
         F.catName, F.types, F.bundleType, F.robloxOnly = entry[1], entry[2], entry[3], entry[4]
+    end
+
+    function Avatar.setSort(label)
+        for _, entry in ipairs(SORTS) do
+            if entry[1] == label then Catalog.F.sort, Catalog.F.sortLabel = entry[2], entry[1] end
+        end
+    end
+
+    function Avatar.setPrice(low, high)
+        local F = Catalog.F
+        low, high = tonumber(low), tonumber(high)
+        F.minPrice = low and math.max(0, math.floor(low)) or nil
+        F.maxPrice = high and math.max(0, math.floor(high)) or nil
+        if F.minPrice and F.maxPrice and F.minPrice > F.maxPrice then F.minPrice, F.maxPrice = F.maxPrice, F.minPrice end
+    end
+
+    function Avatar.resetFilters()
+        local F = Catalog.F
+        Avatar.setCategory("All")
+        F.kind, F.sort, F.sortLabel, F.onSale, F.minPrice, F.maxPrice = "Any", "Relevance", "Relevance", false, nil, nil
+    end
+
+    function Avatar.filterParts()
+        local F, parts = Catalog.F, {}
+        if F.catName ~= "All" then parts[#parts + 1] = F.catName end
+        if F.kind ~= "Any" then parts[#parts + 1] = F.kind == "Limited" and "Limited (Roblox)" or F.kind end
+        if F.minPrice or F.maxPrice then
+            parts[#parts + 1] = (F.minPrice and tostring(F.minPrice) or "0") .. "-" .. (F.maxPrice and tostring(F.maxPrice) or "any") .. " R$"
+        end
+        if F.onSale then parts[#parts + 1] = "on sale" end
+        if F.sortLabel ~= "Relevance" then parts[#parts + 1] = F.sortLabel end
+        return parts
     end
 
     local function gameIsR6()
@@ -16577,7 +17076,28 @@ do
         if #types > 0 then params.AssetTypes = types end
         if F.bundleType then pcall(function() params.BundleTypes = { Enum.BundleType[F.bundleType] } end) end
         if onlyRoblox(F) or F.kind == "Roblox" or F.kind == "Limited" then pcall(function() params.CreatorName = "Roblox" end) end
-        if F.kind == "Free" then pcall(function() params.MaxPrice = 0 end) end
+        if F.kind == "Free" then
+            pcall(function() params.MaxPrice = 0 end)
+        else
+            if F.minPrice then pcall(function() params.MinPrice = F.minPrice end) end
+            if F.maxPrice then pcall(function() params.MaxPrice = F.maxPrice end) end
+        end
+        return params
+    end
+
+    local function relaxedParams(F)
+        local params = CatalogSearchParams.new()
+        params.SearchKeyword = F.keyword or ""
+        pcall(function() params.SortType = Enum.CatalogSortType[F.sort] end)
+        pcall(function() if F.bundleType then params.BundleTypes = { Enum.BundleType[F.bundleType] } end end)
+        pcall(function()
+            local types = {}
+            for _, name in ipairs(F.types) do
+                local ok, item = pcall(function() return Enum.AvatarAssetType[name] end)
+                if ok and item then types[#types + 1] = item end
+            end
+            if #types > 0 then params.AssetTypes = types end
+        end)
         return params
     end
 
@@ -16599,10 +17119,16 @@ do
         if type(creatorRaw) == "table" then creator = creatorRaw.Name or creatorRaw.name else creator = creatorRaw end
         creator = creator ~= nil and tostring(creator) or nil
         local roblox = creator == "Roblox" or creator == "Roblox Corporation" or item.CreatorTargetId == 1 or item.creatorTargetId == 1
+        local premium = type(item.PremiumPricing or item.premiumPricing) == "table" or item.IsPremium == true
+        if type(restrictions) == "table" then
+            for _, restriction in pairs(restrictions) do
+                if string.find(string.lower(tostring(restriction)), "premium", 1, true) then premium = true end
+            end
+        end
         return {
             id = id, name = tostring(item.Name or item.name or id), price = item.Price or item.price or item.lowestPrice,
             assetName = assetTypeName(item.AssetType or item.assetType), creator = creator, limited = limited, roblox = roblox,
-            isBundle = isBundle, priceStatus = tostring(item.PriceStatus or item.priceStatus or ""),
+            premium = premium, isBundle = isBundle, priceStatus = tostring(item.PriceStatus or item.priceStatus or ""),
         }
     end
 
@@ -16611,7 +17137,14 @@ do
         if F.kind == "Limited" then return entry.limited == true and entry.roblox == true end
         if F.kind == "Roblox" then return entry.roblox == true end
         if F.kind == "UGC" then return entry.roblox ~= true end
+        if F.kind == "Premium" then return entry.premium == true end
         if F.kind == "Free" then return entry.price == 0 end
+        if type(entry.price) == "number" then
+            if F.minPrice and entry.price < F.minPrice then return false end
+            if F.maxPrice and entry.price > F.maxPrice then return false end
+        elseif F.minPrice or F.maxPrice then
+            return false
+        end
         return true
     end
 
@@ -16621,6 +17154,8 @@ do
         local url = "https://catalog.roblox.com/v1/search/items/details?Keyword=" .. HttpService:UrlEncode(F.keyword or "") .. "&Limit=30&SortType=" .. sort
         if cursor then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
         if F.kind == "Roblox" or F.kind == "Limited" or onlyRoblox(F) then url = url .. "&CreatorName=Roblox" end
+        if F.kind ~= "Free" and F.minPrice then url = url .. "&MinPrice=" .. F.minPrice end
+        if F.kind ~= "Free" and F.maxPrice then url = url .. "&MaxPrice=" .. F.maxPrice end
         local data, status, message = Avatar.httpJson(url)
         if not data then
             local alt = string.gsub(url, "^https://catalog%.roblox%.com/v1/", "https://apis.roblox.com/catalog/v1/")
@@ -16650,7 +17185,17 @@ do
         if not append then
             local params = buildParams(F)
             local ok, res = pcall(function() return AvatarEditorService:SearchCatalogAsync(params) end)
-            if not ok then error(tostring(res), 0) end
+            if not ok then
+                local first = res
+                ok, res = pcall(function() return AvatarEditorService:SearchCatalogAsync(relaxedParams(F)) end)
+                if not ok then
+                    local plain = CatalogSearchParams.new()
+                    plain.SearchKeyword = F.keyword or ""
+                    local okPlain, resPlain = pcall(function() return AvatarEditorService:SearchCatalogAsync(plain) end)
+                    if not okPlain then error(tostring(first) .. " / " .. tostring(res) .. " / " .. tostring(resPlain), 0) end
+                    res = resPlain
+                end
+            end
             Catalog.pages = res
         elseif Catalog.pages then
             Catalog.pages:AdvanceToNextPageAsync()
@@ -16687,7 +17232,15 @@ do
                     Catalog.useWeb = true
                     Catalog.engineErr = tostring(result)
                 end
-                local list, nextCursor = httpSearch(Catalog.F, append and Catalog.cursor or nil)
+                if Catalog.webBlockedUntil and os.clock() < Catalog.webBlockedUntil then error(Catalog.webBlocked .. "  |  in-game search: " .. tostring(Catalog.engineErr), 0) end
+                local okWeb, list, nextCursor = pcall(httpSearch, Catalog.F, append and Catalog.cursor or nil)
+                if not okWeb then
+                    if string.find(string.lower(tostring(list)), "denied", 1, true) then
+                        Catalog.webBlockedUntil = os.clock() + 60
+                        Catalog.webBlocked = "In-experience search is denied for this place"
+                    end
+                    error(tostring(list), 0)
+                end
                 items, Catalog.cursor = list, nextCursor
                 Catalog.finished = nextCursor == nil
             end)
@@ -16754,8 +17307,87 @@ do
         return entry.assetName
     end
 
+    function Avatar.wearPieces(pieces, label)
+        local worn = 0
+        for _, piece in ipairs(pieces) do
+            if piece.supported and pcall(Avatar.wearAsset, piece.id, piece.typeName, true) then worn = worn + 1 end
+        end
+        notify(worn > 0 and string.format("Avatar builder: wearing %d part(s) of %s", worn, label) or "Avatar builder: nothing selected")
+        if worn > 0 then Avatar.changed() end
+        return worn
+    end
+
+    function Avatar.playEmote(entry)
+        local _, humanoid = localHumanoid()
+        if not humanoid then return notify("Emotes: no character yet") end
+        if Avatar.emoteTrack then
+            pcall(function() Avatar.emoteTrack:Stop() end)
+            Avatar.emoteTrack = nil
+            if Avatar.emoteId == entry.id then
+                Avatar.emoteId = nil
+                return notify("Emote stopped")
+            end
+        end
+        local ok, success, track = pcall(function() return humanoid:PlayEmoteAndGetAnimTrackById(entry.id) end)
+        if ok and success and track then
+            Avatar.emoteTrack, Avatar.emoteId = track, entry.id
+            notify("Playing " .. entry.name)
+            return true
+        end
+        notify("Emotes: could not play " .. entry.name)
+        return false
+    end
+
+    function Avatar.equipEmote(entry, slot)
+        local desc = Builder.desc
+        if not desc then return notify("Avatar builder: still loading your avatar") end
+        local function withSlot(target)
+            pcall(function() target:AddEmote(entry.name, entry.id) end)
+            local list = {}
+            local okGet, equipped = pcall(function() return target:GetEquippedEmotes() end)
+            if okGet and type(equipped) == "table" then
+                for _, item in ipairs(equipped) do
+                    if item.Slot ~= slot and item.Name ~= entry.name then list[#list + 1] = { Slot = item.Slot, Name = item.Name } end
+                end
+            end
+            list[#list + 1] = { Slot = slot, Name = entry.name }
+            return pcall(function() target:SetEquippedEmotes(list) end)
+        end
+        withSlot(desc)
+        local _, humanoid = localHumanoid()
+        if not humanoid then return false end
+        local okApplied, applied = pcall(function() return humanoid:GetAppliedDescription() end)
+        if not (okApplied and applied) then
+            notify("Avatar builder: emote saved in the builder, could not reach the emote wheel")
+            return false
+        end
+        if not withSlot(applied) then
+            notify("Avatar builder: emote saved in the builder, the wheel refused it")
+            return false
+        end
+        local okApply = pcall(function()
+            if humanoid.ApplyDescriptionAsync then humanoid:ApplyDescriptionAsync(applied) else humanoid:ApplyDescription(applied) end
+        end)
+        notify(okApply and string.format("Emote wheel: %s is now in slot %d", entry.name, slot) or "Avatar builder: the wheel refused the emote")
+        if okApply and Avatar.lastBuilt then
+            task.delay(1.2, function()
+                if Avatar.lastBuilt and not Library.Unloaded then
+                    local okCopy, copy = pcall(function() return Avatar.lastBuilt:Clone() end)
+                    Avatar.applyBuilt(okCopy and copy or Avatar.lastBuilt)
+                end
+            end)
+        end
+        return okApply
+    end
+
     function Avatar.activate(entry)
         if not Builder.desc then return notify("Avatar builder: still loading your avatar") end
+        local ui = Avatar.ui
+        if entry.isBundle and ui and ui.openBundle then return ui.openBundle(entry) end
+        if entry.assetName == "EmoteAnimation" then
+            if ui and ui.openEmote then return ui.openEmote(entry) end
+            return Avatar.playEmote(entry)
+        end
         if entry.isBundle then
             local worn = 0
             for _, piece in ipairs(Avatar.bundlePieces(entry.id)) do
@@ -16773,6 +17405,16 @@ do
             return notify("Avatar builder: could not add that item")
         end
         Avatar.changed()
+    end
+
+    function Avatar.defaultRig()
+        if Builder.rigSet then return Builder.rig end
+        local _, humanoid = localHumanoid()
+        if humanoid then
+            Builder.rig = isR6(humanoid) and "R6" or "R15"
+            Builder.rigSet = true
+        end
+        return Builder.rig
     end
 
     function Avatar.setDescription(desc)
@@ -16885,12 +17527,6 @@ do
         return Library:Create("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Position = position, Size = size, ZIndex = 3, Parent = frameOf(parent) })
     end
 
-    local function row(parent, top, height)
-        local frame = area(parent, top, height)
-        Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center, Parent = frame })
-        return frame
-    end
-
     local function text(parent, value, props)
         props = props or {}
         props.Text, props.Parent = value, frameOf(parent)
@@ -16901,16 +17537,6 @@ do
         props.Size = props.Size or UDim2.new(1, 0, 1, 0)
         props.ZIndex = props.ZIndex or 4
         return Library:CreateLabel(props)
-    end
-
-    local function pills(parent, list)
-        local made = {}
-        for order, spec in ipairs(list) do
-            local pill = Library:CreatePill(parent, spec[1], spec[2], { Height = 24, Width = spec[3] })
-            pill.Frame.LayoutOrder = order
-            made[order] = pill
-        end
-        return table.unpack(made)
     end
 
     local function hidePlaceholder(section)
@@ -16932,9 +17558,31 @@ do
         return ids
     end
 
+    local function pillRow(parent, top, list, height)
+        height = height or 26
+        local frame = area(parent, top, height)
+        local total, gap = #list, 6
+        local made = {}
+        for index, spec in ipairs(list) do
+            local holder = Library:Create("Frame", {
+                BackgroundTransparency = 1, ZIndex = 3, Parent = frame,
+                Position = UDim2.new((index - 1) / total, math.floor(gap * (index - 1) / total), 0, 0),
+                Size = UDim2.new(1 / total, -math.floor(gap * (total - 1) / total), 1, 0),
+            })
+            made[index] = Library:CreatePill(holder, spec[1], spec[2], { Height = height, Width = "Fill" })
+        end
+        return table.unpack(made)
+    end
+
+    local function caption(parent, top, value)
+        return text(area(parent, top, 14), string.upper(value), { Dim = true, TextSize = Library.FontSize - 2 })
+    end
+
+    local function thumb(kind, id) return string.format("rbxthumb://type=%s&id=%d&w=150&h=150", kind, id) end
+
     local ui
     local function buildCanvas(out)
-        ui = { token = 0 }
+        ui = { token = 0, view = nil }
         Avatar.ui = ui
         local right, pages = out.right, out.pages
         if right.Scroll then right.Scroll.Visible = false end
@@ -16942,31 +17590,29 @@ do
             local page = pages:GetPage(name)
             if page and page.Scroll then page.Scroll.Visible = false end
         end
+        Avatar.defaultRig()
 
-        local header = area(right, 0, 26)
-        local mine = Library:CreatePill(header, "My avatar", function() task.spawn(Avatar.loadMine) end, { Height = 26 })
-        ui.mine = mine
-        ui.rig = Library:CreateSegmented(header, { Items = { "R6", "R15" }, Default = Builder.rig, Style = "Pill", Fill = true, Height = 26, Position = UDim2.new(1, -104, 0, 0), Size = UDim2.fromOffset(104, 26), Callback = function(rig)
-            Builder.rig = rig
+        local headRow = area(right, 0, 26)
+        ui.mine = Library:CreatePill(headRow, "My avatar", function() task.spawn(Avatar.loadMine) end, { Height = 26 })
+        ui.rig = Library:CreateSegmented(headRow, { Items = { "R6", "R15" }, Default = Builder.rig, Style = "Pill", Fill = true, Height = 26, Position = UDim2.new(1, -104, 0, 0), Size = UDim2.fromOffset(104, 26), Callback = function(rig)
+            Builder.rig, Builder.rigSet = rig, true
             if ui.rebuildPreview then ui.rebuildPreview() end
         end })
-        local viewHost = area(right, 34, nil, 138)
-        ui.view = Library:CreateViewport(viewHost, { Height = "Fill", FOV = 35, AutoRotate = true, Hint = "drag to rotate", Fallback = "rbxthumb://type=Avatar&id=%d&w=420&h=420" })
-        ui.wearTitle = text(area(right, -130, 18), "Wearing", { Dim = true, TextSize = Library.FontSize - 1 })
-        ui.strip = Library:CreateStrip(right, { Height = 70, TileSize = 54, Remove = true, EmptyText = "Nothing worn", Position = UDim2.new(0, 0, 1, -106), Callback = function(item)
+        ui.view = Library:CreateViewport(area(right, 34, nil, 162), { Height = "Fill", FOV = 35, AutoRotate = true, Hint = "drag to rotate, wheel to zoom", Fallback = "rbxthumb://type=Avatar&id=%d&w=420&h=420" })
+        ui.wearTitle = text(area(right, -156, 16), "Wearing", { Dim = true, TextSize = Library.FontSize - 1 })
+        ui.strip = Library:CreateStrip(right, { Height = 70, TileSize = 54, Remove = true, EmptyText = "Nothing worn", Position = UDim2.new(0, 0, 1, -136), Callback = function(item)
             if item and item.worn then
                 pcall(Avatar.removeItem, item.worn)
                 Avatar.changed()
             end
         end })
-        local actions = row(right, -26, 26)
         local respawnText = function() return store.reapply == false and "Respawn: off" or "Respawn: on" end
-        local apply, reset, respawn = pills(actions, {
-            { "Apply to me", function()
-                if not Builder.desc then return notify("Avatar builder: still loading your avatar") end
-                task.spawn(Avatar.applyBuilt, Builder.desc)
-            end },
-            { "Reset", function() task.spawn(Avatar.reset) end },
+        ui.apply = pillRow(right, -58, { { "Apply to me", function()
+            if not Builder.desc then return notify("Avatar builder: still loading your avatar") end
+            task.spawn(Avatar.applyBuilt, Builder.desc)
+        end } })
+        ui.reset, ui.respawn = pillRow(right, -26, {
+            { "Reset to mine", function() task.spawn(Avatar.reset) end },
             { respawnText(), function(pill)
                 store.reapply = store.reapply == false
                 pill:SetText(respawnText())
@@ -16974,8 +17620,7 @@ do
                 Avatar.save()
             end },
         })
-        respawn:SetActive(store.reapply ~= false)
-        ui.apply, ui.reset, ui.respawn = apply, reset, respawn
+        ui.respawn:SetActive(store.reapply ~= false)
 
         local previewModel
         function ui.rebuildPreview()
@@ -17011,45 +17656,58 @@ do
                 items[#items + 1] = { Id = worn.label .. worn.id, Name = worn.label, Image = Avatar.thumbAsset(worn.id), worn = worn }
             end
             ui.strip:SetItems(items)
-            ui.wearTitle.Text = string.format("Wearing (%d), click to take off", #items)
+            ui.wearTitle.Text = string.format("WEARING (%d)  |  click a tile to take it off", #items)
         end
         ui.refreshWorn = refreshWorn
 
         local catalogPage = pages:GetPage("Catalog")
         local top = area(catalogPage, 0, 26)
-        ui.search = Library:CreateInput(top, "Search the catalog, press Enter", { Icon = "search", Size = UDim2.new(1, -118, 0, 26), Callback = function(value, enter)
+        ui.search = Library:CreateInput(top, "Search the catalog, press Enter", { Icon = "search", Size = UDim2.new(1, -196, 0, 26), Callback = function(value, enter)
             if not enter then return end
             Catalog.F.keyword = value
             ui.runSearch(false)
         end })
-        ui.viewBar = Library:CreateSegmented(top, { Items = { "List", "Grid" }, Default = "List", Style = "Chip", Fill = true, Height = 26, Position = UDim2.new(1, -110, 0, 0), Size = UDim2.fromOffset(110, 26), Callback = function(view)
+        ui.filterPill = Library:CreatePill(top, "Filters", function() ui.showView(ui.current == "filters" and "results" or "filters") end, { Height = 26, Width = 88, Position = UDim2.new(1, -190, 0, 0) })
+        ui.viewBar = Library:CreateSegmented(top, { Items = { "List", "Grid" }, Default = "List", Style = "Chip", Fill = true, Height = 26, Position = UDim2.new(1, -96, 0, 0), Size = UDim2.fromOffset(96, 26), Callback = function(view)
             ui.catalog:SetView(view)
         end })
         ui.categories = Library:CreateSegmented(area(catalogPage, 32, 24), { Items = CATEGORY_NAMES, Default = "All", Style = "Chip", Scroll = true, Height = 24, Callback = function(name)
             Avatar.setCategory(name)
             ui.runSearch(false)
         end })
-        local filters = area(catalogPage, 62, 24)
-        ui.kinds = Library:CreateSegmented(filters, { Items = KIND_NAMES, Default = "Any", Style = "Chip", Scroll = true, Height = 24, Size = UDim2.new(1, -138, 0, 24), Callback = function(kind)
-            Catalog.F.kind = kind
-            ui.runSearch(false)
-        end })
-        local sortIndex = 1
-        ui.sort = Library:CreatePill(filters, "Sort: Relevance", function(pill)
-            sortIndex = sortIndex % #SORTS + 1
-            Catalog.F.sort = SORTS[sortIndex][2]
-            pill:SetText("Sort: " .. SORTS[sortIndex][1])
-            ui.runSearch(false)
-        end, { Height = 24, Width = 132, Position = UDim2.new(1, -132, 0, 0) })
+        ui.summary = text(area(catalogPage, 62, 16), "", { Dim = true, TextSize = Library.FontSize - 1 })
+
+        local body = area(catalogPage, 84)
+        local views = { results = area(body, 0), filters = area(body, 0), bundle = area(body, 0), emote = area(body, 0) }
+        ui.views = views
+        function ui.showView(name)
+            ui.current = views[name] and name or "results"
+            for viewName, frame in pairs(views) do frame.Visible = viewName == ui.current end
+            ui.updateSummary()
+        end
+
+        local function clickHint()
+            local F = Catalog.F
+            if F.bundleType then return "click a bundle to pick its parts" end
+            if F.catName == "Emotes" then return "click an emote to play or equip it" end
+            return "click to wear, again to take off"
+        end
+        function ui.updateSummary()
+            local parts = Avatar.filterParts()
+            ui.summary.Text = (#parts > 0 and table.concat(parts, "  |  ") or "All items") .. "     " .. clickHint()
+            ui.filterPill:SetText(ui.current == "filters" and "Close" or ("Filters" .. (#parts > 0 and (" (" .. #parts .. ")") or "")))
+            ui.filterPill:SetActive(ui.current == "filters" or #parts > 0)
+        end
 
         local function catalogItem(entry)
             local color, tag = Avatar.entryStyle(entry)
             local price = entry.price
+            local badge
+            if type(price) == "number" then badge = price == 0 and "Free" or (tostring(price) .. " R$") end
             return {
                 Id = entry.id, Name = entry.name, Image = Avatar.thumbAsset(entry.id), Color = color,
-                Subtitle = tag .. (entry.assetName and ("  |  " .. entry.assetName) or ""),
-                Badge = type(price) == "number" and (price == 0 and "Free" or (tostring(price) .. " R$")) or nil,
-                entry = entry,
+                Subtitle = tag .. (entry.premium and "  |  premium" or "") .. (entry.assetName and ("  |  " .. entry.assetName) or ""),
+                Badge = badge, entry = entry,
             }
         end
         local function syncWorn(gallery)
@@ -17057,7 +17715,7 @@ do
             for _, worn in ipairs(Avatar.wornItems()) do set[worn.id] = true end
             pcall(function() gallery:SetValue(set) end)
         end
-        ui.catalog = Library:CreateGallery(area(catalogPage, 92), {
+        ui.catalog = Library:CreateGallery(views.results, {
             Height = "Fill", View = "List", Multi = true, Header = false, EmptyText = "Search the catalog",
             OnEnd = function() ui.runSearch(true) end,
             Callback = function(item)
@@ -17068,17 +17726,24 @@ do
         function ui.runSearch(append)
             local gallery = ui.catalog
             if not append then
+                ui.auto = 0
                 gallery:SetItems({})
                 gallery:SetStatus("Searching...")
+                if ui.current ~= "filters" then ui.showView("results") else ui.updateSummary() end
             elseif not Catalog.finished and not Catalog.busy then
                 gallery:SetStatus("Loading more...")
             end
-            Avatar.search(append, function(items, err)
+            return Avatar.search(append, function(items, err)
                 if err then return gallery:SetStatus("Catalog unavailable: " .. err) end
                 local list = {}
                 for _, entry in ipairs(items) do list[#list + 1] = catalogItem(entry) end
                 gallery:AppendItems(list)
                 syncWorn(gallery)
+                if Catalog.count < 16 and not Catalog.finished and (ui.auto or 0) < 6 then
+                    ui.auto = (ui.auto or 0) + 1
+                    gallery:SetStatus("Loading more...")
+                    return ui.runSearch(true)
+                end
                 if Catalog.count == 0 then
                     gallery:SetStatus("No items found, try other filters")
                 else
@@ -17087,41 +17752,193 @@ do
             end)
         end
 
+        local filters = views.filters
+        caption(filters, 0, "Source")
+        ui.kinds = Library:CreateSegmented(area(filters, 18, 24), { Items = KIND_NAMES, Default = "Any", Style = "Chip", Fill = true, Height = 24, Callback = function(kind)
+            Catalog.F.kind = kind
+            ui.runSearch(false)
+        end })
+        text(area(filters, 46, 28), "Limited lists Roblox limiteds only. Premium keeps items with Premium pricing. Bodies and Emotes always list Roblox items.", { Dim = true, TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextSize = Library.FontSize - 2, TextYAlignment = Enum.TextYAlignment.Top })
+        caption(filters, 80, "Sort by")
+        local sortNames = {}
+        for index, entry in ipairs(SORTS) do sortNames[index] = entry[1] end
+        ui.sorts = Library:CreateSegmented(area(filters, 98, 24), { Items = sortNames, Default = sortNames[1], Style = "Chip", Scroll = true, Height = 24, Callback = function(label)
+            Avatar.setSort(label)
+            ui.runSearch(false)
+        end })
+        caption(filters, 132, "Price (Robux)")
+        local priceRow = area(filters, 150, 26)
+        local function priceChanged()
+            local F = Catalog.F
+            local low, high = F.minPrice, F.maxPrice
+            Avatar.setPrice(ui.minPrice:GetText(), ui.maxPrice:GetText())
+            if low ~= F.minPrice or high ~= F.maxPrice then ui.runSearch(false) end
+        end
+        ui.minPrice = Library:CreateInput(priceRow, "min", { Size = UDim2.new(0.5, -3, 0, 26), Callback = priceChanged })
+        ui.maxPrice = Library:CreateInput(priceRow, "max", { Position = UDim2.new(0.5, 3, 0, 0), Size = UDim2.new(0.5, -3, 0, 26), Callback = priceChanged })
+        ui.priceChanged = priceChanged
+        caption(filters, 186, "Availability")
+        ui.sale = Library:CreatePill(area(filters, 204, 26), "On sale only", function(pill)
+            Catalog.F.onSale = not Catalog.F.onSale
+            pill:SetActive(Catalog.F.onSale)
+            ui.runSearch(false)
+        end, { Height = 26, Width = 130 })
+        pillRow(filters, -26, {
+            { "Reset all", function()
+                Avatar.resetFilters()
+                ui.categories:SetValue("All", true)
+                ui.kinds:SetValue("Any", true)
+                ui.sorts:SetValue(sortNames[1], true)
+                ui.minPrice:SetText("", true)
+                ui.maxPrice:SetText("", true)
+                ui.sale:SetActive(false)
+                ui.runSearch(false)
+            end },
+            { "Done", function()
+                priceChanged()
+                ui.showView("results")
+            end },
+        })
+
+        local bundle = views.bundle
+        ui.bundleTitle = text(area(bundle, 0, 18), "", {})
+        ui.bundleSub = text(area(bundle, 20, 16), "", { Dim = true, TextSize = Library.FontSize - 1 })
+        ui.bundleParts = Library:CreateGallery(area(bundle, 42, nil, 34), { Height = "Fill", View = "List", RowHeight = 44, Multi = true, Header = false, EmptyText = "Loading the parts...", Callback = function(item, _, selected)
+            if selected and item and item.piece and not item.piece.supported then ui.bundleParts:SetSelected(item.Id, false) end
+        end })
+        local function bundleSelection(all)
+            local set = {}
+            for _, item in ipairs(ui.bundleParts.Items or {}) do
+                if all and item.piece.supported then set[item.Id] = true end
+            end
+            ui.bundleParts:SetValue(set)
+        end
+        function ui.wearBundle()
+            local entry = ui.bundleEntry
+            if not entry then return 0 end
+            local chosen = {}
+            for _, item in ipairs(ui.bundleParts.Items or {}) do
+                if ui.bundleParts:IsSelected(item.Id) then chosen[#chosen + 1] = item.piece end
+            end
+            local worn = Avatar.wearPieces(chosen, entry.name)
+            ui.bundleEntry = nil
+            ui.showView("results")
+            return worn
+        end
+        pillRow(bundle, -26, {
+            { "All", function() bundleSelection(true) end },
+            { "None", function() bundleSelection(false) end },
+            { "Wear selected", function() task.spawn(ui.wearBundle) end },
+            { "Back", function()
+                ui.bundleEntry = nil
+                ui.showView("results")
+            end },
+        })
+        function ui.openBundle(entry)
+            ui.bundleEntry = entry
+            ui.bundleTitle.Text = tostring(entry.name)
+            ui.bundleSub.Text = "loading the parts of this bundle..."
+            ui.bundleParts:SetItems({})
+            if pages.Current ~= "Catalog" then pages:Select("Catalog") end
+            ui.showView("bundle")
+            local pieces = Avatar.bundlePieces(entry.id)
+            if ui.bundleEntry ~= entry then return end
+            if #pieces == 0 then
+                ui.bundleSub.Text = "Could not read the parts of this bundle"
+                return
+            end
+            local items = {}
+            for _, piece in ipairs(pieces) do
+                items[#items + 1] = {
+                    Id = piece.id, Name = piece.name, Image = Avatar.thumbAsset(piece.id), piece = piece,
+                    Subtitle = tostring(piece.typeName) .. (piece.supported and "" or "  |  not wearable here"),
+                    Color = piece.supported and nil or Color3.fromRGB(226, 70, 70),
+                }
+            end
+            ui.bundleParts:SetItems(items)
+            bundleSelection(true)
+            ui.bundleSub.Text = Builder.rig == "R6" and "Pick the parts to wear. On R6, R15-only parts may look wrong." or "Pick the parts to wear, the rest stay as they are."
+        end
+
+        local emote = views.emote
+        local emoteCard = Library:CreateBevel(area(emote, 0, 76), { Size = UDim2.new(1, 0, 1, 0), ZIndex = 4 })
+        ui.emoteImage = Library:Create("ImageLabel", { BackgroundTransparency = 1, Image = "", ScaleType = Enum.ScaleType.Fit, Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(60, 60), ZIndex = 6, Parent = emoteCard })
+        ui.emoteName = text(emoteCard, "", { Position = UDim2.fromOffset(78, 10), Size = UDim2.new(1, -88, 0, 18), ZIndex = 6 })
+        text(emoteCard, "Play it on your character, or put it in a slot of your emote wheel.", { Dim = true, TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextSize = Library.FontSize - 2, TextYAlignment = Enum.TextYAlignment.Top, Position = UDim2.fromOffset(78, 32), Size = UDim2.new(1, -88, 0, 36), ZIndex = 6 })
+        pillRow(emote, 86, { { "Play / stop", function()
+            if ui.emoteEntry then task.spawn(Avatar.playEmote, ui.emoteEntry) end
+        end } })
+        caption(emote, 122, "Emote wheel slot")
+        for rowIndex = 0, 1 do
+            local specs = {}
+            for column = 1, 4 do
+                local slot = rowIndex * 4 + column
+                specs[column] = { tostring(slot), function()
+                    if ui.emoteEntry then task.spawn(Avatar.equipEmote, ui.emoteEntry, slot) end
+                end }
+            end
+            pillRow(emote, 140 + rowIndex * 32, specs)
+        end
+        pillRow(emote, -26, { { "Back to results", function()
+            ui.emoteEntry = nil
+            ui.showView("results")
+        end } })
+        function ui.openEmote(entry)
+            ui.emoteEntry = entry
+            ui.emoteName.Text = tostring(entry.name)
+            ui.emoteImage.Image = Avatar.thumbAsset(entry.id)
+            if pages.Current ~= "Catalog" then pages:Select("Catalog") end
+            ui.showView("emote")
+        end
+        ui.showView("results")
+
         local bodyPage = pages:GetPage("Body")
         local bodyPart = 1
-        local target = text(area(bodyPage, 30, 16), "", { Dim = true, TextSize = Library.FontSize - 1 })
-        local function paintTarget()
-            target.Text = bodyPart == 1 and "Pick a colour, it is applied to every part" or ("Pick a colour for the " .. string.lower(BODY_PARTS[bodyPart][1]))
+        local partList = Library:Create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0, 150, 1, 0), ZIndex = 3, Parent = frameOf(bodyPage) })
+        local bodyRight = Library:Create("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(158, 0), Size = UDim2.new(1, -158, 1, 0), ZIndex = 3, Parent = frameOf(bodyPage) })
+        local target = text(area(bodyRight, 0, 16), "", { Dim = true, TextSize = Library.FontSize - 1 })
+        local function currentColor(prop)
+            local desc = Builder.desc
+            if not (desc and prop) then return Color3.fromRGB(120, 120, 120) end
+            local ok, color = pcall(function() return desc[prop] end)
+            return ok and typeof(color) == "Color3" and color or Color3.fromRGB(120, 120, 120)
         end
-        local partNames = {}
-        for index, entry in ipairs(BODY_PARTS) do partNames[index] = entry[1] end
-        ui.bodyParts = Library:CreateSegmented(area(bodyPage, 0, 24), { Items = partNames, Default = partNames[1], Style = "Chip", Scroll = true, Height = 24, Callback = function(name)
-            for index, entry in ipairs(BODY_PARTS) do if entry[1] == name then bodyPart = index end end
-            paintTarget()
+        ui.bodyList = Library:CreateGallery(partList, { Height = "Fill", View = "List", RowHeight = 30, Header = false, Callback = function(item, _, selected)
+            if selected and item then bodyPart = item.index end
+            pcall(function() ui.bodyList:SetValue("part" .. bodyPart) end)
+            target.Text = bodyPart == 1 and "Pick a colour, it goes on every part" or ("Pick a colour for the " .. string.lower(BODY_PARTS[bodyPart][1]))
         end })
-        paintTarget()
+        function ui.refreshColors()
+            local items = {}
+            for index, entry in ipairs(BODY_PARTS) do
+                items[index] = { Id = "part" .. index, Name = entry[1], Swatch = currentColor(entry[2] or "TorsoColor"), index = index }
+            end
+            ui.bodyList:SetItems(items)
+            pcall(function() ui.bodyList:SetValue("part" .. bodyPart) end)
+            target.Text = bodyPart == 1 and "Pick a colour, it goes on every part" or ("Pick a colour for the " .. string.lower(BODY_PARTS[bodyPart][1]))
+        end
         local swatches = {}
         for index, rgb in ipairs(PALETTE) do
             local color = Color3.fromRGB(rgb[1], rgb[2], rgb[3])
             swatches[index] = { Id = "c" .. index, Name = string.format("#%02x%02x%02x", rgb[1], rgb[2], rgb[3]), Swatch = color, color = color }
         end
-        ui.palette = Library:CreateGallery(area(bodyPage, 52, nil, 34), { Height = "Fill", Header = false, MinTile = 40, Aspect = 1, Items = swatches, Callback = function(item)
+        ui.palette = Library:CreateGallery(area(bodyRight, 22, nil, 66), { Height = "Fill", Header = false, MinTile = 34, Aspect = 1, Items = swatches, Callback = function(item)
             if item and item.color then Avatar.setColor(BODY_PARTS[bodyPart][2], item.color) end
             pcall(function() ui.palette:SetValue(nil) end)
         end })
-        local hexRow = area(bodyPage, -26, 26)
-        local hex = Library:CreateInput(hexRow, "hex colour, e.g. #ff8844", { Size = UDim2.new(1, -224, 0, 26) })
+        local hexRow = area(bodyRight, -58, 26)
         local function hexApply()
-            local r, g, b = string.match(hex:GetText(), "#?(%x%x)(%x%x)(%x%x)")
+            local r, g, b = string.match(ui.hex:GetText(), "#?(%x%x)(%x%x)(%x%x)")
             if not r then return notify("Avatar builder: type a colour like #ff8844") end
             Avatar.setColor(BODY_PARTS[bodyPart][2], Color3.fromRGB(tonumber(r, 16), tonumber(g, 16), tonumber(b, 16)))
         end
-        Library:CreatePill(hexRow, "Set", hexApply, { Height = 26, Width = 56, Position = UDim2.new(1, -218, 0, 0) })
-        Library:CreatePill(hexRow, "Reset colours", Avatar.resetColors, { Height = 26, Width = 150, Position = UDim2.new(1, -150, 0, 0) })
-        ui.hex = hex
+        ui.hex = Library:CreateInput(hexRow, "hex colour, e.g. #ff8844", { Size = UDim2.new(1, -70, 0, 26), Callback = function(_, enter) if enter then hexApply() end end })
+        Library:CreatePill(hexRow, "Set", hexApply, { Height = 26, Width = 64, Position = UDim2.new(1, -64, 0, 0) })
+        pillRow(bodyRight, -26, { { "Reset to original colours", Avatar.resetColors } })
+        ui.refreshColors()
 
         local idPage = pages:GetPage("By ID")
-        text(area(idPage, 0, 32), "Paste asset ids or catalog links for clothes, hats, heads, bodies and animations. Separate several with spaces or commas. A bundle id wears its parts.", { Dim = true, TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextSize = Library.FontSize - 1, TextYAlignment = Enum.TextYAlignment.Top })
+        text(area(idPage, 0, 32), "Paste asset ids or catalog links for clothes, hats, heads, bodies and animations. Separate several with spaces or commas. A bundle id opens its parts.", { Dim = true, TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextSize = Library.FontSize - 1, TextYAlignment = Enum.TextYAlignment.Top })
         ui.idInput = Library:CreateInput(area(idPage, 38, 26), "e.g. 607785314, 1029025 or a catalog link", { Size = UDim2.new(1, 0, 0, 26) })
         ui.idResults = Library:CreateGallery(area(idPage, 102), { Height = "Fill", View = "List", RowHeight = 40, Header = false, EmptyText = "Results show here" })
         local function runIds(mode)
@@ -17133,6 +17950,7 @@ do
                 local function add(id, name, status, good)
                     results[#results + 1] = { Id = "r" .. #results, Name = name, Subtitle = status, Image = Avatar.thumbAsset(id), Color = good and Color3.fromRGB(110, 210, 140) or Color3.fromRGB(230, 110, 110) }
                 end
+                local bundleId
                 for _, id in ipairs(ids) do
                     local info = itemDetails(id, "Asset")
                     if info and info.AssetType ~= nil then
@@ -17156,28 +17974,25 @@ do
                         else
                             add(id, name, tostring(typeName) .. "  |  not wearable here", false)
                         end
-                    elseif mode ~= "off" then
-                        local worn = 0
-                        for _, piece in ipairs(Avatar.bundlePieces(id)) do
-                            if piece.supported and pcall(Avatar.wearAsset, piece.id, piece.typeName, true) then worn = worn + 1 end
-                        end
-                        changed = changed or worn > 0
-                        add(id, worn > 0 and ("Bundle " .. id) or tostring(id), worn > 0 and string.format("bundle  |  %d parts worn", worn) or "not found", worn > 0)
+                    elseif mode ~= "off" and itemDetails(id, "Bundle") then
+                        bundleId = bundleId or id
+                        add(id, "Bundle " .. id, "bundle  |  opened its parts in the catalog", true)
                     else
                         add(id, tostring(id), "not found", false)
                     end
                 end
                 ui.idResults:SetItems(results)
                 if changed then Avatar.changed() end
+                if bundleId then ui.openBundle({ id = bundleId, name = "Bundle " .. bundleId, isBundle = true }) end
             end)
         end
-        pills(row(idPage, 70, 24), {
-            { "Wear", function() runIds("wear") end, 90 },
-            { "Take off", function() runIds("off") end, 90 },
+        pillRow(idPage, 70, {
+            { "Wear", function() runIds("wear") end },
+            { "Take off", function() runIds("off") end },
             { "Clear", function()
                 ui.idInput:SetText("", true)
                 ui.idResults:SetItems({})
-            end, 90 },
+            end },
         })
         ui.runIds = runIds
 
@@ -17225,10 +18040,38 @@ do
         ui.outfits = Library:CreateGallery(area(outfitPage, 34), { Height = "Fill", View = "List", Header = false, EmptyText = "No saved outfits yet. Build something in the catalog, then press Save current." })
         outfitPage:OnShow(function() ui.refreshOutfits() end)
 
+        local function applyInfo(info)
+            if not info or info.kind == "random" then return notify("Avatar spoofer: pick an avatar first") end
+            ui.applied = info
+            task.spawn(function()
+                if info.kind == "outfit" then Avatar.applyOutfit(info.id) else Avatar.applyUser(info.uid) end
+            end)
+        end
+        local function editInfo(info)
+            if not info or info.kind == "random" then return notify("Avatar spoofer: pick an avatar first") end
+            task.spawn(function()
+                local ok, desc = pcall(function()
+                    if info.kind == "outfit" then return Players:GetHumanoidDescriptionFromOutfitId(info.id) end
+                    return Players:GetHumanoidDescriptionFromUserIdAsync(info.uid)
+                end)
+                if not ok or not desc then return notify("Avatar builder: could not load that avatar") end
+                Avatar.setDescription(desc)
+                pages:Select("Catalog")
+                notify("Avatar builder: loaded " .. tostring(info.name))
+            end)
+        end
+        local function clickedTwice(item)
+            local now = os.clock()
+            local twice = ui.lastClick ~= nil and ui.lastClick.id == item.Id and now - ui.lastClick.at < 0.5
+            ui.lastClick = { id = item.Id, at = now }
+            return twice
+        end
+
         local playersPage = pages:GetPage("Players")
-        ui.playerSearch = Library:CreateInput(area(playersPage, 0, 26), "username, UserId, profile URL or outfit:ID, press Enter", { Icon = "search", Size = UDim2.new(1, 0, 0, 26), Callback = function(value, enter)
-            if enter then ui.lookup(value) end
-        end })
+        ui.playerSearch = Library:CreateInput(area(playersPage, 0, 26), "username, UserId, profile URL or outfit:ID, press Enter", { Icon = "search", Size = UDim2.new(1, 0, 0, 26),
+            Callback = function(value, enter) if enter then ui.lookup(value) end end,
+            Changed = function(value) ui.refreshChips(value) end,
+        })
         local chipNames = {}
         ui.chips = Library:CreateSegmented(area(playersPage, 32, 24), { Items = { "You" }, Style = "Chip", Scroll = true, Height = 24, Callback = function(name)
             local entry = chipNames[name]
@@ -17239,11 +18082,13 @@ do
             ui.indicator.Text = value
             ui.indicator.TextColor3 = INDICATOR[kind] or INDICATOR.unreachable
         end
-        function ui.refreshChips()
+        function ui.refreshChips(query)
+            query = string.lower(tostring(query or ""))
             chipNames = { You = { uid = LocalPlayer.UserId, name = "You" } }
             local names = { "You" }
             for _, entry in ipairs(store.recent) do
-                if #names < 16 and type(entry.name) == "string" and type(entry.uid) == "number" and not chipNames[entry.name] then
+                if #names < 16 and type(entry.name) == "string" and type(entry.uid) == "number" and not chipNames[entry.name]
+                    and (query == "" or string.find(string.lower(entry.name), query, 1, true)) then
                     names[#names + 1] = entry.name
                     chipNames[entry.name] = entry
                 end
@@ -17253,22 +18098,49 @@ do
         local function playerItem(info, image)
             return { Id = (info.kind == "outfit" and "o" or "u") .. tostring(info.id or info.uid), Name = info.name, Image = image, Star = Avatar.favoriteIndex(info) ~= nil, info = info }
         end
-        local function thumb(kind, id) return string.format("rbxthumb://type=%s&id=%d&w=150&h=150", kind, id) end
-        ui.people = Library:CreateGallery(area(playersPage, 82, nil, 32), { Height = "Fill", Header = false, MinTile = 92, Aspect = 1.18, EmptyText = "Look someone up", Callback = function(item, _, selected)
-            ui.selected = selected and item and item.info or nil
-            if ui.selected then Avatar.prefetch(ui.selected.kind ~= "outfit" and ui.selected.uid or nil, ui.selected.kind == "outfit" and ui.selected.id or nil) end
+        ui.selectedLabel = text(area(playersPage, -50, 16), "", { Dim = true, TextSize = Library.FontSize - 1 })
+        local function choose(info)
+            ui.selected = info
+            ui.selectedLabel.Text = info and ("Selected: " .. tostring(info.name) .. (info.kind == "outfit" and "  (outfit)" or "  (current look)") .. "  |  double-click applies") or "Click a tile to select it, double-click to apply"
+            if info then Avatar.prefetch(info.kind ~= "outfit" and info.uid or nil, info.kind == "outfit" and info.id or nil) end
+        end
+        ui.select = choose
+        ui.people = Library:CreateGallery(area(playersPage, 82, nil, 56), { Height = "Fill", Header = false, MinTile = 92, Aspect = 1.18, EmptyText = "Look someone up", Callback = function(item, _, selected)
+            if item and item.info and item.info.kind == "random" then
+                local pool = {}
+                for _, other in ipairs(ui.people.Items or {}) do
+                    if other.info and other.info.kind == "outfit" then pool[#pool + 1] = other end
+                end
+                if #pool == 0 then
+                    pcall(function() ui.people:SetValue(nil) end)
+                    return notify("Avatar spoofer: no outfits to pick from yet")
+                end
+                local pick = pool[math.random(#pool)]
+                pcall(function() ui.people:SetValue(pick.Id) end)
+                return choose(pick.info)
+            end
+            if item and clickedTwice(item) then
+                pcall(function() ui.people:SetValue(item.Id) end)
+                choose(item.info)
+                return applyInfo(item.info)
+            end
+            choose(selected and item and item.info or nil)
         end })
         function ui.loadTarget(uid, name)
             if not uid then return end
             ui.token = ui.token + 1
             local token = ui.token
-            ui.target, ui.selected = { uid = uid, name = name }, nil
+            ui.target = { uid = uid, name = name }
+            choose(nil)
             if uid ~= LocalPlayer.UserId then
                 Avatar.recordRecent(uid, name)
-                ui.refreshChips()
+                ui.refreshChips(ui.playerSearch:GetText())
             end
-            local alive = function() return ui.token == token and not Library.Unloaded end
-            ui.people:SetItems({ playerItem({ kind = "user", uid = uid, name = name .. " (now)" }, thumb("Avatar", uid)) })
+            local alive = function() return ui ~= nil and ui.token == token and not Library.Unloaded end
+            ui.people:SetItems({
+                playerItem({ kind = "user", uid = uid, name = name .. " (now)" }, thumb("Avatar", uid)),
+                { Id = "random", Name = "Random", Subtitle = "picks one of the outfits below", info = { kind = "random", name = "Random" } },
+            })
             ui.people:SetStatus("Loading outfits...")
             setIndicator("checking", "checking outfits...")
             task.spawn(function()
@@ -17304,8 +18176,10 @@ do
             local outfitId = tonumber(string.match(value, "[Oo]utfits?[:%s/=]*(%d+)"))
             if outfitId then
                 local info = { kind = "outfit", id = outfitId, name = "Outfit " .. outfitId }
-                ui.people:AppendItems({ playerItem(info, thumb("Outfit", outfitId)) })
-                ui.selected = info
+                local item = playerItem(info, thumb("Outfit", outfitId))
+                ui.people:AppendItems({ item })
+                pcall(function() ui.people:SetValue(item.Id) end)
+                choose(info)
                 return
             end
             task.spawn(function()
@@ -17317,47 +18191,40 @@ do
                 ui.loadTarget(uid, name)
             end)
         end
-        local function applyInfo(info)
-            if not info then return notify("Avatar spoofer: pick an avatar first") end
-            task.spawn(function()
-                if info.kind == "outfit" then Avatar.applyOutfit(info.id) else Avatar.applyUser(info.uid) end
-            end)
+        local function favourite(gallery, info)
+            if not info or info.kind == "random" then return notify("Avatar spoofer: pick an avatar first") end
+            local on = Avatar.toggleFavorite(info)
+            notify(on and ("Favourited " .. tostring(info.name)) or ("Removed " .. tostring(info.name) .. " from favourites"))
+            for _, item in ipairs(gallery.Items or {}) do
+                if item.info and item.info.kind ~= "random" then item.Star = Avatar.favoriteIndex(item.info) ~= nil end
+            end
+            pcall(function() gallery:Refresh() end)
         end
-        local function editInfo(info)
-            if not info then return notify("Avatar spoofer: pick an avatar first") end
-            task.spawn(function()
-                local ok, desc = pcall(function()
-                    if info.kind == "outfit" then return Players:GetHumanoidDescriptionFromOutfitId(info.id) end
-                    return Players:GetHumanoidDescriptionFromUserIdAsync(info.uid)
-                end)
-                if not ok or not desc then return notify("Avatar builder: could not load that avatar") end
-                Avatar.setDescription(desc)
-                pages:Select("Catalog")
-                notify("Avatar builder: loaded " .. tostring(info.name))
-            end)
-        end
-        pills(row(playersPage, -26, 26), {
-            { "Apply selected", function() applyInfo(ui.selected) end, 118 },
-            { "Edit in builder", function() editInfo(ui.selected) end, 118 },
-            { "Favourite", function()
-                local info = ui.selected
-                if not info then return notify("Avatar spoofer: pick an avatar first") end
-                local on = Avatar.toggleFavorite(info)
-                notify(on and ("Favourited " .. tostring(info.name)) or ("Removed " .. tostring(info.name) .. " from favourites"))
-                if ui.target then
-                    for _, item in ipairs(ui.people.Items or {}) do
-                        if item.info then item.Star = Avatar.favoriteIndex(item.info) ~= nil end
-                    end
-                    pcall(function() ui.people:Refresh() end)
-                end
-            end, 96 },
+        pillRow(playersPage, -26, {
+            { "Apply", function() applyInfo(ui.selected) end },
+            { "Edit in builder", function() editInfo(ui.selected) end },
+            { "Favourite", function() favourite(ui.people, ui.selected) end },
+            { "Forget", function() ui.forget() end },
         })
+        function ui.forget()
+            local target = ui.target
+            if not target or target.uid == LocalPlayer.UserId then return notify("Avatar spoofer: look someone up first") end
+            Avatar.removeRecent(target.uid)
+            ui.refreshChips(ui.playerSearch:GetText())
+            ui.loadTarget(LocalPlayer.UserId, "You")
+        end
+        choose(nil)
         playersPage:OnShow(function(_, first)
             if first then ui.loadTarget(LocalPlayer.UserId, "You") end
         end)
 
         local favPage = pages:GetPage("Favorites")
-        ui.favorites = Library:CreateGallery(area(favPage, 0, nil, 32), { Height = "Fill", Header = false, MinTile = 92, Aspect = 1.18, EmptyText = "Favourite an outfit or player on the Players page to keep it here", Callback = function(item, _, selected)
+        ui.favorites = Library:CreateGallery(area(favPage, 0, nil, 34), { Height = "Fill", Header = false, MinTile = 92, Aspect = 1.18, EmptyText = "Favourite an outfit or player on the Players page to keep it here", Callback = function(item, _, selected)
+            if item and clickedTwice(item) then
+                pcall(function() ui.favorites:SetValue(item.Id) end)
+                ui.favSelected = item.info
+                return applyInfo(item.info)
+            end
             ui.favSelected = selected and item and item.info or nil
         end })
         function ui.refreshFavorites()
@@ -17370,14 +18237,14 @@ do
             ui.favorites:SetItems(items)
             ui.favSelected = nil
         end
-        pills(row(favPage, -26, 26), {
-            { "Apply", function() applyInfo(ui.favSelected) end, 96 },
-            { "Edit in builder", function() editInfo(ui.favSelected) end, 118 },
+        pillRow(favPage, -26, {
+            { "Apply", function() applyInfo(ui.favSelected) end },
+            { "Edit in builder", function() editInfo(ui.favSelected) end },
             { "Remove", function()
                 if not ui.favSelected then return notify("Avatar spoofer: pick a favourite first") end
                 Avatar.toggleFavorite(ui.favSelected)
                 ui.refreshFavorites()
-            end, 96 },
+            end },
         })
         favPage:OnShow(function() ui.refreshFavorites() end)
 
@@ -17385,8 +18252,9 @@ do
             refreshWorn()
             ui.rebuildPreview()
             syncWorn(ui.catalog)
+            ui.refreshColors()
         end)
-        ui.refreshChips()
+        ui.refreshChips("")
         refreshWorn()
         task.spawn(Avatar.loadMine)
         ui.runSearch(false)
@@ -17470,7 +18338,10 @@ do
     local HttpService = game:GetService("HttpService")
     local Effects = Pages.Effects
     local GunSounds = Feedback.GunSounds
-    local Preview = { built = {}, lists = {}, store = { weapons = {} }, path = "Aster/sounds.json" }
+    local Preview = {
+        built = {}, lists = {}, store = { weapons = {} }, path = "Aster/sounds.json",
+        dirty = {}, paints = {}, shown = {}, dummy = { Name = "Test dummy", UserId = 0 },
+    }
 
     do
         local ok, data = pcall(function()
@@ -17543,13 +18414,24 @@ do
         return Library:CreateLabel(props)
     end
 
-    local function pillRow(parent, top, list)
-        local frame = area(parent, top, 26)
-        Library:Create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = frame })
-        for order, spec in ipairs(list) do
-            Library:CreatePill(frame, spec[1], spec[2], { Height = 26, Width = spec[3] }).Frame.LayoutOrder = order
+    local function header(parent, top, value)
+        return text(area(parent, top, 14), string.upper(value), { Dim = true, TextSize = Library.FontSize - 2 })
+    end
+
+    local function pillRow(parent, top, list, height)
+        height = height or 26
+        local frame = area(parent, top, height)
+        local count, gap = #list, 6
+        local made = {}
+        for index, spec in ipairs(list) do
+            local holder = Library:Create("Frame", {
+                BackgroundTransparency = 1, ZIndex = 3, Parent = frame,
+                Position = UDim2.new((index - 1) / count, math.floor(gap * (index - 1) / count), 0, 0),
+                Size = UDim2.new(1 / count, -math.floor(gap * (count - 1) / count), 1, 0),
+            })
+            made[index] = Library:CreatePill(holder, spec[1], spec[2], { Height = height, Width = "Fill" })
         end
-        return frame
+        return frame, made
     end
 
     local function setOption(name, value)
@@ -17557,11 +18439,34 @@ do
         if control and control.Value ~= value then control:SetValue(value) end
     end
 
+    function Preview.mark(fn)
+        Preview.dirty[fn] = true
+    end
+
     local function watch(names, fn)
+        local function hook() Preview.dirty[fn] = true end
         for _, name in ipairs(names) do
             local control = Options[name] or Toggles[name]
-            if control and control.OnChanged then control:OnChanged(function() Util.guard("fx preview", fn) end) end
+            if control then
+                if type(Library.AddChangedHook) == "function" then
+                    Library:AddChangedHook(control, hook)
+                elseif control.OnChanged then
+                    control:OnChanged(hook)
+                end
+            end
         end
+        Preview.dirty[fn] = true
+    end
+
+    function Preview.flush()
+        if next(Preview.dirty) == nil then return end
+        local list = Preview.dirty
+        Preview.dirty = {}
+        for fn in pairs(list) do Util.guard("fx preview", fn) end
+    end
+
+    local function count(name)
+        Preview.paints[name] = (Preview.paints[name] or 0) + 1
     end
 
     local function previewPane(sub, build)
@@ -17569,16 +18474,93 @@ do
         local pane = sub.right
         if pane.Scroll then pane.Scroll.Visible = false end
         pane:OnShow(function(_, first)
+            Preview.shown[pane] = true
             if first and not Preview.built[pane] then
                 Preview.built[pane] = true
                 local ok, problem = pcall(build, pane)
                 if not ok then warn("[Aster] effects preview failed:", problem) end
             end
         end)
+        pane:OnHide(function() Preview.shown[pane] = nil end)
         return pane
     end
 
-    function Preview.soundList(pane, spec)
+    local function fallbackRows(sub, rows)
+        if not sub or sub.canvas or not sub.Preview then return end
+        for _, spec in ipairs(rows) do sub.Preview:Button({ Name = spec[1], Callback = spec[2] }) end
+    end
+
+    local function ahead(distance)
+        local cam = Game.camera()
+        if not cam then return nil end
+        local frame = cam.CFrame
+        return frame.Position + frame.LookVector * distance, frame
+    end
+
+    function Preview.target(head)
+        local cam = Game.camera()
+        local eye = cam and cam.CFrame.Position
+        local best, bestPart, bestDist
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local char = player.Character
+                local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+                local part = char and (char:FindFirstChild(head and "Head" or "Torso") or char:FindFirstChild("HumanoidRootPart"))
+                if humanoid and humanoid.Health > 0 and part and part:IsA("BasePart") then
+                    local distance = eye and (part.Position - eye).Magnitude or 0
+                    if distance < 400 and (not bestDist or distance < bestDist) then best, bestPart, bestDist = player, part, distance end
+                end
+            end
+        end
+        return best, bestPart
+    end
+
+    function Preview.testHit(head)
+        local player, part = Preview.target(head)
+        local partName = head and "Head" or "Torso"
+        local damage = head and 100 or 34
+        if player then
+            Feedback.hit(player, damage, part.Position, part.Name == "HumanoidRootPart" and "Torso" or part.Name, false)
+            return player
+        end
+        local position = ahead(14)
+        if not position then return nil end
+        Feedback.noteHit(position, os.clock())
+        Feedback.onHit(head)
+        if flag("dmg_on", false) then Feedback.addNumber(position, partName, damage, false) end
+        if flag("hit_cham_on", false) or flag("hit_fx_on", false) then Feedback.notify("Hit chams and hit effects need another player nearby to test on") end
+        return nil
+    end
+
+    function Preview.testKill()
+        local any = flag("kill_snd", false) or flag("killcam_notify", true) or flag("streak_on", false) or flag("kill_fx", false) or flag("hit_marker_kill", false) or flag("hit_marker_skull", false)
+        if not any then return Feedback.notify("Kills: turn on a kill sound, notice, streak or effect first") end
+        local result = Feedback.onOwnKill(Preview.dummy, { at = os.clock(), part = "Head" })
+        if flag("kill_fx", false) then Util.guard("killfx-preview", KillFx.preview) end
+        Preview.lastKill = result
+        return result
+    end
+
+    function Preview.killEffect()
+        if not flag("kill_fx", false) then return Feedback.notify("Kill effects: turn them on first") end
+        Util.guard("killfx-preview", KillFx.preview)
+    end
+
+    function Preview.testShot()
+        if not (flag("trace_on", false) or flag("impact_on", false)) then return Feedback.notify("Bullets: turn on Own bullets or Bullet impacts first") end
+        local origin, frame = ahead(2)
+        if not origin then return false end
+        origin = origin - Vector3.new(0, 1, 0)
+        local direction = frame.LookVector
+        local hitPos, part = origin + direction * 120, nil
+        local ok, result = pcall(Game.cast, origin, direction * 300, Visible.params)
+        if ok and result then hitPos, part = result.Position, result.Instance end
+        Tracers.enqueue(origin, hitPos, nil, nil, true)
+        Preview.lastShot = { origin = origin, hitPos = hitPos, part = part }
+        return true
+    end
+
+    function Preview.soundList(parent, spec)
         local list = { spec = spec, target = spec.targets[1] }
         Preview.lists[spec.name] = list
         local names = {}
@@ -17589,22 +18571,21 @@ do
         end
         local initial = spec.current and targetNamed(spec.current()) or spec.targets[1]
         list.target = initial
-        list.bar = Library:CreateSegmented(area(pane, 0, 26), { Items = names, Default = initial.name, Style = #names > 3 and "Chip" or "Pill", Fill = #names <= 3, Scroll = #names > 3, Height = 26, Callback = function(name)
-            list.target = targetNamed(name)
-            if spec.onTarget then spec.onTarget(list.target) end
-            list.refresh()
-        end })
+        local top = 0
+        if #names > 1 then
+            list.bar = Library:CreateSegmented(area(parent, 0, 26), { Items = names, Default = initial.name, Style = #names > 3 and "Chip" or "Pill", Fill = #names <= 3, Scroll = #names > 3, Height = 26, Callback = function(name)
+                list.target = targetNamed(name)
+                if spec.onTarget then spec.onTarget(list.target) end
+                list.refresh()
+            end })
+            top = 34
+        end
 
-        local card = Library:CreateBevel(area(pane, 34, 46), { Size = UDim2.new(1, 0, 1, 0), ZIndex = 6 })
-        text(card, "NOW SELECTED", { Dim = true, TextSize = Library.FontSize - 2, Position = UDim2.fromOffset(10, 5), Size = UDim2.new(1, -90, 0, 14) })
+        local card = Library:CreateBevel(area(parent, top, 46), { Size = UDim2.new(1, 0, 1, 0), ZIndex = 6 })
+        list.title = text(card, "", { Dim = true, TextSize = Library.FontSize - 2, Position = UDim2.fromOffset(10, 5), Size = UDim2.new(1, -90, 0, 14) })
         list.current = text(card, "", { Position = UDim2.fromOffset(10, 21), Size = UDim2.new(1, -90, 0, 18) })
         Library:CreatePill(card, "Play", function() Util.guard("sound preview", list.playSelected) end, { Height = 24, Width = 64, Position = UDim2.new(1, -72, 0, 11), ZIndex = 8 })
 
-        local bottom = 34
-        if spec.extra then
-            pillRow(pane, -60, spec.extra)
-            bottom = 68
-        end
         local function itemAsset(item, target)
             if item.saved then return savedAsset(item.saved) end
             if item.Name == "Custom" then return Feedback.parseAsset(flag(target.custom, "")) end
@@ -17636,7 +18617,7 @@ do
             end
         end
 
-        list.gallery = Library:CreateGallery(area(pane, 88, nil, bottom), {
+        list.gallery = Library:CreateGallery(area(parent, top + 54, nil, 34), {
             Height = "Fill", View = "List", Virtual = true, RowHeight = 32, Search = true, Title = "Sounds",
             HoverButton = { Text = "Play", Callback = function(item) Util.guard("sound preview", list.play, item) end },
             Callback = function(item, _, selected)
@@ -17673,7 +18654,7 @@ do
                 local entry = Feedback.HIT_SOUNDS[name]
                 local subtitle
                 if name == "Custom" then
-                    subtitle = Feedback.parseAsset(flag(target.custom, "")) or "type an id in Custom sound id"
+                    subtitle = Feedback.parseAsset(flag(target.custom, "")) or "type an id below and press Save"
                 elseif type(entry) == "table" then
                     subtitle = #entry .. " variants"
                 else
@@ -17685,10 +18666,14 @@ do
         end
 
         function list.sync()
+            local target = list.target
             local id = list.selectedId()
             pcall(function() list.gallery:SetValue(id) end)
-            local value = flag(list.target.flag, "?")
+            local value = flag(target.flag, "?")
+            local on = target.enabled == nil or flag(target.enabled, false)
+            list.title.Text = string.upper(target.name) .. (on and "" or "  |  OFF")
             list.current.Text = string.sub(tostring(id or value), 1, 6) == "saved:" and string.sub(id, 7) .. "  (saved)" or tostring(value)
+            count("sounds")
         end
 
         function list.refresh()
@@ -17696,7 +18681,7 @@ do
             list.sync()
         end
 
-        local saveRow = area(pane, -26, 26)
+        local saveRow = area(parent, -26, 26)
         list.nameBox = Library:CreateInput(saveRow, "name", { Size = UDim2.new(0.35, -4, 0, 26) })
         list.idBox = Library:CreateInput(saveRow, "sound id or link", { Position = UDim2.new(0.35, 2, 0, 0), Size = UDim2.new(0.65, -72, 0, 26) })
         function list.saveSound()
@@ -17720,6 +18705,7 @@ do
         local picks, customs = {}, {}
         for _, target in ipairs(spec.targets) do
             picks[#picks + 1] = target.flag
+            if target.enabled then picks[#picks + 1] = target.enabled end
             customs[#customs + 1] = target.custom
         end
         watch(picks, list.sync)
@@ -17732,32 +18718,59 @@ do
         return function() return order end
     end
 
+    local HIT_TARGETS = {
+        { name = "Hit sound", flag = "hit_snd_id", enabled = "hit_snd", custom = "hit_snd_custom", key = "hit", vol = "hit_snd_vol", pitch = "hit_snd_pitch", max = "hit_snd_max", order = soundOrder(Feedback.HIT_SOUND_ORDER) },
+        { name = "Headshot sound", flag = "hit_snd_head_id", enabled = "hit_snd_head", custom = "hit_snd_custom", key = "hit", vol = "hit_snd_vol", pitch = "hit_snd_pitch", max = "hit_snd_max", order = soundOrder(Feedback.HIT_SOUND_ORDER) },
+    }
+    local KILL_TARGETS = {
+        { name = "Kill sound", flag = "kill_snd_id", enabled = "kill_snd", custom = "kill_snd_custom", key = "kill", vol = "kill_snd_vol", pitch = "kill_snd_pitch", max = "kill_snd_max", order = soundOrder(Feedback.KILL_SOUND_ORDER) },
+    }
+
+    local function hitTest(head) return function() Util.guard("hit-test", Preview.testHit, head) end end
+    local function killTest() Util.guard("kill-test", Preview.testKill) end
+    local function effectTest() Preview.killEffect() end
+    local function streakTest() Util.guard("streak-test", Streak.test) end
+    local function shotTest() Util.guard("shot-test", Preview.testShot) end
+
     previewPane(Effects.Hits, function(pane)
-        Preview.soundList(pane, { name = "Hits", targets = {
-            { name = "Hit sound", flag = "hit_snd_id", custom = "hit_snd_custom", key = "hit", vol = "hit_snd_vol", pitch = "hit_snd_pitch", max = "hit_snd_max", order = soundOrder(Feedback.HIT_SOUND_ORDER) },
-            { name = "Headshot sound", flag = "hit_snd_head_id", custom = "hit_snd_custom", key = "hit", vol = "hit_snd_vol", pitch = "hit_snd_pitch", max = "hit_snd_max", order = soundOrder(Feedback.HIT_SOUND_ORDER) },
-        } })
+        header(pane, 0, "Try it")
+        pillRow(pane, 18, { { "Test hit", hitTest(false) }, { "Headshot", hitTest(true) } })
+        header(pane, 54, "Sounds")
+        Preview.soundList(area(pane, 72), { name = "Hits", targets = HIT_TARGETS })
     end)
+    fallbackRows(Effects.Hits, {
+        { "Test hit", hitTest(false) },
+        { "Test headshot", hitTest(true) },
+        { "Play hit sound", function() Util.guard("hit-preview", Feedback.preview, "hit_snd", "Gamesense") end },
+    })
 
     previewPane(Effects.Kills, function(pane)
-        Preview.soundList(pane, { name = "Kills", targets = {
-            { name = "Kill sound", flag = "kill_snd_id", custom = "kill_snd_custom", key = "kill", vol = "kill_snd_vol", pitch = "kill_snd_pitch", max = "kill_snd_max", order = soundOrder(Feedback.KILL_SOUND_ORDER) },
-        }, extra = {
-            { "Preview kill effect", function()
-                if not flag("kill_fx", false) then return Feedback.notify("Kill effects: turn them on first") end
-                Util.guard("killfx-preview", KillFx.preview)
-            end, 150 },
-            { "Test streak", function() Util.guard("streak-test", Streak.test) end, 110 },
-        } })
+        header(pane, 0, "Try it")
+        pillRow(pane, 18, { { "Test kill", killTest }, { "Kill effect", effectTest }, { "Streak", streakTest } })
+        header(pane, 54, "Sounds")
+        Preview.soundList(area(pane, 72), { name = "Kills", targets = KILL_TARGETS })
     end)
+    fallbackRows(Effects.Kills, {
+        { "Test kill", killTest },
+        { "Preview kill effect", effectTest },
+        { "Test streak", streakTest },
+        { "Play kill sound", function() Util.guard("kill-preview", Feedback.preview, "kill_snd", "Alt Killshot") end },
+    })
 
     if GunSounds then
-        previewPane(Effects["Gun sounds"], function(pane)
-            local targets = {}
-            for index, weapon in ipairs(GunSounds.weapons) do
-                local key = "sfx_" .. weapon.key
-                targets[index] = { name = weapon.label, flag = key .. "_sound", custom = key .. "_custom", key = weapon.key, vol = key .. "_volume", pitch = key .. "_pitch", scale = 0.5, order = function() return GunSounds.soundItems end }
+        local targets = {}
+        for index, weapon in ipairs(GunSounds.weapons) do
+            local key = "sfx_" .. weapon.key
+            targets[index] = { name = weapon.label, flag = key .. "_sound", enabled = key .. "_on", custom = key .. "_custom", key = weapon.key, vol = key .. "_volume", pitch = key .. "_pitch", scale = 0.5, order = function() return GunSounds.soundItems end }
+        end
+        local function selectedKey()
+            local label = flag("sfx_weapon", GunSounds.labels[1])
+            for _, weapon in ipairs(GunSounds.weapons) do
+                if weapon.label == label then return "sfx_" .. weapon.key end
             end
+            return "sfx_" .. GunSounds.weapons[1].key
+        end
+        previewPane(Effects["Gun sounds"], function(pane)
             local list = Preview.soundList(pane, { name = "Gun sounds", targets = targets,
                 current = function() return flag("sfx_weapon", GunSounds.labels[1]) end,
                 onTarget = function(target) setOption("sfx_weapon", target.name) end,
@@ -17767,48 +18780,161 @@ do
                 if list.target.name ~= name then list.bar:SetValue(name) end
             end)
         end)
+        fallbackRows(Effects["Gun sounds"], {
+            { "Play selected gun sound", function() Util.guard("gun-sound-preview", GunSounds.preview, selectedKey()) end },
+        })
     end
 
-    local function tracerColor(index, total)
-        if flag("trace_rainbow", false) then return Color3.fromHSV(((index - 1) / math.max(total, 1)) % 1, 0.7, 1) end
-        if flag("trace_gradient", false) then
-            local a, b = flag("trace_grad_start", Color3.new(1, 1, 1)), flag("trace_grad_end", Color3.new(1, 1, 1))
-            return a:Lerp(b, 0.5)
+    local LANES = {
+        { "Own", "trace_on", "trace_color", Color3.fromRGB(255, 94, 94) },
+        { "Enemy", "trace_enemy_on", "trace_enemy_color", Color3.fromRGB(94, 160, 255) },
+        { "Team", "trace_team_on", "trace_team_color", Color3.fromRGB(90, 220, 130) },
+    }
+    local TRACER_FLAGS = {
+        "trace_on", "trace_enemy_on", "trace_team_on", "trace_color", "trace_enemy_color", "trace_team_color", "trace_texture", "trace_time", "trace_game_timing", "trace_width",
+        "trace_glow", "trace_glow_strength", "trace_glow_same", "trace_glow_color", "trace_gradient", "trace_grad_start", "trace_grad_end", "trace_grad_fade", "trace_rainbow",
+    }
+    local IMPACT_FLAGS = { "impact_on", "impact_color", "impact_list", "impact_size", "impact_time", "impact_enemy" }
+
+    local function rainbow()
+        local keys = {}
+        for step = 0, 6 do keys[#keys + 1] = ColorSequenceKeypoint.new(step / 6, Color3.fromHSV((step / 6 * 0.8) % 1, 0.85, 1)) end
+        return ColorSequence.new(keys)
+    end
+
+    function Preview.tracerLook(laneColor)
+        local gradient = flag("trace_gradient", false)
+        local sequence
+        if gradient and flag("trace_rainbow", false) then
+            sequence = rainbow()
+        elseif gradient then
+            sequence = ColorSequence.new(flag("trace_grad_start", Color3.fromRGB(255, 94, 94)), flag("trace_grad_end", Color3.fromRGB(94, 160, 255)))
+        else
+            sequence = ColorSequence.new(laneColor)
         end
-        return flag("trace_color", Color3.fromRGB(255, 94, 94))
+        local name = flag("trace_texture", "Lightning")
+        local preset = Tracers.presets()[name]
+        local base = preset and preset.Alpha or 0
+        local fade = gradient and math.clamp(flag("trace_grad_fade", 0), 0, 1) or 0
+        local glow = flag("trace_glow", false) and math.clamp(flag("trace_glow_strength", 4), 0, 10) or 0
+        return {
+            color = sequence, alpha = NumberSequence.new(base, base + (1 - base) * fade),
+            thick = math.clamp(math.floor(2 + 3 * flag("trace_width", 1) + 0.5), 2, 11), glow = glow,
+            glowColor = flag("trace_glow_same", true) and sequence or ColorSequence.new(flag("trace_glow_color", WHITE)),
+            glowAlpha = NumberSequence.new(math.clamp(0.9 - 0.06 * glow, 0.2, 1), 1),
+        }
     end
 
     previewPane(Effects.Bullets, function(pane)
-        local strip = Library:CreateBevel(area(pane, 0, 26), { Size = UDim2.new(1, 0, 1, 0), ZIndex = 6 })
-        local gradient = Library:Create("UIGradient", { Parent = strip })
-        local stripText = text(strip, "", { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -20, 1, 0) })
-        local gallery
-        gallery = Library:CreateGallery(area(pane, 34), { Height = "Fill", View = "List", RowHeight = 40, Title = "Tracer textures", Search = true, Callback = function(item, _, selected)
-            if selected and item then setOption("trace_texture", item.Name) end
-            pcall(function() gallery:SetValue(flag("trace_texture", nil)) end)
-        end })
-        local function refresh()
-            local names = Tracers.textureNames or {}
-            local particles = Util.toSet(Tracers.particleNames)
-            local items = {}
-            local width = flag("trace_width", 1)
-            for index, name in ipairs(names) do
-                local particle = particles[name] == true
-                items[index] = { Id = name, Name = name, Swatch = tracerColor(index, #names), Subtitle = string.format("%s  |  width %.1fx", particle and "particle tracer" or "beam", width) }
-            end
-            gallery:SetItems(items)
-            pcall(function() gallery:SetValue(flag("trace_texture", nil)) end)
-            local first = flag("trace_gradient", false) and flag("trace_grad_start", WHITE) or tracerColor(1, 1)
-            local last = flag("trace_gradient", false) and flag("trace_grad_end", WHITE) or first
-            strip.BackgroundColor3 = WHITE
-            gradient.Color = ColorSequence.new(first, last)
-            stripText.Text = string.format("%s  |  %.1f s  |  width %.1fx", tostring(flag("trace_texture", "?")), flag("trace_time", 4), width)
-            Preview.tracerItems = items
+        header(pane, 0, "Live preview")
+        local stage = Library:CreateBevel(area(pane, 18, 88), { Color = "BackgroundColor", Size = UDim2.new(1, 0, 1, 0), ZIndex = 4 })
+        local lanes = {}
+        for index, lane in ipairs(LANES) do
+            local y = 8 + (index - 1) * 26
+            local label = text(stage, lane[1], { TextSize = Library.FontSize - 1, Position = UDim2.fromOffset(10, y), Size = UDim2.fromOffset(44, 22) })
+            local track = Library:Create("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.fromOffset(58, y), Size = UDim2.new(1, -70, 0, 22), ZIndex = 5, Parent = stage })
+            local glow = Library:Create("Frame", { AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 8), ZIndex = 5, Parent = track })
+            local beam = Library:Create("Frame", { AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 3), ZIndex = 6, Parent = track })
+            Library:Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = glow })
+            Library:Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = beam })
+            lanes[index] = {
+                spec = lane, label = label, track = track, glow = glow, beam = beam,
+                glowGradient = Library:Create("UIGradient", { Parent = glow }), beamGradient = Library:Create("UIGradient", { Parent = beam }),
+                thick = 3, glowThick = 8, scale = 1,
+            }
         end
-        Preview.refreshTracers = refresh
-        watch({ "trace_color", "trace_width", "trace_time", "trace_texture", "trace_gradient", "trace_grad_start", "trace_grad_end", "trace_rainbow" }, refresh)
-        refresh()
+        local info = text(area(pane, 110, 16), "", { Dim = true, TextSize = Library.FontSize - 1 })
+
+        local impactCard = Library:CreateBevel(area(pane, 132, 42), { Size = UDim2.new(1, 0, 1, 0), ZIndex = 4 })
+        local dot = Library:Create("Frame", { BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.fromOffset(10, 9), Size = UDim2.fromOffset(24, 24), ZIndex = 6, Parent = impactCard })
+        Library:Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = dot })
+        local ring = Library:Create("UIStroke", { Thickness = 2, Color = WHITE, Parent = dot })
+        local impactName = text(impactCard, "", { Position = UDim2.fromOffset(44, 5), Size = UDim2.new(1, -54, 0, 16) })
+        local impactInfo = text(impactCard, "", { Dim = true, TextSize = Library.FontSize - 2, Position = UDim2.fromOffset(44, 22), Size = UDim2.new(1, -54, 0, 14) })
+
+        pillRow(pane, 182, { { "Fire test shot", shotTest } })
+        header(pane, 216, "Tracer textures")
+
+        local particles = Util.toSet(Tracers.particleNames)
+        local items = {}
+        for index, name in ipairs(Tracers.textureNames or {}) do
+            items[index] = { Id = name, Name = name, Subtitle = particles[name] and "particle tracer" or "beam" }
+        end
+        Preview.tracerItems = items
+        local gallery
+        gallery = Library:CreateGallery(area(pane, 234), { Height = "Fill", View = "List", RowHeight = 32, Header = false, Items = items, Callback = function(item, _, selected)
+            if selected and item then setOption("trace_texture", item.Name) end
+            Preview.dirty[Preview.syncTexture] = true
+        end })
+        Preview.tracerGallery = gallery
+        function Preview.syncTexture()
+            pcall(function() gallery:SetValue(flag("trace_texture", nil)) end)
+        end
+
+        local function paintTracers()
+            local look
+            local shown = {}
+            for _, lane in ipairs(lanes) do
+                local spec = lane.spec
+                local on = flag(spec[2], false)
+                look = Preview.tracerLook(flag(spec[3], spec[4]))
+                lane.thick = look.thick
+                lane.glowThick = look.glow > 0 and math.floor(look.thick * (1.5 + 0.15 * look.glow) + 2) or 0
+                lane.beamGradient.Color, lane.beamGradient.Transparency = look.color, look.alpha
+                lane.glowGradient.Color, lane.glowGradient.Transparency = look.glowColor, look.glowAlpha
+                lane.glow.Visible = lane.glowThick > 0
+                lane.beam.BackgroundTransparency = on and 0 or 0.7
+                lane.glow.BackgroundTransparency = on and 0 or 0.8
+                lane.label.TextTransparency = on and 0 or 0.55
+                lane.beam.Size = UDim2.new(lane.scale, 0, 0, lane.thick)
+                lane.glow.Size = UDim2.new(lane.scale, 0, 0, lane.glowThick)
+                if on then shown[#shown + 1] = spec[1] end
+            end
+            local name = tostring(flag("trace_texture", "Lightning"))
+            local life = flag("trace_game_timing", true) and "game timing" or string.format("%.1f s", flag("trace_time", 4))
+            info.Text = string.format("%s  |  %s  |  %s  |  %.1fx%s", name, particles[name] and "particles" or "beam", life, flag("trace_width", 1), #shown == 0 and "  |  all off" or "")
+            count("tracers")
+        end
+
+        local function paintImpacts()
+            local on = flag("impact_on", false)
+            local color = flag("impact_color", Color3.fromRGB(120, 200, 255))
+            dot.BackgroundColor3, ring.Color = color, color
+            dot.BackgroundTransparency = on and 0.55 or 0.85
+            local chosen = {}
+            local set = Util.set("impact_list", {})
+            for _, name in ipairs(Impacts.names) do
+                if set[name] then chosen[#chosen + 1] = name end
+            end
+            impactName.Text = on and (#chosen > 0 and table.concat(chosen, " + ") or "No effect picked") or "Bullet impacts are off"
+            impactInfo.Text = string.format("size %.2fx  |  %.1f s%s", flag("impact_size", 1), flag("impact_time", 1.2), flag("impact_enemy", false) and "  |  enemy shots too" or "")
+            count("impacts")
+        end
+
+        Preview.lanes = lanes
+        Preview.bulletsPane = pane
+        Preview.paintTracers, Preview.paintImpacts = paintTracers, paintImpacts
+        watch(TRACER_FLAGS, paintTracers)
+        watch({ "trace_texture" }, Preview.syncTexture)
+        watch(IMPACT_FLAGS, paintImpacts)
+        Preview.flush()
     end)
+    fallbackRows(Effects.Bullets, { { "Fire test shot", shotTest } })
+
+    function Preview.animate(now)
+        local lanes = Preview.lanes
+        if not lanes or not Preview.shown[Preview.bulletsPane] then return end
+        local phase = (now % 1.6) / 1.6
+        local scale = math.min(1, phase / 0.3)
+        scale = math.floor(scale * 50 + 0.5) / 50
+        for _, lane in ipairs(lanes) do
+            if lane.scale ~= scale then
+                lane.scale = scale
+                lane.beam.Size = UDim2.new(scale, 0, 0, lane.thick)
+                lane.glow.Size = UDim2.new(scale, 0, 0, lane.glowThick)
+            end
+        end
+    end
 
     local FACES = { { 1, 0, "Up" }, { 1, 2, "Down" }, { 1, 1, "Front" }, { 3, 1, "Back" }, { 0, 1, "Left" }, { 2, 1, "Right" } }
     previewPane(Effects.Sky, function(pane)
@@ -17832,6 +18958,12 @@ do
         end
         Preview.netImages = images
         local status = text(area(skyView, 3 * CELL + 6, 16), "", { Dim = true, TextSize = Library.FontSize - 1, TextXAlignment = Enum.TextXAlignment.Center })
+
+        local skyList
+        skyList = Library:CreateGallery(area(skyView, 3 * CELL + 28), { Height = "Fill", View = "List", Virtual = true, RowHeight = 32, Search = true, Title = "Skyboxes", Callback = function(item, _, selected)
+            if selected and item then setOption("world_sky_box", item.Name) end
+            Preview.dirty[Preview.refreshSky] = true
+        end })
         local function refreshNet()
             local ok, ids = pcall(World.skyIds)
             ids = ok and type(ids) == "table" and ids or nil
@@ -17842,28 +18974,21 @@ do
             else
                 status.Text = choice .. (flag("world_skybox", false) and "  |  applied" or "  |  turn on Custom skybox to apply")
             end
+            pcall(function() skyList:SetValue(flag("world_sky_box", nil)) end)
+            count("sky")
         end
         Preview.refreshSky = refreshNet
 
-        local skyList
-        skyList = Library:CreateGallery(area(skyView, 3 * CELL + 28), { Height = "Fill", View = "List", Virtual = true, RowHeight = 32, Search = true, Title = "Skyboxes", Callback = function(item, _, selected)
-            if selected and item then setOption("world_sky_box", item.Name) end
-            pcall(function() skyList:SetValue(flag("world_sky_box", nil)) end)
-        end })
-        local function skyItems()
-            local items = {}
-            local control = Options.world_sky_box
-            for _, name in ipairs(control and control.Values or {}) do
-                items[#items + 1] = { Id = name, Name = name, Actions = { { Text = "Apply", Callback = function(item)
-                    setOption("world_sky_box", item.Name)
-                    setOption("world_skybox", true)
-                    refreshNet()
-                end } } }
-            end
-            skyList:SetItems(items)
-            pcall(function() skyList:SetValue(flag("world_sky_box", nil)) end)
+        local items = {}
+        local control = Options.world_sky_box
+        for _, name in ipairs(control and control.Values or {}) do
+            items[#items + 1] = { Id = name, Name = name, Actions = { { Text = "Apply", Callback = function(item)
+                setOption("world_sky_box", item.Name)
+                setOption("world_skybox", true)
+                Preview.dirty[refreshNet] = true
+            end } } }
         end
-        skyItems()
+        skyList:SetItems(items)
 
         local atmosList
         atmosList = Library:CreateGallery(atmosView, { Height = "Fill", View = "List", RowHeight = 36, Title = "Atmosphere presets", Callback = function(item, _, selected)
@@ -17881,14 +19006,22 @@ do
         atmosList:SetItems(atmosItems)
         pcall(function() atmosList:SetValue(flag("world_atmos_preset", nil)) end)
 
-        watch({ "world_sky_box", "world_skybox", "world_sky_custom", "world_sky_single", "world_sky_saved_pick" }, function()
-            refreshNet()
-            pcall(function() skyList:SetValue(flag("world_sky_box", nil)) end)
-        end)
-        refreshNet()
+        watch({ "world_sky_box", "world_skybox", "world_sky_custom", "world_sky_single", "world_sky_saved_pick" }, refreshNet)
+        Preview.flush()
+    end)
+
+    function Preview.step(_, now)
+        Preview.flush()
+        Preview.animate(now)
+    end
+
+    Util.onUnload(function()
+        Preview.dirty, Preview.lanes, Preview.bulletsPane, Preview.shown = {}, nil, nil, {}
     end)
 
     Util.effectsPreview = Preview
+    Util.systems = Util.systems or {}
+    table.insert(Util.systems, { name = "fx_preview", fn = Preview.step, priority = 150 })
 end
 
 

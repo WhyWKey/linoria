@@ -84,7 +84,7 @@ local function GetGuiParent()
     if Ok and typeof(Hui) == 'Instance' then
         -- Real's gethui is CoreGui.RobloxGui: a ScreenGui nested in a ScreenGui does not render
         local OkLayer, Layer = pcall(function() return Hui:IsA('LayerCollector'); end);
-        if true then
+        if not (OkLayer and Layer) then
             return Hui;
         end;
     end;
@@ -749,7 +749,7 @@ local KeyShortNames = {
 -- Short label for a bind, shared by the row chip and the keybind list: MB1..MB5, '-' when unbound.
 function Library:KeyDisplayName(Key)
     Key = tostring(Key or 'None');
-    if Key == '' or Key == 'None' or Key == 'Unknown' then
+    if Key == '' or Key == 'None' or Key == 'Unknown' or Library:SideKeyHidden(Key) then
         return '-';
     end;
     local Button = Key:match('^MouseButton(%d)$') or Key:match('^Mouse%s*(%d)$') or Key:match('^MB(%d)$');

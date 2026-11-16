@@ -72,8 +72,11 @@ do
         volt = { commReceiver = true, getgcFunctionsOnly = true, noActorThreads = true },
         real = { huiIsRobloxGui = true, deletedActorsAreThreads = true },
     }
-    for key, profile in pairs(PROFILES) do
-        if string.find(lower, key, 1, true) then Compat.id, Compat.profile = key, profile end
+    for _, key in ipairs({ "potassium", "volt", "real" }) do
+        if string.find(lower, key, 1, true) then
+            Compat.id, Compat.profile = key, PROFILES[key]
+            break
+        end
     end
     Compat.id = Compat.id or "other"
     Compat.profile = Compat.profile or {}
@@ -250,6 +253,13 @@ function Util.keyActive(name)
     return true
 end
 
+function Util.bindOn(toggleName, keyName)
+    if flag(toggleName, false) ~= true then return false end
+    local picker = Options[keyName]
+    if picker and picker.SyncToggleState and picker.Mode == "Toggle" then return true end
+    return Util.keyActive(keyName)
+end
+
 function Util.menuOpen()
     return Library.Toggled == true
 end
@@ -322,11 +332,12 @@ local function toRounding(decimals)
     return math.clamp(math.floor(-math.log10(decimals) + 0.5), 0, 4)
 end
 
-function escapeUnbinds(name, fallback)
+function escapeUnbinds(name, fallback, keepBound)
     local picker = Options[name]
     if not picker then return end
     picker:OnChanged(function()
-        if picker.Value == "Escape" then
+        local value = picker.Value
+        if value == "Escape" or (keepBound and (value == nil or value == "None" or value == "")) then
             pcall(function() picker:SetValue({ fallback, picker.Mode }) end)
         end
     end)
@@ -969,11 +980,13 @@ do
         Entities.calls = Entities.calls + 1
         local list, shown, seen = {}, {}, {}
         local floor = Workspace.FallenPartsDestroyHeight
+        if Game.bindLocal then pcall(Game.bindLocal, LocalPlayer.Character) end
         for _, player in ipairs(Players:GetPlayers()) do
             local model = player ~= LocalPlayer and player.Character or nil
             local humanoid = Game.humanoid(model)
             if model and humanoid then
                 seen[player] = true
+                if Game.ensureWatched then pcall(Game.ensureWatched, player) end
                 local ok, record = pcall(refresh, player, model, humanoid, floor)
                 if not ok then
                     Util.note("entity" .. tostring(record), "entity (" .. tostring(player.Name) .. "):", record)
@@ -994,12 +1007,38 @@ do
         Entities.list, Entities.shown, Entities.byPlayer = {}, {}, {}
     end
 
-    local function watchCharacter(character)
+    Game.localWatch = {}
+
+    local function dropLocalWatch()
+        for _, connection in ipairs(Game.localWatch.connections or {}) do pcall(function() connection:Disconnect() end) end
+        Game.localWatch = {}
+    end
+
+    local function bindLocal(character)
+        local watch = Game.localWatch
         local humanoid = Game.humanoid(character)
-        Game.state_.arrested = false
+        if watch.character == character and watch.humanoid == humanoid then return end
+        dropLocalWatch()
+        watch = { character = character, humanoid = humanoid, connections = {} }
+        Game.localWatch = watch
+        if not character then return end
         if humanoid then
-            Util.track(humanoid.Died:Connect(function() Game.events.onLocalDied:Fire() end))
+            watch.connections[1] = humanoid.Died:Connect(function()
+                if watch.died then return end
+                watch.died = true
+                Game.events.onLocalDied:Fire()
+            end)
+        else
+            watch.connections[1] = character.ChildAdded:Connect(function(child)
+                if Game.localWatch == watch and child:IsA("Humanoid") then bindLocal(character) end
+            end)
         end
+    end
+    Game.bindLocal = bindLocal
+
+    local function watchCharacter(character)
+        Game.state_.arrested = false
+        bindLocal(character)
     end
     if LocalPlayer.Character then watchCharacter(LocalPlayer.Character) end
     Util.track(LocalPlayer.CharacterAdded:Connect(watchCharacter))
@@ -1135,9 +1174,12 @@ do
         Game.events.onOwnShot:Fire(origin, hitPos, part, behavior)
         local victim = part and Game.playerFromPart(part)
         if not victim or victim == LocalPlayer then return end
+        Game.ensureWatched(victim)
         local queue = Game.hits.pending[victim] or {}
         Game.hits.pending[victim] = queue
-        queue[#queue + 1] = { expiry = now + HIT_WINDOW, at = now, position = position, partName = part.Name }
+        local partName = part.Name
+        if partName == "HumanoidRootPart" then partName = "Torso" end
+        queue[#queue + 1] = { expiry = now + HIT_WINDOW, at = now, position = position, partName = partName }
     end
 
     local function consume(player)
@@ -1159,11 +1201,29 @@ do
         Game.hits.watched[player] = nil
     end
 
-    local function watchVictim(player, character)
+    local watchVictim
+
+    function Game.ensureWatched(player)
+        if not player or player == LocalPlayer then return end
+        local character = player.Character
+        if not character then return end
+        local entry = Game.hits.watched[player]
+        if entry and entry.character == character and entry.humanoid == Game.humanoid(character) then return end
+        watchVictim(player, character)
+    end
+
+    function watchVictim(player, character)
         unwatch(player)
         local humanoid = Game.humanoid(character)
-        if not humanoid then return end
-        local entry = { connections = {}, previous = humanoid.Health }
+        if not humanoid then
+            local waiting = { connections = {}, character = character }
+            Game.hits.watched[player] = waiting
+            waiting.connections[1] = character.ChildAdded:Connect(function(child)
+                if Game.hits.watched[player] == waiting and child:IsA("Humanoid") then watchVictim(player, character) end
+            end)
+            return
+        end
+        local entry = { connections = {}, previous = humanoid.Health, character = character, humanoid = humanoid }
         Game.hits.watched[player] = entry
         local function kill(pending)
             entry.killed = true
@@ -1242,6 +1302,7 @@ do
     end
 
     Util.onUnload(function()
+        dropLocalWatch()
         for player in pairs(Game.hits.watched) do unwatch(player) end
         Game.hits.pending, Game.lastCast = {}, nil
         for _, bus in pairs(Game.events) do bus:Clear() end
@@ -2746,12 +2807,21 @@ do
 
     function Local.paint(root, kind, cfg, skip)
         for _, inst in ipairs(root:GetDescendants()) do
-            if inst:IsA("BasePart") and inst.Name ~= "HumanoidRootPart" and not (skip and skip(inst)) then
+            if skip and skip(inst) then
+            elseif inst:IsA("BasePart") and inst.Name ~= "HumanoidRootPart" then
                 if cfg.material then Local.set(inst, kind, "Material", cfg.material) end
                 if cfg.color then Local.set(inst, kind, "Color", cfg.color) end
                 if cfg.alpha then Local.set(inst, kind, "Transparency", cfg.alpha) end
-            elseif cfg.hideDecals and (inst:IsA("Decal") or inst:IsA("Texture")) and not (skip and skip(inst)) then
+                if cfg.plain then
+                    if inst:IsA("MeshPart") then Local.set(inst, kind, "TextureID", "") end
+                    if inst:IsA("UnionOperation") then Local.set(inst, kind, "UsePartColor", true) end
+                end
+            elseif cfg.hideDecals and (inst:IsA("Decal") or inst:IsA("Texture")) then
                 Local.set(inst, kind, "Transparency", 1)
+            elseif cfg.plain and inst:IsA("SurfaceAppearance") then
+                Local.set(inst, kind, "Parent", nil)
+            elseif cfg.plain and inst:IsA("SpecialMesh") then
+                Local.set(inst, kind, "TextureId", "")
             end
         end
     end
@@ -2792,6 +2862,7 @@ do
                 color = flag("self_body_color", Color3.fromRGB(150, 110, 255)),
                 alpha = Util.alpha("self_body_color", 0),
                 hideDecals = true,
+                plain = true,
             }, inGear)
         else
             Local.restore("body")
@@ -2808,6 +2879,8 @@ do
                 material = material(flag("self_tool_material", "Neon")),
                 color = flag("self_tool_color", Color3.fromRGB(120, 200, 255)),
                 alpha = Util.alpha("self_tool_color", 0),
+                hideDecals = true,
+                plain = true,
             })
         else
             Local.restore("tool")
@@ -2820,11 +2893,223 @@ do
         Local.highlight("toolLight")
     end)
 
-    Draw.esp = { ESP = ESP, Chams = Chams, ChamStyle = ChamStyle, Local = Local }
-    Util.visuals = { Draw = Draw, Visible = Visible, ESP = ESP, Chams = Chams, ChamStyle = ChamStyle, Local = Local }
+    local C4 = { entries = {}, added = {}, conn = nil, ref = nil }
+    local C4_OWNER_KEYS = { "Owner", "OwnerName", "OwnerId", "Placer", "PlacedBy", "Player", "Creator", "UserId" }
+    local C4_OWNER_VALUES = { owner = true, creator = true, placer = true, player = true, placedby = true }
+
+    function C4.refMesh()
+        if C4.ref == nil then
+            C4.ref = false
+            pcall(function()
+                local explosive = game:GetService("ReplicatedStorage").Tools["C4 Explosive"]:FindFirstChild("Explosive")
+                if explosive and explosive.MeshId ~= "" then C4.ref = explosive.MeshId end
+            end)
+        end
+        return C4.ref
+    end
+
+    function C4.isC4(inst)
+        if not inst:IsA("BasePart") then return false end
+        local name = string.lower(inst.Name)
+        if name == "ghostc4" or name == "clientc4" then return false end
+        if inst:FindFirstAncestorOfClass("Tool") then return false end
+        local items = Workspace:FindFirstChild("Prison_ITEMS")
+        if items and inst:IsDescendantOf(items) then return false end
+        if name == "c4" or name == "c4 explosive" then return true end
+        local parent = inst.Parent
+        if name == "explosive" and parent and (parent == Workspace or string.find(string.lower(parent.Name), "c4", 1, true)) then return true end
+        local ref = C4.refMesh()
+        return ref and inst:IsA("MeshPart") and inst.MeshId == ref or false
+    end
+
+    function C4.toPlayer(value)
+        if typeof(value) == "Instance" then
+            if value:IsA("Player") then return value end
+            return Players:GetPlayerFromCharacter(value)
+        end
+        if type(value) == "string" and value ~= "" then return Players:FindFirstChild(value) end
+        if type(value) == "number" then
+            local ok, player = pcall(function() return Players:GetPlayerByUserId(value) end)
+            return ok and player or nil
+        end
+        return nil
+    end
+
+    function C4.owner(part, guess)
+        for _, holder in ipairs({ part, part.Parent }) do
+            if holder and holder ~= Workspace then
+                for _, key in ipairs(C4_OWNER_KEYS) do
+                    local ok, player = pcall(function() return C4.toPlayer(holder:GetAttribute(key)) end)
+                    if ok and player then return player, false end
+                end
+                for _, child in ipairs(holder:GetChildren()) do
+                    if C4_OWNER_VALUES[string.lower(child.Name)] then
+                        local ok, player = pcall(function() return C4.toPlayer(child.Value) end)
+                        if ok and player then return player, false end
+                    end
+                end
+            end
+        end
+        if not guess then return nil, false end
+        local best, bestDist = nil, 25
+        for _, player in ipairs(Players:GetPlayers()) do
+            local character = player.Character
+            local root = character and (character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso"))
+            if root then
+                local dist = (root.Position - part.Position).Magnitude
+                if dist < bestDist then best, bestDist = player, dist end
+            end
+        end
+        return best, best ~= nil
+    end
+
+    function C4.track(part, now, fresh)
+        if C4.entries[part] then return end
+        local entry = { part = part, born = now }
+        entry.owner, entry.guess = C4.owner(part, fresh)
+        if Draw.hasApi then
+            entry.box = Draw.new("Square", { Filled = false, Thickness = 1, ZIndex = 7, Visible = false })
+            entry.edge = Draw.new("Square", { Filled = false, Thickness = 3, Color = BLACK, ZIndex = 6, Visible = false })
+            entry.label = Draw.text(13, 8)
+        end
+        C4.entries[part] = entry
+    end
+
+    function C4.untrack(part)
+        local entry = C4.entries[part]
+        if not entry then return end
+        C4.entries[part] = nil
+        Draw.remove(entry.box)
+        Draw.remove(entry.edge)
+        Draw.remove(entry.label)
+        if entry.light then pcall(function() entry.light:Destroy() end) end
+    end
+
+    function C4.stop()
+        if C4.conn then pcall(function() C4.conn:Disconnect() end) end
+        C4.conn, C4.added, C4.rescan = nil, {}, false
+        for part in pairs(C4.entries) do C4.untrack(part) end
+    end
+
+    C4.QUEUE_MAX, C4.PER_FRAME = 20000, 500
+
+    function C4.scan(now, fresh)
+        local okList, list = pcall(function() return Workspace:GetDescendants() end)
+        for _, inst in ipairs(okList and list or {}) do
+            local okCheck, found = pcall(C4.isC4, inst)
+            if okCheck and found then C4.track(inst, now, fresh) end
+        end
+    end
+
+    function C4.start(now)
+        local ok, conn = pcall(function()
+            return Workspace.DescendantAdded:Connect(function(inst)
+                if #C4.added < C4.QUEUE_MAX then C4.added[#C4.added + 1] = inst else C4.rescan = true end
+            end)
+        end)
+        C4.conn = ok and conn or false
+        C4.scan(now, false)
+    end
+
+    function C4.draw(cam, entry, origin, now, color, alpha, S)
+        local part = entry.part
+        local dist = (part.Position - origin).Magnitude
+        local shown = dist <= C4.maxdist
+        if entry.light or (shown and flag("esp_c4_highlight", false)) then
+            local light = entry.light
+            if shown and flag("esp_c4_highlight", false) then
+                if not (light and light.Parent) then
+                    local container = Chams.getContainer()
+                    if container then
+                        Chams.identity()
+                        light = Instance.new("Highlight")
+                        light.Name = Util.randomName()
+                        light.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                        light.Parent = container
+                        entry.light = light
+                    end
+                end
+                if light then
+                    if light.Adornee ~= part then light.Adornee = part end
+                    light.FillColor, light.FillTransparency = color, 0.5
+                    light.OutlineColor, light.OutlineTransparency = color, 0
+                end
+            elseif light then
+                pcall(function() light:Destroy() end)
+                entry.light = nil
+            end
+        end
+        if not entry.label then return end
+        local point, front, depth = Draw.project(cam, part.Position)
+        if not (shown and front) then
+            entry.box.Visible, entry.edge.Visible, entry.label.Visible = false, false, false
+            return
+        end
+        local size = part.Size
+        local scale = cam.ViewportSize.Y / (2 * math.tan(math.rad(cam.FieldOfView or 70) / 2))
+        local half = math.clamp(math.max(size.X, size.Y, size.Z) * 0.6 * scale / math.max(depth, 0.1), 4, 80)
+        local box = flag("esp_c4_box", true)
+        if box then
+            local corner = Vector2.new(point.X - half, point.Y - half)
+            entry.box.Position, entry.box.Size, entry.box.Color, entry.box.Transparency = corner, Vector2.new(half * 2, half * 2), color, alpha
+            entry.edge.Position, entry.edge.Size, entry.edge.Transparency = corner, Vector2.new(half * 2, half * 2), alpha
+        end
+        entry.box.Visible, entry.edge.Visible = box, box and S.outline ~= false
+        local text = { "C4" }
+        if flag("esp_c4_owner", true) and entry.owner then text[#text + 1] = entry.owner.Name .. (entry.guess and "?" or "") end
+        if flag("esp_c4_dist", true) then text[#text + 1] = math.floor(dist * STUDS_TO_M) .. "m" end
+        if flag("esp_c4_timer", false) then text[#text + 1] = string.format("%.0fs", now - entry.born) end
+        entry.label.Text = table.concat(text, " | ")
+        entry.label.Position = Vector2.new(point.X, point.Y + half + 2)
+        entry.label.Color, entry.label.Transparency = color, alpha
+        entry.label.Font, entry.label.Size = S.font or 2, S.size or 13
+        entry.label.Visible = true
+    end
+
+    function C4.step(dt, now)
+        now = now or os.clock()
+        local cam = Game.camera()
+        if not (cam and flag("esp_c4", false)) then
+            if C4.conn ~= nil or next(C4.entries) then C4.stop() end
+            return
+        end
+        if C4.conn == nil then C4.start(now) end
+        local added = C4.added
+        local take = math.min(#added, C4.PER_FRAME)
+        if take > 0 then
+            local rest = table.move(added, take + 1, #added, 1, {})
+            C4.added = rest
+            for index = 1, take do
+                local ok, found = pcall(C4.isC4, added[index])
+                if ok and found then C4.track(added[index], now, true) end
+            end
+        end
+        if C4.rescan and #C4.added == 0 then
+            C4.rescan = false
+            C4.scan(now, false)
+        end
+        local maxdist = flag("esp_c4_dist_max", MAX_RANGE)
+        C4.maxdist = maxdist >= MAX_RANGE and math.huge or maxdist
+        local color, alpha = flag("esp_c4_color", Color3.fromRGB(255, 120, 40)), Util.opacity("esp_c4_color")
+        local origin = Game.eye(cam) or cam.CFrame.Position
+        for part, entry in pairs(C4.entries) do
+            if not part.Parent or not part:IsDescendantOf(Workspace) then
+                C4.untrack(part)
+            else
+                local ok, problem = pcall(C4.draw, cam, entry, origin, now, color, alpha, ESP.S)
+                if not ok then Util.note("c4:" .. tostring(problem), "c4 esp:", problem) end
+            end
+        end
+    end
+
+    Util.onUnload(C4.stop)
+
+    Draw.esp = { ESP = ESP, Chams = Chams, ChamStyle = ChamStyle, Local = Local, C4 = C4 }
+    Util.visuals = { Draw = Draw, Visible = Visible, ESP = ESP, Chams = Chams, ChamStyle = ChamStyle, Local = Local, C4 = C4 }
     Util.systems = Util.systems or {}
     table.insert(Util.systems, { name = "esp", fn = ESP.step, priority = 100 })
     table.insert(Util.systems, { name = "local_visuals", fn = Local.step, priority = 110 })
+    table.insert(Util.systems, { name = "c4_esp", fn = C4.step, priority = 105 })
 
     local function pickColor(popup, label, flagName, default, alpha)
         popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
@@ -2956,6 +3241,14 @@ do
             pickColor(Vis, "Behind walls", "esp_occ_color", Color3.fromRGB(255, 80, 80))
             Vis:Slider({ Name = "Check interval", Flag = "esp_vis_interval", Min = 0, Max = 500, Default = 100, Decimals = 1, Suffix = " ms" })
             Vis:Slider({ Name = "Rays per player", Flag = "esp_vis_rays", Min = 1, Max = 6, Default = 3, Decimals = 1 })
+            local Bomb = Marks:Toggle({ Name = "C4 ESP", Flag = "esp_c4", Tooltip = "Marks placed C4 explosives with the owner (? = nearest player when it was placed), distance and time since placed" }):Settings("C4 ESP", 230)
+            pickColor(Bomb, "C4", "esp_c4_color", Color3.fromRGB(255, 120, 40))
+            Bomb:Toggle({ Name = "Box", Flag = "esp_c4_box", Default = true })
+            Bomb:Toggle({ Name = "Highlight", Flag = "esp_c4_highlight", Tooltip = "Glow through walls on the C4 itself" })
+            Bomb:Toggle({ Name = "Owner", Flag = "esp_c4_owner", Default = true })
+            Bomb:Toggle({ Name = "Distance", Flag = "esp_c4_dist", Default = true })
+            Bomb:Toggle({ Name = "Timer", Flag = "esp_c4_timer", Tooltip = "Seconds since the C4 appeared" })
+            Bomb:Slider({ Name = "Max distance", Flag = "esp_c4_dist_max", Min = 50, Max = MAX_RANGE, Default = MAX_RANGE, Decimals = 1, Suffix = " studs", Tooltip = "At the maximum there is no limit" })
         end
     end
 
@@ -3166,6 +3459,9 @@ do
     local ATMOS_ORDER = { "Clear Day", "Hazy Afternoon", "Golden Sunset", "Moonlit Night", "Neon Dream", "Storm Front", "Deep Space" }
 
     local CELL = 28
+    local MAP_RATE = 600
+    local WIND_SCALE = 2
+    local UP_AXIS = Vector3.new(0, 1, 0)
     local SMOKE = "rbxasset://textures/particles/smoke_main.dds"
     local SPARK = "rbxasset://textures/particles/sparkles_main.dds"
     local SNOW_WHITE = Color3.fromRGB(255, 255, 255)
@@ -3725,10 +4021,11 @@ do
             put(sky, "MoonAngularSize", val("world_sky_moon"))
             put(sky, "CelestialBodiesShown", val("world_sky_bodies") ~= false)
         end
-        if on("world_sky_spin") then
+        local spin, tilt = on("world_sky_spin") == true, val("world_fx_sky_tilt") or 0
+        if spin or tilt ~= 0 then
             if World.orientOk == nil then World.orientOk = pcall(function() return sky.SkyboxOrientation end) end
-            World.angle = (World.angle + val("world_sky_spin_speed") * dt) % 360
-            if World.orientOk then put(sky, "SkyboxOrientation", Vector3.new(val("world_fx_sky_tilt") or 0, World.angle, 0)) end
+            if spin then World.angle = (World.angle + val("world_sky_spin_speed") * dt) % 360 end
+            if World.orientOk then put(sky, "SkyboxOrientation", Vector3.new(tilt, spin and World.angle or 0, 0)) end
         end
     end
 
@@ -4422,6 +4719,11 @@ do
             put(clouds, "Density", val("world_clouds_density"))
             put(clouds, "Color", val("world_clouds_color"))
         end
+        local wind = on("world_weather") and val("world_weather_wind") or 0
+        if wind > 0 then
+            local radians = math.rad(val("world_weather_wind_dir") or 0)
+            put(Workspace, "GlobalWind", Vector3.new(math.sin(radians) * wind, 0, math.cos(radians) * wind))
+        end
 
         for object, props in pairs(want) do
             World.orig[object] = World.orig[object] or {}
@@ -4499,7 +4801,7 @@ do
         if not (ok and type(list) == "table") then return nil end
         local minX, minZ, maxX, maxZ, top = math.huge, math.huge, -math.huge, -math.huge, -math.huge
         for _, object in ipairs(list) do
-            local okPart, isPart = pcall(function() return object:IsA("BasePart") end)
+            local okPart, isPart = pcall(function() return object:IsA("BasePart") and not object:IsA("Terrain") and object.Transparency < 1 end)
             if okPart and isPart and World.inMap(object) then
                 local okRead, position, size = pcall(function() return object.Position, object.Size end)
                 if okRead and typeof(position) == "Vector3" and typeof(size) == "Vector3" then
@@ -4584,8 +4886,17 @@ do
         if not cell.open then return end
         local span = math.clamp(cell.camY + cfg.height - cell.ground, 6, 90)
         if def.maxH then span = math.min(span, def.maxH) end
-        cell.part.Position = Vector3.new(cell.x, def.rise and cell.ground + 0.5 or cell.ground + span, cell.z)
         local radians = math.rad(cfg.windDir)
+        local dir = Vector3.new(math.sin(radians), 0, math.cos(radians))
+        local lead = def.layers[1]
+        local fall = math.max((lead.speed[1] + lead.speed[2]) * 0.5 * cfg.speed, 0.1)
+        local slope = math.clamp((cfg.wind * WIND_SCALE * (lead.wind or 1) + (lead.push or 0)) / fall, 0, 4)
+        local up = def.rise and (UP_AXIS + dir * slope).Unit or (UP_AXIS - dir * slope).Unit
+        local base = Vector3.new(cell.x, def.rise and cell.ground + 0.5 or cell.ground + span, cell.z)
+        if not def.rise then base = base - dir * (slope * span) end
+        cell.part.CFrame = CFrame.fromMatrix(base, Vector3.new(dir.Z, 0, -dir.X), up)
+        cell.slope = slope
+        local stretch = math.sqrt(1 + slope * slope)
         for _, entry in ipairs(cell.emitters) do
             local emitter, layer = entry.object, entry.layer
             local slow, fast = layer.speed[1] * cfg.speed, layer.speed[2] * cfg.speed
@@ -4596,15 +4907,50 @@ do
                 lifeHi = math.clamp(span / fast, 0.25, 14)
                 lifeLo = lifeHi * 0.8
             end
-            local push = cfg.wind * (layer.wind or 1) + (layer.push or 0)
+            local rate = layer.count * cfg.density * (cell.size / CELL) ^ 2 / ((lifeLo + lifeHi) * 0.5)
+            if cell.size > CELL then rate = math.min(rate, MAP_RATE) end
             emitter.Lifetime = NumberRange.new(lifeLo, lifeHi)
-            emitter.Rate = layer.count * cfg.density * (cell.size / CELL) ^ 2 / ((lifeLo + lifeHi) * 0.5)
-            emitter.Speed = NumberRange.new(slow, fast)
+            emitter.Rate = rate
+            emitter.Speed = NumberRange.new(slow * stretch, fast * stretch)
             emitter.Size = NumberSequence.new(layer.size[1] * cfg.size, layer.size[2] * cfg.size)
             emitter.SpreadAngle = Vector2.new(layer.spread, layer.spread)
             emitter.Color = ColorSequence.new(cfg.custom and cfg.color or layer.color)
-            emitter.Acceleration = Vector3.new(math.sin(radians) * push, layer.accel or 0, math.cos(radians) * push)
+            emitter.Acceleration = Vector3.new(0, layer.accel or 0, 0)
         end
+    end
+
+    function World.nearPlan(state, position, range)
+        local gx0, gz0 = math.floor(position.X / CELL), math.floor(position.Z / CELL)
+        if state.near and state.nearGx == gx0 and state.nearGz == gz0 and state.nearRange == range then return state.near end
+        local plan = {}
+        for dx = -range, range do
+            for dz = -range, range do
+                if dx * dx + dz * dz <= (range + 0.5) * (range + 0.5) then
+                    local gx, gz = gx0 + dx, gz0 + dz
+                    plan[#plan + 1] = { key = "n" .. gx .. ":" .. gz, gx = gx, gz = gz, size = CELL, x = (gx + 0.5) * CELL, z = (gz + 0.5) * CELL, every = 0.35, stagger = ((dx * 7 + dz * 3) % 5) * 0.06 }
+                end
+            end
+        end
+        state.near, state.nearGx, state.nearGz, state.nearRange = plan, gx0, gz0, range
+        return plan
+    end
+
+    function World.mapPlan(state, bounds, cap)
+        if state.map and state.mapFor == bounds and state.mapCap == cap then return state.map end
+        local size = math.max(CELL, math.sqrt(bounds.w * bounds.d / cap))
+        local nx, nz = math.ceil(bounds.w / size), math.ceil(bounds.d / size)
+        while nx * nz > cap do
+            size = size * 1.05
+            nx, nz = math.ceil(bounds.w / size), math.ceil(bounds.d / size)
+        end
+        local prefix, plan = table.concat({ "m", nx, nz, math.floor(size * 100) }, ":") .. "|", {}
+        for gx = 0, nx - 1 do
+            for gz = 0, nz - 1 do
+                plan[#plan + 1] = { key = prefix .. gx .. ":" .. gz, map = true, gx = gx, gz = gz, size = size, x = bounds.x + (gx + 0.5) * size, z = bounds.z + (gz + 0.5) * size, every = 1.5, stagger = (gx * 7 + gz * 3) % 11 * 0.1 }
+            end
+        end
+        state.map, state.mapFor, state.mapCap = plan, bounds, cap
+        return plan
     end
 
     function World.stepWeather(cam, now)
@@ -4622,6 +4968,11 @@ do
         end
         local density, speed, size, wind = val("world_weather_amount"), val("world_weather_speed"), val("world_weather_size"), val("world_weather_wind")
         local windDir, height, custom, color = val("world_weather_wind_dir"), val("world_weather_height"), on("world_weather_custom") == true, val("world_weather_color")
+        local cycle = World.skyfx.cycle
+        if cycle and cycle.Weather then
+            color = World.cycleColor(custom and color or def.layers[1].color, math.floor(World.skyfx.hue * 30) / 30)
+            custom = true
+        end
         local cfg = state.cfg
         if not (cfg and cfg.density == density and cfg.speed == speed and cfg.size == size and cfg.wind == wind and cfg.windDir == windDir
             and cfg.height == height and cfg.custom == custom and cfg.color == color) then
@@ -4630,51 +4981,23 @@ do
         end
         local sig = state.cfgSig
         local position = cam.CFrame.Position
-        local plan, mode = nil, "near"
         local cover = on("world_weather_map") == true
         local bounds = cover and World.mapBounds(now)
-        if cover and not bounds then
-            if next(state.cells) then World.dropWeather() end
-            return
-        end
-        local gx0, gz0 = math.floor(position.X / CELL), math.floor(position.Z / CELL)
         local range = math.clamp(math.floor(val("world_weather_range") or 2), 1, 3)
-        local cap = bounds and math.clamp(math.floor(val("world_weather_map_cap") or 100), 16, 400)
-        if bounds and state.planFor == bounds and state.planCap == cap then
-            plan, mode = state.plan, state.planMode
-        elseif not bounds and state.planFor == false and state.planGx == gx0 and state.planGz == gz0 and state.planRange == range then
-            plan, mode = state.plan, state.planMode
-        elseif bounds then
-            local size = math.max(CELL, math.sqrt(bounds.w * bounds.d / cap))
-            local nx, nz = math.ceil(bounds.w / size), math.ceil(bounds.d / size)
-            while nx * nz > cap do
-                size = size * 1.05
-                nx, nz = math.ceil(bounds.w / size), math.ceil(bounds.d / size)
+        local near = World.nearPlan(state, position, range)
+        local plan = near
+        if bounds then
+            local cap = math.clamp(math.floor(val("world_weather_map_cap") or 100), 16, 400)
+            local map = World.mapPlan(state, bounds, cap)
+            if state.planNear ~= near or state.planMap ~= map then
+                plan = {}
+                for _, item in ipairs(near) do plan[#plan + 1] = item end
+                for _, item in ipairs(map) do plan[#plan + 1] = item end
+                state.plan, state.planNear, state.planMap = plan, near, map
             end
-            mode, plan = table.concat({ "map", nx, nz, math.floor(size * 100) }, ":"), {}
-            for gx = 0, nx - 1 do
-                for gz = 0, nz - 1 do
-                    plan[#plan + 1] = { key = gx .. ":" .. gz, gx = gx, gz = gz, size = size, x = bounds.x + (gx + 0.5) * size, z = bounds.z + (gz + 0.5) * size, every = 1.5, stagger = (gx * 7 + gz * 3) % 11 * 0.1 }
-                end
-            end
-            state.plan, state.planMode, state.planFor, state.planCap = plan, mode, bounds, cap
-        else
-            plan = {}
-            for dx = -range, range do
-                for dz = -range, range do
-                    if dx * dx + dz * dz <= (range + 0.5) * (range + 0.5) then
-                        local gx, gz = gx0 + dx, gz0 + dz
-                        plan[#plan + 1] = { key = gx .. ":" .. gz, gx = gx, gz = gz, size = CELL, x = (gx + 0.5) * CELL, z = (gz + 0.5) * CELL, every = 0.35, stagger = ((dx * 7 + dz * 3) % 5) * 0.06 }
-                    end
-                end
-            end
-            state.plan, state.planMode, state.planFor, state.planGx, state.planGz, state.planRange = plan, mode, false, gx0, gz0, range
+            plan = state.plan
         end
-        if state.mode ~= mode then
-            World.dropWeather()
-            state.preset, state.mode = preset, mode
-        end
-        local clearRadius = math.clamp(val("world_weather_clear_radius") or 40, 0, 150)
+        local reach = math.max(math.clamp(val("world_weather_clear_radius") or 40, 0, 150), (range + 0.5) * CELL)
         local keep, scans = {}, 0
         for _, item in ipairs(plan) do
             local key = item.key
@@ -4692,16 +5015,16 @@ do
                 scans = scans + 1
                 cell.nextAt = now + item.every + item.stagger
                 local open, ground, camY = cell.open, cell.ground, cell.camY
-                World.scanCell(cell, position.Y, bounds and bounds.top)
+                World.scanCell(cell, position.Y, item.map and bounds.top or nil)
                 if cell.open ~= open or cell.ground ~= ground or cell.camY ~= camY then cell.dirty = true end
             end
             if cell.dirty or cell.sig ~= sig then World.shapeCell(cell, def, cfg, sig) end
             local cleared = false
-            if bounds and clearRadius > 0 then
+            if item.map then
                 local half = cell.size / 2
                 local dx = math.max(math.abs(position.X - cell.x) - half, 0)
                 local dz = math.max(math.abs(position.Z - cell.z) - half, 0)
-                cleared = dx * dx + dz * dz < clearRadius * clearRadius
+                cleared = dx * dx + dz * dz < reach * reach
             end
             if cell.cleared ~= cleared then
                 cell.cleared = cleared
@@ -4923,6 +5246,11 @@ do
         return Color3.fromHSV((h + shift) % 1, s, v)
     end
 
+    function World.cycleColor(color, shift)
+        local h, sat, v = Color3.toHSV(color)
+        return Color3.fromHSV((h + shift) % 1, math.max(sat, 0.65), math.max(v, 0.45))
+    end
+
     function World.baseOf(object, prop)
         local wanted = want[object]
         if wanted and wanted[prop] ~= nil then return wanted[prop] end
@@ -4960,7 +5288,7 @@ do
         end
         if state.cycle and state.cycle.Atmosphere then
             local base = World.baseOf(atmos, "Color")
-            if typeof(base) == "Color3" then put(atmos, "Color", World.hueShift(base, state.hue)) end
+            if typeof(base) == "Color3" then put(atmos, "Color", World.cycleColor(base, state.hue)) end
         end
     end
 
@@ -5035,12 +5363,13 @@ do
     end
 
     function World.arcStyle(state, cfg)
-        local shift = state.cycle and state.cycle.Arcs and math.floor(state.hue * 60) / 60 or 0
+        local cycling = state.cycle and state.cycle.Arcs
+        local shift = cycling and math.floor(state.hue * 60) / 60 or false
         local style = state.style
         if style and style.width == cfg.width and style.light == cfg.light and style.core == cfg.core and style.glow == cfg.glow and style.shift == shift then return end
         state.style = { width = cfg.width, light = cfg.light, core = cfg.core, glow = cfg.glow, shift = shift }
         local core, glow = cfg.core, cfg.glow
-        if shift ~= 0 then core, glow = World.hueShift(core, shift), World.hueShift(glow, shift) end
+        if cycling then core, glow = World.cycleColor(core, shift), World.cycleColor(glow, shift) end
         local coreSeq, glowSeq = ColorSequence.new(core), ColorSequence.new(glow)
         for _, arc in ipairs(state.arcs) do
             arc.core.Color, arc.core.LightEmission = coreSeq, cfg.light
@@ -5158,6 +5487,12 @@ do
             cfg = { def = def, rate = rate, low = low, high = high, speed = speed, spread = spread, tex = tex }
             state.pcfg = cfg
             World.shapeParticles(state.emitter, def, cfg)
+            state.pshift = nil
+        end
+        local shift = state.cycle and state.cycle.Particles and math.floor(state.hue * 60) / 60 or false
+        if shift ~= (state.pshift or false) then
+            state.pshift = shift
+            state.emitter.Color = ColorSequence.new(shift and World.cycleColor(def.layer.color, shift) or def.layer.color)
         end
         local offset = state.offset
         if not offset or state.offsetRise ~= def.rise then
@@ -5287,7 +5622,7 @@ do
     Skybox:Dropdown({ Name = "Skybox", Flag = "world_sky_box", Items = SKY_CHOICES, Default = SKY_CHOICES[1], Searchable = true })
     Skybox:Toggle({ Name = "Rotate skybox", Flag = "world_sky_spin" })
     Skybox:Slider({ Name = "Rotation speed", Flag = "world_sky_spin_speed", Min = -60, Max = 60, Default = 6, Decimals = 0.1, Suffix = " deg/s" })
-    Skybox:Slider({ Name = "Tilt", Flag = "world_fx_sky_tilt", Min = -90, Max = 90, Default = 0, Decimals = 1, Suffix = " deg", Tooltip = "Tips the spinning sky over; older clients without sky orientation skip rotation" })
+    Skybox:Slider({ Name = "Tilt", Flag = "world_fx_sky_tilt", Min = -90, Max = 90, Default = 0, Decimals = 1, Suffix = " deg", Tooltip = "Tips the sky over, with or without rotation; older clients without sky orientation skip it" })
     Box:Toggle({ Name = "Remove sky", Flag = "world_nosky" })
     local Mood = Box:Toggle({ Name = "Mood preset", Flag = "world_sky", Tooltip = "Sets the time of day and atmosphere colours together" }):Settings("Mood preset", 200)
     Mood:Dropdown({ Name = "Preset", Flag = "world_sky_preset", Items = { "Night", "Sunset", "Overcast", "Dusk" }, Default = "Night" })
@@ -5342,8 +5677,8 @@ do
     AtmosPulse:Slider({ Name = "Speed", Flag = "world_fx_pulse_speed", Min = 0.02, Max = 2, Default = 0.25, Decimals = 0.01, Suffix = " Hz" })
     AtmosPulse:Slider({ Name = "Amount", Flag = "world_fx_pulse_amount", Min = 0, Max = 1, Default = 0.5, Decimals = 0.01 })
 
-    local Cycle = Dyn:Toggle({ Name = "Colour cycle", Flag = "world_fx_cycle", Tooltip = "Rotates the hue of the arcs and/or the atmosphere colour" }):Settings("Colour cycle", 230)
-    Cycle:Dropdown({ Name = "Applies to", Flag = "world_fx_cycle_targets", Items = { "Arcs", "Atmosphere" }, Multi = true, Default = { "Arcs" } })
+    local Cycle = Dyn:Toggle({ Name = "Colour cycle", Flag = "world_fx_cycle", Tooltip = "Cycles the colour of the arcs, atmosphere, sky particles and/or weather; grey colours are saturated so they visibly change" }):Settings("Colour cycle", 230)
+    Cycle:Dropdown({ Name = "Applies to", Flag = "world_fx_cycle_targets", Items = { "Arcs", "Atmosphere", "Particles", "Weather" }, Multi = true, Default = { "Arcs" } })
     Cycle:Slider({ Name = "Speed", Flag = "world_fx_cycle_speed", Min = 0.01, Max = 1, Default = 0.05, Decimals = 0.01 })
 
     local Cloud = SkySub["Clouds / wind"]
@@ -5354,21 +5689,21 @@ do
 
     local Weather = Subs.Weather
     local Wx = Weather.Weather
-    Wx:Toggle({ Name = "Enabled", Flag = "world_weather", Tooltip = "Particles follow you in map-anchored cells and only fall where the sky is open above; Cover whole map replaces that with cells over the whole map" })
+    Wx:Toggle({ Name = "Enabled", Flag = "world_weather", Tooltip = "Particles follow you in map-anchored cells and only fall where the sky is open above; Cover whole map adds cells over the rest of the map" })
     Wx:Dropdown({ Name = "Type", Flag = "world_weather_preset", Items = WEATHER_NAMES, Default = "Snow" })
     Wx:Slider({ Name = "Density", Flag = "world_weather_amount", Min = 0.1, Max = 3, Default = 1, Decimals = 0.05 })
     Wx:Slider({ Name = "Speed", Flag = "world_weather_speed", Min = 0.2, Max = 3, Default = 1, Decimals = 0.05 })
     Wx:Slider({ Name = "Particle size", Flag = "world_weather_size", Min = 0.3, Max = 3, Default = 1, Decimals = 0.05 })
     Wx:Toggle({ Name = "Custom colour", Flag = "world_weather_custom", Tooltip = "Overrides the colour each weather type comes with" }):Colorpicker({ Name = "Weather", Flag = "world_weather_color", Default = WHITE })
     local Cover = Weather.Coverage
-    local MapGear = Cover:Toggle({ Name = "Cover whole map", Flag = "world_weather_map", Tooltip = "Weather over the whole map only; the cells that follow you are switched off and come back when this is off. Cells grow so the count stays under the cap" }):Settings("Whole map", 200)
+    local MapGear = Cover:Toggle({ Name = "Cover whole map", Flag = "world_weather_map", Tooltip = "Adds weather over the whole map; the roof-aware cells around you keep running, so it never stops under the open sky and stays out from under roofs. Cells grow so the count stays under the cap" }):Settings("Whole map", 200)
     MapGear:Slider({ Name = "Max cells", Flag = "world_weather_map_cap", Min = 16, Max = 400, Default = 100, Decimals = 1, Tooltip = "More cells = finer roof detection but more emitters" })
-    MapGear:Slider({ Name = "Clear radius around player", Flag = "world_weather_clear_radius", Min = 0, Max = 150, Default = 40, Decimals = 1, Suffix = " studs", Tooltip = "Cells this close to you stay empty so nothing falls on or above you; 0 = off" })
-    Cover:Slider({ Name = "Range", Flag = "world_weather_range", Min = 1, Max = 3, Default = 2, Decimals = 1, Suffix = " cells", Tooltip = "Rings of 28 stud cells around you; unused while Cover whole map is on" })
+    MapGear:Slider({ Name = "Clear radius around player", Flag = "world_weather_clear_radius", Min = 0, Max = 150, Default = 40, Decimals = 1, Suffix = " studs", Tooltip = "Whole-map cells this close to you stay off; the roof-aware cells around you take over there" })
+    Cover:Slider({ Name = "Range", Flag = "world_weather_range", Min = 1, Max = 3, Default = 2, Decimals = 1, Suffix = " cells", Tooltip = "Rings of 28 stud roof-aware cells around you" })
     Cover:Slider({ Name = "Spawn height", Flag = "world_weather_height", Min = 10, Max = 80, Default = 35, Decimals = 1, Suffix = " studs" })
     local Wind = Weather["Wind & lightning"]
-    Wind:Slider({ Name = "Wind strength", Flag = "world_weather_wind", Min = 0, Max = 30, Default = 4, Decimals = 0.1 })
-    Wind:Slider({ Name = "Wind direction", Flag = "world_weather_wind_dir", Min = 0, Max = 360, Default = 0, Decimals = 1, Suffix = " deg" })
+    Wind:Slider({ Name = "Wind strength", Flag = "world_weather_wind", Min = 0, Max = 30, Default = 4, Decimals = 0.1, Tooltip = "Slants the weather and sets the game wind (clouds, grass) while weather is on" })
+    Wind:Slider({ Name = "Wind direction", Flag = "world_weather_wind_dir", Min = 0, Max = 360, Default = 0, Decimals = 1, Suffix = " deg", Tooltip = "Compass direction the wind blows toward; 0 = +Z" })
     Wind:Label({ Name = "Lightning: Dynamic sky > Storm" })
 
     local Post = Subs.Post
@@ -5505,11 +5840,11 @@ do
             },
             Lightning = {
                 Alpha = 0.45, Texture = "rbxassetid://7151778302", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
-                Segments = 10, TextureLength = 1, TextureMode = mode.Stretch, TextureSpeed = 1, Width0 = 1.2, Width1 = 1.2, FaceCamera = true,
+                Segments = 10, TextureLength = 1, TextureMode = mode.Stretch, TextureSpeed = 1, Width0 = 1.2, Width1 = 1.2, FaceCamera = true, Tile = 8,
             },
             DNA = {
                 Alpha = 0.45, Texture = "rbxassetid://7071778278", Brightness = 1.5, Transparency = sequence(0.45), LightEmission = 1, LightInfluence = 0,
-                Segments = 1, TextureLength = 12, TextureMode = mode.Wrap, TextureSpeed = 1, Width0 = 0.6, Width1 = 0.6, FaceCamera = true,
+                Segments = 1, TextureLength = 2.4, TextureMode = mode.Wrap, TextureSpeed = 1, Width0 = 0.8, Width1 = 0.8, FaceCamera = true, Tile = 2.4,
             },
         }
         return Tracers.table
@@ -5603,7 +5938,8 @@ do
                 point.WorldCFrame = frame
                 record.points[index] = point
             end
-            local tiles = math.max(1, math.floor(segment / preset.TextureLength + 0.5))
+            local tileLength = preset.Tile and preset.Tile * scale or preset.TextureLength
+            local tiles = math.max(1, math.floor(segment / tileLength + 0.5))
             for index = 1, count do
                 local t0, t1 = (index - 1) / count, index / count
                 local reach = (nodes[index + 1] - nodes[index]).Magnitude / 3
@@ -5639,9 +5975,13 @@ do
                 for prop, value in pairs(preset) do
                     if prop == "Width0" or prop == "Width1" then value = value * scale end
                     if prop == "Brightness" and glow then value = value * (1 + 0.2 * strength) end
-                    if prop ~= "Alpha" and prop ~= "Transparency" then beam[prop] = value end
+                    if prop ~= "Alpha" and prop ~= "Transparency" and prop ~= "Tile" then beam[prop] = value end
                 end
-                if count > 1 and not stretch then beam.TextureLength = segment / tiles end
+                if preset.Tile and stretch then
+                    beam.TextureLength = tiles
+                elseif (count > 1 or preset.Tile) and not stretch then
+                    beam.TextureLength = segment / tiles
+                end
                 beam.Transparency = NumberSequence.new(a0, a1)
                 beam.Color = sequence
                 place(beam)
@@ -7333,7 +7673,7 @@ do
         if not flag("streak_on", false) then return false end
         if now - Streak.last > flag("streak_window", 4) then Streak.count = 0 end
         Streak.count, Streak.total, Streak.last = Streak.count + 1, Streak.total + 1, now
-        Streak.show(Streak.count, Streak.total, now)
+        Util.guard("streak banner", Streak.show, Streak.count, Streak.total, now)
         local every = math.floor(flag("streak_milestone_every", 5))
         if flag("streak_milestone", false) and every >= 1 and Streak.total % every == 0 then
             Util.notify({ Title = "Kill streak", Text = Streak.total .. " kills without dying", Icon = "flame", Duration = 4, Id = "streak_milestone" })
@@ -7544,8 +7884,8 @@ do
     end
 
     function Feedback.buildHit(victim, position, partName)
-        Util.guard("hit chams", HitCham.onHit, victim, position, partName)
-        Util.guard("hit fx", HitFx.onHit, victim, position, partName)
+        Util.guard("hit chams", HitCham.onHit, victim, position, partName, true)
+        Util.guard("hit fx", HitFx.onHit, victim, position, partName, true)
     end
 
     function Feedback.kill(victim, position, partName)
@@ -7565,10 +7905,12 @@ do
         local fired = {}
         Feedback.markKill(now)
         if flag("kill_fx", false) then fired[#fired + 1] = "kill effects" end
-        fired[#fired + 1] = Killcam.start(victim, now, info.part)
+        local okNotice, notice = pcall(Killcam.start, victim, now, info.part)
+        fired[#fired + 1] = okNotice and notice or "kill notice failed"
         local muted = false
         if flag("streak_on", false) then
-            muted = Streak.onKill(now)
+            local ok, result = pcall(Streak.onKill, now)
+            muted = ok and result == true
             fired[#fired + 1] = "streak " .. Streak.count .. "/" .. Streak.total
         end
         if flag("kill_snd", false) then
@@ -7806,14 +8148,19 @@ do
     }
     HitCham.parts, HitCham.sizes = CHAM_PARTS, PART_SIZES
 
-    function HitCham.victim(player)
+    function HitCham.victim(player, confirmed)
         local record = Entities.byPlayer[player]
-        if record and record.enemy == false then return nil end
+        if not confirmed and record and record.enemy == false then return nil end
         local model = player and player.Character
         if not model then return nil end
-        if record and record.model == model and type(record.parts) == "table" then return record.parts end
-        local parts = {}
-        for _, name in ipairs(CHAM_PARTS) do parts[name] = model:FindFirstChild(name) end
+        local parts, any = {}, false
+        for _, name in ipairs(CHAM_PARTS) do
+            local part = record and record.model == model and type(record.parts) == "table" and record.parts[name]
+            if not part or part.Parent ~= model then part = model:FindFirstChild(name) end
+            parts[name] = part
+            any = any or part ~= nil
+        end
+        if not any then return nil end
         return parts
     end
 
@@ -7910,9 +8257,9 @@ do
         end
     end
 
-    function HitCham.onHit(player, position, partName)
+    function HitCham.onHit(player, position, partName, confirmed)
         if player == nil or player == LocalPlayer or not flag("hit_cham_on", false) then return end
-        local hash = HitCham.victim(player)
+        local hash = HitCham.victim(player, confirmed)
         local camera = propGet(Workspace, "CurrentCamera")
         if not (hash and camera) then return end
         local hitName = type(partName) == "string" and hash[partName] and partName or "Torso"
@@ -8204,7 +8551,7 @@ do
         return 1.2
     end
 
-    function HitFx.onHit(player, position, partName)
+    function HitFx.onHit(player, position, partName, confirmed)
         if player == nil or player == LocalPlayer or not flag("hit_fx_on", false) then return end
         local head = partName == "Head"
         if flag("hit_fx_head", false) and not head then return end
@@ -8213,7 +8560,7 @@ do
             if chosen[name] then names[#names + 1] = name end
         end
         if #names == 0 then return end
-        local hash = HitCham.victim(player)
+        local hash = HitCham.victim(player, confirmed)
         local camera = propGet(Workspace, "CurrentCamera")
         if not (hash and camera) then return end
         local hitName = type(partName) == "string" and hash[partName] and partName or "Torso"
@@ -8870,6 +9217,16 @@ do
             end
             for _, item in ipairs(body.decals) do propSet(item.inst, "LocalTransparencyModifier", item.ltm) end
         end
+        body.reset = function()
+            if body.anchored then
+                body.anchored = false
+                for _, item in ipairs(body.parts) do
+                    propSet(item.inst, "CFrame", item.cf)
+                    propSet(item.inst, "Anchored", item.anchored)
+                end
+            end
+            body.unhide()
+        end
         ev.undo[#ev.undo + 1] = function()
             if body.open <= 0 then return end
             body.open = 0
@@ -8881,6 +9238,10 @@ do
                 end
             end
             body.unhide()
+            if settled and body.anchored and not body.kept then
+                body.kept = true
+                KillFx.keep(corpse, body.reset)
+            end
         end
         return body
     end
@@ -8935,7 +9296,7 @@ do
             body.open = body.open - 1
             if keep and body.open <= 0 and not body.kept then
                 body.kept = true
-                KillFx.keep(corpse, body.unhide)
+                KillFx.keep(corpse, body.reset)
             end
         end
         ev.ticks[#ev.ticks + 1] = function(t)
@@ -10243,13 +10604,16 @@ do
     end
 
     function KillFx.clear()
-        for _, ev in ipairs(KillFx.events) do KillFx.destroy(ev) end
+        for _, ev in ipairs(KillFx.events) do
+            KillFx.destroy(ev)
+            for _, body in pairs(ev.bodies or {}) do Util.guard("killfx body", body.reset) end
+        end
         for _, entry in ipairs(KillFx.kept) do Util.guard("killfx restore", entry.restore) end
         KillFx.events, KillFx.pending, KillFx.seeded, KillFx.kept = {}, {}, false, {}
     end
 
     function KillFx.anchorOf(model)
-        for _, name in ipairs({ "Torso", "Head" }) do
+        for _, name in ipairs({ "Torso", "HumanoidRootPart", "Head" }) do
             local ok, part = pcall(model.FindFirstChild, model, name)
             local at = ok and part and propGet(part, "Position")
             if typeof(at) == "Vector3" then return at end
@@ -10403,6 +10767,30 @@ do
         propSet(sound, "SoundId", record.id)
         propSet(sound, "Volume", record.volume)
         propSet(sound, "PlaybackSpeed", record.speed)
+        for effect, enabled in pairs(record.effects) do propSet(effect, "Enabled", enabled) end
+    end
+
+    function GunSounds.record(sound, asset)
+        local parent = propGet(sound, "Parent")
+        if propGet(sound, "SoundId") == asset then
+            for other, record in pairs(GunSounds.applied) do
+                if other ~= sound and propGet(other, "Parent") == parent and propGet(other, "Name") == propGet(sound, "Name") then
+                    return { id = record.id, volume = record.volume, speed = record.speed, effects = {} }
+                end
+            end
+        end
+        return { id = propGet(sound, "SoundId"), volume = propGet(sound, "Volume") or 0.5, speed = propGet(sound, "PlaybackSpeed") or 1, effects = {} }
+    end
+
+    function GunSounds.mute(sound, record)
+        local ok, children = pcall(sound.GetChildren, sound)
+        if not ok then return end
+        for _, child in ipairs(children) do
+            if child:IsA("PitchShiftSoundEffect") and record.effects[child] == nil then
+                record.effects[child] = propGet(child, "Enabled") ~= false
+                propSet(child, "Enabled", false)
+            end
+        end
     end
 
     function GunSounds.apply(sound, weapon, owned)
@@ -10411,14 +10799,15 @@ do
         if not asset then return GunSounds.restore(sound) end
         local record = GunSounds.applied[sound]
         if not record then
-            record = { id = propGet(sound, "SoundId"), volume = propGet(sound, "Volume") or 0.5, speed = propGet(sound, "PlaybackSpeed") or 1 }
+            record = GunSounds.record(sound, asset)
             GunSounds.applied[sound] = record
         end
         if propGet(sound, "SoundId") ~= asset then propSet(sound, "SoundId", asset) end
         assign(sound, "Volume", record.volume * flag(key .. "_volume", 1))
+        GunSounds.mute(sound, record)
         if not propGet(sound, "IsPlaying") then
             local variation = flag(key .. "_pitchvar", 0)
-            propSet(sound, "PlaybackSpeed", math.max(record.speed * flag(key .. "_pitch", 1) * (1 + (math.random() * 2 - 1) * variation), 0.05))
+            propSet(sound, "PlaybackSpeed", math.max(flag(key .. "_pitch", 1) * (1 + (math.random() * 2 - 1) * variation), 0.05))
         end
     end
 
@@ -10951,8 +11340,7 @@ do
             if Compat.isexecutorclosure and Compat.isexecutorclosure(fn) then return false end
             return functionName(fn) == "castRay" and string.find(sourceOf(fn), "GunController", 1, true) ~= nil
         end
-        local filtergc = Compat.filtergc
-        for _, getter in ipairs({ filtergc and function() return filtergc("function", { Name = "castRay" }) end or false, Compat.getgc or false }) do
+        for _, getter in ipairs({ Compat.filtergc and function() return Compat.filtergc("function", { Name = "castRay" }) end or false, Compat.getgc or false }) do
             if type(getter) == "function" then
                 local ok, list = pcall(getter)
                 if ok and type(list) == "table" then
@@ -11616,7 +12004,7 @@ do
 
     local function onHeartbeat(dt)
         local root = Game.rootPart()
-        if not root or flag("misc_invis", false) then
+        if not root or (Util.player and Util.player.invisActive and Util.player.invisActive()) then
             SP.pos, spApplied, spRealCF = nil, nil, nil
             return
         end
@@ -12147,11 +12535,12 @@ do
                 if tool then available[#available + 1] = tool end
             end
         end
-        if #available == 0 then return end
-        if not Combat.select("silent", Combat.aimRef(), from, { limit = 1000, skipWall = flag("silent_wallbang", false) }) then return end
-        Silent.switchNext = now + math.max(flag("silent_switch_delay", 0.3), 0.03)
+        if #available == 0 then return false end
+        if not Combat.select("silent", Combat.aimRef(), from, { limit = 1000, skipWall = flag("silent_wallbang", false) }) then return false end
+        local delay = math.max(flag("silent_switch_delay", 0.3), 0.03)
+        Silent.switchNext = (now - Silent.switchNext < delay) and Silent.switchNext + delay or now + delay
         local _, humanoid = Combat.localParts()
-        if not humanoid then return end
+        if not humanoid then return false end
         local current = Game.weapon()
         local index = 0
         for position, tool in ipairs(available) do
@@ -12162,17 +12551,27 @@ do
             local ammo = candidate:GetAttribute("Local_CurrentAmmo")
             if candidate ~= current and (ammo == nil or ammo > 0) then
                 humanoid:EquipTool(candidate)
-                return
+                Silent.switches = (Silent.switches or 0) + 1
+                return true
             end
         end
+        return false
     end
 
     function Silent.step(_, now)
-        if not (flag("silent_autofire", false) and Silent.active()) or now < Silent.autoNext or Util.typing() then return end
-        Silent.autoNext = now + 1 / math.max(flag("silent_autofire_rate", 15), 1)
+        if not (flag("silent_autofire", false) and Silent.active()) or Util.typing() then return end
         local _, _, root, eye = Combat.localParts()
         if not root or not eye or not Game.camera() then return end
-        if flag("silent_switch", false) then Util.guard("silent switch", Silent.autoSwitch, now, eye.Position) end
+        if flag("silent_switch", false) then
+            local ok, switched = pcall(Silent.autoSwitch, now, eye.Position)
+            if not ok then Util.note("silent switch" .. tostring(switched), "silent switch:", switched) end
+            if ok and switched then
+                Silent.autoNext = math.min(Silent.autoNext, now)
+                return
+            end
+        end
+        if now < Silent.autoNext then return end
+        Silent.autoNext = now + 1 / math.max(flag("silent_autofire_rate", 15), 1)
         if not Combat.readyGun() then return end
         local info = Gun.info()
         local record, part = Combat.select("silent", Combat.aimRef(), eye.Position, { limit = Gun.range(info) or 1000, ignoreDown = info.Behavior == "Taser", skipWall = flag("silent_wallbang", false) })
@@ -12955,7 +13354,7 @@ do
     end
 
     function R.step(_, now)
-        local on = flag("rb_enabled", false)
+        local on = Util.bindOn("rb_enabled", "rb_key")
         if on ~= (R.run == true) then
             R.run = on
             if on then
@@ -12974,7 +13373,7 @@ do
         end
         SP.set("rage", on, R.request)
         SP.set("voidhide", flag("vh_enabled", false), VoidHide.request)
-        SP.set("desync", flag("misc_desync", false), SP.desyncRequest)
+        SP.set("desync", Util.bindOn("misc_desync", "misc_desync_key"), SP.desyncRequest)
         if on and now >= R.nextHouse then
             R.nextHouse = now + 0.08
             Util.guard("ragebot", R.housekeeping, now)
@@ -13272,7 +13671,7 @@ do
     end
 
     function Assist.step(dt, now)
-        local on = flag("wb_assist", false)
+        local on = Util.bindOn("wb_assist", "wb_assist_key")
         SP.set("assist", on, Assist.request)
         if not on then
             if Assist.goal or Assist.home or next(Assist.modified) then
@@ -13393,7 +13792,7 @@ do
     end
 
     function Orbit.step()
-        local on = flag("orbit_on", false)
+        local on = Util.bindOn("orbit_on", "orbit_key")
         SP.set("orbit", on, Orbit.request)
         if not on and (Orbit.ring or Orbit.target) then
             Orbit.target, Orbit.last = nil, nil
@@ -14057,7 +14456,7 @@ end
 
 do
     local Player = {
-        saved = {}, tracks = {}, flagged = {}, cheats = {}, flying = false, jumpQueued = false, jumpAt = -math.huge, labelAt = 0, label = nil, spinAngle = 0, corpse = nil,
+        saved = {}, tracks = {}, flagged = {}, cheats = {}, walls = {}, fences = { parts = {}, nextScan = 0 }, flying = false, jumpQueued = false, jumpAt = -math.huge, labelAt = 0, label = nil, spinAngle = 0, corpse = nil,
         antiJump = { humanoid = nil, disabled = {}, hooked = false, tries = 0, nextTry = 0 },
         invis = { on = false, character = nil, track = nil, startAt = nil, held = nil },
         fling = { container = nil, modified = {}, prompts = {}, connections = {}, queue = nil, index = 0 },
@@ -14068,6 +14467,8 @@ do
     local LIFT = Vector3.new(0, 3, 0)
     local FLAT = Vector3.new(1, 0, 1)
     local NONE = {}
+    local PHASE_GRACE = 0.4
+    local FENCE_PART, FENCE_SCAN = "damagePart", 1
     local LONG_LIFT = 30
     local MIN_MOVE = 1
     local HOOK_TRIES = 20
@@ -14092,6 +14493,20 @@ do
         "83690472549256", "107176344504758", "111090572475133", "113267949064300", "131326339350805",
     }) do known[id] = true end
     local want = {}
+
+    local KEYS = { misc_invis = "char_invis_key" }
+
+    local function active(name)
+        if not flag(name, false) then return false end
+        local key = KEYS[name] or name .. "_key"
+        local picker = Options[key]
+        if not picker or picker.Value == nil or picker.Value == "None" then return true end
+        return Util.keyActive(key)
+    end
+
+    function Player.invisActive()
+        return active("misc_invis")
+    end
 
     local function localParts()
         local character = Game.localCharacter()
@@ -14266,7 +14681,7 @@ do
     end
 
     function Player.jump(humanoid, root)
-        local high, long = flag("move_hjump", false), flag("move_ljump", false)
+        local high, long = active("move_hjump"), active("move_ljump")
         if not (high or long) then return end
         local velocity = read(root, "AssemblyLinearVelocity") or ZERO
         local x, y, z = velocity.X, velocity.Y, velocity.Z
@@ -14307,6 +14722,52 @@ do
     function Player.phase(character)
         for _, part in ipairs(character:GetDescendants()) do
             if part:IsA("BasePart") then hold(part, "CanCollide", false) end
+        end
+    end
+
+    local function phaseable(part, character)
+        if not part or not part:IsA("BasePart") or part:IsA("Terrain") or part:IsDescendantOf(character) then return false end
+        local model = part:FindFirstAncestorOfClass("Model")
+        return not (model and model:FindFirstChildOfClass("Humanoid"))
+    end
+
+    function Player.phaseParts(now, character, humanoid, root)
+        local state = Player.walls
+        local params = Game.newParams({ character })
+        local position = root.Position
+        local hip = read(humanoid, "HipHeight") or 0
+        local half = (read(root, "Size") or Vector3.new(2, 2, 1)).Y / 2
+        local feet = position.Y - half - (hip > 0.1 and hip or 2)
+        local floor = Workspace:Raycast(position, Vector3.new(0, -(position.Y - feet + 2.5), 0), params)
+        local floorPart = floor and floor.Instance
+        local direction = flat(read(humanoid, "MoveDirection"))
+        if direction.Magnitude < 0.1 then direction = flat(root.CFrame.LookVector) end
+        if direction.Magnitude > 0 then
+            direction = direction.Unit * flag("move_phase_reach", 2.5)
+            for _, height in ipairs({ feet + 1.2, position.Y, position.Y + 1.4 }) do
+                local hit = Workspace:Raycast(Vector3.new(position.X, height, position.Z), direction, params)
+                if hit and (hit.Normal and hit.Normal.Y or 0) < 0.7 and hit.Instance ~= floorPart and phaseable(hit.Instance, character) then state[hit.Instance] = now + PHASE_GRACE end
+            end
+        end
+        local okBox, touching = pcall(function()
+            local overlap = OverlapParams.new()
+            overlap.FilterType = Enum.RaycastFilterType.Exclude
+            overlap.FilterDescendantsInstances = { character }
+            local bottom, top = feet + 0.8, position.Y + half + 1.6
+            return Workspace:GetPartBoundsInBox(CFrame.new(position.X, (bottom + top) / 2, position.Z), Vector3.new(2.6, top - bottom, 2.6), overlap)
+        end)
+        if okBox and type(touching) == "table" then
+            for _, part in ipairs(touching) do
+                if part ~= floorPart and phaseable(part, character) then state[part] = now + PHASE_GRACE end
+            end
+        end
+        if floorPart then state[floorPart] = nil end
+        for part, untilAt in pairs(state) do
+            if untilAt < now or not part.Parent then
+                state[part] = nil
+            else
+                hold(part, "CanCollide", false)
+            end
         end
     end
 
@@ -14421,6 +14882,28 @@ do
                 local shield = record.model:FindFirstChild("RiotShieldPart")
                 if shield and shield:IsA("BasePart") then hold(shield, "CanQuery", false) end
             end
+        end
+    end
+
+    function Player.fenceSafe(now)
+        local state = Player.fences
+        local stale = false
+        for _, part in ipairs(state.parts) do
+            if not part.Parent then stale = true end
+        end
+        if stale or now >= state.nextScan then
+            state.nextScan = now + FENCE_SCAN
+            local parts = {}
+            local folder = Workspace:FindFirstChild("Prison_Fences")
+            if folder then
+                for _, object in ipairs(folder:GetDescendants()) do
+                    if object.Name == FENCE_PART and object:IsA("BasePart") then parts[#parts + 1] = object end
+                end
+            end
+            state.parts = parts
+        end
+        for _, part in ipairs(state.parts) do
+            if part.Parent then hold(part, "CanTouch", false) end
         end
     end
 
@@ -14569,12 +15052,12 @@ do
         now = now or os.clock()
         local character, humanoid, root = localParts()
         local alive = humanoid ~= nil and root ~= nil and (read(humanoid, "Health") or 0) > 0
-        local flying = alive and flag("move_fly", false)
-        local invis = flag("misc_invis", false)
-        local noCooldown = flag("char_nocooldown", false)
+        local flying = alive and active("move_fly")
+        local invis = active("misc_invis")
+        local noCooldown = active("char_nocooldown")
         if alive then
-            if flag("move_walk", false) then hold(humanoid, "WalkSpeed", flag("move_walk_speed", 32)) end
-            if flag("move_jump", false) then
+            if active("move_walk") then hold(humanoid, "WalkSpeed", flag("move_walk_speed", 32)) end
+            if active("move_jump") then
                 hold(humanoid, "UseJumpPower", true)
                 hold(humanoid, "JumpPower", flag("move_jump_power", 75))
             end
@@ -14582,16 +15065,23 @@ do
             if flying then Player.fly(dt, humanoid, root) end
             if Player.flying and not flying then write(root, "AssemblyLinearVelocity", ZERO) end
             if not flying then
-                if flag("move_speed", false) then
+                if active("move_speed") then
                     Player.speed(dt, humanoid, root)
-                elseif flag("move_noaccel", false) and not invis then
+                elseif active("move_noaccel") and not invis then
                     Player.noAccel(humanoid, root)
                 end
-                if flag("move_spider", false) then Player.spider(character, humanoid, root) end
+                if active("move_spider") then Player.spider(character, humanoid, root) end
                 if Player.jumpQueued then Player.jump(humanoid, root) end
             end
-            if flag("move_spin", false) then Player.spin(dt, character, humanoid) end
-            if flag("move_phase", false) then Player.phase(character) end
+            if active("move_spin") then Player.spin(dt, character, humanoid) end
+            if active("move_phase") then
+                if flag("move_phase_mode", "Character") == "Part" then
+                    Player.phaseParts(now, character, humanoid, root)
+                else
+                    Player.phase(character)
+                end
+            end
+            if not active("move_phase") or flag("move_phase_mode", "Character") ~= "Part" then Player.walls = {} end
             if invis then Player.invisStep(dt, now, character, humanoid, root) end
             if flag("char_anti_killplane", false) then Player.killPlane(root) end
         end
@@ -14603,10 +15093,15 @@ do
             Player.flingOff()
         end
         if flag("char_anti_riot", false) then Player.antiRiot(records) end
+        if flag("char_fence_safe", false) then
+            Player.fenceSafe(now)
+        elseif #Player.fences.parts > 0 then
+            Player.fences = { parts = {}, nextScan = 0 }
+        end
         if Player.corpse then Player.sinkBody(now) end
         Player.flying, Player.jumpQueued = flying, false
         if flag("char_zoom", false) then hold(LocalPlayer, "CameraMaxZoomDistance", flag("char_zoom_dist", 400)) end
-        if flag("char_gravity", false) then hold(Workspace, "Gravity", flag("char_gravity_value", 196.2)) end
+        if active("char_gravity") then hold(Workspace, "Gravity", flag("char_gravity_value", 196.2)) end
         settle()
     end
 
@@ -14618,6 +15113,7 @@ do
         Player.invisOff()
         Player.flingOff()
         Player.antiInvisOff()
+        Player.walls, Player.fences = {}, { parts = {}, nextScan = 0 }
         want = {}
         settle()
     end
@@ -14729,11 +15225,11 @@ do
     local okJump, jumpRequest = pcall(function() return UserInputService.JumpRequest end)
     if okJump and jumpRequest then
         Util.track(jumpRequest:Connect(function()
-            if flag("move_infjump", false) then
+            if active("move_infjump") then
                 local _, humanoid = localParts()
                 if humanoid then changeState(humanoid, "Jumping") end
             end
-            if not (flag("move_hjump", false) or flag("move_ljump", false)) then return end
+            if not (active("move_hjump") or active("move_ljump")) then return end
             local now = os.clock()
             if now - Player.jumpAt < 0.3 then return end
             local _, humanoid = localParts()
@@ -14745,7 +15241,7 @@ do
     local okStepped, stepped = pcall(function() return RunService.Stepped end)
     if okStepped and stepped then
         Util.track(stepped:Connect(function()
-            if not flag("move_phase", false) then return end
+            if not active("move_phase") then return end
             for object, saved in pairs(Player.saved) do
                 if saved.CanCollide ~= nil and read(object, "CanCollide") then write(object, "CanCollide", false) end
             end
@@ -14785,25 +15281,27 @@ do
 
     local function buildMovement(page)
         local Fly, Speed, Walk, Spider, Jumps, Phase, JumpMult, Extras, ClickTp = page["Fly"], page["Speed"], page["Walk speed"], page["Spider"], page["High / long jump"], page["Phase"], page["Jump mult"], page["Movement extras"], page["Click TP"]
-        Fly:Toggle({ Name = "Fly", Flag = "move_fly", Tooltip = "WASD follows the camera, Space up, Ctrl down" }):Keybind({ Name = "Fly key", Flag = "move_fly_key", Sync = true })
+        Fly:Toggle({ Name = "Fly", Flag = "move_fly", Tooltip = "WASD follows the camera, Space up, Ctrl down" }):Keybind({ Name = "Fly key", Flag = "move_fly_key", Mode = "Toggle" })
         Fly:Slider({ Name = "Fly speed", Flag = "move_fly_speed", Min = 10, Max = 300, Default = 60, Decimals = 1, Suffix = " studs/s" })
-        Speed:Toggle({ Name = "Speed", Flag = "move_speed" }):Keybind({ Name = "Speed key", Flag = "move_speed_key", Sync = true })
+        Speed:Toggle({ Name = "Speed", Flag = "move_speed" }):Keybind({ Name = "Speed key", Flag = "move_speed_key", Mode = "Hold" })
         Speed:Dropdown({ Name = "Mode", Flag = "move_speed_mode", Items = { "Velocity", "CFrame", "WalkSpeed" }, Default = "Velocity" })
         Speed:Slider({ Name = "Speed", Flag = "move_speed_value", Min = 1, Max = 150, Default = 50, Decimals = 1, Suffix = " studs/s" })
-        Walk:Toggle({ Name = "Walk speed", Flag = "move_walk" })
+        Walk:Toggle({ Name = "Walk speed", Flag = "move_walk" }):Keybind({ Name = "Walk speed key", Flag = "move_walk_key", Mode = "Toggle" })
         Walk:Slider({ Name = "Speed", Flag = "move_walk_speed", Min = 0, Max = 250, Default = 32, Decimals = 1 })
-        Spider:Toggle({ Name = "Wall climb", Flag = "move_spider", Tooltip = "Walk into a wall to climb it" })
+        Spider:Toggle({ Name = "Wall climb", Flag = "move_spider", Tooltip = "Walk into a wall to climb it" }):Keybind({ Name = "Wall climb key", Flag = "move_spider_key", Mode = "Hold" })
         Spider:Slider({ Name = "Climb speed", Flag = "move_spider_speed", Min = 5, Max = 100, Default = 30, Decimals = 1, Suffix = " studs/s" })
-        Jumps:Toggle({ Name = "High jump", Flag = "move_hjump" })
+        Jumps:Toggle({ Name = "High jump", Flag = "move_hjump" }):Keybind({ Name = "High jump key", Flag = "move_hjump_key", Mode = "Hold" })
         Jumps:Slider({ Name = "Jump velocity", Flag = "move_hjump_power", Min = 50, Max = 500, Default = 120, Decimals = 1 })
-        Jumps:Toggle({ Name = "Long jump", Flag = "move_ljump" })
+        Jumps:Toggle({ Name = "Long jump", Flag = "move_ljump" }):Keybind({ Name = "Long jump key", Flag = "move_ljump_key", Mode = "Hold" })
         Jumps:Slider({ Name = "Forward push", Flag = "move_ljump_force", Min = 20, Max = 300, Default = 100, Decimals = 1 })
-        Phase:Toggle({ Name = "No collision", Flag = "move_phase", Tooltip = "Walk through walls; collisions come back when off" })
-        JumpMult:Toggle({ Name = "Jump power", Flag = "move_jump" })
+        Phase:Toggle({ Name = "No collision", Flag = "move_phase", Tooltip = "Walk through walls; collisions come back exactly as they were when off" }):Keybind({ Name = "Phase key", Flag = "move_phase_key", Mode = "Toggle" })
+        Phase:Dropdown({ Name = "Phase mode", Flag = "move_phase_mode", Items = { "Character", "Part" }, Default = "Character", Tooltip = "Character: your whole body stops colliding. Part: only walls you touch or walk toward stop colliding, on your screen; the floor under you stays solid" })
+        Phase:Slider({ Name = "Wall reach", Flag = "move_phase_reach", Min = 1, Max = 8, Default = 2.5, Decimals = 0.1, Suffix = " studs", Tooltip = "Part mode: how far ahead walls are opened" })
+        JumpMult:Toggle({ Name = "Jump power", Flag = "move_jump" }):Keybind({ Name = "Jump power key", Flag = "move_jump_key", Mode = "Toggle" })
         JumpMult:Slider({ Name = "Power", Flag = "move_jump_power", Min = 0, Max = 300, Default = 75, Decimals = 1 })
-        Extras:Toggle({ Name = "Infinite jump", Flag = "move_infjump", Tooltip = "Jump again in mid air" }):Keybind({ Name = "Infinite jump key", Flag = "move_infjump_key", Sync = true })
-        Extras:Toggle({ Name = "No acceleration", Flag = "move_noaccel", Tooltip = "Start and stop at full speed instead of speeding up and sliding" }):Keybind({ Name = "No acceleration key", Flag = "move_noaccel_key", Sync = true })
-        Extras:Toggle({ Name = "Spinbot", Flag = "move_spin" }):Keybind({ Name = "Spinbot key", Flag = "move_spin_key", Sync = true })
+        Extras:Toggle({ Name = "Infinite jump", Flag = "move_infjump", Tooltip = "Jump again in mid air" }):Keybind({ Name = "Infinite jump key", Flag = "move_infjump_key", Mode = "Toggle" })
+        Extras:Toggle({ Name = "No acceleration", Flag = "move_noaccel", Tooltip = "Start and stop at full speed instead of speeding up and sliding" }):Keybind({ Name = "No acceleration key", Flag = "move_noaccel_key", Mode = "Toggle" })
+        Extras:Toggle({ Name = "Spinbot", Flag = "move_spin" }):Keybind({ Name = "Spinbot key", Flag = "move_spin_key", Mode = "Toggle" })
         Extras:Slider({ Name = "Spin speed", Flag = "move_spin_speed", Min = 1, Max = 40, Default = 10, Decimals = 1 })
         ClickTp:Toggle({ Name = "Click to move", Flag = "move_clicktp", Tooltip = "Hold the modifier and left click to move there" })
         ClickTp:Dropdown({ Name = "Modifier", Flag = "move_clicktp_mod", Items = MODIFIERS, Default = "LeftControl" })
@@ -14811,13 +15309,13 @@ do
 
     local function buildCharacter(page)
         local Char, Invis, Protect = page["Character"], page["Invisibility"], page["Protection"]
-        Char:Toggle({ Name = "No jump cooldown", Flag = "char_nocooldown", Tooltip = "Turns off the game's AntiJump script. Without getconnections, holding Space jumps again on landing" })
+        Char:Toggle({ Name = "No jump cooldown", Flag = "char_nocooldown", Tooltip = "Turns off the game's AntiJump script. Without getconnections, holding Space jumps again on landing" }):Keybind({ Name = "No jump cooldown key", Flag = "char_nocooldown_key", Mode = "Toggle" })
         Char:Toggle({ Name = "Max zoom", Flag = "char_zoom" })
         Char:Slider({ Name = "Zoom distance", Flag = "char_zoom_dist", Min = 10, Max = 2000, Default = 400, Decimals = 1, Suffix = " studs" })
-        Char:Toggle({ Name = "Gravity", Flag = "char_gravity" })
+        Char:Toggle({ Name = "Gravity", Flag = "char_gravity" }):Keybind({ Name = "Gravity key", Flag = "char_gravity_key", Mode = "Toggle" })
         Char:Slider({ Name = "Gravity value", Flag = "char_gravity_value", Min = 0, Max = 400, Default = 196.2, Decimals = 0.1 })
         Char:Toggle({ Name = "Keep after respawn", Flag = "char_reapply", Default = true, Tooltip = "On: walk speed, jump power, jump cooldown, zoom and gravity carry over to a new character. Off: they switch off when you respawn" })
-        Invis:Toggle({ Name = "Invisibility", Flag = "misc_invis" }):Keybind({ Name = "Invisibility key", Flag = "char_invis_key", Sync = true })
+        Invis:Toggle({ Name = "Invisibility", Flag = "misc_invis" }):Keybind({ Name = "Invisibility key", Flag = "char_invis_key", Mode = "Toggle" })
         Invis:Toggle({ Name = "Hide under the map (look up)", Flag = "char_invis_under", Default = true })
         Invis:Toggle({ Name = "Move while hidden", Flag = "char_invis_move" })
         Invis:Slider({ Name = "Look-up pitch", Flag = "char_invis_pitch", Min = -90, Max = 90, Default = 90, Decimals = 1, Suffix = " deg" })
@@ -14825,6 +15323,7 @@ do
         Protect:Toggle({ Name = "Destroy body on death", Flag = "char_destroy_body" })
         Protect:Toggle({ Name = "Anti riot shield", Flag = "char_anti_riot", Tooltip = "Shots pass through other players' riot shields" })
         Protect:Toggle({ Name = "Anti kill plane", Flag = "char_anti_killplane" })
+        Protect:Toggle({ Name = "Fence protection", Flag = "char_fence_safe", Tooltip = "The electrified prison fences stop registering your touch, so they do not hurt you; restored when off" })
         Protect:Toggle({ Name = "Anti invisible", Flag = "char_anti_invis", Tooltip = "Mutes animations no game asset uses (invisibility exploits). With the movement monitor on, the player is also flagged" })
     end
 
@@ -15530,30 +16029,84 @@ do
 
     function Map.restoreSeats()
         for seat, saved in pairs(Map.seats) do restoreSeat(seat, saved) end
-        Map.seats = {}
+        Map.seats, Map.seatCache = {}, nil
     end
 
-    function Map.vehicleStep()
+    function Map.carSeats(seat)
+        local car = carOf(seat) or seat.Parent
+        local cache = Map.seatCache
+        if cache and cache.car == car and cache.seat == seat and clock() < cache.until_ then return cache.list end
+        local list = { seat }
+        for _, object in ipairs(car and car:GetDescendants() or {}) do
+            if object ~= seat and object:IsA("VehicleSeat") then list[#list + 1] = object end
+        end
+        Map.seatCache = { car = car, seat = seat, list = list, until_ = clock() + 1 }
+        return list
+    end
+
+    local function number(object, key)
+        local ok, value = pcall(function() return object[key] end)
+        return ok and tonumber(value) or nil
+    end
+
+    function Map.driveAssist(seat, dt, speedOn, controlOn)
+        local throttle, steer = number(seat, "Throttle") or 0, number(seat, "Steer") or 0
+        if throttle == 0 and steer == 0 then return end
+        local ok, cf, velocity, spin = pcall(function() return seat.CFrame, seat.AssemblyLinearVelocity, seat.AssemblyAngularVelocity end)
+        if not ok or not cf or not velocity or not spin then return end
+        local look = cf.LookVector * Vector3.new(1, 0, 1)
+        if look.Magnitude < 0.01 then return end
+        look = look.Unit
+        local forward = velocity:Dot(look)
+        local step = math.min(dt or 0.016, 0.1)
+        if speedOn and throttle ~= 0 then
+            local target = flag("veh_speed_value", 120)
+            local along = forward * throttle
+            if along < target then
+                local push = math.min(target - along, math.max(40, target * 0.75) * step)
+                pcall(function() seat.AssemblyLinearVelocity = velocity + look * (push * throttle) end)
+            end
+        end
+        if controlOn and steer ~= 0 and math.abs(forward) > 2 then
+            local want = -steer * (forward >= 0 and 1 or -1) * 1.1 * flag("car_turn", 1.5)
+            if math.abs(spin.Y) < math.abs(want) or spin.Y * want < 0 then
+                local y = spin.Y + (want - spin.Y) * math.min(1, 6 * step)
+                pcall(function() seat.AssemblyAngularVelocity = Vector3.new(spin.X, y, spin.Z) end)
+            end
+        end
+    end
+
+    function Map.vehicleStep(dt)
         local _, humanoid = localParts()
         local seat = humanoid and humanoid.SeatPart
         if seat and not seat:IsA("VehicleSeat") then seat = nil end
-        local speedOn, controlOn = flag("veh_speed", false), flag("car_control", false)
+        local speedOn, controlOn = Util.bindOn("veh_speed", "veh_speed_key"), Util.bindOn("car_control", "car_control_key")
         local active = seat and (speedOn or controlOn)
+        local wanted = {}
+        if active then
+            for _, other in ipairs(Map.carSeats(seat)) do wanted[other] = true end
+        end
         for other, saved in pairs(Map.seats) do
-            if other ~= seat or not active then
+            if not wanted[other] then
                 restoreSeat(other, saved)
                 Map.seats[other] = nil
             end
         end
-        if not active then return end
-        local saved = Map.seats[seat]
-        if not saved then
-            saved = { MaxSpeed = seat.MaxSpeed, Torque = seat.Torque, TurnSpeed = seat.TurnSpeed }
-            Map.seats[seat] = saved
+        if not active then
+            Map.seatCache = nil
+            return
         end
-        if saved.MaxSpeed then assign(seat, "MaxSpeed", speedOn and flag("veh_speed_value", 120) or saved.MaxSpeed) end
-        if saved.Torque then assign(seat, "Torque", controlOn and saved.Torque * flag("car_torque", 2) or saved.Torque) end
-        if saved.TurnSpeed then assign(seat, "TurnSpeed", controlOn and saved.TurnSpeed * flag("car_turn", 1.5) or saved.TurnSpeed) end
+        for other in pairs(wanted) do
+            local saved = Map.seats[other]
+            if not saved then
+                saved = { MaxSpeed = number(other, "MaxSpeed"), Torque = number(other, "Torque"), TurnSpeed = number(other, "TurnSpeed") }
+                Map.seats[other] = saved
+            end
+            if saved.MaxSpeed then assign(other, "MaxSpeed", speedOn and flag("veh_speed_value", 120) or saved.MaxSpeed) end
+            if saved.Torque then assign(other, "Torque", controlOn and saved.Torque * flag("car_torque", 2) or saved.Torque) end
+            if saved.TurnSpeed then assign(other, "TurnSpeed", controlOn and saved.TurnSpeed * flag("car_turn", 1.5) or saved.TurnSpeed) end
+        end
+        Map.driveAssist(seat, dt, speedOn, controlOn)
         if controlOn and flag("car_flip", true) then
             local cf = seat.CFrame
             local up = cf and cf.UpVector
@@ -15636,7 +16189,7 @@ do
 
     function Map.orbitStep(dt, now)
         local orbit = Map.orbit
-        if not flag("car_orbit", false) then
+        if not Util.bindOn("car_orbit", "car_orbit_key") then
             if next(orbit.cars) then Map.orbitRestore() end
             return
         end
@@ -15784,34 +16337,53 @@ do
     end
 
     local function httpGet(url)
-        local send = Compat.request
+        local send, problem = Compat.request, nil
         if send then
-            local ok, reply = pcall(send, { Url = url, Method = "GET" })
-            if ok and type(reply) == "table" and reply.StatusCode == 200 and type(reply.Body) == "string" then return reply.Body end
-            return nil
+            local ok, reply = pcall(send, { Url = url, Method = "GET", Headers = { Accept = "application/json" } })
+            if ok and type(reply) == "table" and type(reply.Body) == "string" then
+                local code = tonumber(reply.StatusCode)
+                if code == 200 or (code == nil and reply.Success ~= false) then return reply.Body end
+                problem = "HTTP " .. tostring(reply.StatusCode)
+            else
+                problem = ok and "empty reply" or tostring(reply)
+            end
         end
-        return Compat.httpGet(url)
+        local ok, body = pcall(function() return game:HttpGet(url) end)
+        if ok and type(body) == "string" and body ~= "" then return body end
+        return nil, problem or (ok and "empty reply" or tostring(body))
+    end
+
+    function Map.serverUrl(cursor)
+        return "https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?sortOrder=Asc&excludeFullGames=true&limit=100" .. (cursor and ("&cursor=" .. string.gsub(cursor, "[^%w%-_%.~]", function(c) return string.format("%%%02X", string.byte(c)) end)) or "")
     end
 
     function Map.servers()
-        local found, cursor = {}, nil
+        local found, cursor, problem = {}, nil, nil
         local minimum = flag("srv_hop_min", 0)
+        local current = game.JobId
         for _ = 1, 5 do
-            local url = "https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?sortOrder=Asc&limit=100" .. (cursor and ("&cursor=" .. cursor) or "")
-            local body = httpGet(url)
-            if not body then break end
+            local body, why = httpGet(Map.serverUrl(cursor))
+            if not body then
+                problem = why
+                break
+            end
             local ok, data = pcall(function() return HttpService:JSONDecode(body) end)
-            if not ok or type(data) ~= "table" or type(data.data) ~= "table" then break end
+            if not ok or type(data) ~= "table" or type(data.data) ~= "table" then
+                problem = type(data) == "table" and type(data.errors) == "table" and type(data.errors[1]) == "table" and tostring(data.errors[1].message) or "bad server list"
+                break
+            end
             for _, server in ipairs(data.data) do
-                if type(server) == "table" and server.id and server.id ~= game.JobId and type(server.playing) == "number" and type(server.maxPlayers) == "number"
-                    and server.playing < server.maxPlayers and server.playing >= minimum then
-                    found[#found + 1] = server
+                if type(server) == "table" and type(server.id) == "string" and server.id ~= current then
+                    local playing, most = tonumber(server.playing) or 0, tonumber(server.maxPlayers)
+                    if most and playing < most and playing >= minimum then
+                        found[#found + 1] = { id = server.id, playing = playing, maxPlayers = most }
+                    end
                 end
             end
-            cursor = type(data.nextPageCursor) == "string" and data.nextPageCursor or nil
+            cursor = type(data.nextPageCursor) == "string" and data.nextPageCursor ~= "" and data.nextPageCursor or nil
             if not cursor then break end
         end
-        return found
+        return found, (#found == 0) and problem or nil
     end
 
     local function teleportService()
@@ -15819,32 +16391,73 @@ do
         return ok and service or nil
     end
 
+    Map.HOP_FETCHES, Map.HOP_TRIES, Map.HOP_WAIT, Map.HOP_SLOW = 3, 3, 12, 45
+
+    function Map.hopOrder(servers)
+        local mode = flag("srv_hop_mode", "Random")
+        if mode == "Fewest players" then
+            table.sort(servers, function(a, b) return a.playing < b.playing end)
+        elseif mode == "Most players" then
+            table.sort(servers, function(a, b) return a.playing > b.playing end)
+        else
+            for index = #servers, 2, -1 do
+                local other = math.random(1, index)
+                servers[index], servers[other] = servers[other], servers[index]
+            end
+        end
+        return servers
+    end
+
+    function Map.hopEnd(text)
+        Map.hopping, Map.hopState = false, nil
+        if text then say(text) end
+    end
+
+    function Map.hopNext(state, reason)
+        if Map.hopState ~= state then return end
+        if reason then say("Teleport failed: " .. reason) end
+        state.tries = state.tries + 1
+        local pick = table.remove(state.servers, 1)
+        if not pick or state.tries > Map.HOP_TRIES then return Map.hopEnd("Server hop gave up after " .. (state.tries - 1) .. " tries") end
+        state.pick = pick
+        say(string.format("Joining a server with %d/%d players", pick.playing, pick.maxPlayers))
+        local ok, problem = pcall(function() state.service:TeleportToPlaceInstance(game.PlaceId, pick.id, LocalPlayer) end)
+        if not ok then return Map.hopNext(state, tostring(problem)) end
+        task.delay(Map.HOP_WAIT, function()
+            if Map.hopState ~= state or state.pick ~= pick then return end
+            if LocalPlayer.Parent == nil then return end
+            say("Still teleporting...")
+            task.delay(Map.HOP_SLOW - Map.HOP_WAIT, function()
+                if Map.hopState == state and state.pick == pick and LocalPlayer.Parent ~= nil then Map.hopNext(state, "no response, trying another server") end
+            end)
+        end)
+    end
+
+    function Map.hopFetch(state)
+        if Map.hopState ~= state then return end
+        state.fetches = state.fetches + 1
+        local servers, problem = Map.servers()
+        if #servers > 0 then
+            state.servers = Map.hopOrder(servers)
+            return Map.hopNext(state)
+        end
+        if problem and state.fetches < Map.HOP_FETCHES then
+            say("Server list failed (" .. problem .. "), retrying")
+            task.delay(2 * state.fetches, function() task.spawn(Map.hopFetch, state) end)
+            return
+        end
+        Map.hopEnd(problem and ("Server list failed: " .. problem) or "No other server found, try a lower minimum")
+    end
+
     function Map.hop()
         if Map.hopping then return end
         local service = teleportService()
         if not service then return say("TeleportService unavailable") end
         Map.hopping = true
+        local state = { service = service, fetches = 0, tries = 0 }
+        Map.hopState = state
         say("Looking for a server...")
-        task.spawn(function()
-            local servers = Map.servers()
-            if #servers == 0 then
-                Map.hopping = false
-                return say("No other server found, try a lower minimum")
-            end
-            local mode = flag("srv_hop_mode", "Random")
-            if mode == "Fewest players" then
-                table.sort(servers, function(a, b) return a.playing < b.playing end)
-            elseif mode == "Most players" then
-                table.sort(servers, function(a, b) return a.playing > b.playing end)
-            end
-            local pick = mode == "Random" and servers[math.random(1, #servers)] or servers[1]
-            say(string.format("Joining a server with %d/%d players", pick.playing, pick.maxPlayers))
-            local ok, problem = pcall(function() service:TeleportToPlaceInstance(game.PlaceId, pick.id, LocalPlayer) end)
-            if not ok then
-                Map.hopping = false
-                say("Teleport failed: " .. tostring(problem))
-            end
-        end)
+        task.spawn(Map.hopFetch, state)
     end
 
     function Map.rejoin()
@@ -15871,9 +16484,12 @@ do
         local failed = service and service.TeleportInitFailed
         if failed then
             pcall(function()
-                Util.track(failed:Connect(function(_, result, message)
+                Util.track(failed:Connect(function(player, result, message)
+                    if player ~= nil and player ~= LocalPlayer then return end
+                    local reason = tostring((message ~= nil and message ~= "") and message or result)
+                    if Map.hopState then return Map.hopNext(Map.hopState, reason) end
                     Map.hopping = false
-                    say("Teleport failed: " .. tostring(message ~= "" and message or result))
+                    say("Teleport failed: " .. reason)
                 end))
             end)
         end
@@ -15909,11 +16525,11 @@ do
         Spawner:Dropdown({ Name = "Spawner", Flag = "car_pad", Items = pads, Default = "Nearest" })
         Spawner:Toggle({ Name = "Sit in the new car", Flag = "car_sit", Default = true })
         Spawner:Button({ Name = "Spawn car", Callback = function() Map.spawnCar() end })
-        Control:Toggle({ Name = "Car control", Flag = "car_control", Tooltip = "Handling for the car you drive; restored when you get out" })
+        Control:Toggle({ Name = "Car control", Flag = "car_control", Tooltip = "Handling for the car you drive; restored when you get out" }):Keybind({ Name = "Car control key", Flag = "car_control_key", Sync = true })
         Control:Slider({ Name = "Torque", Flag = "car_torque", Min = 0.5, Max = 6, Default = 2, Decimals = 0.1, Suffix = "x" })
         Control:Slider({ Name = "Turn speed", Flag = "car_turn", Min = 0.5, Max = 4, Default = 1.5, Decimals = 0.1, Suffix = "x" })
         Control:Toggle({ Name = "Auto flip", Flag = "car_flip", Default = true })
-        Orbit:Toggle({ Name = "Car orbit", Flag = "car_orbit", Tooltip = "Circles the cars you own around a centre; they go back where they were when off" })
+        Orbit:Toggle({ Name = "Car orbit", Flag = "car_orbit", Tooltip = "Circles the cars you own around a centre; they go back where they were when off" }):Keybind({ Name = "Car orbit key", Flag = "car_orbit_key", Sync = true })
         Orbit:Dropdown({ Name = "Centre", Flag = "car_orbit_center", Items = { "Me", "Selected player" }, Default = "Me" })
         Orbit:Slider({ Name = "Radius", Flag = "car_orbit_radius", Min = 5, Max = 60, Default = 15, Decimals = 0.5, Suffix = " studs" })
         Orbit:Slider({ Name = "Height", Flag = "car_orbit_height", Min = -10, Max = 40, Default = 4, Decimals = 0.5, Suffix = " studs" })
@@ -15921,7 +16537,7 @@ do
         Orbit:Slider({ Name = "Smoothing", Flag = "car_orbit_smooth", Min = 1, Max = 30, Default = 8, Decimals = 1 })
         Orbit:Slider({ Name = "Max cars", Flag = "car_orbit_max", Min = 1, Max = 20, Default = 8, Decimals = 1 })
         Orbit:Toggle({ Name = "No collisions", Flag = "car_orbit_ghost", Default = true })
-        Speed:Toggle({ Name = "Vehicle speed", Flag = "veh_speed" })
+        Speed:Toggle({ Name = "Vehicle speed", Flag = "veh_speed" }):Keybind({ Name = "Vehicle speed key", Flag = "veh_speed_key", Sync = true })
         Speed:Slider({ Name = "Max speed", Flag = "veh_speed_value", Min = 20, Max = 400, Default = 120, Decimals = 1 })
     end
 
@@ -15966,6 +16582,7 @@ do
 
     Util.onUnload(function()
         Map.queue = {}
+        Map.hopState = nil
         Map.finish(false, true)
         Map.restoreSeats()
         Map.orbitRestore()
@@ -15983,7 +16600,7 @@ do
     local okEditor, AvatarEditorService = pcall(function() return game:GetService("AvatarEditorService") end)
     if not okEditor then AvatarEditorService = nil end
 
-    local Avatar = { busy = false, wornKeys = {}, Http = {}, store = { recent = {}, favorites = {}, outfits = {} } }
+    local Avatar = { busy = false, wornKeys = {}, dynamicHeads = {}, headDynamic = false, Http = {}, store = { recent = {}, favorites = {}, outfits = {} } }
     local Builder = { rig = "R6", desc = nil, stamp = 0, rigSet = false }
     Avatar.Builder = Builder
 
@@ -16275,7 +16892,9 @@ do
             end
             for _, object in ipairs(objects) do
                 if object:IsA("CharacterMesh") then meshFrom(object) end
+                if limbName == "Head" and (object:IsA("MeshPart") or object:IsA("FaceControls")) then Avatar.headDynamic = true end
                 for _, d in ipairs(object:GetDescendants()) do
+                    if limbName == "Head" and (d:IsA("FaceControls") or (d:IsA("MeshPart") and d.Name == "Head")) then Avatar.headDynamic = true end
                     if d:IsA("CharacterMesh") then
                         meshFrom(d)
                     elseif d:IsA("SpecialMesh") then
@@ -16411,6 +17030,66 @@ do
         return count, headless
     end
 
+    local DEFAULT_FACES = { "textures/face.png", "id=144080495", "//144080495", "id=144075659", "//144075659" }
+
+    local function isDefaultFace(decal)
+        local ok, texture = pcall(function() return string.lower(tostring(decal.Texture)) end)
+        if not ok or texture == "" then return true end
+        for _, pattern in ipairs(DEFAULT_FACES) do
+            if string.find(texture, pattern, 1, true) then return true end
+        end
+        return false
+    end
+
+    local function headIsTextured(head, model, desc)
+        if Avatar.headDynamic then return true end
+        local okHead, headId = pcall(function() return tonumber(desc and desc.Head) or 0 end)
+        if okHead and headId > 0 and Avatar.dynamicHeads[headId] then return true end
+        local sourceHead = model and model:FindFirstChild("Head")
+        if sourceHead and (sourceHead:IsA("MeshPart") or sourceHead:FindFirstChildOfClass("FaceControls")) then return true end
+        local mesh = head:FindFirstChildOfClass("SpecialMesh")
+        local okTexture, texture = pcall(function() return mesh and tostring(mesh.TextureId) or "" end)
+        return okTexture and texture ~= ""
+    end
+
+    function Avatar.fixFace(char, desc, model)
+        local head = char and char:FindFirstChild("Head")
+        if not head then return 0 end
+        local okFace, faceId = pcall(function() return tonumber(desc and desc.Face) or 0 end)
+        faceId = okFace and faceId or 0
+        local decals = {}
+        for _, d in ipairs(head:GetChildren()) do
+            if d:IsA("Decal") and not d:IsA("Texture") then decals[#decals + 1] = d end
+        end
+        local drop = {}
+        if faceId == 0 and headIsTextured(head, model, desc) then
+            for _, d in ipairs(decals) do drop[d] = true end
+        else
+            local real, seen = {}, {}
+            for _, d in ipairs(decals) do
+                if not isDefaultFace(d) then real[tostring(d.Face)] = true end
+            end
+            for _, d in ipairs(decals) do
+                local side = tostring(d.Face)
+                local key = side .. "|" .. tostring(d.Texture)
+                if seen[key] or (real[side] and isDefaultFace(d)) then drop[d] = true end
+                seen[key] = true
+            end
+        end
+        local removed = 0
+        for d in pairs(drop) do
+            if pcall(function() d:Destroy() end) then removed = removed + 1 end
+        end
+        return removed
+    end
+
+    local function applyDescription(humanoid, desc)
+        local okAsync, async = pcall(function() return humanoid.ApplyDescriptionAsync end)
+        if okAsync and type(async) == "function" and pcall(async, humanoid, desc) then return true end
+        return (pcall(function() humanoid:ApplyDescription(desc) end))
+    end
+    Avatar.applyDescription = applyDescription
+
     local function forceHeadless(char)
         local head = char and char:FindFirstChild("Head")
         if not head then return end
@@ -16512,10 +17191,11 @@ do
 
     local function finishApply(char, humanoid, model, desc)
         stripAppearance(char)
-        Avatar.wornKeys = {}
+        Avatar.wornKeys, Avatar.headDynamic = {}, false
         copyClothesAndColors(char, model)
         local meshCount = applyCharacterMeshesFromModel(char, model)
         if desc and isR6(humanoid) then meshCount = meshCount + applyR6MeshesFromDescription(char, desc) end
+        Avatar.fixFace(char, desc, model)
         copyAccessories(char, model)
         local headless = false
         if desc then
@@ -16572,10 +17252,10 @@ do
         end
         if not model then
             if desc then
-                pcall(function()
-                    if humanoid.ApplyDescriptionAsync then humanoid:ApplyDescriptionAsync(desc) else humanoid:ApplyDescription(desc) end
-                end)
+                Avatar.headDynamic = false
+                applyDescription(humanoid, desc)
                 if isR6(humanoid) then applyR6MeshesFromDescription(char, desc) end
+                Avatar.fixFace(char, desc, nil)
                 dedupeAccessories(char)
                 notify("Avatar changer: applied the description only (no model)")
                 return true
@@ -16892,6 +17572,7 @@ do
             desc:SetAccessories(list, true)
             return true
         end
+        if typeName == "DynamicHead" then Avatar.dynamicHeads[id] = true end
         if desc[slot.prop] == id then
             if onlyAdd then return true end
             desc[slot.prop] = 0
@@ -17365,9 +18046,7 @@ do
             notify("Avatar builder: emote saved in the builder, the wheel refused it")
             return false
         end
-        local okApply = pcall(function()
-            if humanoid.ApplyDescriptionAsync then humanoid:ApplyDescriptionAsync(applied) else humanoid:ApplyDescription(applied) end
-        end)
+        local okApply = applyDescription(humanoid, applied)
         notify(okApply and string.format("Emote wheel: %s is now in slot %d", entry.name, slot) or "Avatar builder: the wheel refused the emote")
         if okApply and Avatar.lastBuilt then
             task.delay(1.2, function()
@@ -19107,13 +19786,28 @@ do
     if menu then
         menu:AddLabel("Menu key"):AddKeyPicker("MenuKeybind", { Default = "Delete", Mode = "Toggle", Text = "Menu key", NoUI = true })
         Library.ToggleKeybind = Options.MenuKeybind
-        escapeUnbinds("MenuKeybind", "Delete")
+        escapeUnbinds("MenuKeybind", "Delete", true)
+        Util.hook(Options.MenuKeybind, "SetValue", function(original)
+            return function(self, data)
+                local key = type(data) == "table" and data[1] or nil
+                if type(data) == "table" and (key == nil or key == "" or key == "None" or key == "Escape") then data = { "Delete", data[2] or self.Mode or "Toggle" } end
+                return original(self, data)
+            end
+        end)
         menu:AddToggle("menu_hide_cursor", { Text = "Hide game cursor", Default = true, Tooltip = "Hides the game's mouse icon while the menu is open" })
         Toggles.menu_hide_cursor:OnChanged(function() pcall(function() Library:SetHideGameCursor(Toggles.menu_hide_cursor.Value) end) end)
         menu:AddToggle("menu_watermark", { Text = "Watermark", Default = true })
         Toggles.menu_watermark:OnChanged(function() pcall(function() Library:SetWatermarkVisibility(Toggles.menu_watermark.Value) end) end)
         menu:AddToggle("menu_keybinds", { Text = "Keybind list", Default = false })
         Toggles.menu_keybinds:OnChanged(function() pcall(function() Library:SetKeybindListVisibility(Toggles.menu_keybinds.Value) end) end)
+        menu:AddToggle("menu_keybinds_toggled", { Text = "Show toggled only", Default = false, Tooltip = "The keybind list hides features that are off" })
+        menu:AddToggle("menu_keybinds_bound", { Text = "Show bound only", Default = false, Tooltip = "The keybind list hides features without a key" })
+        local function keybindFilter()
+            if type(Library.SetKeybindListFilter) ~= "function" then return end
+            pcall(function() Library:SetKeybindListFilter({ OnlyEnabled = Toggles.menu_keybinds_toggled.Value, OnlyBound = Toggles.menu_keybinds_bound.Value }) end)
+        end
+        Toggles.menu_keybinds_toggled:OnChanged(keybindFilter)
+        Toggles.menu_keybinds_bound:OnChanged(keybindFilter)
         menu:AddButton("Test notification", function() Library:Notify("Aster notification test", 3) end)
     end
 
@@ -19137,7 +19831,7 @@ do
     end
 
     SaveManager:IgnoreThemeSettings()
-    local ignore = { "MenuKeybind" }
+    local ignore = {}
     for _, tabSpec in ipairs(Pages.spec) do ignore[#ignore + 1] = "ui_view_" .. tabSpec[1] end
     SaveManager:SetIgnoreIndexes(ignore)
     local config = settings and settings.Config and settings.Config.surface

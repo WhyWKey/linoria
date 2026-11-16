@@ -2618,10 +2618,6 @@ do
 
             SyncToggleState = Info.SyncToggleState or false;
         };
-        if KeyPicker.SyncToggleState then
-            Info.Modes = { 'Toggle' }
-            Info.Mode = 'Toggle'
-        end
 
         -- 18px rows: chip height keeps the row's parity so it centres on whole pixels
         -- CHIP_TEXT: chip text size at the default 13pt font, where the chip stays 16px
@@ -2772,6 +2768,8 @@ do
                 end;
 
                 KeyPicker.Mode = Mode;
+                -- Hold-synced binds flip the toggle on press/release edges only, starting from now
+                KeyPicker.HoldDown = Mode == 'Hold' and Library:IsBindDown(KeyPicker.Value) or false;
 
                 Label.TextColor3 = Library.AccentColor;
                 Library.RegistryMap[Label].Properties.TextColor3 = 'AccentColor';
@@ -2797,7 +2795,16 @@ do
             ModeButtons[Mode] = ModeButton;
         end;
 
+        function KeyPicker:SyncHold()
+            if not (KeyPicker.SyncToggleState and KeyPicker.Mode == 'Hold' and ParentObj.Type == 'Toggle') then return end;
+            local Down = KeyPicker:GetState() == true;
+            if Down == KeyPicker.HoldDown then return end;
+            KeyPicker.HoldDown = Down;
+            if ParentObj.Value ~= Down then ParentObj:SetValue(Down) end;
+        end;
+
         function KeyPicker:Update()
+            KeyPicker:SyncHold();
             if Info.NoUI then
                 return;
             end;
@@ -2831,7 +2838,9 @@ do
             end;
             if Filter.OnlyEnabled then
                 local On = State;
-                if ParentObj and ParentObj.Type == 'Toggle' then On = ParentObj.Value == true end;
+                if ParentObj and ParentObj.Type == 'Toggle' then
+                    On = ParentObj.Value == true and (KeyPicker.SyncToggleState or KeyPicker.Mode ~= 'Toggle' or State == true);
+                end;
                 if not On then Want = false end;
             end;
 
@@ -2881,6 +2890,9 @@ do
             KeyPicker.Value = Key;
             ModeButtons[Mode]:Select();
             Library:UpdateSidePolling();
+            if KeyPicker.SyncToggleState and Mode == 'Hold' and ParentObj.Type == 'Toggle' and ParentObj.Value and not KeyPicker:GetState() then
+                ParentObj:SetValue(false);
+            end;
             KeyPicker:Update();
         end;
 
@@ -3663,14 +3675,22 @@ do
             Func(Toggle.Value);
         end;
 
-        function Toggle:SetValue(Bool)
+        function Toggle:SetValue(Bool, Manual)
             Bool = (not not Bool);
+            if Bool and not Manual then
+                -- a Hold-synced key owns the state; a loaded ON with the key up must not show as active
+                for _, Addon in next, Toggle.Addons do
+                    if Addon.Type == 'KeyPicker' and Addon.SyncToggleState and Addon.Mode == 'Hold' and Addon:GetState() ~= true then
+                        Bool = false;
+                    end
+                end
+            end
             Toggle.Value = Bool;
             Toggle:Display();
 
             for _, Addon in next, Toggle.Addons do
-                if Addon.Type == 'KeyPicker' and Addon.SyncToggleState then
-                    Addon.Toggled = Bool
+                if Addon.Type == 'KeyPicker' then
+                    if Addon.SyncToggleState then Addon.Toggled = Bool end
                     Addon:Update()
                 end
             end
@@ -3684,7 +3704,7 @@ do
         end;
         SwitchHit.InputBegan:Connect(function(Input)
             if not Clicked(Input) then return end;
-            Toggle:SetValue(not Toggle.Value)
+            Toggle:SetValue(not Toggle.Value, true)
             Library:AttemptSave();
         end);
         -- the whole row only flips the toggle with Library.ToggleClickRow; a click on the switch is SwitchHit's
@@ -3696,7 +3716,7 @@ do
                 end;
             end;
 
-            Toggle:SetValue(not Toggle.Value)
+            Toggle:SetValue(not Toggle.Value, true)
             Library:AttemptSave();
         end);
         if Toggle.Risky then

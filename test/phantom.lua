@@ -10,6 +10,93 @@ local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local LocalPlayer = Players.LocalPlayer
 
+local getgenv = (type(getgenv) == "function" and getgenv) or function() return _G end
+
+local Compat = { has = {}, why = {} }
+do
+    local function fn(...)
+        for index = 1, select("#", ...) do
+            local value = select(index, ...)
+            if type(value) == "function" then return value end
+        end
+        return nil
+    end
+    local function field(owner, key)
+        if type(owner) ~= "table" and type(owner) ~= "userdata" then return nil end
+        local ok, value = pcall(function() return owner[key] end)
+        return ok and value or nil
+    end
+
+    Compat.request = fn(request, http_request, field(http, "request"), field(syn, "request"))
+    Compat.getgc = fn(getgc, get_gc_objects)
+    Compat.getupvalue = fn(field(debug, "getupvalue"), getupvalue)
+    Compat.getupvalues = fn(field(debug, "getupvalues"), getupvalues)
+    Compat.gethui = fn(gethui, get_hidden_gui, gethiddenui)
+    Compat.setidentity = fn(setthreadidentity, setidentity, set_thread_identity, setthreadcontext)
+    Compat.getidentity = fn(getthreadidentity, getidentity, get_thread_identity, getthreadcontext)
+    Compat.customasset = fn(getcustomasset, getsynasset)
+    Compat.getactors = fn(getactors, get_actors)
+    Compat.run_on_actor = fn(run_on_actor, runonactor)
+    Compat.actorthreads = fn(getactorthreads, get_actor_threads)
+    Compat.run_on_thread = fn(run_on_thread, runonthread)
+    Compat.deletedactors = fn(getdeletedactors, get_deleted_actors)
+    Compat.create_channel = fn(create_comm_channel)
+    Compat.get_channel = fn(get_comm_channel)
+
+    function Compat.httpGet(url)
+        local ok, body = pcall(function() return game:HttpGet(url) end)
+        if ok and type(body) == "string" then return body end
+        if Compat.request then
+            local sent, response = pcall(Compat.request, { Url = url, Method = "GET" })
+            if sent and type(response) == "table" and type(response.Body) == "string" then return response.Body end
+        end
+        return nil, tostring(body)
+    end
+
+    function Compat.hui()
+        if not Compat.gethui then return nil end
+        local ok, container = pcall(Compat.gethui)
+        if not ok or typeof(container) ~= "Instance" then return nil end
+        local okLayer, layer = pcall(function() return container:IsA("LayerCollector") end)
+        if okLayer and layer then return nil end
+        return container
+    end
+
+    function Compat.actorSources()
+        local sources = {}
+        if Compat.actorthreads and Compat.run_on_thread then
+            sources[#sources + 1] = { list = Compat.actorthreads, run = Compat.run_on_thread }
+        end
+        if Compat.getactors and Compat.run_on_actor then
+            sources[#sources + 1] = { list = Compat.getactors, run = Compat.run_on_actor }
+        end
+        if Compat.deletedactors and (Compat.run_on_actor or Compat.run_on_thread) then
+            sources[#sources + 1] = { list = Compat.deletedactors, run = function(target, ...)
+                if typeof(target) == "Instance" or not Compat.run_on_thread then return Compat.run_on_actor(target, ...) end
+                return Compat.run_on_thread(target, ...)
+            end }
+        end
+        return sources
+    end
+
+    local okId, name, version = pcall(function() return fn(identifyexecutor, getexecutorname)() end)
+    Compat.name = okId and name ~= nil and tostring(name) or "unknown"
+    Compat.version = okId and version ~= nil and tostring(version) or ""
+    local lower = string.lower(Compat.name)
+    local PROFILES = {
+        potassium = {},
+        volt = { commReceiver = true, getgcFunctionsOnly = true },
+        real = { huiIsRobloxGui = true, deletedActorsAreThreads = true },
+    }
+    for key, profile in pairs(PROFILES) do
+        if string.find(lower, key, 1, true) then Compat.id, Compat.profile = key, profile break end
+    end
+    Compat.profile = Compat.profile or {}
+
+    Compat.has.actors = #Compat.actorSources() > 0 and Compat.create_channel ~= nil and Compat.get_channel ~= nil
+    Compat.why.actors = "needs getactors + run_on_actor (or getactorthreads + run_on_thread) and create_comm_channel / get_comm_channel"
+end
+
 local __ok, __err = xpcall(function()
 
 do
@@ -22,55 +109,53 @@ do
     if not inActor and not inGameVm() then
         local source = getgenv().PF_SOURCE
         if (type(source) ~= "string" or #source < 2000) and SOURCE_URL ~= "" then
-            local okGet, body = pcall(game.HttpGet, game, SOURCE_URL)
-            if okGet and type(body) == "string" then source = body end
-        end
-        local run, list
-        if type(getactorthreads) == "function" and type(run_on_thread) == "function" then
-            run, list = run_on_thread, getactorthreads
-        elseif type(getactors) == "function" and type(run_on_actor) == "function" then
-            run, list = run_on_actor, getactors
-        elseif type(getdeletedactors) == "function" and type(run_on_actor) == "function" then
-            run, list = run_on_actor, getdeletedactors
+            local body = Compat.httpGet(SOURCE_URL)
+            if type(body) == "string" then source = body end
         end
         if type(source) ~= "string" or #source < 2000 then
-            warn("[Aster] Not inside the game's actor and no source to relaunch with. Start it with the loader (sets getgenv().PF_SOURCE) or fill in SOURCE_URL at the top of the file")
-        elseif not run or type(create_comm_channel) ~= "function" or type(get_comm_channel) ~= "function" then
-            warn("[Aster] This executor cannot run code inside actors (" .. tostring(identifyexecutor and identifyexecutor() or "unknown") .. ")")
+            Compat.actorProblem = "Not inside the game's actor and no source to relaunch with. Start it with the loader (sets getgenv().PF_SOURCE) or fill in SOURCE_URL at the top of the file"
+        elseif not Compat.has.actors then
+            Compat.actorProblem = "Aster needs actor support, and " .. Compat.name .. " has none (" .. Compat.why.actors .. "). Game features will not work"
         else
             local probe = [=[
                 local Channel = get_comm_channel(...)
                 local ok, request = pcall(function() return getrenv().shared.require end)
                 if ok and type(request) == "function" then Channel:Fire() end
             ]=]
-            local okList, actors = pcall(list)
-            local found = false
-            if okList and type(actors) == "table" then
-                for _, actor in ipairs(actors) do
-                    if found then break end
-                    local okChannel, index, channel = pcall(create_comm_channel)
-                    if okChannel and channel then
-                        local function onReply()
-                            if found then return end
-                            found = true
-                            getgenv().PF_INACTOR = true
-                            pcall(run, actor, "getgenv().PF_INACTOR = true\n" .. source)
+            local found, checked = false, 0
+            for _, entry in ipairs(Compat.actorSources()) do
+                if found then break end
+                local okList, actors = pcall(entry.list)
+                if okList and type(actors) == "table" then
+                    for _, actor in ipairs(actors) do
+                        if found then break end
+                        checked = checked + 1
+                        local okChannel, index, channel = pcall(Compat.create_channel)
+                        if okChannel and channel then
+                            local run = entry.run
+                            local function onReply()
+                                if found then return end
+                                found = true
+                                getgenv().PF_INACTOR = true
+                                pcall(run, actor, "getgenv().PF_INACTOR = true\n" .. source)
+                            end
+                            if not pcall(function() channel.Event:Connect(onReply) end) then
+                                pcall(function() channel:connect(onReply) end)
+                            end
+                            pcall(run, actor, probe, index)
                         end
-                        if not pcall(function() channel.Event:Connect(onReply) end) then
-                            pcall(function() channel:connect(onReply) end)
-                        end
-                        pcall(run, actor, probe, index)
                     end
                 end
-                local started = os.clock()
-                while not found and os.clock() - started < 5 do task.wait(0.1) end
             end
+            local started = os.clock()
+            while not found and checked > 0 and os.clock() - started < 5 do task.wait(0.1) end
             if found then
                 print("[Aster] relaunched inside the game's actor")
                 return
             end
-            warn("[Aster] No actor with the game's modules was found (" .. tostring(okList and type(actors) == "table" and #actors or 0) .. " actors checked)")
+            Compat.actorProblem = "No actor with the game's modules was found (" .. checked .. " actors checked on " .. Compat.name .. "). Game features will not work"
         end
+        if Compat.actorProblem then warn("[Aster] " .. Compat.actorProblem) end
     end
 end
 
@@ -148,7 +233,9 @@ local function patchLibrarySource(source)
 end
 
 local function loadRemote(path, patch)
-    local body = game:HttpGet(UI_REPO .. path)
+    local body, problem = Compat.httpGet(UI_REPO .. path)
+    if type(body) ~= "string" then error("[Aster] could not download " .. path .. ": " .. tostring(problem), 0) end
+    if type(loadstring) ~= "function" then error("[Aster] this executor has no loadstring", 0) end
     if patch then
         local okPatch, patched = pcall(patch, body)
         if okPatch and type(patched) == "string" then
@@ -156,7 +243,9 @@ local function loadRemote(path, patch)
             if chunk then return chunk() end
         end
     end
-    return loadstring(body)()
+    local chunk, reason = loadstring(body)
+    if not chunk then error("[Aster] could not load " .. path .. ": " .. tostring(reason), 0) end
+    return chunk()
 end
 
 local Library = loadRemote("Library.lua", patchLibrarySource)
@@ -173,6 +262,10 @@ Library:OnUnload(function()
     end
     getgenv().PF_Connections = {}
 end)
+
+if Compat.actorProblem then
+    pcall(function() Library:Notify(Compat.actorProblem, 15) end)
+end
 
 function Util.flag(name, default)
     local object = Toggles[name]
@@ -538,10 +631,10 @@ function Game.load()
     local gaps = false
     for _, name in ipairs(REQUIRED) do if not Game.mods[name] then gaps = true end end
     local scanNow = os.clock()
-    if gaps and type(getgc) == "function" and scanNow - (Game.scanAt or -math.huge) >= 30 then
+    if gaps and Compat.getgc and scanNow - (Game.scanAt or -math.huge) >= 30 then
         Game.scanAt = scanNow
         pcall(function()
-            for _, value in ipairs(getgc(true)) do
+            for _, value in ipairs(Compat.getgc(true)) do
                 if type(value) == "table" then
                     if not Game.mods.ReplicationInterface and rawget(value, "operateOnAllEntries") and rawget(value, "getEntry") then
                         Game.mods.ReplicationInterface, Game.via.ReplicationInterface = value, "gc"
@@ -573,7 +666,7 @@ function Game.load()
         Game.summary = "loaded (" .. table.concat(list, ", ") .. ")"
     else
         Game.summary = "missing " .. table.concat(Game.missing, ", ")
-        Util.note("core", "Core modules not found:", table.concat(Game.missing, ", "), "| executor:", tostring(identifyexecutor and identifyexecutor() or "unknown"))
+        Util.note("core", "Core modules not found:", table.concat(Game.missing, ", "), "| executor:", Compat.name)
     end
 end
 
@@ -1231,14 +1324,14 @@ function Icons.warn(reason)
 end
 
 function Icons.labelMode()
-    if Icons.labels == nil then Icons.labels = type(getcustomasset) == "function" and type(writefile) == "function" end
+    if Icons.labels == nil then Icons.labels = Compat.customasset ~= nil and type(writefile) == "function" end
     return Icons.labels
 end
 
 function Icons.fetch(url)
     local ok, body = pcall(function() return game:HttpGet(url) end)
     if ok and Icons.valid(body) then return body end
-    local send = (type(request) == "function" and request) or (type(http_request) == "function" and http_request) or (type(syn) == "table" and syn.request) or nil
+    local send = Compat.request
     if send then
         local sent, response = pcall(send, { Url = url, Method = "GET" })
         local data = sent and type(response) == "table" and response.Body
@@ -1260,10 +1353,10 @@ end
 
 function Icons.container()
     if Icons.gui and Icons.gui.Parent then return Icons.gui end
-    if setthreadidentity then pcall(setthreadidentity, 7) end
+    if Compat.setidentity then pcall(Compat.setidentity, 7) end
     local parents = {}
     pcall(function() parents[#parents + 1] = game:GetService("CoreGui") end)
-    pcall(function() if gethui then parents[#parents + 1] = gethui() end end)
+    pcall(function() local hui = Compat.hui() if hui then parents[#parents + 1] = hui end end)
     for _, parent in ipairs(parents) do
         local gui
         local ok = pcall(function()
@@ -1318,7 +1411,7 @@ function Icons.load(key)
                 return false
             end
         end
-        local ok, result = pcall(getcustomasset, path)
+        local ok, result = pcall(Compat.customasset, path)
         if not (ok and type(result) == "string" and result ~= "") then
             Icons.warn("getcustomasset failed (" .. tostring(result) .. ")")
             return false
@@ -1788,7 +1881,7 @@ local ChamStyle = {
 }
 
 function Chams.identity()
-    if setthreadidentity then pcall(setthreadidentity, 7) end
+    if Compat.setidentity then pcall(Compat.setidentity, 7) end
 end
 
 function Chams.getContainer()
@@ -1796,7 +1889,7 @@ function Chams.getContainer()
     Chams.identity()
     local parents = {}
     pcall(function() parents[#parents + 1] = game:GetService("CoreGui") end)
-    pcall(function() if gethui then parents[#parents + 1] = gethui() end end)
+    pcall(function() local hui = Compat.hui() if hui then parents[#parents + 1] = hui end end)
     for _, parent in ipairs(parents) do
         local gui
         local ok = pcall(function()
@@ -6405,16 +6498,16 @@ end
 function Nades.scanHandlers(fn)
     if type(fn) ~= "function" then return nil end
     local values = {}
-    local getter = debug.getupvalues or getupvalues
+    local getter = Compat.getupvalues
     if type(getter) == "function" then
         local ok, list = pcall(getter, fn)
         if ok and type(list) == "table" then
             for _, value in pairs(list) do values[#values + 1] = value end
         end
     end
-    if type(debug.getupvalue) == "function" then
+    if Compat.getupvalue then
         for index = 1, 40 do
-            local ok, a, b = pcall(debug.getupvalue, fn, index)
+            local ok, a, b = pcall(Compat.getupvalue, fn, index)
             if not ok or (a == nil and b == nil) then break end
             values[#values + 1] = type(b) == "table" and b or a
         end
@@ -6431,10 +6524,10 @@ function Nades.findHandlers()
     local found = Nades.scanHandlers(network.receive) or Nades.scanHandlers(network.fireReady)
     if found then return found end
     local now = os.clock()
-    if type(getgc) == "function" and now - Nades.scanAt >= 30 then
+    if Compat.getgc and now - Nades.scanAt >= 30 then
         Nades.scanAt = now
         pcall(function()
-            for _, value in ipairs(getgc(true)) do
+            for _, value in ipairs(Compat.getgc(true)) do
                 if type(value) == "table" and type(rawget(value, "newgrenade")) == "function" and type(rawget(value, "ping")) == "function" then
                     found = value
                     return
@@ -7062,10 +7155,10 @@ function Streak.make(class, parent, props)
 end
 
 function Streak.container()
-    if setthreadidentity then pcall(setthreadidentity, 7) end
+    if Compat.setidentity then pcall(Compat.setidentity, 7) end
     local parents = {}
     pcall(function() parents[#parents + 1] = game:GetService("CoreGui") end)
-    pcall(function() if gethui then parents[#parents + 1] = gethui() end end)
+    pcall(function() local hui = Compat.hui() if hui then parents[#parents + 1] = hui end end)
     for _, parent in ipairs(parents) do
         local gui
         local ok = pcall(function()
@@ -7244,12 +7337,9 @@ function Feedback.noteKill(victim, now)
 end
 
 function Feedback.identity()
-    for _, name in ipairs({ "getthreadidentity", "getidentity", "getthreadcontext" }) do
-        local fn = getgenv()[name]
-        if type(fn) == "function" then
-            local ok, level = pcall(fn)
-            if ok then return level end
-        end
+    if Compat.getidentity then
+        local ok, level = pcall(Compat.getidentity)
+        if ok then return level end
     end
     return "?"
 end

@@ -602,11 +602,10 @@ do
             { "Camera", { "Camera FOV / zoom" }, { "Crosshair" }, { "Crosshair motion" } },
         } },
         { "Effects", "sparkles", {
-            { "Hits", effects = { { "Hit marker", "Hit sound" }, { "Hit chams", "Hit effects", "Damage numbers" } } },
-            { "Kills", effects = { { "Kill sound", "Kill effects" }, { "Kill notice", "Kill streak", "Corpse" } } },
-            { "Bullets", effects = { { "Tracers", "Tracer style" }, { "Impacts" } } },
-            { "Gun sounds", effects = { { "Gun sounds" } } },
-            { "Sky", effects = { { "Skyboxes" }, { "Creator Store skies", "Atmosphere presets" } } },
+            { "When I shoot", effects = { { "Tracers", "Tracer look" }, { "Impacts", "Gun sounds" } } },
+            { "When I hit", effects = { { "Hit marker", "Damage numbers", "Hit sound" }, { "Hit chams", "Hit effects" } } },
+            { "When I kill", effects = { { "Kill sound", "Kill notice", "Kill streak" }, { "Kill effects", "Corpse" } } },
+            { "Ambience", effects = { { "Skyboxes" }, { "Creator Store skies", "Atmosphere presets" } } },
         } },
         { "Misc", "box", {
             { "Movement", { "Fly", "Speed", "Walk speed" }, { "High / long jump", "Phase", "Jump mult" }, { "Spider", "Movement extras", "Click TP" } },
@@ -713,6 +712,7 @@ do
         end
         Pages[name] = entry
     end
+    Pages.Effects.Sky, Pages.Effects["Gun sounds"] = Pages.Effects.Ambience, Pages.Effects["When I shoot"]
 
     function Pages.finalize()
         local empty = {}
@@ -5807,8 +5807,10 @@ do
 
     Tracers = {
         list = {}, fade = 0.5, fx = {}, particle = {},
-        particleNames = { "Comet", "Plasma", "Smoke ribbon", "Frost", "Railgun", "Laser", "Ion bolt", "Tracer round", "Neon streak", "Void" },
-        caps = { records = 20, enemy = 12, emitters = 32, rate = 120, life = 2.5, burst = 40, beams = 360, rays = 160, builds = 6, queue = 48 },
+        particleNames = { "Comet", "Plasma", "Smoke ribbon", "Frost", "Railgun", "Laser", "Ion bolt", "Tracer round", "Neon streak", "Void", "Smoke trail", "Wisp", "Ribbon", "Pulse", "Ion" },
+        styleNames = { "Smoke trail", "Wisp", "Ribbon", "Pulse", "Ion" }, styles = {}, styled = {},
+        caps = { records = 20, enemy = 12, emitters = 32, rate = 120, life = 2.5, burst = 40, beams = 360, rays = 160, builds = 6, queue = 48,
+            segments = 40, enemySegments = 20, styleBeams = 480, styleRecords = 24, puffs = 8, pool = 480 },
         owner = setmetatable({}, { __mode = "k" }), queue = {}, rays = 0, minSize = 0.3,
         fire = "rbxasset://textures/particles/fire_main.dds", ice = Color3.fromRGB(190, 235, 255),
         ring = "rbxassetid://5857851812", flare = "rbxassetid://8983307836", bolt = "rbxassetid://5833323391",
@@ -5889,6 +5891,7 @@ do
     function Tracers.spawn(path, color, hit, speed, mine, timing)
         local presets = Tracers.presets()
         local name = flag("trace_texture", "Lightning")
+        if Tracers.styles[name] then return Tracers.spawnStyle(name, path, color, mine, timing) end
         if Tracers.particle[name] then return Tracers.spawnFx(name, path, color, hit, speed, mine, timing) end
         local preset = presets[name] or presets.Lightning
         local scale = flag("trace_width", 1)
@@ -5898,6 +5901,7 @@ do
         local count = 1
         if deviation > (stretch and 2 or 0.6) then count = math.clamp(math.ceil(total / 25), 6, 12) end
         local nodes = Tracers.nodes(path, cumulative, total, count)
+        local near = Tracers.nearScale(nodes[1])
 
         local glow = flag("trace_glow", false)
         local strength = glow and math.clamp(flag("trace_glow_strength", 4), 0, 10) or 0
@@ -5962,7 +5966,7 @@ do
                     halo.Name = Util.randomName()
                     halo.LightEmission, halo.LightInfluence, halo.FaceCamera = 1, 0, true
                     halo.Segments = preset.Segments
-                    halo.Width0, halo.Width1 = preset.Width0 * scale * (1.5 + 0.15 * strength), preset.Width1 * scale * (1.5 + 0.15 * strength)
+                    halo.Width0, halo.Width1 = preset.Width0 * scale * (1.5 + 0.15 * strength) * (index == 1 and near or 1), preset.Width1 * scale * (1.5 + 0.15 * strength)
                     halo.Transparency = NumberSequence.new(g0, g1)
                     halo.Color = glowSame and sequence or ColorSequence.new(glowColor)
                     propSet(halo, "Brightness", preset.Brightness)
@@ -5982,6 +5986,7 @@ do
                 elseif (count > 1 or preset.Tile) and not stretch then
                     beam.TextureLength = segment / tiles
                 end
+                if index == 1 then beam.Width0 = beam.Width0 * near end
                 beam.Transparency = NumberSequence.new(a0, a1)
                 beam.Color = sequence
                 place(beam)
@@ -6134,6 +6139,7 @@ do
             end
         end
         local active = flag("trace_on", false) or flag("trace_enemy_on", false) or flag("trace_team_on", false)
+        Tracers.stepStyles(now, active)
         for index = #Tracers.fx, 1, -1 do
             local rec = Tracers.fx[index]
             local age = now - rec.born
@@ -6198,6 +6204,13 @@ do
             points[index] = Tracers.point(rec, position, nodes[math.min(index + 1, #nodes)] - nodes[math.max(index - 1, 1)])
         end
         return points
+    end
+
+    function Tracers.nearScale(position)
+        local camera = propGet(Workspace, "CurrentCamera")
+        local frame = camera and propGet(camera, "CFrame")
+        if typeof(frame) ~= "CFrame" or typeof(position) ~= "Vector3" then return 1 end
+        return math.clamp(((position - frame.Position).Magnitude - 2) / 10, 0.2, 1)
     end
 
     function Tracers.distScale(position)
@@ -6326,7 +6339,7 @@ do
         for index = 1, #points - 1 do
             local beam = Tracers.make(rec, "Beam", {
                 Attachment0 = points[index], Attachment1 = points[index + 1], FaceCamera = true, LightEmission = 1, LightInfluence = 0, Segments = 1,
-                Width0 = width, Width1 = width, Transparency = NumberSequence.new(alpha),
+                Width0 = index == 1 and width * ctx.near or width, Width1 = width, Transparency = NumberSequence.new(alpha),
                 Color = ColorSequence.new(tint(ctx.colorAt(ctx.t[index])), tint(ctx.colorAt(ctx.t[index + 1]))),
             })
             propSet(beam, "Brightness", 2 * rec.bright)
@@ -6377,7 +6390,7 @@ do
             travel = math.clamp(total / math.max(type(speed) == "number" and speed or 0, 300), 0.03, 1.2),
             keep = timing and math.clamp(timing.hold + timing.fade, 0.05, 10) or math.clamp(flag("trace_time", 4), 0.5, 10), density = math.clamp(flag("trace_fx_density", 1), 0.25, 3),
             scale = math.clamp(flag("trace_width", 1), 0.2, 3), psize = math.clamp(flag("trace_fx_size", 1), 0.25, 3),
-            fade = gradient and math.clamp(flag("trace_grad_fade", 0), 0, 1) or 0,
+            fade = gradient and math.clamp(flag("trace_grad_fade", 0), 0, 1) or 0, near = Tracers.nearScale(path[1]),
         }
         if ctx.chord.Magnitude < 1e-6 then ctx.chord = Vector3.new(0, 0, -1) end
         ctx.scales = {}
@@ -6459,7 +6472,7 @@ do
             local tip = Tracers.point(rec, opts.instant and nodes[index + 1] or nodes[index], ahead)
             local beam = Tracers.make(rec, "Beam", {
                 Attachment0 = base, Attachment1 = tip, FaceCamera = true, LightEmission = opts.emission or 1, LightInfluence = 0, Segments = 1,
-                Width0 = width, Width1 = width, Transparency = NumberSequence.new(a0, a1), Color = ColorSequence.new(tint(ctx.colorAt(t0)), tint(ctx.colorAt(t1))),
+                Width0 = index == 1 and width * ctx.near or width, Width1 = width, Transparency = NumberSequence.new(a0, a1), Color = ColorSequence.new(tint(ctx.colorAt(t0)), tint(ctx.colorAt(t1))),
             })
             propSet(beam, "Brightness", (opts.bright or 2) * rec.bright)
             if opts.z then propSet(beam, "ZOffset", opts.z) end
@@ -6508,13 +6521,16 @@ do
         local linger = { hold = ctx.keep * 0.6, fade = 0.6 }
         local _, finish = Tracers.streak(rec, ctx, 0.35 * s, 0.6, Tracers.plain, linger)
         Tracers.streak(rec, ctx, 0.08 * s, 0, Tracers.whiten(0.6), { hold = linger.hold, fade = linger.fade, bright = 3 })
-        local head
-        local part, top, bottom = Tracers.runner(rec, ctx, 0.45 * s, function() if head then head.Enabled = false end end)
+        local head, light
+        local part, top, bottom = Tracers.runner(rec, ctx, 0.45 * s, function()
+            if head then head.Enabled = false end
+            if light then light.Enabled = false end
+        end)
         Tracers.make(rec, "Trail", {
             Attachment0 = top, Attachment1 = bottom, FaceCamera = true, LightEmission = 1, LightInfluence = 0, Lifetime = math.clamp(ctx.travel * 0.35, 0.05, 0.3),
             Color = ColorSequence.new(Util.lerpColor(ctx.colorAt(1), WHITE, 0.5), ctx.colorAt(0)), Transparency = NumberSequence.new(0, 1), WidthScale = NumberSequence.new(1, 0.1),
         }, part)
-        Tracers.make(rec, "PointLight", { Color = ctx.color, Brightness = 2 * rec.bright, Range = 10 }, part)
+        light = Tracers.make(rec, "PointLight", { Color = ctx.color, Brightness = 2 * rec.bright, Range = 10 }, part)
         head = Tracers.emitter(rec, part, {
             Rate = 120, Enabled = true, Lifetime = NumberRange.new(0.25, 0.5), Speed = NumberRange.new(0.5, 2.5),
             Size = Tracers.curve(0, 0.45 * p, 1, 0), Color = ColorSequence.new(WHITE, ctx.colorAt(0)),
@@ -6578,7 +6594,7 @@ do
         local part, top, bottom = Tracers.runner(rec, ctx, 0.5 * s)
         Tracers.make(rec, "Trail", {
             Attachment0 = top, Attachment1 = bottom, FaceCamera = true, Texture = SMOKE, TextureMode = Enum.TextureMode.Stretch, LightEmission = 0.2, LightInfluence = 0.5,
-            Lifetime = ctx.keep, Color = ColorSequence.new(soft(1), soft(0)), Transparency = Tracers.curve(0, 0.35, 0.7, 0.6, 1, 1), WidthScale = NumberSequence.new(1, 3),
+            Lifetime = math.max(ctx.keep, 0.8), Color = ColorSequence.new(soft(1), soft(0)), Transparency = Tracers.curve(0, 0.35, 0.7, 0.6, 1, 1), WidthScale = NumberSequence.new(1, 3),
         }, part)
         local puffs = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function(t)
             return {
@@ -6720,7 +6736,8 @@ do
         local hot = Util.lerpColor(ctx.color, Color3.fromRGB(255, 190, 90), 0.35)
         local haze = math.min(ctx.keep, 2.5)
         local _, finish = Tracers.streak(rec, ctx, 0.06 * s, 0.55, Tracers.whiten(0.3), { hold = math.min(ctx.keep, 0.25), fade = 0.35 })
-        local part, top, bottom = Tracers.runner(rec, ctx, 0.16 * s)
+        local light
+        local part, top, bottom = Tracers.runner(rec, ctx, 0.16 * s, function() if light then light.Enabled = false end end)
         local slug = Tracers.make(rec, "Trail", {
             Attachment0 = top, Attachment1 = bottom, FaceCamera = true, LightEmission = 1, LightInfluence = 0, Lifetime = math.clamp(ctx.travel * 0.12, 0.03, 0.08),
             Color = ColorSequence.new(WHITE, hot), Transparency = NumberSequence.new(0, 0.6), WidthScale = NumberSequence.new(1, 0.4),
@@ -6731,7 +6748,7 @@ do
             Lifetime = haze, Color = ColorSequence.new(Util.lerpColor(ctx.colorAt(0), Color3.fromRGB(150, 150, 150), 0.75)),
             Transparency = Tracers.curve(0, 0.75, 1, 1), WidthScale = NumberSequence.new(0.6, 2.5),
         }, part)
-        Tracers.make(rec, "PointLight", { Color = hot, Brightness = 2 * rec.bright, Range = 6 }, part)
+        light = Tracers.make(rec, "PointLight", { Color = hot, Brightness = 2 * rec.bright, Range = 6 }, part)
         local shed = Tracers.perNode(rec, ctx, Tracers.nodePoints(rec, ctx), function()
             return {
                 Orientation = Enum.ParticleOrientation.VelocityParallel, Lifetime = NumberRange.new(0.1, 0.25), Speed = NumberRange.new(2, 6), Drag = 3,
@@ -6785,11 +6802,389 @@ do
         return math.max(finish, 1.4)
     end
 
+    Tracers.SMOKE_CORE, Tracers.SMOKE_HALO = Color3.fromRGB(200, 205, 214), Color3.fromRGB(90, 98, 112)
+    Tracers.pool = { points = {}, beams = {}, puffs = {}, made = 0, puffing = 0 }
+    Tracers.BEAM = {
+        Texture = "", TextureMode = Enum.TextureMode.Wrap, TextureLength = 1, TextureSpeed = 0, LightEmission = 1, LightInfluence = 0,
+        FaceCamera = true, Segments = 1, CurveSize0 = 0, CurveSize1 = 0, Brightness = 1, ZOffset = 0,
+    }
+
+    function Tracers.take(kind)
+        local pool = Tracers.pool
+        local free = pool[kind]
+        while #free > 0 do
+            local item = table.remove(free)
+            local holder = kind == "puffs" and item.point or item
+            if propGet(holder, "Parent") ~= nil then return item end
+            pcall(holder.Destroy, holder)
+        end
+        local object = Instance.new(kind == "beams" and "Beam" or "Attachment")
+        object.Name = Util.randomName()
+        if kind == "beams" then object.Enabled = false end
+        object.Parent = Workspace.Terrain
+        pool.made = pool.made + 1
+        if kind ~= "puffs" then return object end
+        local emitter = Instance.new("ParticleEmitter")
+        emitter.Name = Util.randomName()
+        emitter.Enabled, emitter.Rate = false, 0
+        emitter.Parent = object
+        return { point = object, emitter = emitter }
+    end
+
+    function Tracers.give(kind, item)
+        local free = Tracers.pool[kind]
+        local holder = kind == "puffs" and item.point or item
+        if #free >= Tracers.caps.pool or propGet(holder, "Parent") == nil then
+            pcall(holder.Destroy, holder)
+            return
+        end
+        free[#free + 1] = item
+    end
+
+    function Tracers.release(rec)
+        for index = #rec.beams, 1, -1 do
+            local beam = rec.beams[index]
+            pcall(function()
+                beam.Enabled = false
+                beam.Attachment0, beam.Attachment1 = nil, nil
+            end)
+            Tracers.give("beams", beam)
+            rec.beams[index] = nil
+        end
+        for index = #rec.points, 1, -1 do
+            Tracers.give("points", rec.points[index])
+            rec.points[index] = nil
+        end
+        if rec.puff then
+            Tracers.give("puffs", rec.puff)
+            Tracers.pool.puffing = Tracers.pool.puffing - 1
+            rec.puff = nil
+        end
+        rec.layers = {}
+    end
+
+    function Tracers.flushPool()
+        local pool = Tracers.pool
+        for _, kind in ipairs({ "beams", "points", "puffs" }) do
+            for _, item in ipairs(pool[kind]) do
+                local holder = kind == "puffs" and item.point or item
+                pcall(holder.Destroy, holder)
+            end
+            pool[kind] = {}
+        end
+        pool.puffing = 0
+    end
+
+    function Tracers.place(rec, position)
+        local point = Tracers.take("points")
+        point.WorldPosition = position
+        rec.points[#rec.points + 1] = point
+        return point
+    end
+
+    function Tracers.layer(rec, a0, a1)
+        local layer = { list = {}, a0 = a0, a1 = a1 or a0 }
+        rec.layers[#rec.layers + 1] = layer
+        return layer
+    end
+
+    function Tracers.lay(rec, layer, a0, a1, props)
+        local beam = Tracers.take("beams")
+        rec.beams[#rec.beams + 1] = beam
+        for key, default in pairs(Tracers.BEAM) do
+            local value = props[key]
+            if value == nil then value = default end
+            if key == "Brightness" or key == "ZOffset" then propSet(beam, key, value) else beam[key] = value end
+        end
+        beam.Attachment0, beam.Attachment1 = a0, a1
+        beam.Width0, beam.Width1, beam.Color = props.Width0, props.Width1, props.Color
+        beam.Transparency = NumberSequence.new(layer.a0, layer.a1)
+        beam.Enabled = true
+        layer.list[#layer.list + 1] = beam
+        return beam
+    end
+
+    function Tracers.basis(direction)
+        local ref = math.abs(direction.Y) > 0.95 and Vector3.new(1, 0, 0) or Vector3.new(0, 1, 0)
+        local right = direction:Cross(ref).Unit
+        return right, right:Cross(direction).Unit
+    end
+
+    function Tracers.fadeStyle(rec, k)
+        local step = math.floor(k * 32 + 0.5)
+        if step == rec.step then return end
+        rec.step = step
+        k = step / 32
+        for _, layer in ipairs(rec.layers) do
+            if not layer.own then
+                local value = NumberSequence.new(layer.a0 + (1 - layer.a0) * k, layer.a1 + (1 - layer.a1) * k)
+                for _, beam in ipairs(layer.list) do beam.Transparency = value end
+            end
+        end
+    end
+
+    function Tracers.tickStyle(rec, age)
+        if rec.tick then rec.tick(age) end
+        local k = math.clamp((age - rec.hold) / math.max(rec.fade, 1e-3), 0, 1)
+        if rec.ease then k = k * k end
+        Tracers.fadeStyle(rec, k)
+    end
+
+    function Tracers.stepStyles(now, active)
+        local list = Tracers.styled
+        for index = #list, 1, -1 do
+            local rec = list[index]
+            local age = now - rec.born
+            local ok, problem = true, nil
+            if active and age < rec.life then
+                ok, problem = pcall(Tracers.tickStyle, rec, age)
+                if not ok then Util.note("tracer style" .. tostring(problem), "tracer style:", problem) end
+            end
+            if not ok or not active or age >= rec.life then
+                Tracers.release(rec)
+                table.remove(list, index)
+            end
+        end
+    end
+
+    function Tracers.admit(rec)
+        local list, caps = Tracers.styled, Tracers.caps
+        local beams = #rec.beams
+        for _, other in ipairs(list) do beams = beams + #other.beams end
+        while #list > 0 and (#list >= caps.styleRecords or beams > caps.styleBeams) do
+            local pick = 1
+            for index, other in ipairs(list) do
+                if not other.mine then
+                    pick = index
+                    break
+                end
+            end
+            local oldest = table.remove(list, pick)
+            beams = beams - #oldest.beams
+            Tracers.release(oldest)
+        end
+        list[#list + 1] = rec
+    end
+
+    function Tracers.spawnStyle(name, path, color, mine, timing)
+        local origin, finish = path[1], path[#path]
+        local offset = finish - origin
+        local length = offset.Magnitude
+        if length < 1 then return false end
+        local gradient = flag("trace_gradient", false)
+        local rainbow = gradient and flag("trace_rainbow", false)
+        local start = flag("trace_grad_start", Color3.fromRGB(255, 94, 94))
+        local stop = flag("trace_grad_end", Color3.fromRGB(94, 160, 255))
+        local hold, fade = math.clamp(flag("trace_time", 4), 0.5, 10), Tracers.fade
+        if timing then hold, fade = timing.hold, math.max(timing.fade, 0.3 - timing.hold) end
+        local own = mine ~= false
+        local ctx = {
+            origin = origin, finish = finish, offset = offset, length = length, direction = offset.Unit, color = color,
+            scale = math.clamp(flag("trace_width", 1), 0.2, 3), density = math.clamp(flag("trace_fx_density", 1), 0.25, 3),
+            cap = own and Tracers.caps.segments or Tracers.caps.enemySegments, near = Tracers.nearScale(origin),
+        }
+        function ctx.colorAt(t)
+            if rainbow then return Color3.fromHSV((t * 0.8) % 1, 0.85, 1) end
+            if gradient then return Util.lerpColor(start, stop, t) end
+            return color
+        end
+        local glow = flag("trace_glow", false)
+        local rec = {
+            beams = {}, points = {}, layers = {}, born = os.clock(), mine = own, style = name, step = 0, hold = hold, fade = fade, ease = timing and timing.ease,
+            bright = glow and 1 + 0.2 * math.clamp(flag("trace_glow_strength", 4), 0, 10) or 1,
+        }
+        if not Util.guard("tracer style " .. name, Tracers.styles[name], rec, ctx) then
+            Tracers.release(rec)
+            return false
+        end
+        rec.life = rec.hold + rec.fade
+        Tracers.admit(rec)
+        return true
+    end
+
+    function Tracers.puffs(rec, ctx, points, width, color)
+        local pool = Tracers.pool
+        local amount = math.min(math.floor(#points / 6 * ctx.density + 0.5), 6)
+        if amount < 1 or pool.puffing >= Tracers.caps.puffs then return end
+        local puff = Tracers.take("puffs")
+        rec.puff, pool.puffing = puff, pool.puffing + 1
+        local emitter = puff.emitter
+        local props = {
+            Texture = SMOKE, LightEmission = 0.3, LightInfluence = 0, Lifetime = NumberRange.new(rec.fade * 0.6, rec.fade), Speed = NumberRange.new(0.05, 0.25),
+            SpreadAngle = Vector2.new(180, 180), Drag = 1, Acceleration = Vector3.new(0, 0.3, 0), Rotation = NumberRange.new(0, 360), RotSpeed = NumberRange.new(-20, 20),
+            Size = Tracers.curve(0, width * 2, 1, width * 3.5), Transparency = Tracers.curve(0, 0.5, 1, 1), Color = ColorSequence.new(color), LockedToPart = false,
+        }
+        for key, value in pairs(props) do emitter[key] = value end
+        local last = #points
+        for n = 1, amount do
+            local index = math.clamp(math.floor((n - 0.5 + (math.random() - 0.5) * 0.8) / amount * (last - 1)) + 1, 2, last)
+            puff.point.WorldPosition = points[index].WorldPosition
+            pcall(emitter.Emit, emitter, 1)
+        end
+    end
+
+    function Tracers.smoke(rec, ctx, wisp)
+        local spacing = math.clamp(flag("trace_smoke_spacing", 1.5), 0.75, 4)
+        local jitter = math.clamp(flag("trace_smoke_jitter", 0.2), 0, 0.6) * (wisp and 1.8 or 1)
+        local width = math.clamp(flag("trace_smoke_width", 0.22), 0.1, 0.6) * (wisp and 0.75 or 1)
+        local gaps = wisp and math.clamp(flag("trace_wisp_gaps", 0.25), 0, 0.6) or 0
+        local core = flag("trace_smoke_lane", false) and ctx.colorAt(0) or flag("trace_smoke_color", Tracers.SMOKE_CORE)
+        local halo = flag("trace_smoke_halo", Tracers.SMOKE_HALO)
+        local peak = Util.lerpColor(core, WHITE, 0.28)
+        rec.hold, rec.fade, rec.ease = 0, math.clamp(flag("trace_smoke_life", 1), 0.3, 3), false
+        local count = math.clamp(math.ceil(ctx.length / spacing), 1, ctx.cap)
+        local right, up = Tracers.basis(ctx.direction)
+        local points, tints = {}, {}
+        for index = 0, count do
+            local position = ctx.origin + ctx.offset * (index / count)
+            if index > 0 and jitter > 0 then
+                local angle, reach = math.random() * math.pi * 2, jitter * (0.75 + 0.5 * math.random())
+                position = position + (right * math.cos(angle) + up * math.sin(angle)) * reach
+            end
+            points[index + 1] = Tracers.place(rec, position)
+            tints[index + 1] = Util.lerpColor(core, peak, math.random() ^ 2)
+        end
+        local outer = Tracers.layer(rec, wisp and 0.86 or 0.78)
+        local inner = Tracers.layer(rec, wisp and 0.25 or 0.08)
+        local wide = width * 3.2
+        for index = 1, count do
+            if not (gaps > 0 and index > 1 and math.random() < gaps) then
+                local taper0, taper1 = 1 - 0.35 * (index - 1) / count, 1 - 0.35 * index / count
+                if index == 1 then taper0 = taper0 * ctx.near end
+                local a, b = points[index], points[index + 1]
+                Tracers.lay(rec, outer, a, b, {
+                    Texture = SMOKE, TextureLength = wide * 1.6, LightEmission = 0.15, ZOffset = -0.05, Width0 = wide * taper0, Width1 = wide * taper1, Color = ColorSequence.new(halo),
+                })
+                Tracers.lay(rec, inner, a, b, {
+                    Texture = SMOKE, TextureLength = width * 2.5, LightEmission = 0.3, Width0 = width * taper0, Width1 = width * taper1, Color = ColorSequence.new(tints[index], tints[index + 1]),
+                })
+            end
+        end
+        if flag("trace_smoke_puffs", true) then Tracers.puffs(rec, ctx, points, width, peak) end
+    end
+
+    Tracers.styles["Smoke trail"] = function(rec, ctx) Tracers.smoke(rec, ctx, false) end
+    Tracers.styles.Wisp = function(rec, ctx) Tracers.smoke(rec, ctx, true) end
+
+    Tracers.styles.Ribbon = function(rec, ctx)
+        local s = ctx.scale
+        local count = math.clamp(math.ceil(ctx.length / 0.6), 6, math.floor(ctx.cap / 2))
+        local turns = math.min(ctx.length / 3.5, count / 6)
+        local radius, phase = 0.16 * s, math.random() * math.pi * 2
+        local right, up = Tracers.basis(ctx.direction)
+        local strands = { {}, {} }
+        for index = 0, count do
+            local t = index / count
+            local swell = math.min(ctx.length * t / 2, 1) * radius
+            local angle = phase + turns * math.pi * 2 * t
+            local centre = ctx.origin + ctx.offset * t
+            for side = 1, 2 do
+                local turn = angle + (side - 1) * math.pi
+                strands[side][index + 1] = Tracers.place(rec, centre + (right * math.cos(turn) + up * math.sin(turn)) * swell)
+            end
+        end
+        local spine = Tracers.layer(rec, 0.75)
+        Tracers.lay(rec, spine, strands[1][1], Tracers.place(rec, ctx.finish), {
+            Width0 = 0.4 * s * ctx.near, Width1 = 0.4 * s, Color = ColorSequence.new(ctx.colorAt(0), ctx.colorAt(1)), Brightness = rec.bright, ZOffset = -0.05,
+        })
+        local layers = { Tracers.layer(rec, 0.05), Tracers.layer(rec, 0.2) }
+        for side, strand in ipairs(strands) do
+            local tint = side == 1 and Tracers.plain or Tracers.whiten(0.6)
+            for index = 1, count do
+                Tracers.lay(rec, layers[side], strand[index], strand[index + 1], {
+                    Width0 = 0.07 * s, Width1 = 0.07 * s, Brightness = 2 * rec.bright,
+                    Color = ColorSequence.new(tint(ctx.colorAt((index - 1) / count)), tint(ctx.colorAt(index / count))),
+                })
+            end
+        end
+    end
+
+    Tracers.styles.Pulse = function(rec, ctx)
+        local s = ctx.scale
+        local travel = math.clamp(ctx.length / 600, 0.05, 0.25)
+        rec.hold = math.max(rec.hold, travel)
+        local base, tip, back = Tracers.place(rec, ctx.origin), Tracers.place(rec, ctx.origin), Tracers.place(rec, ctx.origin)
+        Tracers.lay(rec, Tracers.layer(rec, 0.92, 0.15), base, tip, {
+            Width0 = 0.06 * s * ctx.near, Width1 = 0.1 * s, Color = ColorSequence.new(ctx.colorAt(0), ctx.colorAt(1)), Brightness = 2 * rec.bright,
+        })
+        local headLayer, glowLayer = Tracers.layer(rec, 1, 0), Tracers.layer(rec, 1, 0.55)
+        headLayer.own, glowLayer.own = true, true
+        local hot = ctx.colorAt(1)
+        local head = Tracers.lay(rec, headLayer, back, tip, {
+            Width0 = 0.1 * s, Width1 = 0.32 * s, Color = ColorSequence.new(hot, Util.lerpColor(hot, WHITE, 0.7)), Brightness = 4 * rec.bright,
+        })
+        local glow = Tracers.lay(rec, glowLayer, back, tip, {
+            Width0 = 0.3 * s, Width1 = 0.9 * s, Color = ColorSequence.new(hot), Brightness = 2 * rec.bright, ZOffset = -0.05,
+        })
+        local reach, shown = 2.2 * s, -1
+        rec.tick = function(age)
+            local u = math.clamp(age / travel, 0, 1)
+            local at = ctx.origin + ctx.offset * u
+            tip.WorldPosition = at
+            back.WorldPosition = at - ctx.direction * math.min(reach, ctx.length * u)
+            local k = math.floor(math.clamp((age - travel) / 0.12, 0, 1) * 16 + 0.5) / 16
+            if u >= 1 and k ~= shown then
+                shown = k
+                head.Transparency = NumberSequence.new(1, k)
+                glow.Transparency = NumberSequence.new(1, 0.55 + 0.45 * k)
+            end
+        end
+    end
+
+    Tracers.styles.Ion = function(rec, ctx)
+        local s = ctx.scale
+        local a, b = Tracers.place(rec, ctx.origin), Tracers.place(rec, ctx.finish)
+        Tracers.lay(rec, Tracers.layer(rec, 0.7), a, b, {
+            Width0 = 0.45 * s * ctx.near, Width1 = 0.45 * s, Color = ColorSequence.new(ctx.colorAt(0), ctx.colorAt(1)), Brightness = 1.5 * rec.bright, ZOffset = -0.05,
+        })
+        local white = Tracers.whiten(0.65)
+        Tracers.lay(rec, Tracers.layer(rec, 0), a, b, {
+            Width0 = 0.05 * s * ctx.near, Width1 = 0.05 * s, Color = ColorSequence.new(white(ctx.colorAt(0)), white(ctx.colorAt(1))), Brightness = 3 * rec.bright,
+        })
+        local spark = Tracers.layer(rec, 0)
+        local total = math.clamp(math.floor(ctx.length / 5), 2, math.floor((ctx.cap - 2) / 3))
+        local right, up = Tracers.basis(ctx.direction)
+        local arcs = {}
+        for index = 1, total do
+            local chain = {}
+            for n = 1, 4 do chain[n] = Tracers.place(rec, ctx.origin) end
+            local tint = ctx.colorAt((index - 0.5) / total)
+            for n = 1, 3 do
+                Tracers.lay(rec, spark, chain[n], chain[n + 1], {
+                    Width0 = 0.07 * s, Width1 = 0.04 * s, Color = ColorSequence.new(Util.lerpColor(tint, WHITE, 0.5), tint), Brightness = 2.5 * rec.bright,
+                })
+            end
+            arcs[index] = chain
+        end
+        local function crackle()
+            for index, chain in ipairs(arcs) do
+                local span = (0.8 + math.random() * 1.2) * s
+                local t = math.min((index - 1 + math.random()) / total, math.max(0, 1 - span / ctx.length))
+                local from = ctx.origin + ctx.offset * t
+                for n, point in ipairs(chain) do
+                    local angle, reach = math.random() * math.pi * 2, (n == 1 and 0.05 or 0.12 + math.random() * 0.28) * s
+                    point.WorldPosition = from + ctx.direction * (span * (n - 1) / 3) + (right * math.cos(angle) + up * math.sin(angle)) * reach
+                end
+            end
+        end
+        crackle()
+        local frame = 0
+        rec.tick = function(age)
+            local step = math.floor(age / 0.05)
+            if step ~= frame then
+                frame = step
+                crackle()
+            end
+        end
+    end
+
     Util.onUnload(function()
         for _, record in ipairs(Tracers.list) do Tracers.drop(record) end
         Tracers.list = {}
         for _, rec in ipairs(Tracers.fx) do Tracers.dropFx(rec) end
-        Tracers.fx, Tracers.queue = {}, {}
+        for _, rec in ipairs(Tracers.styled) do Tracers.release(rec) end
+        Tracers.flushPool()
+        Tracers.fx, Tracers.queue, Tracers.styled = {}, {}, {}
     end)
 
     Impacts = {
@@ -8185,6 +8580,7 @@ do
     function HitCham.sizeOf(part, name)
         local ok, size = pcall(function() return part.Size end)
         if not (ok and typeof(size) == "Vector3") or math.min(size.X, size.Y, size.Z) < 0.05 then size = PART_SIZES[name] or Vector3.new(1, 1, 1) end
+        if name == "Head" then return Vector3.new(1.2, 1.2, 1.2) * size.Y end
         return size
     end
 
@@ -8621,7 +9017,10 @@ do
     local BODY_PARTS = { Head = true, Torso = true, ["Left Arm"] = true, ["Right Arm"] = true, ["Left Leg"] = true, ["Right Leg"] = true, HumanoidRootPart = true }
     local function on(name) return Toggles[name] and Toggles[name].Value end
     local function val(name) return Options[name] and Options[name].Value end
-    local SNAP_PROPS = { "Material", "Color", "Reflectance", "Transparency", "TextureID", "TextureId", "VertexColor", "UsePartColor" }
+    local SNAP_PROPS = { "Material", "Color", "Reflectance", "Transparency", "TextureID", "TextureId", "VertexColor", "UsePartColor", "ShirtTemplate", "PantsTemplate", "Graphic" }
+    local CLOTH_PROPS = { Shirt = "ShirtTemplate", Pants = "PantsTemplate", ShirtGraphic = "Graphic" }
+    local PART_SIZES = { Head = Vector3.new(1.2, 1.2, 1.2) }
+    for name, size in pairs(HitCham.sizes) do PART_SIZES[name] = PART_SIZES[name] or size end
 
     for _, entry in ipairs({
         { "None", "" }, { "Webbed", "rbxassetid://2179243880" }, { "Pixelated", "rbxassetid://140652787" }, { "Swirl", "rbxassetid://8133639623" },
@@ -8645,6 +9044,9 @@ do
         if is("BasePart") then return "part" end
         if is("SpecialMesh") then return "smesh" end
         if is("Texture") or is("Decal") then return "decal" end
+        for class in pairs(CLOTH_PROPS) do
+            if is(class) then return "cloth" end
+        end
         return nil
     end
 
@@ -8697,6 +9099,11 @@ do
                 Body.setIf(object, "TextureId", spec.texture)
                 Body.setIf(object, "VertexColor", spec.vertex)
             end
+            return
+        end
+        if item.kind == "cloth" then
+            local prop = CLOTH_PROPS[propGet(object, "ClassName")]
+            if prop then Body.setIf(object, prop, "") end
             return
         end
         if item.kind == "decal" or hide then
@@ -9509,7 +9916,7 @@ do
                 if size and item.top and not seen[item.name] then
                     seen[item.name] = true
                     ghosts[#ghosts + 1] = { size = size, cf = item.cf, part = KillFx.make(ev, "Part", {
-                        Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false,
+                        Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false, Shape = KillFx.shapeOf(item.name),
                         Material = Enum.Material.ForceField, Color = opts.color, Transparency = 0, Size = size, CFrame = item.cf,
                     }) }
                 end
@@ -9619,13 +10026,17 @@ do
         end,
     }
 
+    function KillFx.shapeOf(name)
+        return name == "Head" and Enum.PartType.Ball or Enum.PartType.Block
+    end
+
     function KillFx.copies(ev, body, props)
         local list, seen = {}, {}
         for _, item in ipairs(body.parts) do
             local size = PART_SIZES[item.name]
             if size and item.top and not seen[item.name] then
                 seen[item.name] = true
-                local base = { Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false, Size = size, CFrame = item.cf }
+                local base = { Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false, Shape = KillFx.shapeOf(item.name), Size = size, CFrame = item.cf }
                 for key, value in pairs(props) do base[key] = value end
                 list[#list + 1] = { size = size, cf = item.cf, turn = CFrame.new(-item.cf.Position) * item.cf, part = KillFx.make(ev, "Part", base) }
             end
@@ -9756,7 +10167,8 @@ do
             local slab = KillFx.make(ev, "Part", KillFx.solid({ Material = Enum.Material.Slate, Color = stone, Size = Vector3.new(2.2, 3, 0.5), CFrame = base }))
             local cap = KillFx.make(ev, "Part", KillFx.solid({ Material = Enum.Material.Slate, Color = stone, Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.5, 2.2, 2.2), CFrame = base }))
             local gui = KillFx.make(ev, "SurfaceGui", { Face = Enum.NormalId.Front, LightInfluence = 0, CanvasSize = Vector2.new(220, 300) }, slab)
-            local name = tostring(propGet(LocalPlayer, "DisplayName") or propGet(LocalPlayer, "Name") or "")
+            local owner = Corpse.ownerOf(corpse) or Players:FindFirstChild(tostring(propGet(corpse, "Name"))) or LocalPlayer
+            local name = tostring(propGet(owner, "DisplayName") or propGet(owner, "Name") or "")
             KillFx.make(ev, "TextLabel", {
                 Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "R.I.P.\n" .. name, TextScaled = true, Font = Enum.Font.GothamBold,
                 TextColor3 = opts.color2, TextStrokeTransparency = 0.4, TextStrokeColor3 = opts.color,
@@ -10892,6 +11304,10 @@ end
 
 do
     local Effects = Pages.Effects
+    local Shoot, Hits, Kills = Effects["When I shoot"], Effects["When I hit"], Effects["When I kill"]
+    local hasCanvas = Shoot.canvas ~= nil
+    local Sections = { list = {}, order = {} }
+
     local function pickColor(popup, label, flagName, default, alpha)
         popup:Label({ Name = label }):Colorpicker({ Name = label, Flag = flagName, Default = default, Alpha = alpha or 0 })
     end
@@ -10905,198 +11321,351 @@ do
         end
     end
 
-    local Hits = Effects.Hits
-    local Marker = Hits["Hit marker"]
-    local MarkerMore = Marker:Toggle({ Name = "Hit marker", Flag = "hit_marker", Tooltip = "Drawn at the crosshair whenever one of your shots lowers a player's health" }):Colorpicker({ Name = "Marker", Flag = "hit_marker_color", Default = WHITE, Alpha = 0 }):Colorpicker({ Name = "Headshot", Flag = "hit_marker_head", Default = Color3.fromRGB(255, 70, 70), Alpha = 0 }):Settings("Hit marker", 240)
-    Marker:Depends({ { "hit_marker", true } }, function(box)
-        box:Dropdown({ Name = "Style", Flag = "hit_marker_style", Items = Feedback.styles, Default = "Classic X" })
-        box:Dropdown({ Name = "Animation", Flag = "hit_marker_anim", Items = Feedback.anims, Default = "Expand" })
-        box:Slider({ Name = "Size", Flag = "hit_marker_size", Min = 4, Max = 24, Default = 9, Decimals = 1, Suffix = " px" })
-        box:Slider({ Name = "Duration", Flag = "hit_marker_time", Min = 0.1, Max = 1.2, Default = 0.4, Decimals = 0.01, Suffix = " s" })
-        box:Toggle({ Name = "Kill marker", Flag = "hit_marker_kill", Tooltip = "Bigger marker in its own colour when the hit kills" }):Colorpicker({ Name = "Kill", Flag = "hit_marker_kill_color", Default = Color3.fromRGB(255, 190, 60), Alpha = 0 })
-        box:Toggle({ Name = "3D at hit position", Flag = "hit_marker_3d", Tooltip = "Draws each marker where the bullet hit the player instead of at the crosshair" })
-    end)
-    MarkerMore:Slider({ Name = "Thickness", Flag = "hit_marker_thick", Min = 1, Max = 5, Default = 1, Decimals = 1, Suffix = " px" })
-    MarkerMore:Slider({ Name = "Gap", Flag = "hit_marker_gap", Min = 0, Max = 20, Default = 3, Decimals = 1, Suffix = " px" })
-    MarkerMore:Toggle({ Name = "Outline", Flag = "hit_marker_outline", Default = true })
-    MarkerMore:Depends({ { "hit_marker_kill", true } }, function(box)
-        box:Slider({ Name = "Kill marker size", Flag = "hit_marker_kill_size", Min = 1, Max = 3, Default = 1.5, Decimals = 0.05, Suffix = "x" })
-    end)
-    MarkerMore:Toggle({ Name = "Skull on kill", Flag = "hit_marker_skull", Tooltip = "Replaces the marker with a skull when the hit kills" })
-    MarkerMore:Toggle({ Name = "Follow mouse", Flag = "hit_marker_mouse", Default = true, Tooltip = "Prison Life aims at the mouse; off draws the marker at the screen centre" })
+    local function never() return false end
 
-    local HitSnd = Hits["Hit sound"]
-    HitSnd:Toggle({ Name = "Hit sound", Flag = "hit_snd", Tooltip = "Pick and audition sounds in the list on the right" })
-    HitSnd:Depends({ { "hit_snd", true } }, function(box)
-        box:Dropdown({ Name = "Sound", Flag = "hit_snd_id", Items = Feedback.HIT_SOUND_ORDER, Default = "Gamesense", Searchable = true })
-        box:Slider({ Name = "Volume", Flag = "hit_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
-        box:Slider({ Name = "Pitch", Flag = "hit_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
-        box:Slider({ Name = "Max length", Flag = "hit_snd_max", Min = 0, Max = 3, Default = 0.6, Decimals = 0.05, Suffix = " s", Tooltip = "Stops long sounds after this long; 0 plays the whole sound" })
-        box:Toggle({ Name = "Different on headshot", Flag = "hit_snd_head" })
-        box:Depends({ { "hit_snd_head", true } }, function(head)
-            head:Dropdown({ Name = "Headshot sound", Flag = "hit_snd_head_id", Items = Feedback.HIT_SOUND_ORDER, Default = "Alt Headshot kill", Searchable = true })
-        end)
-        box:Depends({ { "hit_snd_id", function(value) return value == "Custom" or flag("hit_snd_head_id", nil) == "Custom" end } }, function(custom)
-            custom:Input({ Name = "Custom sound id", Flag = "hit_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
-        end)
-    end)
+    local function pickerRow(box, anchor, build)
+        if hasCanvas then return box:Depends({ { anchor, never } }, build) end
+        build(box)
+    end
 
-    local Hc = Hits["Hit chams"]
-    local HcMore = Hc:Toggle({ Name = "Hit chams", Flag = "hit_cham_on", Tooltip = "Flashes a local copy of the body you hit, built from adornments. Only your own hits on enemies" }):Colorpicker({ Name = "Hit cham", Flag = "hit_cham_color", Default = Color3.fromRGB(255, 70, 110), Alpha = 0.35 }):Settings("Hit chams", 240)
-    Hc:Depends({ { "hit_cham_on", true } }, function(box)
-        box:Dropdown({ Name = "Look", Flag = "hit_cham_look", Items = { "Solid", "Glow", "Wireframe" }, Default = "Solid" })
-        box:Dropdown({ Name = "Fade style", Flag = "hit_cham_fade", Items = { "Linear", "Pop", "Pulse" }, Default = "Linear" })
-        box:Slider({ Name = "Duration", Flag = "hit_cham_time", Min = 0.1, Max = 3, Default = 0.8, Decimals = 0.05, Suffix = " s" })
-        box:Toggle({ Name = "Hit part only", Flag = "hit_cham_part", Tooltip = "Only the body part the bullet hit instead of the whole body" })
-        box:Toggle({ Name = "Follow player", Flag = "hit_cham_follow", Tooltip = "Off keeps the pose from the moment of the hit; on moves with the player while it fades" })
-    end)
-    HcMore:Toggle({ Name = "Always on top", Flag = "hit_cham_top", Default = true })
-    HcMore:Toggle({ Name = "Outline", Flag = "hit_cham_outline", Tooltip = "A second, slightly larger layer around each part" })
-    HcMore:Depends({ { "hit_cham_outline", true } }, function(box)
-        pickColor(box, "Outline colour", "hit_cham_outline_color", WHITE, 0.4)
-    end)
-    HcMore:Slider({ Name = "Max at once", Flag = "hit_cham_max", Min = 1, Max = 12, Default = 12, Decimals = 1, Tooltip = "The oldest cham is removed first" })
+    local function controlNames()
+        local seen = {}
+        for name in pairs(Toggles) do seen[name] = true end
+        for name in pairs(Options) do seen[name] = true end
+        return seen
+    end
 
-    local HitEffects = Hits["Hit effects"]
-    local HfMore = HitEffects:Toggle({ Name = "Hit effects", Flag = "hit_fx_on", Tooltip = "Local particle effects where your bullets hit enemies, separate from hit chams" }):Colorpicker({ Name = "Hit effect", Flag = "hit_fx_color", Default = Color3.fromRGB(255, 120, 80), Alpha = 0 }):Settings("Hit effects", 240)
-    HitEffects:Depends({ { "hit_fx_on", true } }, function(box)
-        box:Dropdown({ Name = "Effects", Flag = "hit_fx_list", Items = HitFx.names, Multi = true, Default = { "Sparks", "Glow burst" }, Tooltip = "Pick several to layer them" })
-        box:Slider({ Name = "Size", Flag = "hit_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
-        box:Slider({ Name = "Amount", Flag = "hit_fx_amount", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
-        box:Toggle({ Name = "Headshots only", Flag = "hit_fx_head" })
-    end)
-    HfMore:Slider({ Name = "Lifetime", Flag = "hit_fx_time", Min = 0.3, Max = 2.5, Default = 1, Decimals = 0.05, Suffix = "x" })
-    HfMore:Dropdown({ Name = "Position", Flag = "hit_fx_at", Items = { "Hit point", "Body centre" }, Default = "Hit point" })
-    HfMore:Slider({ Name = "Max at once", Flag = "hit_fx_max", Min = 1, Max = 16, Default = 12, Decimals = 1, Tooltip = "The oldest effect is removed first" })
+    local function copyValue(value)
+        if type(value) ~= "table" then return value end
+        local out = {}
+        for key, item in pairs(value) do out[key] = item end
+        return out
+    end
 
-    local Dmg = Hits["Damage numbers"]
-    local DmgMore = Dmg:Toggle({ Name = "Damage numbers", Flag = "dmg_on", Tooltip = "Floating numbers with the health each of your hits took" }):Colorpicker({ Name = "Head", Flag = "dmg_head", Default = Color3.fromRGB(255, 102, 102) }):Colorpicker({ Name = "Torso", Flag = "dmg_torso", Default = Color3.fromRGB(255, 150, 0) }):Colorpicker({ Name = "Limbs", Flag = "dmg_limb", Default = Color3.fromRGB(255, 255, 0) }):Settings("Damage numbers", 230)
-    Dmg:Depends({ { "dmg_on", true } }, function(box)
-        box:Slider({ Name = "Size", Flag = "dmg_size", Min = 8, Max = 32, Default = 16, Decimals = 1, Suffix = " px" })
-    end)
-    DmgMore:Slider({ Name = "Rise", Flag = "dmg_rise", Min = 10, Max = 150, Default = 60, Decimals = 1, Suffix = " px" })
-    DmgMore:Slider({ Name = "Duration", Flag = "dmg_time", Min = 0.4, Max = 3, Default = 1.1, Decimals = 0.01, Suffix = " s" })
+    local function snapshot(control)
+        if control.Type == "ColorPicker" then return { color = control.Value, alpha = control.Transparency or 0 } end
+        return copyValue(control.Value)
+    end
 
-    local Kills = Effects.Kills
-    local KillSnd = Kills["Kill sound"]
-    KillSnd:Toggle({ Name = "Kill sound", Flag = "kill_snd", Tooltip = "Plays when a player dies within 0.8 s of your hit. Pick and audition sounds in the list on the right" })
-    KillSnd:Depends({ { "kill_snd", true } }, function(box)
-        box:Dropdown({ Name = "Sound", Flag = "kill_snd_id", Items = Feedback.KILL_SOUND_ORDER, Default = "Alt Killshot", Searchable = true })
-        box:Slider({ Name = "Volume", Flag = "kill_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
-        box:Slider({ Name = "Pitch", Flag = "kill_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
-        box:Slider({ Name = "Max length", Flag = "kill_snd_max", Min = 0, Max = 6, Default = 2.5, Decimals = 0.05, Suffix = " s", Tooltip = "Stops long sounds after this long; 0 plays the whole sound" })
-        box:Depends({ { "kill_snd_id", "Custom" } }, function(custom)
-            custom:Input({ Name = "Custom sound id", Flag = "kill_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
-        end)
-    end)
+    local function remember(key, names)
+        local entry = { key = key, flags = {}, defaults = {} }
+        table.sort(names)
+        for _, name in ipairs(names) do
+            local control = Toggles[name] or Options[name]
+            if control and control.Type ~= "KeyPicker" then
+                entry.flags[#entry.flags + 1] = name
+                entry.defaults[name] = snapshot(control)
+            end
+        end
+        Sections.list[key] = entry
+        Sections.order[#Sections.order + 1] = key
+        return entry
+    end
 
-    local Kill = Kills["Kill effects"]
-    local KfMore = Kill:Toggle({ Name = "Kill effects", Flag = "kill_fx", Tooltip = "Plays local effects on the body of players you kill. Visual only, nothing is sent to the server" }):Settings("Kill effects", 260)
-    Kill:Depends({ { "kill_fx", true } }, function(box)
-        box:Dropdown({ Name = "Effects", Flag = "kill_fx_list", Items = KillFx.names, Multi = true, Default = { "Dissolve", "Lightning" } })
-        box:Dropdown({ Name = "Body effects", Flag = "kill_fx_corpse", Items = KillFx.corpseNames, Multi = true, Tooltip = "Act on the body itself, locally. Only one movement effect runs per body: the first one in this list" })
-        box:Slider({ Name = "Intensity", Flag = "kill_fx_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
-        box:Slider({ Name = "Duration", Flag = "kill_fx_dur", Min = 0.5, Max = 6, Default = 2.5, Decimals = 0.1, Suffix = " s", Tooltip = "Length of Dissolve, Pillar, Tombstone, Crystallize and Holo-scan" })
-    end)
-    pickColor(KfMore, "Colour", "kill_fx_color", Color3.fromRGB(102, 204, 255))
-    pickColor(KfMore, "Secondary", "kill_fx_color2", Color3.fromRGB(235, 248, 255))
-    KfMore:Slider({ Name = "Screen flash only near", Flag = "kill_fx_flash_dist", Min = 20, Max = 500, Default = 150, Decimals = 1, Suffix = " studs" })
-    KfMore:Slider({ Name = "Body effect time", Flag = "kill_fx_corpse_dur", Min = 1, Max = 8, Default = 3, Decimals = 0.1, Suffix = " s" })
-    KfMore:Slider({ Name = "Body particles", Flag = "kill_fx_corpse_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
-    KfMore:Slider({ Name = "Float height", Flag = "kill_fx_corpse_height", Min = 2, Max = 30, Default = 10, Decimals = 1, Suffix = " studs" })
-    KfMore:Toggle({ Name = "Play sound", Flag = "kill_fx_sound" })
-    KfMore:Depends({ { "kill_fx_sound", true } }, function(box)
-        box:Input({ Name = "Sound id", Flag = "kill_fx_sound_id", Placeholder = "rbxassetid or number" })
-    end)
+    function Sections.reset(key)
+        local entry = Sections.list[key]
+        if not entry then return 0 end
+        local changed = 0
+        for _, name in ipairs(entry.flags) do
+            local control = Toggles[name] or Options[name]
+            local value = entry.defaults[name]
+            if control then
+                local ok
+                if control.Type == "ColorPicker" then
+                    ok = pcall(control.SetValueRGB, control, value.color, value.alpha)
+                else
+                    ok = pcall(control.SetValue, control, copyValue(value))
+                end
+                if ok then changed = changed + 1 end
+            end
+        end
+        return changed
+    end
 
-    local Notice = Kills["Kill notice"]
-    Notice:Toggle({ Name = "Kill notice", Flag = "killcam_notify", Default = true, Tooltip = "Notification naming the player you just eliminated" })
-    Notice:Depends({ { "killcam_notify", true } }, function(box)
-        box:Toggle({ Name = "Notice sound", Flag = "killcam_sound" })
-    end)
-    Notice:Toggle({ Name = "Debug kill events", Flag = "misc_debug_kills", Tooltip = "Prints one line per inferred kill to the console (F9)" })
+    local function resetButton(box, key)
+        box:Button({ Name = "Reset section", Callback = function()
+            local count = Sections.reset(key)
+            Util.notify({ Title = "Effects", Text = string.format("%s: %d settings back to default", key, count), Duration = 2 })
+        end })
+    end
 
-    local Run = Kills["Kill streak"]
-    local RunMore = Run:Toggle({ Name = "Kill streak", Flag = "streak_on", Tooltip = "Banner and announcer for kills in quick succession: each kill within the window of the previous one raises the count" }):Colorpicker({ Name = "Streak", Flag = "streak_color", Default = Color3.fromRGB(255, 80, 90), Alpha = 0 }):Colorpicker({ Name = "Peak", Flag = "streak_color2", Default = Color3.fromRGB(255, 200, 70), Alpha = 0 }):Settings("Kill streak", 250)
-    Run:Depends({ { "streak_on", true } }, function(box)
-        box:Dropdown({ Name = "Style", Flag = "streak_style", Items = Streak.styles, Default = "Valorant bars" })
-        box:Slider({ Name = "Window", Flag = "streak_window", Min = 1, Max = 15, Default = 4, Decimals = 0.1, Suffix = " s", Tooltip = "Longest gap between two kills that still continues the streak" })
-        box:Dropdown({ Name = "Streak sound set", Flag = "streak_snd_set", Items = Feedback.STREAK_SET_ORDER, Default = "Valorant", Searchable = true, Tooltip = "Counts past the end of a set repeat its last line. Spree sets (UT Spree, Halo, CoD) follow kills since your last death and only play on their thresholds" })
-        box:Depends({ { "streak_snd_set", function(value) return value ~= "None" end } }, function(sound)
-            sound:Slider({ Name = "Streak volume", Flag = "streak_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
-            sound:Toggle({ Name = "Mute kill sound", Flag = "streak_mute_kill", Default = true, Tooltip = "Skips the normal kill sound when a streak sound plays for that kill" })
-        end)
-    end)
-    RunMore:Toggle({ Name = "Reset on death", Flag = "streak_reset_death", Default = true })
-    RunMore:Slider({ Name = "Scale", Flag = "streak_scale", Min = 0.5, Max = 2, Default = 1, Decimals = 0.05, Suffix = "x" })
-    RunMore:Slider({ Name = "Position Y", Flag = "streak_y", Min = 0.1, Max = 0.95, Default = 0.72, Decimals = 0.01, Tooltip = "Fraction of the screen height" })
-    RunMore:Slider({ Name = "Duration", Flag = "streak_time", Min = 0.5, Max = 5, Default = 2.2, Decimals = 0.1, Suffix = " s" })
-    RunMore:Toggle({ Name = "Show total streak", Flag = "streak_total", Default = true, Tooltip = "Kills since your last death, under the banner" })
-    RunMore:Toggle({ Name = "Milestone notifications", Flag = "streak_milestone" })
-    RunMore:Depends({ { "streak_milestone", true } }, function(box)
-        box:Slider({ Name = "Milestone every", Flag = "streak_milestone_every", Min = 2, Max = 25, Default = 5, Decimals = 1, Suffix = " kills" })
-    end)
+    local function section(sub, name, build)
+        local box = sub[name]
+        local key = sub.key and string.gsub(sub.key, "^Effects/", "") .. "/" .. name or name
+        local before = controlNames()
+        build(box)
+        local made = {}
+        for flagName in pairs(controlNames()) do
+            if not before[flagName] then made[#made + 1] = flagName end
+        end
+        remember(key, made)
+        resetButton(box, key)
+        return box
+    end
 
-    local Dead = Kills.Corpse
-    local Cham = Dead:Toggle({ Name = "Corpse chams", Flag = "chams_dead", Tooltip = "Restyles dead players' bodies (material, colour, transparency) until they respawn" }):Settings("Corpse chams", 260)
-    Dead:Depends({ { "chams_dead", true } }, function(box)
-        box:Toggle({ Name = "Enemy corpses", Flag = "chams_dead_enemy", Default = true }):Colorpicker({ Name = "Enemy", Flag = "chams_dead_enemy_color", Default = Color3.fromRGB(255, 70, 90), Alpha = 0 })
-        box:Toggle({ Name = "Team corpses", Flag = "chams_dead_team" }):Colorpicker({ Name = "Team", Flag = "chams_dead_team_color", Default = Color3.fromRGB(90, 220, 130), Alpha = 0 })
-        box:Toggle({ Name = "My corpse", Flag = "chams_dead_local" }):Colorpicker({ Name = "Mine", Flag = "chams_dead_local_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 })
-        box:Dropdown({ Name = "Material", Flag = "chams_dead_mat", Items = KillFx.Body.materials, Default = "ForceField" })
-    end)
-    Cham:Dropdown({ Name = "Texture", Flag = "chams_dead_tex", Items = KillFx.Body.names, Default = "None", Tooltip = "Pattern drawn by the ForceField material" })
-    Cham:Slider({ Name = "Reflectance", Flag = "chams_dead_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
-    Cham:Toggle({ Name = "Hide clothing/accessories", Flag = "chams_dead_hide", Tooltip = "Hides everything on the body except the body parts" })
-    Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 10, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the body out over this long after death; 0 is off" })
+    local function styleNames()
+        local names, seen = {}, {}
+        local function add(name)
+            if type(name) == "string" and not seen[name] then
+                seen[name] = true
+                names[#names + 1] = name
+            end
+        end
+        for _, name in ipairs({ "Obelus", "Lightning", "DNA", "Beam", "Bolt", "Trail", "Zigzag", "Heartrate", "Chain", "Glitch", "Swirl" }) do add(name) end
+        for _, name in ipairs(type(Tracers.beamNames) == "table" and Tracers.beamNames or {}) do add(name) end
+        for _, name in ipairs(type(Tracers.particleNames) == "table" and Tracers.particleNames or {}) do add(name) end
+        local extra = {}
+        local ok, presets = pcall(Tracers.presets)
+        for name in pairs(ok and type(presets) == "table" and presets or {}) do if not seen[name] then extra[#extra + 1] = name end end
+        for name in pairs(type(Tracers.particle) == "table" and Tracers.particle or {}) do if not seen[name] then extra[#extra + 1] = name end end
+        for name in pairs(type(Tracers.styles) == "table" and Tracers.styles or {}) do if not seen[name] then extra[#extra + 1] = name end end
+        table.sort(extra)
+        for _, name in ipairs(extra) do add(name) end
+        return names
+    end
+    Tracers.textureNames = styleNames()
 
-    local Bullets = Effects.Bullets
-    local Trace = Bullets.Tracers
     local tracing = anyOf({ "trace_on", "trace_enemy_on", "trace_team_on" })
-    Trace:Toggle({ Name = "Own bullets", Flag = "trace_on", Tooltip = "Draws a tracer from your barrel to where the shot lands" }):Colorpicker({ Name = "Tracer", Flag = "trace_color", Default = Color3.fromRGB(255, 94, 94) })
-    Trace:Toggle({ Name = "Enemy bullets", Flag = "trace_enemy_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
-    Trace:Toggle({ Name = "Team bullets", Flag = "trace_team_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_team_color", Default = Color3.fromRGB(90, 220, 130) })
-    local traceItems = { "Obelus", "Lightning", "DNA", "Beam", "Bolt", "Trail", "Zigzag", "Heartrate", "Chain", "Glitch", "Swirl" }
-    for _, name in ipairs(Tracers.particleNames) do traceItems[#traceItems + 1] = name end
-    Tracers.textureNames = traceItems
-    Trace:Depends({ { "trace_on", tracing } }, function(box)
-        box:Dropdown({ Name = "Tracer texture", Flag = "trace_texture", Items = traceItems, Default = "Lightning", Tooltip = "Comet to Void are particle tracers; the list on the right shows which is which" })
-        box:Toggle({ Name = "Match game timing", Flag = "trace_game_timing", Default = true, Tooltip = "Tracers last as long as the game's own tracer; off uses Tracer lifetime" })
-        box:Depends({ { "trace_game_timing", false } }, function(timing)
-            timing:Slider({ Name = "Tracer lifetime", Flag = "trace_time", Min = 0.5, Max = 10, Default = 4, Decimals = 0.1, Suffix = " s" })
+    section(Shoot, "Tracers", function(Trace)
+        Trace:Toggle({ Name = "Own bullets", Flag = "trace_on", Tooltip = "Draws a tracer from your barrel to where the shot lands" }):Colorpicker({ Name = "Tracer", Flag = "trace_color", Default = Color3.fromRGB(255, 94, 94) })
+        Trace:Toggle({ Name = "Enemy bullets", Flag = "trace_enemy_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_enemy_color", Default = Color3.fromRGB(94, 160, 255) })
+        Trace:Toggle({ Name = "Team bullets", Flag = "trace_team_on" }):Colorpicker({ Name = "Tracer", Flag = "trace_team_color", Default = Color3.fromRGB(90, 220, 130) })
+        Trace:Depends({ { "trace_on", tracing } }, function(box)
+            pickerRow(box, "trace_on", function(picker)
+                picker:Dropdown({ Name = "Tracer style", Flag = "trace_texture", Items = Tracers.textureNames, Default = "Lightning", Searchable = true, Tooltip = "Comet to Void and the newer styles are particle tracers" })
+            end)
+            box:Slider({ Name = "Width", Flag = "trace_width", Min = 0.2, Max = 3, Default = 1, Decimals = 0.1, Suffix = "x" })
+            box:Toggle({ Name = "Match game timing", Flag = "trace_game_timing", Default = true, Tooltip = "Tracers last as long as the game's own tracer; off uses Lifetime" })
+            box:Depends({ { "trace_game_timing", false } }, function(timing)
+                timing:Slider({ Name = "Lifetime", Flag = "trace_time", Min = 0.5, Max = 10, Default = 4, Decimals = 0.1, Suffix = " s" })
+            end)
+            box:Toggle({ Name = "Hide the game's tracer", Flag = "trace_hide_beam", Default = true, Tooltip = "Skips the game's yellow tracer on shots that get a custom tracer" })
         end)
-        box:Slider({ Name = "Tracer width", Flag = "trace_width", Min = 0.2, Max = 3, Default = 1, Decimals = 0.1, Suffix = "x" })
-        box:Toggle({ Name = "Hide the game's tracer", Flag = "trace_hide_beam", Default = true, Tooltip = "Skips the game's yellow tracer on shots that get a custom tracer" })
     end)
 
-    local Style = Bullets["Tracer style"]
-    local particles = Util.toSet(Tracers.particleNames)
-    local Glow = Style:Toggle({ Name = "Tracer glow", Flag = "trace_glow", Tooltip = "Full-bright beam plus a wider additive halo behind it" }):Settings("Tracer glow", 230)
-    Glow:Slider({ Name = "Glow strength", Flag = "trace_glow_strength", Min = 0, Max = 10, Default = 4, Decimals = 0.1 })
-    Glow:Toggle({ Name = "Glow uses tracer colour", Flag = "trace_glow_same", Default = true })
-    Glow:Depends({ { "trace_glow_same", false } }, function(box)
-        box:Label({ Name = "Glow colour" }):Colorpicker({ Name = "Glow colour", Flag = "trace_glow_color", Default = Color3.fromRGB(255, 255, 255) })
-    end)
-    local Grad = Style:Toggle({ Name = "Tracer gradient", Flag = "trace_gradient", Tooltip = "Colours the tracer from start to end along its whole length, replacing the single tracer colour" }):Colorpicker({ Name = "Gradient start", Flag = "trace_grad_start", Default = Color3.fromRGB(255, 94, 94) }):Colorpicker({ Name = "Gradient end", Flag = "trace_grad_end", Default = Color3.fromRGB(94, 160, 255) }):Settings("Tracer gradient", 230)
-    Grad:Slider({ Name = "Gradient fade", Flag = "trace_grad_fade", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Tooltip = "Fades the tracer toward its far end" })
-    Grad:Toggle({ Name = "Rainbow", Flag = "trace_rainbow", Tooltip = "Cycles hue along the tracer instead of the two colours" })
-    Style:Depends({ { "trace_texture", function(value) return particles[value] == true end } }, function(box)
-        box:Slider({ Name = "Particle size", Flag = "trace_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only; Tracer width sets their core beam" })
-        box:Slider({ Name = "Particle density", Flag = "trace_fx_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only" })
-        box:Toggle({ Name = "Particle impact burst", Flag = "trace_fx_impact", Default = true, Tooltip = "Particle tracers burst where the bullet hits" })
+    local function isParticle(value) return type(Tracers.particle) == "table" and Tracers.particle[value] ~= nil end
+    local function isStyled(value) return type(Tracers.styles) == "table" and Tracers.styles[value] ~= nil end
+    local function isSmoke(value) return value == "Smoke trail" or value == "Wisp" end
+    local smokeCore = Tracers.SMOKE_CORE or Color3.fromRGB(200, 205, 214)
+    local smokeHalo = Tracers.SMOKE_HALO or Color3.fromRGB(90, 98, 112)
+
+    section(Shoot, "Tracer look", function(Style)
+        local Glow = Style:Toggle({ Name = "Tracer glow", Flag = "trace_glow", Tooltip = "Full-bright beam plus a wider additive halo behind it" }):Settings("Tracer glow", 230)
+        Glow:Slider({ Name = "Glow strength", Flag = "trace_glow_strength", Min = 0, Max = 10, Default = 4, Decimals = 0.1 })
+        Glow:Toggle({ Name = "Glow uses tracer colour", Flag = "trace_glow_same", Default = true })
+        Glow:Depends({ { "trace_glow_same", false } }, function(box)
+            box:Label({ Name = "Glow colour" }):Colorpicker({ Name = "Glow colour", Flag = "trace_glow_color", Default = Color3.fromRGB(255, 255, 255) })
+        end)
+        Style:Toggle({ Name = "Tracer gradient", Flag = "trace_gradient", Tooltip = "Colours the tracer from start to end along its whole length, replacing the single tracer colour" }):Colorpicker({ Name = "Gradient start", Flag = "trace_grad_start", Default = Color3.fromRGB(255, 94, 94) }):Colorpicker({ Name = "Gradient end", Flag = "trace_grad_end", Default = Color3.fromRGB(94, 160, 255) })
+        Style:Depends({ { "trace_gradient", true } }, function(box)
+            box:Slider({ Name = "Gradient fade", Flag = "trace_grad_fade", Min = 0, Max = 1, Default = 0, Decimals = 0.01, Tooltip = "Fades the tracer toward its far end" })
+            box:Toggle({ Name = "Rainbow", Flag = "trace_rainbow", Tooltip = "Cycles hue along the tracer instead of the two colours" })
+        end)
+        Style:Depends({ { "trace_texture", isSmoke } }, function(box)
+            box:Toggle({ Name = "Smoke uses tracer colour", Flag = "trace_smoke_lane", Tooltip = "Off keeps the vapour in the smoke colours below" })
+            box:Depends({ { "trace_smoke_lane", false } }, function(colors)
+                colors:Label({ Name = "Smoke colours" }):Colorpicker({ Name = "Smoke core", Flag = "trace_smoke_color", Default = smokeCore }):Colorpicker({ Name = "Smoke halo", Flag = "trace_smoke_halo", Default = smokeHalo })
+            end)
+            box:Slider({ Name = "Smoke width", Flag = "trace_smoke_width", Min = 0.1, Max = 0.6, Default = 0.22, Decimals = 0.01, Suffix = " studs" })
+            box:Slider({ Name = "Wobble", Flag = "trace_smoke_jitter", Min = 0, Max = 0.6, Default = 0.2, Decimals = 0.01, Suffix = " studs", Tooltip = "How far the vapour wanders off the bullet line" })
+            box:Slider({ Name = "Fade time", Flag = "trace_smoke_life", Min = 0.3, Max = 3, Default = 1, Decimals = 0.05, Suffix = " s", Tooltip = "Smoke ignores game timing and fades over this long" })
+            box:Toggle({ Name = "Drifting puffs", Flag = "trace_smoke_puffs", Default = true })
+            box:Slider({ Name = "Puff spacing", Flag = "trace_smoke_spacing", Min = 0.75, Max = 4, Default = 1.5, Decimals = 0.05, Suffix = " studs" })
+            box:Depends({ { "trace_texture", "Wisp" } }, function(wisp)
+                wisp:Slider({ Name = "Wisp gaps", Flag = "trace_wisp_gaps", Min = 0, Max = 0.6, Default = 0.25, Decimals = 0.01, Tooltip = "Chance of a break between two pieces of the wisp" })
+            end)
+        end)
+        Style:Depends({ { "trace_texture", function(value) return isParticle(value) or isStyled(value) end } }, function(box)
+            box:Slider({ Name = "Particle density", Flag = "trace_fx_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers and the newer styles" })
+        end)
+        Style:Depends({ { "trace_texture", isParticle } }, function(box)
+            box:Slider({ Name = "Particle size", Flag = "trace_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x", Tooltip = "Particle tracers only; Width sets their core beam" })
+            box:Toggle({ Name = "Particle impact burst", Flag = "trace_fx_impact", Default = true, Tooltip = "Particle tracers burst where the bullet hits" })
+        end)
     end)
 
-    local Imp = Bullets.Impacts
-    local ImpMore = Imp:Toggle({ Name = "Bullet impacts", Flag = "impact_on", Tooltip = "Local effects where your bullets hit the world" }):Colorpicker({ Name = "Impact", Flag = "impact_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 }):Settings("Bullet impacts", 240)
-    Imp:Depends({ { "impact_on", true } }, function(box)
-        box:Dropdown({ Name = "Effects", Flag = "impact_list", Items = Impacts.names, Multi = true, Default = { "Spark burst", "Glow ring" }, Tooltip = "Pick several to layer them" })
-        box:Slider({ Name = "Size", Flag = "impact_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
-        box:Slider({ Name = "Lifetime", Flag = "impact_time", Min = 0.2, Max = 5, Default = 1.2, Decimals = 0.05, Suffix = " s" })
-        box:Toggle({ Name = "Enemy bullets too", Flag = "impact_enemy", Tooltip = "Same shots the enemy tracers use; teammates are skipped" })
+    section(Shoot, "Impacts", function(Imp)
+        local ImpMore = Imp:Toggle({ Name = "Bullet impacts", Flag = "impact_on", Tooltip = "Local effects where your bullets hit the world" }):Colorpicker({ Name = "Impact", Flag = "impact_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 }):Settings("Bullet impacts", 240)
+        Imp:Depends({ { "impact_on", true } }, function(box)
+            box:Dropdown({ Name = "Effects", Flag = "impact_list", Items = Impacts.names, Multi = true, Default = { "Spark burst", "Glow ring" }, Tooltip = "Pick several to layer them" })
+            box:Slider({ Name = "Size", Flag = "impact_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
+            box:Slider({ Name = "Lifetime", Flag = "impact_time", Min = 0.2, Max = 5, Default = 1.2, Decimals = 0.05, Suffix = " s" })
+            box:Toggle({ Name = "Enemy bullets too", Flag = "impact_enemy", Tooltip = "Same shots the enemy tracers use; teammates are skipped" })
+        end)
+        ImpMore:Slider({ Name = "Particle density", Flag = "impact_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
+        ImpMore:Toggle({ Name = "Surface aligned", Flag = "impact_align", Default = true, Tooltip = "Lays the effect on the surface using the hit normal; off keeps it flat" })
+        ImpMore:Slider({ Name = "Max at once", Flag = "impact_max", Min = 1, Max = 30, Default = 30, Decimals = 1, Tooltip = "The oldest impact is removed first" })
     end)
-    ImpMore:Slider({ Name = "Particle density", Flag = "impact_density", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
-    ImpMore:Toggle({ Name = "Surface aligned", Flag = "impact_align", Default = true, Tooltip = "Lays the effect on the surface using the hit normal; off keeps it flat" })
-    ImpMore:Slider({ Name = "Max at once", Flag = "impact_max", Min = 1, Max = 30, Default = 30, Decimals = 1, Tooltip = "The oldest impact is removed first" })
+
+    do
+        local gunFlags = {}
+        for name in pairs(controlNames()) do
+            if string.sub(name, 1, 4) == "sfx_" then gunFlags[#gunFlags + 1] = name end
+        end
+        if #gunFlags > 0 and Shoot["Gun sounds"] then
+            remember("When I shoot/Gun sounds", gunFlags)
+            resetButton(Shoot["Gun sounds"], "When I shoot/Gun sounds")
+        end
+    end
+
+    section(Hits, "Hit marker", function(Marker)
+        local MarkerMore = Marker:Toggle({ Name = "Hit marker", Flag = "hit_marker", Tooltip = "Drawn at the crosshair whenever one of your shots lowers a player's health" }):Colorpicker({ Name = "Marker", Flag = "hit_marker_color", Default = WHITE, Alpha = 0 }):Colorpicker({ Name = "Headshot", Flag = "hit_marker_head", Default = Color3.fromRGB(255, 70, 70), Alpha = 0 }):Settings("Hit marker", 240)
+        Marker:Depends({ { "hit_marker", true } }, function(box)
+            box:Dropdown({ Name = "Style", Flag = "hit_marker_style", Items = Feedback.styles, Default = "Classic X" })
+            box:Dropdown({ Name = "Animation", Flag = "hit_marker_anim", Items = Feedback.anims, Default = "Expand" })
+            box:Slider({ Name = "Size", Flag = "hit_marker_size", Min = 4, Max = 24, Default = 9, Decimals = 1, Suffix = " px" })
+            box:Slider({ Name = "Duration", Flag = "hit_marker_time", Min = 0.1, Max = 1.2, Default = 0.4, Decimals = 0.01, Suffix = " s" })
+            box:Toggle({ Name = "Kill marker", Flag = "hit_marker_kill", Tooltip = "Bigger marker in its own colour when the hit kills" }):Colorpicker({ Name = "Kill", Flag = "hit_marker_kill_color", Default = Color3.fromRGB(255, 190, 60), Alpha = 0 })
+            box:Toggle({ Name = "3D at hit position", Flag = "hit_marker_3d", Tooltip = "Draws each marker where the bullet hit the player instead of at the crosshair" })
+        end)
+        MarkerMore:Slider({ Name = "Thickness", Flag = "hit_marker_thick", Min = 1, Max = 5, Default = 1, Decimals = 1, Suffix = " px" })
+        MarkerMore:Slider({ Name = "Gap", Flag = "hit_marker_gap", Min = 0, Max = 20, Default = 3, Decimals = 1, Suffix = " px" })
+        MarkerMore:Toggle({ Name = "Outline", Flag = "hit_marker_outline", Default = true })
+        MarkerMore:Depends({ { "hit_marker_kill", true } }, function(box)
+            box:Slider({ Name = "Kill marker size", Flag = "hit_marker_kill_size", Min = 1, Max = 3, Default = 1.5, Decimals = 0.05, Suffix = "x" })
+        end)
+        MarkerMore:Toggle({ Name = "Skull on kill", Flag = "hit_marker_skull", Tooltip = "Replaces the marker with a skull when the hit kills" })
+        MarkerMore:Toggle({ Name = "Follow mouse", Flag = "hit_marker_mouse", Default = true, Tooltip = "Prison Life aims at the mouse; off draws the marker at the screen centre" })
+    end)
+
+    section(Hits, "Damage numbers", function(Dmg)
+        local DmgMore = Dmg:Toggle({ Name = "Damage numbers", Flag = "dmg_on", Tooltip = "Floating numbers with the health each of your hits took" }):Colorpicker({ Name = "Head", Flag = "dmg_head", Default = Color3.fromRGB(255, 102, 102) }):Colorpicker({ Name = "Torso", Flag = "dmg_torso", Default = Color3.fromRGB(255, 150, 0) }):Colorpicker({ Name = "Limbs", Flag = "dmg_limb", Default = Color3.fromRGB(255, 255, 0) }):Settings("Damage numbers", 230)
+        Dmg:Depends({ { "dmg_on", true } }, function(box)
+            box:Slider({ Name = "Size", Flag = "dmg_size", Min = 8, Max = 32, Default = 16, Decimals = 1, Suffix = " px" })
+        end)
+        DmgMore:Slider({ Name = "Rise", Flag = "dmg_rise", Min = 10, Max = 150, Default = 60, Decimals = 1, Suffix = " px" })
+        DmgMore:Slider({ Name = "Duration", Flag = "dmg_time", Min = 0.4, Max = 3, Default = 1.1, Decimals = 0.01, Suffix = " s" })
+    end)
+
+    section(Hits, "Hit sound", function(HitSnd)
+        HitSnd:Toggle({ Name = "Hit sound", Flag = "hit_snd", Tooltip = hasCanvas and "Pick and audition sounds in the list on the right" or nil })
+        HitSnd:Depends({ { "hit_snd", true } }, function(box)
+            pickerRow(box, "hit_snd", function(picker)
+                picker:Dropdown({ Name = "Sound", Flag = "hit_snd_id", Items = Feedback.HIT_SOUND_ORDER, Default = "Gamesense", Searchable = true })
+            end)
+            box:Slider({ Name = "Volume", Flag = "hit_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
+            box:Slider({ Name = "Pitch", Flag = "hit_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+            box:Slider({ Name = "Max length", Flag = "hit_snd_max", Min = 0, Max = 3, Default = 0.6, Decimals = 0.05, Suffix = " s", Tooltip = "Stops long sounds after this long; 0 plays the whole sound" })
+            box:Toggle({ Name = "Different on headshot", Flag = "hit_snd_head", Tooltip = hasCanvas and "Pick it under Headshot sound in the list on the right" or nil })
+            box:Depends({ { "hit_snd_head", true } }, function(head)
+                pickerRow(head, "hit_snd_head", function(picker)
+                    picker:Dropdown({ Name = "Headshot sound", Flag = "hit_snd_head_id", Items = Feedback.HIT_SOUND_ORDER, Default = "Alt Headshot kill", Searchable = true })
+                end)
+            end)
+            box:Depends({ { "hit_snd_id", function(value) return value == "Custom" or flag("hit_snd_head_id", nil) == "Custom" end } }, function(custom)
+                custom:Input({ Name = "Custom sound id", Flag = "hit_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
+            end)
+        end)
+    end)
+
+    section(Hits, "Hit chams", function(Hc)
+        local HcMore = Hc:Toggle({ Name = "Hit chams", Flag = "hit_cham_on", Tooltip = "Flashes a local copy of the body you hit, built from adornments. Only your own hits on enemies" }):Colorpicker({ Name = "Hit cham", Flag = "hit_cham_color", Default = Color3.fromRGB(255, 70, 110), Alpha = 0.35 }):Settings("Hit chams", 240)
+        Hc:Depends({ { "hit_cham_on", true } }, function(box)
+            box:Dropdown({ Name = "Look", Flag = "hit_cham_look", Items = { "Solid", "Glow", "Wireframe" }, Default = "Solid" })
+            box:Dropdown({ Name = "Fade style", Flag = "hit_cham_fade", Items = { "Linear", "Pop", "Pulse" }, Default = "Linear" })
+            box:Slider({ Name = "Duration", Flag = "hit_cham_time", Min = 0.1, Max = 3, Default = 0.8, Decimals = 0.05, Suffix = " s" })
+            box:Toggle({ Name = "Hit part only", Flag = "hit_cham_part", Tooltip = "Only the body part the bullet hit instead of the whole body" })
+            box:Toggle({ Name = "Follow player", Flag = "hit_cham_follow", Tooltip = "Off keeps the pose from the moment of the hit; on moves with the player while it fades" })
+        end)
+        HcMore:Toggle({ Name = "Always on top", Flag = "hit_cham_top", Default = true })
+        HcMore:Toggle({ Name = "Outline", Flag = "hit_cham_outline", Tooltip = "A second, slightly larger layer around each part" })
+        HcMore:Depends({ { "hit_cham_outline", true } }, function(box)
+            pickColor(box, "Outline colour", "hit_cham_outline_color", WHITE, 0.4)
+        end)
+        HcMore:Slider({ Name = "Max at once", Flag = "hit_cham_max", Min = 1, Max = 12, Default = 12, Decimals = 1, Tooltip = "The oldest cham is removed first" })
+    end)
+
+    section(Hits, "Hit effects", function(HitEffects)
+        local HfMore = HitEffects:Toggle({ Name = "Hit effects", Flag = "hit_fx_on", Tooltip = "Local particle effects where your bullets hit enemies, separate from hit chams" }):Colorpicker({ Name = "Hit effect", Flag = "hit_fx_color", Default = Color3.fromRGB(255, 120, 80), Alpha = 0 }):Settings("Hit effects", 240)
+        HitEffects:Depends({ { "hit_fx_on", true } }, function(box)
+            box:Dropdown({ Name = "Effects", Flag = "hit_fx_list", Items = HitFx.names, Multi = true, Default = { "Sparks", "Glow burst" }, Tooltip = "Pick several to layer them" })
+            box:Slider({ Name = "Size", Flag = "hit_fx_size", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
+            box:Slider({ Name = "Amount", Flag = "hit_fx_amount", Min = 0.25, Max = 3, Default = 1, Decimals = 0.05, Suffix = "x" })
+            box:Toggle({ Name = "Headshots only", Flag = "hit_fx_head" })
+        end)
+        HfMore:Slider({ Name = "Lifetime", Flag = "hit_fx_time", Min = 0.3, Max = 2.5, Default = 1, Decimals = 0.05, Suffix = "x" })
+        HfMore:Dropdown({ Name = "Position", Flag = "hit_fx_at", Items = { "Hit point", "Body centre" }, Default = "Hit point" })
+        HfMore:Slider({ Name = "Max at once", Flag = "hit_fx_max", Min = 1, Max = 16, Default = 12, Decimals = 1, Tooltip = "The oldest effect is removed first" })
+    end)
+
+    section(Kills, "Kill sound", function(KillSnd)
+        KillSnd:Toggle({ Name = "Kill sound", Flag = "kill_snd", Tooltip = "Plays when a player dies within 0.8 s of your hit" .. (hasCanvas and ". Pick and audition sounds in the list on the right" or "") })
+        KillSnd:Depends({ { "kill_snd", true } }, function(box)
+            pickerRow(box, "kill_snd", function(picker)
+                picker:Dropdown({ Name = "Sound", Flag = "kill_snd_id", Items = Feedback.KILL_SOUND_ORDER, Default = "Alt Killshot", Searchable = true })
+            end)
+            box:Slider({ Name = "Volume", Flag = "kill_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
+            box:Slider({ Name = "Pitch", Flag = "kill_snd_pitch", Min = 0.5, Max = 2, Default = 1, Decimals = 0.01 })
+            box:Slider({ Name = "Max length", Flag = "kill_snd_max", Min = 0, Max = 6, Default = 2.5, Decimals = 0.05, Suffix = " s", Tooltip = "Stops long sounds after this long; 0 plays the whole sound" })
+            box:Depends({ { "kill_snd_id", "Custom" } }, function(custom)
+                custom:Input({ Name = "Custom sound id", Flag = "kill_snd_custom", Placeholder = "id or link, used when Sound is Custom" })
+            end)
+        end)
+    end)
+
+    section(Kills, "Kill notice", function(Notice)
+        local NoticeMore = Notice:Toggle({ Name = "Kill notice", Flag = "killcam_notify", Default = true, Tooltip = "Notification naming the player you just eliminated" }):Settings("Kill notice", 220)
+        Notice:Depends({ { "killcam_notify", true } }, function(box)
+            box:Toggle({ Name = "Notice sound", Flag = "killcam_sound" })
+        end)
+        NoticeMore:Toggle({ Name = "Debug kill events", Flag = "misc_debug_kills", Tooltip = "Prints one line per inferred kill to the console (F9)" })
+    end)
+
+    section(Kills, "Kill streak", function(Run)
+        local RunMore = Run:Toggle({ Name = "Kill streak", Flag = "streak_on", Tooltip = "Banner and announcer for kills in quick succession: each kill within the window of the previous one raises the count" }):Colorpicker({ Name = "Streak", Flag = "streak_color", Default = Color3.fromRGB(255, 80, 90), Alpha = 0 }):Colorpicker({ Name = "Peak", Flag = "streak_color2", Default = Color3.fromRGB(255, 200, 70), Alpha = 0 }):Settings("Kill streak", 250)
+        Run:Depends({ { "streak_on", true } }, function(box)
+            box:Dropdown({ Name = "Style", Flag = "streak_style", Items = Streak.styles, Default = "Valorant bars" })
+            box:Slider({ Name = "Window", Flag = "streak_window", Min = 1, Max = 15, Default = 4, Decimals = 0.1, Suffix = " s", Tooltip = "Longest gap between two kills that still continues the streak" })
+            box:Dropdown({ Name = "Streak sound set", Flag = "streak_snd_set", Items = Feedback.STREAK_SET_ORDER, Default = "Valorant", Searchable = true, Tooltip = "Counts past the end of a set repeat its last line. Spree sets (UT Spree, Halo, CoD) follow kills since your last death and only play on their thresholds" })
+            box:Depends({ { "streak_snd_set", function(value) return value ~= "None" end } }, function(sound)
+                sound:Slider({ Name = "Streak volume", Flag = "streak_snd_vol", Min = 0.1, Max = 5, Default = 1.5, Decimals = 0.01 })
+                sound:Toggle({ Name = "Mute kill sound", Flag = "streak_mute_kill", Default = true, Tooltip = "Skips the normal kill sound when a streak sound plays for that kill" })
+            end)
+        end)
+        RunMore:Toggle({ Name = "Reset on death", Flag = "streak_reset_death", Default = true })
+        RunMore:Slider({ Name = "Scale", Flag = "streak_scale", Min = 0.5, Max = 2, Default = 1, Decimals = 0.05, Suffix = "x" })
+        RunMore:Slider({ Name = "Position Y", Flag = "streak_y", Min = 0.1, Max = 0.95, Default = 0.72, Decimals = 0.01, Tooltip = "Fraction of the screen height" })
+        RunMore:Slider({ Name = "Duration", Flag = "streak_time", Min = 0.5, Max = 5, Default = 2.2, Decimals = 0.1, Suffix = " s" })
+        RunMore:Toggle({ Name = "Show total streak", Flag = "streak_total", Default = true, Tooltip = "Kills since your last death, under the banner" })
+        RunMore:Toggle({ Name = "Milestone notifications", Flag = "streak_milestone" })
+        RunMore:Depends({ { "streak_milestone", true } }, function(box)
+            box:Slider({ Name = "Milestone every", Flag = "streak_milestone_every", Min = 2, Max = 25, Default = 5, Decimals = 1, Suffix = " kills" })
+        end)
+    end)
+
+    section(Kills, "Kill effects", function(Kill)
+        local KfMore = Kill:Toggle({ Name = "Kill effects", Flag = "kill_fx", Tooltip = "Plays local effects on the body of players you kill. Visual only, nothing is sent to the server" }):Settings("Kill effects", 260)
+        Kill:Depends({ { "kill_fx", true } }, function(box)
+            box:Dropdown({ Name = "Effects", Flag = "kill_fx_list", Items = KillFx.names, Multi = true, Default = { "Dissolve", "Lightning" } })
+            box:Dropdown({ Name = "Body effects", Flag = "kill_fx_corpse", Items = KillFx.corpseNames, Multi = true, Tooltip = "Act on the body itself, locally. Only one movement effect runs per body: the first one in this list" })
+            box:Slider({ Name = "Intensity", Flag = "kill_fx_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
+            box:Slider({ Name = "Duration", Flag = "kill_fx_dur", Min = 0.5, Max = 6, Default = 2.5, Decimals = 0.1, Suffix = " s", Tooltip = "Length of Dissolve, Pillar, Tombstone, Crystallize and Holo-scan" })
+        end)
+        pickColor(KfMore, "Colour", "kill_fx_color", Color3.fromRGB(102, 204, 255))
+        pickColor(KfMore, "Secondary", "kill_fx_color2", Color3.fromRGB(235, 248, 255))
+        KfMore:Slider({ Name = "Screen flash only near", Flag = "kill_fx_flash_dist", Min = 20, Max = 500, Default = 150, Decimals = 1, Suffix = " studs" })
+        KfMore:Slider({ Name = "Body effect time", Flag = "kill_fx_corpse_dur", Min = 1, Max = 8, Default = 3, Decimals = 0.1, Suffix = " s" })
+        KfMore:Slider({ Name = "Body particles", Flag = "kill_fx_corpse_int", Min = 0.3, Max = 3, Default = 1, Decimals = 0.1 })
+        KfMore:Slider({ Name = "Float height", Flag = "kill_fx_corpse_height", Min = 2, Max = 30, Default = 10, Decimals = 1, Suffix = " studs" })
+        KfMore:Toggle({ Name = "Play sound", Flag = "kill_fx_sound" })
+        KfMore:Depends({ { "kill_fx_sound", true } }, function(box)
+            box:Input({ Name = "Sound id", Flag = "kill_fx_sound_id", Placeholder = "rbxassetid or number" })
+        end)
+    end)
+
+    section(Kills, "Corpse", function(Dead)
+        local Cham = Dead:Toggle({ Name = "Corpse chams", Flag = "chams_dead", Tooltip = "Restyles dead players' bodies (material, colour, transparency) until they respawn" }):Settings("Corpse chams", 260)
+        Dead:Depends({ { "chams_dead", true } }, function(box)
+            box:Toggle({ Name = "Enemy corpses", Flag = "chams_dead_enemy", Default = true }):Colorpicker({ Name = "Enemy", Flag = "chams_dead_enemy_color", Default = Color3.fromRGB(255, 70, 90), Alpha = 0 })
+            box:Toggle({ Name = "Team corpses", Flag = "chams_dead_team" }):Colorpicker({ Name = "Team", Flag = "chams_dead_team_color", Default = Color3.fromRGB(90, 220, 130), Alpha = 0 })
+            box:Toggle({ Name = "My corpse", Flag = "chams_dead_local" }):Colorpicker({ Name = "Mine", Flag = "chams_dead_local_color", Default = Color3.fromRGB(120, 200, 255), Alpha = 0 })
+            box:Dropdown({ Name = "Material", Flag = "chams_dead_mat", Items = KillFx.Body.materials, Default = "ForceField" })
+        end)
+        Cham:Dropdown({ Name = "Texture", Flag = "chams_dead_tex", Items = KillFx.Body.names, Default = "None", Tooltip = "Pattern drawn by the ForceField material" })
+        Cham:Slider({ Name = "Reflectance", Flag = "chams_dead_refl", Min = 0, Max = 1, Default = 0, Decimals = 0.01 })
+        Cham:Toggle({ Name = "Hide clothing/accessories", Flag = "chams_dead_hide", Tooltip = "Hides everything on the body except the body parts" })
+        Cham:Slider({ Name = "Fade out time", Flag = "chams_dead_fade", Min = 0, Max = 10, Default = 0, Decimals = 0.1, Suffix = " s", Tooltip = "Fades the body out over this long after death; 0 is off" })
+    end)
 
     local events = Game.events
     events.onOwnShot:Connect(function(origin, hitPos, part, behavior) Tracers.enqueue(origin, hitPos, part, behavior, true) end)
@@ -11134,7 +11703,7 @@ do
         Util.guard("streak", Streak.step, now)
     end
 
-    Util.fx = { Tracers = Tracers, Impacts = Impacts, Feedback = Feedback, Killcam = Killcam, Streak = Streak, HitCham = HitCham, HitFx = HitFx, Corpse = Corpse, KillFx = KillFx, GunSounds = Feedback.GunSounds, step = step }
+    Util.fx = { Tracers = Tracers, Impacts = Impacts, Feedback = Feedback, Killcam = Killcam, Streak = Streak, HitCham = HitCham, HitFx = HitFx, Corpse = Corpse, KillFx = KillFx, GunSounds = Feedback.GunSounds, step = step, sections = Sections, resetSection = Sections.reset }
     Util.systems = Util.systems or {}
     table.insert(Util.systems, { name = "fx", fn = step, priority = 120 })
 end
@@ -15645,10 +16214,19 @@ do
     local TAU = math.pi * 2
     local clock = os.clock
     local HttpService = game:GetService("HttpService")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local okTags, CollectionService = pcall(function() return game:GetService("CollectionService") end)
+    if not okTags then CollectionService = nil end
 
     Map.GUNS = { "AK-47", "Remington 870", "MP5", "M4A1", "M700", "FAL" }
     Map.ITEMS = { "M9", "Crude Knife", "Riot Shield", "Dinner" }
     Map.TEAMS = { "Inmates", "Guards", "Neutral" }
+    Map.KEYCARD, Map.FOOD = "Key card", "Dinner"
+    Map.FOODS = { Dinner = true, Lunch = true, Breakfast = true }
+    Map.cards, Map.keyAt = {}, 0
+    Map.food = { phase = nil, at = 0, nextAt = 0, warnAt = 0 }
+    Map.doors, Map.doorIndex, Map.doorBlocks = {}, {}, {}
+    Map.doorsDirty, Map.doorScanAt, Map.doorTickAt, Map.doorsAll, Map.doorsLive = true, 0, 0, false, false
     Map.PLACES = {
         { "Cells", Vector3.new(916.75, 100.2, 2435.4) },
         { "Nexus", Vector3.new(915.3, 100.2, 2388) },
@@ -16498,6 +17076,290 @@ do
     Util.track(Players.PlayerAdded:Connect(function() task.defer(Map.refreshList, false) end))
     Util.track(Players.PlayerRemoving:Connect(function() task.defer(Map.refreshList, false) end))
 
+    local function buildKeycard()
+        local tools = ReplicatedStorage:FindFirstChild("Tools")
+        local template = tools and tools:FindFirstChild(Map.KEYCARD)
+        if template and template:IsA("Tool") then
+            local ok, card = pcall(function() return template:Clone() end)
+            if ok and card then return card end
+        end
+        local card = Instance.new("Tool")
+        card.RequiresHandle = true
+        card.CanBeDropped = false
+        local handle = Instance.new("Part")
+        handle.Name = "Handle"
+        handle.Size = Vector3.new(0.2, 0.8, 1.2)
+        handle.CanCollide = false
+        handle.Massless = true
+        handle.Parent = card
+        return card
+    end
+
+    function Map.giveKeycard(quiet)
+        local pack = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if not pack then
+            if not quiet then say("Backpack not found, wait for your character") end
+            return nil
+        end
+        if Map.findTool(Map.KEYCARD) then
+            if not quiet then say("You already have a key card") end
+            return nil
+        end
+        local card = buildKeycard()
+        card.Name = Map.KEYCARD
+        card.Parent = pack
+        Map.cards[#Map.cards + 1] = card
+        if not quiet then say("Key card added on your side only; hold it and walk into a door") end
+        return card
+    end
+
+    function Map.dropKeycards()
+        for _, card in ipairs(Map.cards) do pcall(function() card:Destroy() end) end
+        Map.cards = {}
+    end
+
+    function Map.keyStep(now)
+        if now < Map.keyAt or not flag("tp_key_keep", false) then return end
+        Map.keyAt = now + 0.5
+        local kept = {}
+        for _, card in ipairs(Map.cards) do
+            if card.Parent then kept[#kept + 1] = card end
+        end
+        Map.cards = kept
+        local _, humanoid = localParts()
+        if humanoid and humanoid.Health > 0 and not Map.findTool(Map.KEYCARD) then Map.giveKeycard(true) end
+    end
+
+    function Map.foodTool()
+        local character = Game.localCharacter()
+        local pack = LocalPlayer:FindFirstChildOfClass("Backpack")
+        for _, holder in ipairs({ character or false, pack or false }) do
+            for _, tool in ipairs(holder and holder:GetChildren() or {}) do
+                if tool:IsA("Tool") and Map.FOODS[tool.Name] then
+                    local left = tool:GetAttribute("Quantity")
+                    if left == nil or left > 0 then return tool end
+                end
+            end
+        end
+        return nil
+    end
+
+    function Map.eat()
+        local remote = Game.remote("Remotes.EatFood")
+        if not remote then return false end
+        task.spawn(function() pcall(function() remote:FireServer() end) end)
+        return true
+    end
+
+    function Map.foodStep(now)
+        local food = Map.food
+        local character, humanoid = localParts()
+        if not Util.bindOn("food_auto", "food_auto_key") or not humanoid or humanoid.Health <= 0 then
+            food.phase = nil
+            return
+        end
+        if food.phase == "equip" then
+            if food.tool.Parent ~= character then
+                if now > food.at + 1 then food.phase, food.nextAt = nil, now + 1 end
+                return
+            end
+            if now < food.at then return end
+            Map.eat()
+            food.phase, food.at, food.nextAt = "back", now + 0.5, now + 3.2
+            return
+        end
+        if food.phase == "back" then
+            if now < food.at then return end
+            food.phase = nil
+            local prev = food.prev
+            if prev and prev.Parent and prev.Parent ~= character and food.tool.Parent == character then
+                pcall(function() humanoid:EquipTool(prev) end)
+            end
+            return
+        end
+        local most = humanoid.MaxHealth > 0 and humanoid.MaxHealth or 100
+        if now < food.nextAt or humanoid.Health / most * 100 >= flag("food_health", 50) then return end
+        local tool = Map.foodTool()
+        if not tool then
+            if now >= food.warnAt then
+                food.warnAt = now + 15
+                say("Auto eat: no food left, use Get food")
+            end
+            return
+        end
+        local held = character:FindFirstChildOfClass("Tool")
+        food.tool, food.prev, food.phase, food.at = tool, held ~= tool and held or nil, "equip", now + 0.15
+        if tool.Parent ~= character then pcall(function() humanoid:EquipTool(tool) end) end
+    end
+
+    function Map.itemsStep(dt, now)
+        Map.keyStep(now)
+        Map.foodStep(now)
+    end
+
+    local DOOR_OPEN = { "Exploded", "ScheduledOpen", "PlayerOpened", "LocalPlayerOpened" }
+
+    local function doorOpen(model)
+        for _, key in ipairs(DOOR_OPEN) do
+            if model:GetAttribute(key) then return true end
+        end
+        return false
+    end
+
+    local function addDoor(found, model, cell)
+        if found[model] then return end
+        local entry = Map.doorIndex[model]
+        local block = cell and model or model:FindFirstChild("block") or (entry and entry.block)
+        if not block then return end
+        if not entry then
+            entry = { model = model, cell = cell, held = false, forced = false, ghost = false, collide = {} }
+            Map.doorIndex[model] = entry
+        end
+        local parts = {}
+        for _, object in ipairs(block:GetDescendants()) do
+            if object:IsA("BasePart") then parts[#parts + 1] = object end
+        end
+        local anchor = block:FindFirstChild("hitbox") or parts[1]
+        entry.block, entry.parts, entry.ghost = block, parts, nil
+        if anchor then entry.pos = anchor.Position end
+        if not cell then Map.doorBlocks[block] = true end
+        found[model] = entry
+    end
+
+    function Map.doorSettle(entry)
+        if entry.cell or not entry.block then return end
+        local want = not doorOpen(entry.model) and entry.model or nil
+        if entry.block.Parent ~= want then pcall(function() entry.block.Parent = want end) end
+    end
+
+    function Map.doorHold(entry)
+        if entry.cell or not entry.block then return end
+        local model = entry.model
+        if not entry.held then entry.held, entry.saved = true, model:GetAttribute("LocalPlayerOpened") end
+        if model:GetAttribute("LocalPlayerOpened") ~= true then pcall(function() model:SetAttribute("LocalPlayerOpened", true) end) end
+        if entry.block.Parent ~= nil then pcall(function() entry.block.Parent = nil end) end
+    end
+
+    function Map.doorRelease(entry)
+        if not entry.held then return end
+        entry.held = false
+        pcall(function() entry.model:SetAttribute("LocalPlayerOpened", entry.saved) end)
+        entry.saved = nil
+        Map.doorSettle(entry)
+    end
+
+    function Map.doorClose(entry)
+        Map.doorRelease(entry)
+        if entry.cell or not entry.block or entry.block.Parent == entry.model then return end
+        entry.forced = true
+        pcall(function() entry.block.Parent = entry.model end)
+    end
+
+    function Map.doorGhost(entry, on)
+        if entry.ghost == on then return end
+        entry.ghost = on
+        if on then
+            for _, part in ipairs(entry.parts) do
+                if entry.collide[part] == nil then entry.collide[part] = part.CanCollide end
+                assign(part, "CanCollide", false)
+            end
+            return
+        end
+        for part, collide in pairs(entry.collide) do assign(part, "CanCollide", collide) end
+        entry.collide = {}
+    end
+
+    function Map.doorRestore(entry)
+        Map.doorRelease(entry)
+        if entry.forced then
+            entry.forced = false
+            Map.doorSettle(entry)
+        end
+        Map.doorGhost(entry, false)
+    end
+
+    function Map.scanDoors()
+        local found, list = {}, {}
+        if CollectionService then
+            local ok, tagged = pcall(function() return CollectionService:GetTagged("Door") end)
+            for _, model in ipairs(ok and tagged or {}) do addDoor(found, model, false) end
+        end
+        local folder = Workspace:FindFirstChild("Doors")
+        for _, model in ipairs(folder and folder:GetChildren() or {}) do
+            if model:IsA("Model") then addDoor(found, model, false) end
+        end
+        local cells = Workspace:FindFirstChild("CellDoors")
+        for _, model in ipairs(cells and cells:GetChildren() or {}) do
+            if model:IsA("Model") then addDoor(found, model, true) end
+        end
+        for model, entry in pairs(Map.doorIndex) do
+            if not found[model] then
+                Map.doorRestore(entry)
+                Map.doorIndex[model] = nil
+                Map.doorBlocks[entry.block] = nil
+            end
+        end
+        for _, entry in pairs(found) do list[#list + 1] = entry end
+        Map.doors, Map.doorsDirty = list, false
+        return list
+    end
+
+    function Map.doorStep(dt, now)
+        local auto, ghost = flag("door_auto", false), flag("door_nocollide", false)
+        if not (Map.doorsAll or auto or ghost or Map.doorsLive) then return end
+        if Map.doorsDirty and now >= Map.doorScanAt then
+            Map.doorScanAt = now + 0.5
+            Map.scanDoors()
+        end
+        if now < Map.doorTickAt then return end
+        Map.doorTickAt = now + 0.1
+        local root = Game.rootPart()
+        local range = flag("door_range", 12)
+        local live = false
+        for _, entry in ipairs(Map.doors) do
+            if entry.model.Parent then
+                if not entry.cell then
+                    local near = auto and root and entry.pos and (entry.pos - root.Position).Magnitude <= range
+                    if Map.doorsAll or near then Map.doorHold(entry) elseif entry.held then Map.doorRelease(entry) end
+                end
+                Map.doorGhost(entry, ghost)
+                live = live or entry.held or entry.ghost == true
+            else
+                Map.doorsDirty = true
+            end
+        end
+        Map.doorsLive = live
+    end
+
+    function Map.openDoors()
+        Map.doorsAll, Map.doorTickAt = true, 0
+        Map.doorStep(0, clock())
+        say("Opened " .. #Map.doors .. " doors on your screen")
+    end
+
+    function Map.closeDoors()
+        Map.doorsAll = false
+        if Map.doorsDirty then Map.scanDoors() end
+        for _, entry in ipairs(Map.doors) do Map.doorClose(entry) end
+        Map.doorTickAt = 0
+        say("Closed the doors on your screen")
+    end
+
+    function Map.restoreDoors()
+        Map.doorsAll, Map.doorsLive = false, false
+        for _, entry in pairs(Map.doorIndex) do Map.doorRestore(entry) end
+    end
+
+    Util.track(Workspace.DescendantAdded:Connect(function(object)
+        local name = object.Name
+        if (name == "block" and not Map.doorBlocks[object]) or name == "Doors" or name == "CellDoors" then Map.doorsDirty = true end
+    end))
+    if CollectionService then
+        pcall(function()
+            Util.track(CollectionService:GetInstanceAddedSignal("Door"):Connect(function() Map.doorsDirty = true end))
+        end)
+    end
+
     local function buildTeleport(page)
         local Guns, Settings, Items, Places, Team = page["Get guns"], page["Settings"], page["Get items"], page["Places"], page["Team switch"]
         for _, name in ipairs(Map.GUNS) do
@@ -16510,10 +17372,20 @@ do
         Settings:Slider({ Name = "Pickup timeout", Flag = "tp_timeout", Min = 1, Max = 8, Default = 3, Decimals = 0.1, Suffix = " s", Tooltip = "Time spent on each giver before trying the next one" })
         Settings:Toggle({ Name = "Touch without moving", Flag = "tp_touch_remote", Tooltip = "Uses firetouchinterest from where you stand, when the executor has it" })
         for _, name in ipairs(Map.ITEMS) do
-            Items:Button({ Name = "Get " .. name, Callback = function() Map.request(name) end })
+            if name ~= Map.FOOD then Items:Button({ Name = "Get " .. name, Callback = function() Map.request(name) end }) end
         end
+        Items:Button({ Name = "Get food", Callback = function() Map.request(Map.FOOD) end })
+        Items:Toggle({ Name = "Auto eat", Flag = "food_auto", Tooltip = "Equips and eats a food tray when your health drops below the threshold" }):Keybind({ Name = "Auto eat key", Flag = "food_auto_key", Sync = true })
+        Items:Slider({ Name = "Eat below", Flag = "food_health", Min = 5, Max = 95, Default = 50, Decimals = 1, Suffix = "% hp" })
+        Items:Button({ Name = "Get keycard (local)", Callback = function() Map.giveKeycard(false) end })
+        Items:Toggle({ Name = "Keep keycard", Flag = "tp_key_keep", Tooltip = "Adds the local key card again after you respawn. Doors only check the tool in your hand" })
         Places:Dropdown({ Name = "Place", Flag = "tp_place", Items = list(Map.PLACES), Default = Map.PLACES[1][1], Searchable = true })
         Places:Button({ Name = "Teleport", Callback = function() Map.gotoPlace(flag("tp_place", Map.PLACES[1][1])) end })
+        Places:Button({ Name = "Open all doors", Callback = function() Map.openDoors() end })
+        Places:Button({ Name = "Close all doors", Callback = function() Map.closeDoors() end })
+        Places:Toggle({ Name = "Auto open doors", Flag = "door_auto", Tooltip = "Opens doors near you, on your screen only" })
+        Places:Slider({ Name = "Door range", Flag = "door_range", Min = 4, Max = 40, Default = 12, Decimals = 1, Suffix = " studs" })
+        Places:Toggle({ Name = "Doors no-collide", Flag = "door_nocollide", Tooltip = "Walk through keycard doors and cell doors, on your screen only" })
         Team:Dropdown({ Name = "Team", Flag = "team_pick", Items = Map.TEAMS, Default = "Guards" })
         Team:Button({ Name = "Switch team", Callback = function() Map.switchTeam(flag("team_pick", "Guards")) end })
     end
@@ -16576,8 +17448,10 @@ do
 
     Util.systems = Util.systems or {}
     table.insert(Util.systems, { name = "map_jobs", fn = Map.jobStep, priority = 40 })
+    table.insert(Util.systems, { name = "map_items", fn = Map.itemsStep, priority = 41 })
     table.insert(Util.systems, { name = "map_vehicles", fn = Map.vehicleStep, priority = 85 })
     table.insert(Util.systems, { name = "map_orbit", fn = Map.orbitStep, priority = 86 })
+    table.insert(Util.systems, { name = "map_doors", fn = Map.doorStep, priority = 87 })
     table.insert(Util.systems, { name = "map_players", fn = Map.playersStep, priority = 140 })
 
     Util.onUnload(function()
@@ -16586,6 +17460,9 @@ do
         Map.finish(false, true)
         Map.restoreSeats()
         Map.orbitRestore()
+        Map.restoreDoors()
+        Map.dropKeycards()
+        Map.food.phase = nil
         Map.stopSpectate()
         if Combat and Combat.selectedPlayer == Map.selectedPlayer then
             Combat.selectedPlayer, Combat.getWeapon, Combat.gettingWeapon = nil, nil, nil
@@ -19411,57 +20288,272 @@ do
     local function streakTest() Util.guard("streak-test", Streak.test) end
     local function shotTest() Util.guard("shot-test", Preview.testShot) end
 
-    previewPane(Effects.Hits, function(pane)
-        header(pane, 0, "Try it")
-        pillRow(pane, 18, { { "Test hit", hitTest(false) }, { "Headshot", hitTest(true) } })
-        header(pane, 54, "Sounds")
-        Preview.soundList(area(pane, 72), { name = "Hits", targets = HIT_TARGETS })
+    local function testBar(pane)
+        local _, pills = pillRow(pane, 0, { { "Fire test shot", shotTest }, { "Test hit", hitTest(false) }, { "Test kill", killTest } })
+        Preview.bars[#Preview.bars + 1] = pills
+        return 34
+    end
+    Preview.bars = {}
+
+    local Shoot, Hits, Kills = Effects["When I shoot"], Effects["When I hit"], Effects["When I kill"]
+
+    previewPane(Hits, function(pane)
+        local top = testBar(pane)
+        pillRow(pane, top, { { "Test headshot", hitTest(true) } }, 22)
+        header(pane, top + 30, "Sounds")
+        Preview.soundList(area(pane, top + 48), { name = "Hits", targets = HIT_TARGETS })
     end)
-    fallbackRows(Effects.Hits, {
+    fallbackRows(Hits, {
         { "Test hit", hitTest(false) },
         { "Test headshot", hitTest(true) },
+        { "Test kill", killTest },
         { "Play hit sound", function() Util.guard("hit-preview", Feedback.preview, "hit_snd", "Gamesense") end },
     })
 
-    previewPane(Effects.Kills, function(pane)
-        header(pane, 0, "Try it")
-        pillRow(pane, 18, { { "Test kill", killTest }, { "Kill effect", effectTest }, { "Streak", streakTest } })
-        header(pane, 54, "Sounds")
-        Preview.soundList(area(pane, 72), { name = "Kills", targets = KILL_TARGETS })
+    previewPane(Kills, function(pane)
+        local top = testBar(pane)
+        pillRow(pane, top, { { "Kill effect", effectTest }, { "Streak", streakTest } }, 22)
+        header(pane, top + 30, "Sounds")
+        Preview.soundList(area(pane, top + 48), { name = "Kills", targets = KILL_TARGETS })
     end)
-    fallbackRows(Effects.Kills, {
+    fallbackRows(Kills, {
         { "Test kill", killTest },
         { "Preview kill effect", effectTest },
         { "Test streak", streakTest },
         { "Play kill sound", function() Util.guard("kill-preview", Feedback.preview, "kill_snd", "Alt Killshot") end },
     })
 
-    if GunSounds then
-        local targets = {}
-        for index, weapon in ipairs(GunSounds.weapons) do
-            local key = "sfx_" .. weapon.key
-            targets[index] = { name = weapon.label, flag = key .. "_sound", enabled = key .. "_on", custom = key .. "_custom", key = weapon.key, vol = key .. "_volume", pitch = key .. "_pitch", scale = 0.5, order = function() return GunSounds.soundItems end }
+    local GREY, ICE, PURPLE, HOT = Color3.fromRGB(165, 165, 170), Color3.fromRGB(190, 235, 255), Color3.fromRGB(150, 60, 255), Color3.fromRGB(255, 190, 90)
+    local LOOKS = {
+        Obelus = { kind = "beam", thick = 1.4, alpha = 0.35 },
+        Lightning = { kind = "zig", amp = 0.7, rate = 14, alpha = 0.15 },
+        DNA = { kind = "wave", amp = 0.6, waves = 3, speed = 1.2, alpha = 0.2 },
+        Beam = { kind = "beam" },
+        Bolt = { kind = "zig", amp = 0.45, rate = 9 },
+        Trail = { kind = "comet", span = 0.7 },
+        Zigzag = { kind = "zig", amp = 0.6, steady = true },
+        Heartrate = { kind = "spike", amp = 0.95 },
+        Chain = { kind = "dash", speed = 6 },
+        Glitch = { kind = "glitch", amp = 0.6, rate = 9 },
+        Swirl = { kind = "wave", amp = 0.45, waves = 5, speed = 2.5 },
+        Comet = { kind = "comet", span = 0.45, tint = { WHITE, 0.3 }, thick = 1.3 },
+        Plasma = { kind = "zig", amp = 0.3, rate = 20, thick = 1.6, alpha = 0.15, tint = { WHITE, 0.2 } },
+        ["Smoke ribbon"] = { kind = "smoke", amp = 0.35, tint = { WHITE, 0.3 }, thick = 1.5 },
+        Frost = { kind = "beam", tint = { ICE, 0.45 }, thick = 1.3, alpha = 0.1 },
+        Railgun = { kind = "dash", speed = 3, thick = 1.6, tint = { WHITE, 0.2 } },
+        Laser = { kind = "beam", instant = true, thick = 0.6, tint = { WHITE, 0.3 } },
+        ["Ion bolt"] = { kind = "zig", amp = 0.5, rate = 16, tint = { WHITE, 0.4 } },
+        ["Tracer round"] = { kind = "comet", span = 0.25, tint = { HOT, 0.35 }, thick = 0.8 },
+        ["Neon streak"] = { kind = "pulse", speed = 0.8, thick = 1.8, alpha = 0.1 },
+        Void = { kind = "beam", tint = { PURPLE, 0.6 }, thick = 1.5, alpha = 0.1 },
+        ["Smoke trail"] = { kind = "smoke", amp = 0.45, core = true, thick = 1.6 },
+        Wisp = { kind = "smoke", amp = 0.7, core = true, thick = 1.1, gaps = true },
+        Ribbon = { kind = "wave", amp = 0.3, waves = 1.5, speed = 0.8, thick = 2.2, alpha = 0.3 },
+        Pulse = { kind = "pulse", speed = 1.6 },
+        Ion = { kind = "zig", amp = 0.4, rate = 22, tint = { ICE, 0.3 } },
+    }
+    Preview.LOOKS = LOOKS
+    local PERIOD = 1.6
+
+    local function lookOf(name)
+        local look = LOOKS[name]
+        if look then return look end
+        if type(Tracers.particle) == "table" and Tracers.particle[name] then return LOOKS.Comet end
+        return LOOKS.Beam
+    end
+
+    local function quant(value, steps)
+        return math.floor(value * steps + 0.5) / steps
+    end
+
+    local function newStrip(parent, count, props)
+        local holder = Library:Create("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = props.Position, Size = props.Size, ZIndex = props.ZIndex, Parent = parent })
+        local strip = { frame = holder, segs = {}, z = props.ZIndex, width = 1 / count, thick = 2, look = LOOKS.Beam }
+        if props.glow then
+            strip.glow = Library:Create("Frame", { AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = WHITE, BorderSizePixel = 0, BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 0), ZIndex = props.ZIndex, Parent = holder })
+            Library:Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = strip.glow })
+            strip.glowGradient = Library:Create("UIGradient", { Parent = strip.glow })
+            strip.glowCache = {}
         end
-        local function selectedKey()
-            local label = flag("sfx_weapon", GunSounds.labels[1])
-            for _, weapon in ipairs(GunSounds.weapons) do
-                if weapon.label == label then return "sfx_" .. weapon.key end
+        for index = 1, count do
+            local frame = Library:Create("Frame", { AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.new((index - 1) / count, 0, 0.5, 0), Size = UDim2.new(1 / count, 1, 0, 2), ZIndex = props.ZIndex + 1, Parent = holder })
+            strip.segs[index] = { frame = frame, x = (index - 1) / count, t = (index - 0.5) / count, alpha = 0, cache = {} }
+        end
+        return strip
+    end
+
+    local function tinted(look, color)
+        if look.core and not flag("trace_smoke_lane", false) then return flag("trace_smoke_color", Tracers.SMOKE_CORE or GREY) end
+        if look.tint then return Util.lerpColor(color, look.tint[1], look.tint[2]) end
+        return color
+    end
+
+    local function paintStrip(strip, name, spec)
+        local look = lookOf(name)
+        strip.look, strip.name = look, name
+        local width = look.core and math.clamp(flag("trace_smoke_width", 0.22) / 0.22, 0.45, 2.7) or 1
+        strip.thick = math.max(1, math.floor(spec.thick * (look.thick or 1) * width + 0.5))
+        strip.spread = look.core and math.clamp(flag("trace_smoke_jitter", 0.2) / 0.2, 0, 3) or 1
+        strip.gaps = look.gaps and math.clamp(flag("trace_wisp_gaps", 0.25), 0, 0.6) or 0
+        local smoke = look.kind == "smoke"
+        local base = look.alpha or 0
+        for _, seg in ipairs(strip.segs) do
+            seg.frame.BackgroundColor3 = tinted(look, spec.colorAt(seg.t))
+            local alpha = base + (1 - base) * (spec.fade or 0) * seg.t
+            seg.alpha = math.min(1, alpha + (spec.dim and (1 - alpha) * 0.65 or 0))
+            if smoke and not seg.corner then seg.corner = Library:Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = seg.frame }) end
+            if seg.corner then seg.corner.CornerRadius = UDim.new(smoke and 1 or 0, 0) end
+            seg.cache = {}
+        end
+        if strip.glow then
+            local glow = smoke and 0 or (spec.glow or 0)
+            strip.glowThick = glow > 0 and math.floor(strip.thick * (1.5 + 0.15 * glow) + 2) or 0
+            strip.glowAlpha = math.clamp(0.9 - 0.06 * glow, 0.2, 1) + (spec.dim and 0.08 or 0)
+            strip.glowGradient.Color = spec.glowColor or ColorSequence.new(spec.colorAt(0))
+            strip.glow.Visible = strip.glowThick > 0
+            strip.glowCache = {}
+        end
+        strip.roll = nil
+    end
+
+    local function tickStrip(strip, now)
+        local look = strip.look
+        local kind, amp = look.kind, look.amp or 0
+        local cycle = (now % PERIOD) / PERIOD
+        local head, tail, fade = 1, 0, 0
+        local span = look.span or 0.5
+        if kind == "comet" then
+            head = cycle / 0.6 * (1 + span)
+            tail = head - span
+        elseif look.instant then
+            fade = cycle > 0.6 and (cycle - 0.6) / 0.4 or 0
+        else
+            head = math.min(1, cycle / 0.35)
+            if kind == "smoke" then
+                fade = cycle > 0.5 and (cycle - 0.5) / 0.5 or 0
+            elseif cycle > 0.7 then
+                tail = (cycle - 0.7) / 0.3
             end
-            return "sfx_" .. GunSounds.weapons[1].key
         end
-        previewPane(Effects["Gun sounds"], function(pane)
-            local list = Preview.soundList(pane, { name = "Gun sounds", targets = targets,
-                current = function() return flag("sfx_weapon", GunSounds.labels[1]) end,
-                onTarget = function(target) setOption("sfx_weapon", target.name) end,
-            })
-            watch({ "sfx_weapon" }, function()
-                local name = flag("sfx_weapon", GunSounds.labels[1])
-                if list.target.name ~= name then list.bar:SetValue(name) end
-            end)
-        end)
-        fallbackRows(Effects["Gun sounds"], {
-            { "Play selected gun sound", function() Util.guard("gun-sound-preview", GunSounds.preview, selectedKey()) end },
-        })
+        local roll = math.floor(now * (look.rate or 10))
+        local reroll = roll ~= strip.roll
+        strip.roll = roll
+        local dash = math.floor(now * (look.speed or 6))
+        local width = kind == "smoke" and strip.width * 1.8 or strip.width
+        for index, seg in ipairs(strip.segs) do
+            local t = seg.t
+            local on = t <= head and t >= tail
+            local y, alpha, thick = 0, seg.alpha, strip.thick
+            if on then
+                if kind == "zig" then
+                    if look.steady then
+                        y = index % 2 == 0 and amp or -amp
+                    else
+                        if reroll or not seg.jitter then seg.jitter = (math.random() * 2 - 1) * amp end
+                        y = seg.jitter
+                    end
+                elseif kind == "wave" then
+                    y = amp * math.sin(2 * math.pi * ((look.waves or 2) * t - now * (look.speed or 1)))
+                elseif kind == "spike" then
+                    local k = index % 6
+                    y = k == 2 and -amp or (k == 3 and amp * 0.6 or 0)
+                elseif kind == "glitch" then
+                    if reroll or seg.jitter == nil then seg.jitter = math.random() < 0.3 and (math.random() * 2 - 1) * amp or 0 end
+                    y = seg.jitter
+                    on = seg.jitter == 0 or math.random() < 0.85
+                elseif kind == "dash" then
+                    on = (index + dash) % 3 ~= 0
+                elseif kind == "pulse" then
+                    alpha = alpha + (1 - alpha) * 0.7 * (0.5 + 0.5 * math.cos(2 * math.pi * (t * 2 - now * (look.speed or 1.5))))
+                elseif kind == "comet" then
+                    local k = math.clamp((head - t) / span, 0, 1)
+                    alpha = alpha + (1 - alpha) * k
+                    thick = math.max(1, math.floor(thick * (1 - 0.6 * k) + 0.5))
+                elseif kind == "smoke" then
+                    local age = math.clamp(head - t + fade * 0.6, 0, 1)
+                    if reroll or not seg.jitter then
+                        seg.jitter = math.random() * 2 - 1
+                        seg.gap = strip.gaps > 0 and index > 1 and math.random() < strip.gaps
+                    end
+                    on = not seg.gap
+                    y = amp * strip.spread * (0.3 + age) * seg.jitter * 0.6 + 0.25 * math.sin(t * 9 + now * 2)
+                    alpha = alpha + (1 - alpha) * math.clamp(0.3 + 0.45 * age + 0.7 * fade, 0, 1)
+                    thick = math.floor(thick * (1 + 1.6 * age) + 0.5)
+                end
+                if kind ~= "smoke" and fade > 0 then alpha = alpha + (1 - alpha) * fade end
+            end
+            local cache = seg.cache
+            if cache.on ~= on then
+                cache.on = on
+                seg.frame.Visible = on
+            end
+            if on then
+                y = quant(math.clamp(y, -1, 1), 50)
+                alpha = quant(math.clamp(alpha, 0, 1), 40)
+                if cache.y ~= y then
+                    cache.y = y
+                    seg.frame.Position = UDim2.new(seg.x, 0, 0.5 + y * 0.32, 0)
+                end
+                if cache.alpha ~= alpha then
+                    cache.alpha = alpha
+                    seg.frame.BackgroundTransparency = alpha
+                end
+                if cache.thick ~= thick or cache.width ~= width then
+                    cache.thick, cache.width = thick, width
+                    seg.frame.Size = UDim2.new(width, 1, 0, thick)
+                end
+            end
+        end
+        if strip.glow and strip.glowThick and strip.glowThick > 0 then
+            local from, to = quant(math.clamp(tail, 0, 1), 50), quant(math.clamp(head, 0, 1), 50)
+            local alpha = quant(strip.glowAlpha + (1 - strip.glowAlpha) * fade, 40)
+            local cache = strip.glowCache
+            if cache.from ~= from or cache.to ~= to then
+                cache.from, cache.to = from, to
+                strip.glow.Position = UDim2.new(from, 0, 0.5, 0)
+                strip.glow.Size = UDim2.new(math.max(0, to - from), 0, 0, strip.glowThick)
+            end
+            if cache.alpha ~= alpha then
+                cache.alpha = alpha
+                strip.glow.BackgroundTransparency = alpha
+            end
+        end
+    end
+    Preview.newStrip, Preview.paintStrip, Preview.tickStrip = newStrip, paintStrip, tickStrip
+
+    local function rainbow()
+        local keys = {}
+        for step = 0, 6 do keys[#keys + 1] = ColorSequenceKeypoint.new(step / 6, Color3.fromHSV((step / 6 * 0.8) % 1, 0.85, 1)) end
+        return ColorSequence.new(keys)
+    end
+
+    function Preview.tracerSpec(laneColor, on)
+        local gradient = flag("trace_gradient", false)
+        local rainbowOn = gradient and flag("trace_rainbow", false)
+        local start = flag("trace_grad_start", Color3.fromRGB(255, 94, 94))
+        local finish = flag("trace_grad_end", Color3.fromRGB(94, 160, 255))
+        local colorAt
+        if rainbowOn then
+            colorAt = function(t) return Color3.fromHSV((t * 0.8) % 1, 0.85, 1) end
+        elseif gradient then
+            colorAt = function(t) return Util.lerpColor(start, finish, t) end
+        else
+            colorAt = function() return laneColor end
+        end
+        local glow = flag("trace_glow", false) and math.clamp(flag("trace_glow_strength", 4), 0, 10) or 0
+        local glowColor
+        if not flag("trace_glow_same", true) then
+            glowColor = ColorSequence.new(flag("trace_glow_color", WHITE))
+        elseif rainbowOn then
+            glowColor = rainbow()
+        else
+            glowColor = ColorSequence.new(colorAt(0), colorAt(1))
+        end
+        return {
+            colorAt = colorAt, glow = glow, glowColor = glowColor, dim = on == false,
+            fade = gradient and math.clamp(flag("trace_grad_fade", 0), 0, 1) or 0,
+            thick = math.clamp(math.floor(2 + 3 * flag("trace_width", 1) + 0.5), 2, 11),
+        }
     end
 
     local LANES = {
@@ -19472,106 +20564,94 @@ do
     local TRACER_FLAGS = {
         "trace_on", "trace_enemy_on", "trace_team_on", "trace_color", "trace_enemy_color", "trace_team_color", "trace_texture", "trace_time", "trace_game_timing", "trace_width",
         "trace_glow", "trace_glow_strength", "trace_glow_same", "trace_glow_color", "trace_gradient", "trace_grad_start", "trace_grad_end", "trace_grad_fade", "trace_rainbow",
+        "trace_smoke_lane", "trace_smoke_color", "trace_smoke_width", "trace_smoke_jitter", "trace_wisp_gaps", "trace_smoke_life",
     }
     local IMPACT_FLAGS = { "impact_on", "impact_color", "impact_list", "impact_size", "impact_time", "impact_enemy" }
 
-    local function rainbow()
-        local keys = {}
-        for step = 0, 6 do keys[#keys + 1] = ColorSequenceKeypoint.new(step / 6, Color3.fromHSV((step / 6 * 0.8) % 1, 0.85, 1)) end
-        return ColorSequence.new(keys)
+    local function isParticle(name)
+        return type(Tracers.particle) == "table" and Tracers.particle[name] ~= nil
     end
 
-    function Preview.tracerLook(laneColor)
-        local gradient = flag("trace_gradient", false)
-        local sequence
-        if gradient and flag("trace_rainbow", false) then
-            sequence = rainbow()
-        elseif gradient then
-            sequence = ColorSequence.new(flag("trace_grad_start", Color3.fromRGB(255, 94, 94)), flag("trace_grad_end", Color3.fromRGB(94, 160, 255)))
-        else
-            sequence = ColorSequence.new(laneColor)
-        end
-        local name = flag("trace_texture", "Lightning")
-        local preset = Tracers.presets()[name]
-        local base = preset and preset.Alpha or 0
-        local fade = gradient and math.clamp(flag("trace_grad_fade", 0), 0, 1) or 0
-        local glow = flag("trace_glow", false) and math.clamp(flag("trace_glow_strength", 4), 0, 10) or 0
-        return {
-            color = sequence, alpha = NumberSequence.new(base, base + (1 - base) * fade),
-            thick = math.clamp(math.floor(2 + 3 * flag("trace_width", 1) + 0.5), 2, 11), glow = glow,
-            glowColor = flag("trace_glow_same", true) and sequence or ColorSequence.new(flag("trace_glow_color", WHITE)),
-            glowAlpha = NumberSequence.new(math.clamp(0.9 - 0.06 * glow, 0.2, 1), 1),
-        }
+    local function kindLabel(name)
+        if isParticle(name) then return "particles" end
+        if type(Tracers.styles) == "table" and Tracers.styles[name] then return "style" end
+        return "beam"
     end
 
-    previewPane(Effects.Bullets, function(pane)
-        header(pane, 0, "Live preview")
-        local stage = Library:CreateBevel(area(pane, 18, 88), { Color = "BackgroundColor", Size = UDim2.new(1, 0, 1, 0), ZIndex = 4 })
+    local function tracerView(view)
+        local stage = Library:CreateBevel(area(view, 0, 76), { Color = "BackgroundColor", Size = UDim2.new(1, 0, 1, 0), ZIndex = 4 })
         local lanes = {}
         for index, lane in ipairs(LANES) do
-            local y = 8 + (index - 1) * 26
-            local label = text(stage, lane[1], { TextSize = Library.FontSize - 1, Position = UDim2.fromOffset(10, y), Size = UDim2.fromOffset(44, 22) })
-            local track = Library:Create("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.fromOffset(58, y), Size = UDim2.new(1, -70, 0, 22), ZIndex = 5, Parent = stage })
-            local glow = Library:Create("Frame", { AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 8), ZIndex = 5, Parent = track })
-            local beam = Library:Create("Frame", { AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 3), ZIndex = 6, Parent = track })
-            Library:Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = glow })
-            Library:Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = beam })
-            lanes[index] = {
-                spec = lane, label = label, track = track, glow = glow, beam = beam,
-                glowGradient = Library:Create("UIGradient", { Parent = glow }), beamGradient = Library:Create("UIGradient", { Parent = beam }),
-                thick = 3, glowThick = 8, scale = 1,
-            }
+            local y = 7 + (index - 1) * 22
+            local label = text(stage, lane[1], { TextSize = Library.FontSize - 1, Position = UDim2.fromOffset(10, y), Size = UDim2.fromOffset(44, 18) })
+            local strip = newStrip(stage, 18, { Position = UDim2.fromOffset(58, y - 3), Size = UDim2.new(1, -70, 0, 24), ZIndex = 5, glow = true })
+            strip.spec, strip.label = lane, label
+            lanes[index] = strip
         end
-        local info = text(area(pane, 110, 16), "", { Dim = true, TextSize = Library.FontSize - 1 })
+        local info = text(area(view, 80, 16), "", { Dim = true, TextSize = Library.FontSize - 1 })
 
-        local impactCard = Library:CreateBevel(area(pane, 132, 42), { Size = UDim2.new(1, 0, 1, 0), ZIndex = 4 })
-        local dot = Library:Create("Frame", { BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.fromOffset(10, 9), Size = UDim2.fromOffset(24, 24), ZIndex = 6, Parent = impactCard })
+        local impactRow = area(view, 100, 18)
+        local dot = Library:Create("Frame", { BackgroundColor3 = WHITE, BorderSizePixel = 0, Position = UDim2.fromOffset(2, 3), Size = UDim2.fromOffset(12, 12), ZIndex = 6, Parent = impactRow })
         Library:Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = dot })
         local ring = Library:Create("UIStroke", { Thickness = 2, Color = WHITE, Parent = dot })
-        local impactName = text(impactCard, "", { Position = UDim2.fromOffset(44, 5), Size = UDim2.new(1, -54, 0, 16) })
-        local impactInfo = text(impactCard, "", { Dim = true, TextSize = Library.FontSize - 2, Position = UDim2.fromOffset(44, 22), Size = UDim2.new(1, -54, 0, 14) })
+        local impactText = text(impactRow, "", { TextSize = Library.FontSize - 1, Position = UDim2.fromOffset(22, 0), Size = UDim2.new(1, -22, 1, 0) })
 
-        pillRow(pane, 182, { { "Fire test shot", shotTest } })
-        header(pane, 216, "Tracer textures")
-
-        local particles = Util.toSet(Tracers.particleNames)
+        local styleHead = header(view, 126, "Style")
         local items = {}
         for index, name in ipairs(Tracers.textureNames or {}) do
-            items[index] = { Id = name, Name = name, Subtitle = particles[name] and "particle tracer" or "beam" }
+            items[index] = { Id = name, Name = name, Subtitle = kindLabel(name), Swatch = Library.BackgroundColor }
         end
         Preview.tracerItems = items
-        local gallery
-        gallery = Library:CreateGallery(area(pane, 234), { Height = "Fill", View = "List", RowHeight = 32, Header = false, Items = items, Callback = function(item, _, selected)
+        local gallery = Library:CreateGallery(area(view, 144), { Height = "Fill", View = "Grid", Columns = 2, Aspect = 0.5, MinTile = 96, Header = false, Items = items, Callback = function(item, _, selected)
             if selected and item then setOption("trace_texture", item.Name) end
             Preview.dirty[Preview.syncTexture] = true
         end })
         Preview.tracerGallery = gallery
+
+        function Preview.decorate()
+            if gallery.Tiles == Preview.tileSource then return false end
+            Preview.tileSource = gallery.Tiles
+            local tiles = {}
+            for _, tile in ipairs(gallery.Tiles) do
+                if tile.Frame and tile.Id ~= nil then
+                    local strip = newStrip(tile.Frame, 9, { Position = UDim2.fromOffset(10, 6), Size = UDim2.new(1, -20, 1, -34), ZIndex = 9 })
+                    strip.style = tile.Id
+                    tiles[#tiles + 1] = strip
+                end
+            end
+            Preview.tiles = tiles
+            Preview.dirty[Preview.paintTiles] = true
+            return true
+        end
+
+        function Preview.paintTiles()
+            if not Preview.tiles then return end
+            local spec = Preview.tracerSpec(flag("trace_color", LANES[1][4]), true)
+            spec.thick = 3
+            for _, strip in ipairs(Preview.tiles) do paintStrip(strip, strip.style, spec) end
+            count("tiles")
+        end
+
         function Preview.syncTexture()
-            pcall(function() gallery:SetValue(flag("trace_texture", nil)) end)
+            local name = flag("trace_texture", nil)
+            pcall(function() gallery:SetValue(name) end)
+            styleHead.Text = "STYLE  |  " .. string.upper(tostring(name or "none"))
         end
 
         local function paintTracers()
-            local look
             local shown = {}
-            for _, lane in ipairs(lanes) do
-                local spec = lane.spec
+            local name = tostring(flag("trace_texture", "Lightning"))
+            for _, strip in ipairs(lanes) do
+                local spec = strip.spec
                 local on = flag(spec[2], false)
-                look = Preview.tracerLook(flag(spec[3], spec[4]))
-                lane.thick = look.thick
-                lane.glowThick = look.glow > 0 and math.floor(look.thick * (1.5 + 0.15 * look.glow) + 2) or 0
-                lane.beamGradient.Color, lane.beamGradient.Transparency = look.color, look.alpha
-                lane.glowGradient.Color, lane.glowGradient.Transparency = look.glowColor, look.glowAlpha
-                lane.glow.Visible = lane.glowThick > 0
-                lane.beam.BackgroundTransparency = on and 0 or 0.7
-                lane.glow.BackgroundTransparency = on and 0 or 0.8
-                lane.label.TextTransparency = on and 0 or 0.55
-                lane.beam.Size = UDim2.new(lane.scale, 0, 0, lane.thick)
-                lane.glow.Size = UDim2.new(lane.scale, 0, 0, lane.glowThick)
+                paintStrip(strip, name, Preview.tracerSpec(flag(spec[3], spec[4]), on))
+                strip.label.TextTransparency = on and 0 or 0.55
                 if on then shown[#shown + 1] = spec[1] end
             end
-            local name = tostring(flag("trace_texture", "Lightning"))
             local life = flag("trace_game_timing", true) and "game timing" or string.format("%.1f s", flag("trace_time", 4))
-            info.Text = string.format("%s  |  %s  |  %s  |  %.1fx%s", name, particles[name] and "particles" or "beam", life, flag("trace_width", 1), #shown == 0 and "  |  all off" or "")
+            if lookOf(name).core then life = string.format("fades %.1f s", flag("trace_smoke_life", 1)) end
+            info.Text = string.format("%s  |  %s  |  %s  |  %.1fx%s", name, kindLabel(name), life, flag("trace_width", 1), #shown == 0 and "  |  all off" or "")
+            if Preview.tiles then Preview.paintTiles() end
             count("tracers")
         end
 
@@ -19582,41 +20662,89 @@ do
             dot.BackgroundTransparency = on and 0.55 or 0.85
             local chosen = {}
             local set = Util.set("impact_list", {})
-            for _, name in ipairs(Impacts.names) do
-                if set[name] then chosen[#chosen + 1] = name end
+            for _, impact in ipairs(Impacts.names) do
+                if set[impact] then chosen[#chosen + 1] = impact end
             end
-            impactName.Text = on and (#chosen > 0 and table.concat(chosen, " + ") or "No effect picked") or "Bullet impacts are off"
-            impactInfo.Text = string.format("size %.2fx  |  %.1f s%s", flag("impact_size", 1), flag("impact_time", 1.2), flag("impact_enemy", false) and "  |  enemy shots too" or "")
+            if on then
+                impactText.Text = string.format("%s  |  %.2fx  |  %.1f s", #chosen > 0 and table.concat(chosen, " + ") or "no effect picked", flag("impact_size", 1), flag("impact_time", 1.2))
+            else
+                impactText.Text = "Impacts off"
+            end
+            impactText.TextTransparency = on and 0 or 0.45
             count("impacts")
         end
 
         Preview.lanes = lanes
-        Preview.bulletsPane = pane
         Preview.paintTracers, Preview.paintImpacts = paintTracers, paintImpacts
+        Preview.decorate()
         watch(TRACER_FLAGS, paintTracers)
         watch({ "trace_texture" }, Preview.syncTexture)
         watch(IMPACT_FLAGS, paintImpacts)
+    end
+
+    previewPane(Shoot, function(pane)
+        local top = testBar(pane)
+        local views = {}
+        local names = GunSounds and { "Tracers", "Gun sounds" } or { "Tracers" }
+        Preview.shootBar = Library:CreateSegmented(area(pane, top, 26), { Items = names, Default = "Tracers", Style = "Pill", Fill = true, Height = 26, Callback = function(name)
+            Preview.view = name
+            for viewName, frame in pairs(views) do frame.Visible = viewName == name end
+        end })
+        Preview.view = "Tracers"
+        Preview.shootPane = pane
+        views.Tracers = area(pane, top + 34)
+        tracerView(views.Tracers)
+        if GunSounds then
+            views["Gun sounds"] = area(pane, top + 34)
+            views["Gun sounds"].Visible = false
+            Preview.gunView(views["Gun sounds"])
+        end
+        Preview.views = views
         Preview.flush()
     end)
-    fallbackRows(Effects.Bullets, { { "Fire test shot", shotTest } })
+
+    if GunSounds then
+        local targets = {}
+        for index, weapon in ipairs(GunSounds.weapons) do
+            local key = "sfx_" .. weapon.key
+            targets[index] = { name = weapon.label, flag = key .. "_sound", enabled = key .. "_on", custom = key .. "_custom", key = weapon.key, vol = key .. "_volume", pitch = key .. "_pitch", scale = 0.5, order = function() return GunSounds.soundItems end }
+        end
+        function Preview.gunView(view)
+            local list = Preview.soundList(view, { name = "Gun sounds", targets = targets,
+                current = function() return flag("sfx_weapon", GunSounds.labels[1]) end,
+                onTarget = function(target) setOption("sfx_weapon", target.name) end,
+            })
+            watch({ "sfx_weapon" }, function()
+                local name = flag("sfx_weapon", GunSounds.labels[1])
+                if list.target.name ~= name then list.bar:SetValue(name) end
+            end)
+        end
+        Preview.selectedGun = function()
+            local label = flag("sfx_weapon", GunSounds.labels[1])
+            for _, weapon in ipairs(GunSounds.weapons) do
+                if weapon.label == label then return "sfx_" .. weapon.key end
+            end
+            return "sfx_" .. GunSounds.weapons[1].key
+        end
+    end
+    local shootRows = { { "Fire test shot", shotTest }, { "Test hit", hitTest(false) }, { "Test kill", killTest } }
+    if GunSounds then shootRows[#shootRows + 1] = { "Play selected gun sound", function() Util.guard("gun-sound-preview", GunSounds.preview, Preview.selectedGun()) end } end
+    fallbackRows(Shoot, shootRows)
 
     function Preview.animate(now)
         local lanes = Preview.lanes
-        if not lanes or not Preview.shown[Preview.bulletsPane] then return end
-        local phase = (now % 1.6) / 1.6
-        local scale = math.min(1, phase / 0.3)
-        scale = math.floor(scale * 50 + 0.5) / 50
-        for _, lane in ipairs(lanes) do
-            if lane.scale ~= scale then
-                lane.scale = scale
-                lane.beam.Size = UDim2.new(scale, 0, 0, lane.thick)
-                lane.glow.Size = UDim2.new(scale, 0, 0, lane.glowThick)
-            end
-        end
+        if not lanes or not Preview.shown[Preview.shootPane] or Preview.view ~= "Tracers" then return end
+        for _, strip in ipairs(lanes) do tickStrip(strip, now) end
+        if Preview.decorate() then Preview.flush() end
+        local step = math.floor(now * 15)
+        if step == Preview.tileStep or not Preview.tiles then return end
+        Preview.tileStep = step
+        for _, strip in ipairs(Preview.tiles) do tickStrip(strip, now) end
+        count("ticks")
     end
 
     local FACES = { { 1, 0, "Up" }, { 1, 2, "Down" }, { 1, 1, "Front" }, { 3, 1, "Back" }, { 0, 1, "Left" }, { 2, 1, "Right" } }
-    previewPane(Effects.Sky, function(pane)
+    previewPane(Effects.Ambience, function(pane)
         local views = {}
         local bar = Library:CreateSegmented(area(pane, 0, 26), { Items = { "Skyboxes", "Atmosphere" }, Default = "Skyboxes", Style = "Pill", Fill = true, Height = 26, Callback = function(name)
             for viewName, frame in pairs(views) do frame.Visible = viewName == name end
@@ -19695,7 +20823,7 @@ do
     end
 
     Util.onUnload(function()
-        Preview.dirty, Preview.lanes, Preview.bulletsPane, Preview.shown = {}, nil, nil, {}
+        Preview.dirty, Preview.lanes, Preview.tiles, Preview.tileSource, Preview.shootPane, Preview.shown = {}, nil, nil, nil, nil, {}
     end)
 
     Util.effectsPreview = Preview

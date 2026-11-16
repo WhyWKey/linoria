@@ -20928,14 +20928,13 @@ do
         Toggles.menu_watermark:OnChanged(function() pcall(function() Library:SetWatermarkVisibility(Toggles.menu_watermark.Value) end) end)
         menu:AddToggle("menu_keybinds", { Text = "Keybind list", Default = false })
         Toggles.menu_keybinds:OnChanged(function() pcall(function() Library:SetKeybindListVisibility(Toggles.menu_keybinds.Value) end) end)
-        menu:AddToggle("menu_keybinds_toggled", { Text = "Show toggled only", Default = false, Tooltip = "The keybind list hides features that are off" })
-        menu:AddToggle("menu_keybinds_bound", { Text = "Show bound only", Default = false, Tooltip = "The keybind list hides features without a key" })
+        menu:AddDropdown("menu_keybinds_filter", { Text = "Keybind list shows", Values = { "Toggled only", "Bound only" }, Multi = true, AllowNull = true, Default = {}, Tooltip = "Hide features that are off and/or features without a key" })
         local function keybindFilter()
             if type(Library.SetKeybindListFilter) ~= "function" then return end
-            pcall(function() Library:SetKeybindListFilter({ OnlyEnabled = Toggles.menu_keybinds_toggled.Value, OnlyBound = Toggles.menu_keybinds_bound.Value }) end)
+            local picked = Options.menu_keybinds_filter.Value or {}
+            pcall(function() Library:SetKeybindListFilter({ OnlyEnabled = picked["Toggled only"] == true, OnlyBound = picked["Bound only"] == true }) end)
         end
-        Toggles.menu_keybinds_toggled:OnChanged(keybindFilter)
-        Toggles.menu_keybinds_bound:OnChanged(keybindFilter)
+        Options.menu_keybinds_filter:OnChanged(keybindFilter)
         menu:AddButton("Test notification", function() Library:Notify("Aster notification test", 3) end)
     end
 

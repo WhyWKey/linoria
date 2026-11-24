@@ -537,9 +537,6 @@ do
     function Input.keyName(input)
         local name = MOUSE[input.UserInputType]
         if name then return name end
-        local typeName = input.UserInputType and input.UserInputType.Name
-        if typeName == "MouseButton4" then return "m4" end
-        if typeName == "MouseButton5" then return "m5" end
         if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode then
             local key = input.KeyCode.Name
             if key == "Unknown" then return nil end
@@ -6950,7 +6947,7 @@ do
     local Scene = {}
     Aster.Scene = Scene
     Aster._.Scene = Scene
-    Scene.adornInViewport = true
+    Scene.adornInViewport = false
 
     local R6 = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }
     local SIZES = {
@@ -7503,13 +7500,7 @@ do
     end
 
     function Chams:_pick()
-        local want = self._force or (Scene.adornInViewport and "adorn" or "parts")
-        if want == "adorn" then
-            local ok, probe = pcall(Instance.new, "BoxHandleAdornment")
-            if not (ok and probe) then return "parts" end
-            pcall(function() probe:Destroy() end)
-        end
-        return want
+        return self._force or (Scene.adornInViewport and "adorn" or "parts")
     end
 
     function Chams:_overlay()
@@ -9856,7 +9847,8 @@ do
         } })
         local links = info:Buttons({ items = {
             act("Copy avatar", function(p)
-                if opts.copyAvatar then Util.guard(opts.copyAvatar, p) end
+                if not opts.copyAvatar then return notify("avatar", "copy avatar is not available here", "warn") end
+                Util.guard(opts.copyAvatar, p)
                 notify("avatar", "copied @" .. tostring(p.name) .. "'s avatar", "ok")
             end),
             act("View profile", function(p)
@@ -9865,6 +9857,10 @@ do
                 notify("profile", url)
             end),
         } })
+        self._maid:Add(function()
+            if spectating and not opts.spectate then spectate(nil, false) end
+            spectating = nil
+        end)
         local list
         paintPlayer = function()
             local p = current

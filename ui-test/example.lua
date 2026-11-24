@@ -5,8 +5,10 @@ local env = (getgenv and getgenv()) or _G
 local compile = loadstring or load
 
 local function fromSource(src)
-    local fn = src and compile(src, "=aster2")
-    return fn and fn()
+    if type(src) ~= "string" or #src < 64 then error("bad download: " .. tostring(src), 0) end
+    local fn, err = compile(src, "=aster2")
+    if not fn then error("compile failed: " .. tostring(err), 0) end
+    return fn()
 end
 
 local function loadAster()

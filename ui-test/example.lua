@@ -18,7 +18,15 @@ local function loadAster()
         if string.find(loc, "\n", 1, true) then return fromSource(loc) end
         if readfile and isfile and isfile(loc) then return fromSource(readfile(loc)) end
     end
-    local ok, lib = pcall(function() return fromSource(game:HttpGet(URL)) end)
+    local ok, lib = pcall(function()
+        local got, body = pcall(function() return game:HttpGet(URL) end)
+        if got and type(body) == "string" and #body >= 64 then return fromSource(body) end
+        local req = request or http_request or (syn and syn.request) or (http and http.request)
+        if not req then return fromSource(body) end
+        local sent, reply = pcall(req, { Url = URL, Method = "GET" })
+        if sent and type(reply) == "table" and type(reply.Body) == "string" then return fromSource(reply.Body) end
+        error("HttpGet failed (" .. tostring(body) .. "), request failed (" .. tostring(type(reply) == "table" and reply.StatusCode or reply) .. ")", 0)
+    end)
     if ok and lib then return lib end
     if readfile and isfile and isfile("aster2/Library.lua") then return fromSource(readfile("aster2/Library.lua")) end
     error("[aster example] could not load Library.lua: " .. tostring(lib))
@@ -88,7 +96,7 @@ end)(), default = "rifles" })
 legit:Variants(legitStrip, function(cls, page)
     local c = "aim." .. cls .. "."
     local target = page:Card({ name = "targeting", id = "target", side = "left" })
-    local on = row(target, "Enabled", c .. "on", { def = true, sw = { "#c9a96e" }, key = "m4", mode = "hold", hud = "Aimbot" })
+    local on = row(target, "Enabled", c .. "on", { def = true, sw = { "#c9a96e" }, key = "m2", mode = "hold", hud = "Aimbot" })
     row(target, "Silent aim", c .. "silent", { dep = c .. "on" })
     row(target, "Visible only", c .. "vis", { def = true, dep = c .. "on" })
     target:Dropdown({ name = "Target part", flag = c .. "part", options = { "head", "neck", "upper torso", "lower torso", "nearest" }, default = "head" })

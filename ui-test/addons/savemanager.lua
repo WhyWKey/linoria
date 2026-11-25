@@ -20,7 +20,9 @@ local function builtinsOf(target)
 end
 
 local function root()
-    if SaveManager.Folder then Store.ConfigRoot = Store.base(SaveManager.Folder) end
+    if not SaveManager.Folder then return end
+    Store.ConfigRoot = Store.base(SaveManager.Folder)
+    if Store.migrate then pcall(Store.migrate, SaveManager.Folder) end
 end
 
 function SaveManager:SetLibrary(lib)

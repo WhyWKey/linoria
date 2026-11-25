@@ -617,6 +617,19 @@ do
         return point.X >= x and point.Y >= y and point.X < x + w and point.Y < y + h
     end
 
+    function Input.overUi(point)
+        point = point or Input.mouse()
+        for _, key in ipairs({ "Main", "Popup", "Hud", "Toast" }) do
+            local gui = Aster.Gui and Aster.Gui[key]
+            if gui and gui.Enabled then
+                for _, child in ipairs(gui:GetChildren()) do
+                    if child:IsA("GuiObject") and child.Visible and Input.over(child, point) then return true end
+                end
+            end
+        end
+        return false
+    end
+
     function Input.shift()
         local ok, down = pcall(function()
             return UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
@@ -2387,6 +2400,9 @@ do
             return (s._hot or s._drag) and T.accent or T.ln3
         end)
 
+        s._maid:Add(frame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+            if s:View() ~= s._view then s:Refit() end
+        end))
         s._maid:Add(frame.InputChanged:Connect(function(input)
             if isWheel(input) then
                 s:_wheel(input.Position.Z)
@@ -2412,6 +2428,8 @@ do
     end
 
     function Scroll:View()
+        local size = self.Frame.Size.Y
+        if size.Scale == 0 then return size.Offset end
         return self.Frame.AbsoluteSize.Y
     end
 
@@ -2425,6 +2443,7 @@ do
 
     function Scroll:Refit()
         local view = self:View()
+        self._view = view
         self.Max = math.max(0, self.Height - view)
         if self.Y > self.Max then self.Y = self.Max end
         if self.Max < 1 then
@@ -4405,6 +4424,37 @@ do
         return T.accent
     end
 
+    local function rank(el)
+        return Kinds[el.Kind].trail or 3
+    end
+
+    function Element:_pack()
+        if self.Parent then return self.Parent:_pack() end
+        local items = {}
+        if Kinds[self.Kind].slot and self.Slot then items[1] = self end
+        for _, el in ipairs(self.Attached) do
+            if el.Slot and not el.Destroyed then items[#items + 1] = el end
+        end
+        for i = 2, #items do
+            local item, j = items[i], i - 1
+            while j >= 1 and rank(items[j]) > rank(item) do
+                items[j + 1] = items[j]
+                j = j - 1
+            end
+            items[j + 1] = item
+        end
+        local used = 0
+        for i = #items, 1, -1 do
+            local slot = items[i].Slot
+            local width = items[i]._trailW or slot.Size.X.Offset
+            slot.Size = UDim2.fromOffset(width, LINE)
+            slot.Position = UDim2.new(1, -(Element.PAD + used + width), 0, 0)
+            used = used + width + Element.GAP
+        end
+        self._used = used
+        self:_fit()
+    end
+
     Kinds.toggle = {
         method = "Toggle", default = false,
         validate = function(opts, value)
@@ -4781,12 +4831,12 @@ do
         if listening then
             if not down then return end
             local el = listening
-            if name == "escape" or name == "m1" then
+            if name == "escape" then
                 stopListen()
-                if name == "m1" then swallowClick = el end
                 return
             end
             stopListen()
+            if name == "m1" then swallowClick = el end
             if name == "m2" then swallowMenu = el end
             el:Set({ key = name, mode = el.Value.mode })
             return
@@ -4795,6 +4845,10 @@ do
         if down and not MOUSE[name] then
             local ok, box = pcall(function() return UserInputService:GetFocusedTextBox() end)
             if ok and box then return end
+        end
+        if down and MOUSE[name] then
+            local ok, over = pcall(Input.overUi)
+            if ok and over then return end
         end
         local snapshot = table.move(list, 1, #list, 1, {})
         for _, el in ipairs(snapshot) do
@@ -4810,7 +4864,7 @@ do
     pcall(function() Aster._maid:Add(UserInputService.WindowFocusReleased:Connect(release)) end)
 
     Kinds.keybind = {
-        method = "Keybind", slot = SLOT,
+        method = "Keybind", slot = SLOT, trail = 2,
         default = function(opts) return { key = "", mode = MODES[opts.mode] and opts.mode or "toggle" } end,
         validate = function(opts, value)
             local mode = MODES[opts.mode] and opts.mode or "toggle"
@@ -4886,6 +4940,12 @@ do
             el._shownValue = value
             local active = value.key ~= "" and el:Active()
             local listen = el._listen
+            local plain = listen and "[...]" or (value.key == "" and "[-]" or "[" .. short(value.key) .. " " .. MODES[value.mode] .. "]")
+            local width = Text.width(plain, "tiny")
+            if width ~= el._trailW then
+                el._trailW = width
+                el:_pack()
+            end
             Theme.bind(el._chip, "TextColor3", (listen or active) and "accent" or (el._chipHover and not el.Disabled and "tx2" or "tx4"))
             Theme.bind(el._chip, "Text", function(T)
                 if listen then return "[...]" end
@@ -5472,7 +5532,7 @@ do
     end
 
     Kinds.color = {
-        method = "Color", slot = SW_W,
+        method = "Color", slot = SW_W + 2, trail = 1,
         default = function() return Color3.new(1, 1, 1) end,
         validate = function(opts, value) return toColor(value) end,
         equal = function(a, b)
@@ -5510,14 +5570,16 @@ do
             local h, s, v = Color3.toHSV(el.Value)
             el._anim = { mode = "static", speed = 1, t = 0, min = MIN_DEF, set2 = false, color = Color3.fromHSV((h + 0.5) % 1, math.max(s, 0.5), math.max(v, 0.5)) }
             el._maid:Add(function() track(el, false) end)
-            local y = (LINE - SW_H) / 2
-            local ring = Util.new("Frame", { Name = "Ring", Position = UDim2.fromOffset(-1, y - 1), Size = UDim2.fromOffset(SW_W + 2, SW_H + 2), Theme = { BackgroundColor3 = "ln2" }, Parent = slot })
+            local ring = Util.new("Frame", { Name = "Ring", Position = UDim2.fromOffset(0, Util.snap((LINE - SW_H) / 2) - 1), Size = UDim2.fromOffset(SW_W + 2, SW_H + 2), Theme = { BackgroundColor3 = "ln2" }, Parent = slot })
             el._glow = Util.new("Frame", { Name = "Glow", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Theme = { BackgroundColor3 = "accent" }, Parent = ring })
-            local border = Util.new("Frame", { Name = "Border", BackgroundTransparency = 0.4, Position = UDim2.fromOffset(1, 1), Size = UDim2.fromOffset(SW_W, SW_H), Theme = { BackgroundColor3 = "black" }, Parent = ring })
-            local well = checker(border, SW_W - 2, SW_H - 2, 6)
-            well.Position = UDim2.fromOffset(1, 1)
+            local border = Util.new("Frame", { Name = "Border", Position = UDim2.fromOffset(1, 1), Size = UDim2.fromOffset(SW_W, SW_H), Theme = { BackgroundColor3 = "black" }, Parent = ring })
+            el._well = checker(border, SW_W - 2, SW_H - 2, 4)
+            el._well.Position = UDim2.fromOffset(1, 1)
             el.Swatch = Util.new("Frame", { Name = "Swatch", Position = UDim2.fromOffset(1, 1), Size = UDim2.fromOffset(SW_W - 2, SW_H - 2), Parent = border })
+            el._sheen = Util.new("Frame", { Name = "Sheen", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Theme = { BackgroundColor3 = "white" }, Parent = el.Swatch })
+            el.SwatchRing = ring
             el.Hit = Util.new("TextButton", { Name = "Hit", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, LINE), Parent = slot })
+            el:_pack()
             el._maid:Add(el.Hit.MouseEnter:Connect(function()
                 el._swHover = true
                 el:_paint()
@@ -5546,8 +5608,11 @@ do
             el._painted = true
             el.Swatch.BackgroundColor3 = el.Value
             el.Swatch.BackgroundTransparency = 1 - el._alpha
+            el._well.Visible = el._alpha < 1
             local open = el._pick ~= nil
-            tween(el._glow, { BackgroundTransparency = ((el._swHover and not el.Disabled) or open) and 0 or 1 }, kind)
+            local hot = el._swHover and not el.Disabled
+            tween(el._glow, { BackgroundTransparency = open and 0 or (hot and 0.45 or 1) }, kind)
+            tween(el._sheen, { BackgroundTransparency = hot and 0.88 or 1 }, kind)
             local state = el._pick
             if el._ticking then return end
             if state and state.draw and not state.own then
@@ -6242,6 +6307,7 @@ do
             path[#path + 1] = { kind = "gear", ref = el, name = el._title, id = "gear" }
             el.Inner = Container.new(el._holder, { width = el._width, path = path, bg = "card", padTop = 0, padBottom = 6, shown = false })
             el.Inner.Gear = el
+            el:_pack()
             el._maid:Add(el.Hit.MouseEnter:Connect(function()
                 el._over = true
                 paint(el, "fade")
@@ -10740,7 +10806,13 @@ do
         function Aster:Window(opts)
             local existed = self._window and not self._window.Destroyed
             local win = makeWindow(self, opts)
-            if win and not existed then Util.guard(H.attach, win) end
+            if win and not existed then
+                Util.guard(H.attach, win)
+                Anim.loop(function()
+                    if not Hud.Booting and not Hud.Entered and not Aster.Unloaded then Hud:Enter(0) end
+                    return false
+                end)
+            end
             return win
         end
         local classes = Aster._.Window
@@ -10779,7 +10851,7 @@ do
     Spectators:Set({})
     H.put(Target, false)
     H.active(false)
-    Hud:Enter(0)
+    Aster.Gui.Hud.Enabled = false
 end
 
 -- [src] 65_loader.lua
@@ -10790,10 +10862,67 @@ do
     Hud.LoaderClass = Loader
     local W, H, BODYW = 220, 56, 218
 
+    local function unhide()
+        local win = Aster._window
+        if win and not win.Destroyed then
+            win.Frame.Visible = win.Visible
+            Hud:Enter(0)
+        end
+    end
+
+    local function watchdog(seconds)
+        local grace = false
+        local function check()
+            if not Hud.Booting or Aster.Unloaded then return end
+            local loader = Hud.ActiveLoader
+            if loader and loader.Finished and not grace then
+                grace = true
+                Anim.after(3, check)
+                return
+            end
+            if loader then
+                loader.Finished = true
+                loader._faded = true
+                Hud.ActiveLoader = nil
+                local root = loader.Root
+                if root then
+                    Anim.to(root, { GroupTransparency = 1 }, "intro", function() loader._maid:Clean() end)
+                else
+                    loader._maid:Clean()
+                end
+            end
+            Util.guard(Loader._bootIn, loader or {})
+            if Hud.Booting then Util.guard(unhide) end
+        end
+        Anim.after(seconds, check)
+    end
+
+    local build
     function Aster:Loader(opts)
         if type(opts) == "string" then opts = { title = opts } end
         opts = opts or {}
         if Hud.ActiveLoader and not Hud.ActiveLoader.Finished then Hud.ActiveLoader:_destroy() end
+        local ok, result = pcall(build, opts)
+        if ok then
+            watchdog(30)
+            return result
+        end
+        warn("[aster] " .. tostring(result))
+        if Hud.ActiveLoader then Util.guard(Hud.ActiveLoader._destroy, Hud.ActiveLoader) end
+        Hud.Booting = false
+        Util.guard(unhide)
+        return setmetatable({ Opts = opts, Progress = 1, Dots = 1, Finished = true, _faded = true, _maid = Util.Maid.new() }, Loader)
+    end
+
+    local makeWindow = Aster.Window
+    function Aster:Window(opts)
+        local existed = self._window and not self._window.Destroyed
+        local win = makeWindow(self, opts)
+        if win and not existed then watchdog(15) end
+        return win
+    end
+
+    function build(opts)
         local self = setmetatable({ Opts = opts, Progress = 0, Dots = 1, Finished = false, _maid = Util.Maid.new() }, Loader)
         Hud.ActiveLoader = self
         Aster._maid:Add(self._maid)

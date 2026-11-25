@@ -1,46 +1,104 @@
 -- aster v2 example: every widget, the built-in settings pages and the engine previews (Aster.Scene)
-local URLS = {
-    "https://raw.githubusercontent.com/WhyWKey/linoria/main/ui-test/library.lua",
+-- the GitHub API first: raw.githubusercontent and Fastly are blocked on some networks, api.github and the
+-- gcore/testingcf jsDelivr hosts are not; cdn.jsdelivr can serve a copy up to 12 h old
+local API = "https://api.github.com/repos/WhyWKey/linoria/contents/ui-test/library.lua"
+local MIRRORS = {
+    "https://gcore.jsdelivr.net/gh/WhyWKey/linoria@main/ui-test/library.lua",
+    "https://testingcf.jsdelivr.net/gh/WhyWKey/linoria@main/ui-test/library.lua",
     "https://cdn.jsdelivr.net/gh/WhyWKey/linoria@main/ui-test/library.lua",
+    "https://raw.githubusercontent.com/WhyWKey/linoria/main/ui-test/library.lua",
 }
 local compile = loadstring or load
+local clock = os.clock or tick
 
--- nil plus a reason unless the body looks like a real download
+local B64 = {}
+for i = 1, 64 do B64[string.byte("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", i)] = i - 1 end
+local function b64decode(s)
+    s = string.gsub(s, "[^%w%+/]", "")
+    local out, floor = {}, math.floor
+    for i = 1, #s - 1, 4 do
+        local a, b, c, d = string.byte(s, i, i + 3)
+        local v = B64[a] * 262144 + B64[b] * 4096 + (c and B64[c] or 0) * 64 + (d and B64[d] or 0)
+        local x, y, z = floor(v / 65536), floor(v / 256) % 256, v % 256
+        out[#out + 1] = d and string.char(x, y, z) or c and string.char(x, y) or string.char(x)
+    end
+    return table.concat(out)
+end
+
+local function decode64(s)
+    local c = crypt
+    for _, f in ipairs({ c and c.base64decode, c and type(c.base64) == "table" and c.base64.decode, base64_decode, base64decode }) do
+        local ok, out = pcall(f, s)
+        if ok and type(out) == "string" and #out > 0 then return out end
+    end
+    return b64decode(s)
+end
+
+-- nil plus a reason unless the body looks like Lua source
 local function usable(body)
-    if type(body) ~= "string" then return nil, tostring(body) end
+    if type(body) ~= "string" then return nil, "body " .. tostring(body) end
     if #body < 64 then return nil, #body .. " bytes: " .. string.sub(body, 1, 80) end
+    if string.find(body, "^%s*[<{]") then return nil, "error page, " .. #body .. " bytes: " .. string.sub(body, 1, 80) end
     return body
 end
 
-local function viaHttpGet(url)
+local function httpGet(url)
     local ok, body = pcall(function() return game:HttpGet(url) end)
     if not ok then return nil, tostring(body) end
-    return usable(body)
+    return body
 end
 
-local function viaRequest(url)
-    local req = request or http_request or (syn and syn.request) or (http and http.request)
+local function viaRequest(url, headers)
+    local req = request or http_request or (syn and syn.request) or (fluxus and fluxus.request) or (http and http.request)
     if not req then return nil, "no request function" end
-    local ok, reply = pcall(req, { Url = url, Method = "GET" })
+    local ok, reply = pcall(req, { Url = url, Method = "GET", Headers = headers })
     if not ok then return nil, tostring(reply) end
     if type(reply) ~= "table" then return nil, "reply " .. tostring(reply) end
+    local status = "status " .. tostring(reply.StatusCode) .. (reply.StatusMessage and " " .. tostring(reply.StatusMessage) or "")
+    local code = tonumber(reply.StatusCode)
+    if code and code >= 400 then return nil, status .. ", " .. #tostring(reply.Body or "") .. " bytes" end
     local body, why = usable(reply.Body)
-    if not body then return nil, "status " .. tostring(reply.StatusCode) .. ", " .. why end
+    if not body then return nil, status .. ", " .. why end
     return body
+end
+
+-- the API answers HttpGet (no headers) with JSON whose .content is the file in base64
+local function viaApiJson()
+    local json, why = httpGet(API)
+    if not json then return nil, why end
+    local content = string.match(json, '"content"%s*:%s*"(.-)"')
+    if not content then return nil, "no content in " .. #json .. " bytes: " .. string.sub(json, 1, 80) end
+    local ok, src = pcall(decode64, (string.gsub(content, "\\n", "")))
+    if not ok then return nil, "base64: " .. tostring(src) end
+    return usable(src)
 end
 
 local function loadAster()
+    local ways = {
+        { "request " .. API .. " (raw)", function() return viaRequest(API, { Accept = "application/vnd.github.raw", ["User-Agent"] = "aster" }) end },
+        { "HttpGet " .. API .. " (json)", viaApiJson },
+    }
+    for _, url in ipairs(MIRRORS) do
+        ways[#ways + 1] = { "HttpGet " .. url, function()
+            local body, why = httpGet(url)
+            if not body then return nil, why end
+            return usable(body)
+        end }
+        ways[#ways + 1] = { "request " .. url, function() return viaRequest(url) end }
+    end
     local tried = {}
-    for _, url in ipairs(URLS) do
-        for _, way in ipairs({ { "HttpGet", viaHttpGet }, { "request", viaRequest } }) do
-            local body, why = way[2](url)
-            if body then
-                local fn, err = compile(body, "=aster2")
-                if fn then return fn() end
-                why = "compile failed: " .. tostring(err)
+    for _, way in ipairs(ways) do
+        local t0 = clock()
+        local body, why = way[2]()
+        if body then
+            local fn, err = compile(body, "=aster2")
+            if fn then
+                print("[aster example] Library.lua from " .. way[1] .. ", " .. #body .. " bytes")
+                return fn()
             end
-            tried[#tried + 1] = "  " .. way[1] .. " " .. url .. ": " .. why
+            why = "compile failed: " .. tostring(err)
         end
+        tried[#tried + 1] = "  " .. way[1] .. ": " .. tostring(why) .. " (" .. math.floor((clock() - t0) * 1000) .. " ms)"
     end
     error("[aster example] could not load Library.lua:\n" .. table.concat(tried, "\n"), 0)
 end

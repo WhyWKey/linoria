@@ -106,7 +106,7 @@ function ThemeManager:SetLibrary(lib)
     Util, Theme, Store, Exec, Anim, Icons = I.Util, I.Theme, I.Store, I.Exec, I.Anim, I.Icons
     self.Library = lib
     self.Changed = Util.Signal.new()
-    self._built, self._init = {}, nil
+    self._built, self._init, self._default, self._complete = {}, nil, nil, {}
     lib._maid:Add(self.Changed)
     lib.ThemeManager = self
     return self
@@ -160,11 +160,22 @@ function ThemeManager:GetBuiltInTheme(name)
     return complete(Util.copy(entry[2]))
 end
 
+local function builtin(self, name)
+    local entry = self.BuiltInThemes[name]
+    local hit = self._complete[name]
+    if not hit or hit[1] ~= entry[2] then
+        hit = { entry[2], complete(Util.copy(entry[2])) }
+        self._complete[name] = hit
+    end
+    return hit[2]
+end
+
 function ThemeManager:SetFolder(name)
     if type(name) == "string" and name ~= "" then
         self.Folder = name
         if Store and Store.migrate then pcall(Store.migrate, name) end
     end
+    self._default = nil
     if Library then self:ReloadCustomThemes() end
 end
 
@@ -230,8 +241,10 @@ end
 
 function ThemeManager:Match()
     need()
+    local picked = self.Picked
+    if picked and self.Custom[picked] and same(self.Custom[picked]) then return picked end
     for _, name in ipairs(self:BuiltInNames()) do
-        if same(self:GetBuiltInTheme(name)) then return name end
+        if same(builtin(self, name)) then return name end
     end
     local list = {}
     for name in pairs(self.Custom) do list[#list + 1] = name end
@@ -247,6 +260,7 @@ function ThemeManager:ApplyTheme(name)
     local data = self:GetTheme(name)
     if not data then return false end
     if self:IsBuiltIn(name) then self.Builtin = name end
+    self.Picked = self.name(name)
     Theme:Set(data)
     return true
 end
@@ -263,9 +277,11 @@ function ThemeManager:SaveCustomTheme(name)
     name = self.name(name)
     if name == "" then return false, "type a name first" end
     if self:IsBuiltIn(name) then return false, name .. " is a built-in theme" end
+    if name == "custom" then return false, "custom is a reserved name" end
     local text = Util.json(Theme:Export())
     local existed = self.Custom[name] ~= nil
     if not text or not write(stored(name), text) then return false, "could not write " .. name end
+    self.Picked = name
     self:ReloadCustomThemes()
     self.Changed:Fire("save", name)
     return true, name, existed
@@ -276,7 +292,7 @@ function ThemeManager:DeleteCustomTheme(name)
     name = self.name(name)
     if not self.Custom[name] then return false end
     if not remove(stored(name)) then return false end
-    if self:GetDefault() == name then remove(folder() .. "/default.txt") end
+    if self:GetDefault() == name and remove(folder() .. "/default.txt") then self._default = false end
     self:ReloadCustomThemes()
     self.Changed:Fire("delete", name)
     return true
@@ -287,19 +303,23 @@ function ThemeManager:SaveDefault(name)
     name = self.name(name)
     if not self:GetTheme(name) then return false end
     if not write(folder() .. "/default.txt", name) then return false end
+    self._default = name
     self.Changed:Fire("default", name)
     return true
 end
 
 function ThemeManager:GetDefault()
     need()
-    local name = read(folder() .. "/default.txt")
-    name = name and self.name(name) or ""
-    if name == "" then return nil end
-    return name
+    if self._default == nil then
+        local name = read(folder() .. "/default.txt")
+        name = name and self.name(name) or ""
+        self._default = name ~= "" and name or false
+    end
+    return self._default or nil
 end
 
 function ThemeManager:LoadDefault()
+    self._default = nil
     local name = self:GetDefault()
     if not name then return false end
     return self:ApplyTheme(name)
@@ -343,27 +363,80 @@ function ThemeManager:ApplyToCard(card, editor)
     editor = editor or card
     local h = { Card = card, Editor = editor, Colours = {} }
     local syncing = false
-    local function tiles()
+    local function key(v)
+        return (string.gsub(tostring(v or ""), " %(default%)$", ""))
+    end
+    local function labels()
         local out = {}
-        for _, item in ipairs(TM:List()) do
-            local data = TM:GetTheme(item.key) or {}
-            out[#out + 1] = { key = item.key, name = item.text, sub = item.marker or item.meta, color = Util.hex(data.bg), swatch = Util.hex(data.accent), fav = item.marker == "default" }
-        end
+        for _, item in ipairs(TM:List()) do out[#out + 1] = item.marker and (item.key .. " (" .. item.marker .. ")") or item.key end
         return out
     end
-    h.Tiles = card:Tiles({ mode = "list", items = tiles, maxHeight = #TM:BuiltInNames() * 28, empty = "no themes",
-        isOn = function(item) return item.key == h.List.Value end,
-        click = function(item) h.List:Set(item.key) end,
-        fav = function(item)
-            if TM:SaveDefault(item.key) then notify(item.key .. " loads on inject", "ok") end
-        end,
-    })
-    h.List = card:List({ items = function() return TM:List() end, rows = 6, empty = "no themes", default = self:Match(), save = false, visible = false, callback = function(v)
-        if not syncing and v ~= "" and v ~= "custom" then TM:ApplyTheme(v) end
-        if not h.Tiles.Destroyed then h.Tiles:Refresh() end
+    local function current()
+        local name = TM:Match()
+        return name == TM:GetDefault() and name .. " (default)" or name
+    end
+    h.List = card:Dropdown({ name = "Theme", options = labels, free = true, default = current(), save = false, callback = function(v)
+        local name = key(v)
+        if not syncing and name ~= "" and name ~= "custom" then TM:ApplyTheme(name) end
     end })
     h.Preset = h.List
-    h.Tiles:Refresh()
+    h.Name = card:Input({ placeholder = "theme name", max = 24 })
+    local function target()
+        local typed = TM.name(h.Name.Value)
+        if typed ~= "" then return typed end
+        local picked = key(h.List.Value)
+        if picked ~= "" and picked ~= "custom" then return picked end
+        return nil
+    end
+    local function save()
+        local ok, why, existed = TM:SaveCustomTheme(target() or "")
+        if ok then h.Name:Set("") end
+        notify(ok and ((existed and "overwrote " or "saved ") .. why) or why, ok and "ok" or "warn")
+    end
+    h.Name.Opts.enter = save
+    local armed, doomed
+    local function disarm()
+        if armed then armed:Stop() end
+        armed, doomed = nil, nil
+        if h.Actions and not h.Actions.Destroyed then h.Actions:SetText(3, "Delete") end
+    end
+    h.Actions = card:Buttons({ items = {
+        { name = "Load", callback = function()
+            local name = target()
+            if not name or not TM:ApplyTheme(name) then return notify("pick a theme first", "warn") end
+            notify("loaded " .. name, "ok")
+        end },
+        { name = "Save", primary = true, callback = save },
+        { name = "Delete", callback = function()
+            if not armed then
+                local name = target()
+                if not name or not TM.Custom[name] then return notify("pick a custom theme", "warn") end
+                h.Actions:SetText(3, "Confirm")
+                armed, doomed = Anim.after(2.5, disarm), name
+                return
+            end
+            local name = doomed
+            disarm()
+            if TM:DeleteCustomTheme(name) then notify("deleted " .. name, "warn") end
+        end },
+    } })
+    h.Extra = card:Buttons({ items = {
+        { name = "Set as default", callback = function()
+            local name = target() or TM:Match()
+            if not TM:SaveDefault(name) then return notify("save the theme first", "warn") end
+            notify(name .. " loads on inject", "ok")
+        end },
+        { name = "Reset", callback = function()
+            local picked = key(h.List.Value)
+            local name = TM:Reset(TM:IsBuiltIn(picked) and picked or nil)
+            notify("reset to " .. tostring(name), "ok")
+        end },
+        { name = "Refresh", callback = function()
+            TM:ReloadCustomThemes()
+            h.List:SetOptions(labels)
+            notify(#TM:List() .. " themes found")
+        end },
+    } })
     h.Style = editor:Dropdown({ name = "Fill style", options = { "flat", "gradient" }, default = Theme.Base.style, save = false, callback = function(v)
         if not syncing then Theme:Set({ style = v }) end
     end })
@@ -395,77 +468,20 @@ function ThemeManager:ApplyToCard(card, editor)
         local el = h.Colours[key]
         if el and type(a) == "table" and type(a.mode) == "string" then el:SetAnimation(a.mode, a.speed, a.second, a.min) end
     end
-    h.Name = editor:Input({ placeholder = "theme name", max = 24 })
-    local function target()
-        local typed = TM.name(h.Name.Value)
-        if typed ~= "" then return typed end
-        local picked = h.List.Value
-        if picked ~= "" and picked ~= "custom" then return picked end
-        return nil
-    end
-    local function save()
-        local ok, why, existed = TM:SaveCustomTheme(target() or "")
-        if ok then h.Name:Set("") end
-        notify(ok and ((existed and "overwrote " or "saved ") .. why) or why, ok and "ok" or "warn")
-    end
-    h.Name.Opts.enter = save
-    local armed
-    local function disarm()
-        if armed then armed:Stop() end
-        armed = nil
-        if h.Actions and not h.Actions.Destroyed then h.Actions:SetText(3, "Delete") end
-    end
-    h.Actions = editor:Buttons({ items = {
-        { name = "Save", primary = true, callback = save },
-        { name = "Load", callback = function()
-            local name = target()
-            if not name or not TM:ApplyTheme(name) then return notify("pick a theme first", "warn") end
-            notify("loaded " .. name, "ok")
-        end },
-        { name = "Delete", callback = function()
-            local name = target()
-            if not name or not TM.Custom[name] then return notify("pick a custom theme", "warn") end
-            if not armed then
-                h.Actions:SetText(3, "Confirm")
-                armed = Anim.after(2.5, disarm)
-                return
-            end
-            disarm()
-            if TM:DeleteCustomTheme(name) then notify("deleted " .. name, "warn") end
-        end },
-    } })
-    h.Extra = editor:Buttons({ items = {
-        { name = "Set as default", callback = function()
-            local name = target() or TM:Match()
-            if not TM:SaveDefault(name) then return notify("save the theme first", "warn") end
-            notify(name .. " loads on inject", "ok")
-        end },
-        { name = "Reset", callback = function()
-            local picked = h.List.Value
-            local name = TM:Reset(TM:IsBuiltIn(picked) and picked or nil)
-            notify("reset to " .. tostring(name), "ok")
-        end },
-        { name = "Refresh", callback = function()
-            TM:ReloadCustomThemes()
-            h.List:Refresh()
-            notify(#TM:List() .. " themes found")
-        end },
-    } })
     local function sync()
         syncing = true
         for key, el in pairs(h.Colours) do
             if not el.Destroyed and (el._anim.mode == "static" or Util.toHex(el._base) ~= Theme.Base[key]) then el:Set(Theme.Base[key], true) end
         end
         if not h.Style.Destroyed then h.Style:Set(Theme.Base.style, true) end
-        if not h.List.Destroyed then h.List:Set(TM:Match(), true) end
-        if not h.Tiles.Destroyed then h.Tiles:Refresh() end
+        if not h.List.Destroyed then h.List:Set(current(), true) end
         syncing = false
     end
     h.List._maid:Add(Theme.Changed:Connect(sync))
     h.List._maid:Add(self.Changed:Connect(function()
         disarm()
         if h.List.Destroyed then return end
-        h.List:Refresh()
+        h.List:SetOptions(labels)
         sync()
     end))
     h.Sync = sync

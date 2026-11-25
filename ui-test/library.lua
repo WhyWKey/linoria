@@ -431,7 +431,7 @@ do
 
     function Theme.fill(obj, top, bottom)
         local gradient = obj:FindFirstChildOfClass("UIGradient") or Util.new("UIGradient", { Rotation = 90, Parent = obj })
-        obj.BackgroundColor3 = Color3.new(1, 1, 1)
+        Theme.bind(obj, "BackgroundColor3", "white")
         Theme.bind(gradient, "Color", function(T) return ColorSequence.new(resolve(top), resolve(bottom)) end)
         return gradient
     end
@@ -2700,6 +2700,8 @@ do
 
         self.Body = Scroll.new(mainArea, { name = "Body", position = UDim2.fromOffset(0, BAR), size = UDim2.new(1, 0, 1, -BAR), endGap = 12 })
         self.Lift = Util.new("Frame", { Name = "Lift", BackgroundTransparency = 1, ZIndex = 30, Size = UDim2.fromScale(1, 1), Parent = frame })
+        self.Stash = Util.new("Frame", { Name = "Stash", BackgroundTransparency = 1, Visible = false, Size = UDim2.fromOffset(0, 0), Parent = main })
+        self._maid:Add(self.Stash)
 
         self:_handles(rig)
         self:_dragging(brand)
@@ -2805,6 +2807,13 @@ do
         local page = self.Page
         if page then page:_relayout(false) end
         self.Body:Refit()
+        self:_fitStash()
+    end
+
+    function Window:_fitStash()
+        local size = self.Body.Frame.AbsoluteSize
+        local goal = UDim2.fromOffset(size.X, size.Y)
+        if self.Stash.Size ~= goal then self.Stash.Size = goal end
     end
 
     function Window:_dragging(handle)
@@ -2975,7 +2984,7 @@ do
         local id = opts.id or Util.slug(name)
         local page = setmetatable({ Tab = self, Window = win, Name = name, Id = id, Icon = opts.icon, Wide = opts.wide == true, Base = self.Id .. "/" .. id, _hot = false }, PageMeta)
         self.Pages[#self.Pages + 1] = page
-        page.Frame = Util.new("Frame", { Name = "Page_" .. self.Id .. "_" .. id, BackgroundTransparency = 1, Visible = false, Size = UDim2.new(1, 0, 0, 0), Parent = win.Body.Content })
+        page.Frame = Util.new("Frame", { Name = "Page_" .. self.Id .. "_" .. id, BackgroundTransparency = 1, Visible = false, Size = UDim2.new(1, 0, 0, 0), Parent = win.Stash })
         page.Path = { { kind = "tab", ref = self, name = self.Name, id = self.Id }, { kind = "page", ref = page, name = name, id = id } }
         page.Set = Set.new(page, nil)
         page._building = page.Set
@@ -3098,8 +3107,10 @@ do
         if self._ready_ then Store.put("at", self.At) end
         if old then
             old.Frame.Visible = false
+            old.Frame.Parent = self.Stash
             old:_shown(false)
         end
+        page.Frame.Parent = self.Body.Content
         page.Frame.Visible = true
         self.TitleLabel.Text = string.upper(page.Name)
         page:_shown(true)
@@ -4820,8 +4831,13 @@ do
     local LINE = Element.LINE
     local SW_W, SW_H = 18, 10
     local WIDTH, PAD, FIELD, SV_H, BAR_H = 208, 8, 192, 120, 10
-    local PRESETS = { "#c9a96e", "#e8e4dc", "#8f9bf0", "#e8639a", "#6fd69a", "#4ec3e0", "#ef6a6a", "#f2d16b" }
+    local MODES = { "static", "rainbow", "fade", "breathe", "gradient" }
+    local MODE_SET = { static = true, rainbow = true, fade = true, breathe = true, gradient = true }
+    local SPEED_MIN, SPEED_MAX = 0.1, 5
+    local BLACK = Color3.new(0, 0, 0)
     local owners = setmetatable({}, { __mode = "k" })
+    local animated, animCount, animConn = {}, 0, nil
+    local clip
 
     local function tween(obj, props, kind)
         return Anim.to(obj, props, kind or 0)
@@ -4898,19 +4914,111 @@ do
         end))
     end
 
+    local function parse(text)
+        if typeof(text) == "Color3" then return text, nil end
+        if type(text) ~= "string" then return nil end
+        text = string.gsub(string.gsub(text, "^%s+", ""), "%s+$", "")
+        local color = Util.hex(text)
+        if color then return color, alphaOf(text) end
+        local r, g, b = string.match(string.lower(text), "^#?(%x)(%x)(%x)$")
+        if r then return Util.hex(r .. r .. g .. g .. b .. b), nil end
+        local inner = string.match(text, "^%a*%((.*)%)$") or text
+        local x, y, z = string.match(inner, "^%s*(%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*,%s*(%d+%.?%d*)%s*$")
+        x, y, z = tonumber(x), tonumber(y), tonumber(z)
+        if not (x and y and z) or x > 255 or y > 255 or z > 255 then return nil end
+        return Color3.fromRGB(Util.snap(x), Util.snap(y), Util.snap(z)), nil
+    end
+
+    local function wave(t)
+        return (1 - math.cos(t * math.pi)) / 2
+    end
+
+    local function frameColor(el, t)
+        local anim, base, a = el._anim, el._base, el._baseA
+        local phase = t * anim.speed
+        if anim.mode == "rainbow" then
+            local h, s, v = Color3.toHSV(base)
+            if s < 0.05 then s = 1 end
+            if v < 0.05 then v = 1 end
+            return Color3.fromHSV(math.min((h + phase * 0.25) % 1, 0.9999), s, v), a
+        elseif anim.mode == "fade" then
+            local k = wave(phase) * 0.85
+            return base:Lerp(BLACK, k), el.Opts.opaque and 1 or a * (1 - k)
+        elseif anim.mode == "breathe" then
+            local h, s, v = Color3.toHSV(base)
+            return Color3.fromHSV(h, s, v * (0.35 + 0.65 * (1 - wave(phase * 0.5)))), a
+        end
+        return base:Lerp(anim.color, wave(phase)), a
+    end
+
+    local function tickAll(dt)
+        local list = {}
+        for el in pairs(animated) do list[#list + 1] = el end
+        for _, el in ipairs(list) do
+            if el._anim.mode == "static" or Aster.Unloaded then
+                animated[el] = nil
+                animCount = animCount - 1
+            else
+                el._anim.t = el._anim.t + (tonumber(dt) or 0)
+                local color, a = frameColor(el, el._anim.t)
+                el._ticking = true
+                Util.guard(el._apply, el, color, a)
+                el._ticking = false
+            end
+        end
+        if animCount <= 0 and animConn then
+            animCount = 0
+            animConn:Disconnect()
+            animConn = nil
+        end
+    end
+
+    local function track(el, on)
+        if on and not animated[el] then
+            animated[el] = true
+            animCount = animCount + 1
+            if not animConn then animConn = RunService.Heartbeat:Connect(tickAll) end
+        elseif not on and animated[el] then
+            animated[el] = nil
+            animCount = animCount - 1
+            if animCount <= 0 and animConn then
+                animCount = 0
+                animConn:Disconnect()
+                animConn = nil
+            end
+        end
+    end
+    Aster._maid:Add(function()
+        for el in pairs(animated) do track(el, false) end
+    end)
+
+    local function notify(text)
+        if Aster.Notify then pcall(Aster.Notify, Aster, "color", text, "warn") end
+    end
+
+    local function readClipboard()
+        local get = Exec.first(getclipboard, fromclipboard)
+        if get then
+            local ok, text = pcall(get)
+            if ok and type(text) == "string" and text ~= "" then return text end
+        end
+        return clip
+    end
+
     local function picker(el)
         local opaque = el.Opts.opaque == true
         local rowY = opaque and 154 or 172
-        local presetY = rowY + 32
-        local height = presetY + 12 + PAD
+        local modeY = rowY + 32
+        local speedY = modeY + 22
+        local height = speedY + 10 + PAD
         local state = {}
         el._pick = state
 
         local function load()
-            local h, s, v = Color3.toHSV(el.Value)
+            local h, s, v = Color3.toHSV(el._base or el.Value)
             if s == 0 or v == 0 then h = state.h or h end
             if v == 0 then s = state.s or s end
-            state.h, state.s, state.v, state.a = h, s, v, el._alpha
+            state.h, state.s, state.v, state.a = h, s, v, el._baseA
         end
         load()
 
@@ -4959,23 +5067,52 @@ do
             })
             el.HexBox = box
 
-            local count = #PRESETS
-            for index, color in ipairs(PRESETS) do
-                local x0 = Util.snap((index - 1) * (FIELD + 4) / count)
-                local x1 = Util.snap(index * (FIELD + 4) / count) - 4
-                local button = Util.new("TextButton", {
-                    Name = "Preset" .. index, Position = UDim2.fromOffset(PAD + x0, presetY), Size = UDim2.fromOffset(x1 - x0, 12),
-                    Theme = { BackgroundColor3 = "ln2" }, Parent = frame,
-                })
-                Util.new("Frame", { Name = "Swatch", Position = UDim2.fromOffset(1, 1), Size = UDim2.new(1, -2, 1, -2), BackgroundColor3 = Util.hex(color), Parent = button })
-                maid:Add(button.MouseButton1Click:Connect(function()
-                    state.h, state.s, state.v = Color3.toHSV(Util.hex(color))
-                    state.a = 1
-                    commit()
-                end))
+            local half = FIELD / 2 - 2
+            local function cycle(step)
+                local at = 1
+                for index, mode in ipairs(MODES) do
+                    if mode == el._anim.mode then at = index end
+                end
+                el:SetAnimation(MODES[(at - 1 + step) % #MODES + 1])
             end
+            local modeButton = Layer.button(frame, "", function() cycle(1) end, { name = "Mode", width = half, height = 18, position = UDim2.fromOffset(PAD, modeY) })
+            maid:Add(modeButton.Frame)
+            maid:Add(modeButton.Hit.MouseButton2Click:Connect(function() cycle(-1) end))
+            el.ModeButton = modeButton
+
+            local second = Util.new("Frame", { Name = "Field2", Position = UDim2.fromOffset(PAD + half + 4, modeY), Size = UDim2.fromOffset(FIELD - half - 4, 18), Theme = { BackgroundColor3 = "black" }, Parent = frame })
+            local secondInner = Util.new("Frame", { Name = "Inner", Position = UDim2.fromOffset(1, 1), Size = UDim2.new(1, -2, 1, -2), Parent = second })
+            Theme.fill(secondInner, "well", "card")
+            local box2 = Util.new("TextBox", {
+                Name = "Hex2", BackgroundTransparency = 1, TextStyle = "body", TextXAlignment = Enum.TextXAlignment.Left,
+                Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1, -12, 1, 0), Theme = { TextColor3 = "tx" }, Parent = secondInner,
+            })
+            el.Hex2Box = box2
+            maid:Add(box2.FocusLost:Connect(function()
+                local color = parse(box2.Text)
+                if color then el:SetAnimation("gradient", nil, color) else state.draw(false) end
+            end))
+
+            local speed = Util.new("TextButton", { Name = "Speed", Position = UDim2.fromOffset(PAD, speedY), Size = UDim2.fromOffset(FIELD, BAR_H), Theme = { BackgroundColor3 = "well" }, Parent = frame })
+            local speedFill = Util.new("Frame", { Name = "Fill", Size = UDim2.fromOffset(0, BAR_H), Theme = { BackgroundColor3 = "accent" }, Parent = speed })
+            local speedText = Util.new("TextLabel", { Name = "Value", TextStyle = "tiny", Size = UDim2.fromScale(1, 1), Theme = { TextColor3 = "tx" }, Parent = speed })
+            local speedKnob = knob(speed, 5, 14)
+            dragOn(maid, speed, function(x)
+                el:SetAnimation(nil, math.floor((SPEED_MIN + x * (SPEED_MAX - SPEED_MIN)) * 10 + 0.5) / 10)
+            end)
 
             function state.draw(typed)
+                local anim = el._anim
+                local animOn = anim.mode ~= "static"
+                modeButton.SetText(string.upper(string.sub(anim.mode, 1, 1)) .. string.sub(anim.mode, 2))
+                local frac = (anim.speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN)
+                speedFill.Size = UDim2.fromOffset(Util.snap(frac * FIELD), BAR_H)
+                speedFill.BackgroundTransparency = animOn and 0.5 or 0.85
+                speedKnob.Position = UDim2.fromOffset(Util.snap(frac * FIELD) - 2, -2)
+                speedText.Text = string.format("%.1fx", anim.speed)
+                Theme.bind(box2, "TextColor3", anim.mode == "gradient" and "tx" or "tx4")
+                local okFocus, focused = pcall(function() return box2:IsFocused() end)
+                if not (okFocus and focused) then box2.Text = Util.toHex(anim.color) end
                 local color = Color3.fromHSV(math.min(state.h, 0.9999), state.s, state.v)
                 sv.BackgroundColor3 = Color3.fromHSV(math.min(state.h, 0.9999), 1, 1)
                 svKnob.Position = UDim2.fromOffset(Util.snap(state.s * FIELD) - 5, Util.snap((1 - state.v) * SV_H) - 5)
@@ -5030,7 +5167,7 @@ do
             onClose = function()
                 if state.maid then state.maid:Clean() end
                 if el._pick == state then el._pick = nil end
-                el.HexBox = nil
+                el.HexBox, el.Hex2Box, el.ModeButton = nil, nil, nil
                 el:_paint()
             end,
         })
@@ -5045,16 +5182,36 @@ do
         end,
         encode = function(value, opts, el)
             el = el or owners[opts]
+            local anim = el and el._anim
+            if anim and anim.mode ~= "static" then
+                local text = Util.toHex(el._base) .. string.format("%02x", Util.snap(el._baseA * 255)) .. ";" .. anim.mode .. ";" .. tostring(anim.speed)
+                if anim.mode == "gradient" then text = text .. ";" .. Util.toHex(anim.color) end
+                return text
+            end
             return Util.toHex(value) .. string.format("%02x", Util.snap((el and el._alpha or 1) * 255))
         end,
-        decode = function(value)
-            if validHex(value) then return value end
-            return nil
+        decode = function(value, opts, el)
+            el = el or owners[opts]
+            if type(value) ~= "string" then return nil end
+            local hex, rest = string.match(value, "^([^;]*);(.*)$")
+            hex = hex or value
+            if not validHex(hex) then return nil end
+            if el and el.SetAnimation then
+                local mode, speed, second = string.match(rest or "", "^(%a*);?([^;]*);?(.*)$")
+                el:SetAnimation(MODE_SET[mode or ""] and mode or "static", tonumber(speed), Util.hex(second or ""))
+            end
+            return hex
         end,
+        parse = parse,
+        running = function() return animConn ~= nil, animCount end,
         build = function(el, slot)
             owners[el.Opts] = el
             local alpha = tonumber(el.Opts.alpha) or alphaOf(el.Opts.default) or 1
             el._alpha = el.Opts.opaque and 1 or round2(alpha)
+            el._base, el._baseA = el.Value, el._alpha
+            local h, s, v = Color3.toHSV(el.Value)
+            el._anim = { mode = "static", speed = 1, t = 0, color = Color3.fromHSV((h + 0.5) % 1, math.max(s, 0.5), math.max(v, 0.5)) }
+            el._maid:Add(function() track(el, false) end)
             local y = (LINE - SW_H) / 2
             local ring = Util.new("Frame", { Name = "Ring", Position = UDim2.fromOffset(-1, y - 1), Size = UDim2.fromOffset(SW_W + 2, SW_H + 2), Theme = { BackgroundColor3 = "ln2" }, Parent = slot })
             el._glow = Util.new("Frame", { Name = "Glow", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Theme = { BackgroundColor3 = "accent" }, Parent = ring })
@@ -5075,6 +5232,13 @@ do
                 if el.Disabled then return end
                 el:Open()
             end))
+            el._maid:Add(el.Hit.MouseButton2Click:Connect(function()
+                if el.Disabled then return end
+                el._menu = Layer.menu(el.Hit, {
+                    { text = "Copy", hint = string.upper(Util.toHex(el._base)), callback = function() el:Copy() end },
+                    { text = "Paste", callback = function() el:Paste() end },
+                })
+            end))
             el._maid:Add(function()
                 if el._popup then el._popup.Close() end
             end)
@@ -5087,11 +5251,12 @@ do
             local open = el._pick ~= nil
             tween(el._glow, { BackgroundTransparency = ((el._swHover and not el.Disabled) or open) and 0 or 1 }, kind)
             local state = el._pick
+            if el._ticking then return end
             if state and state.draw and not state.own then
-                local h, s, v = Color3.toHSV(el.Value)
+                local h, s, v = Color3.toHSV(el._base)
                 if s == 0 or v == 0 then h = state.h end
                 if v == 0 then s = state.s end
-                state.h, state.s, state.v, state.a = h, s, v, el._alpha
+                state.h, state.s, state.v, state.a = h, s, v, el._baseA
                 state.draw(state.typing)
             elseif state and state.draw then
                 state.draw(state.typing)
@@ -5115,6 +5280,42 @@ do
             Close = function(self)
                 if self._popup then self._popup.Close() end
             end,
+            Copy = function(self)
+                local text = string.upper(Util.toHex(self._base))
+                clip = text
+                if Exec.clipboard then pcall(Exec.clipboard, text) end
+                return text
+            end,
+            Paste = function(self, text)
+                if text == nil then text = readClipboard() end
+                local color, alpha = parse(text)
+                if not color then
+                    notify("invalid colour: " .. string.sub(tostring(text or "empty clipboard"), 1, 32))
+                    return false
+                end
+                self:_apply(color, alpha or self._baseA)
+                return true
+            end,
+            Animation = function(self)
+                local anim = self._anim
+                return anim.mode, anim.speed, anim.color
+            end,
+            SetAnimation = function(self, mode, speed, second)
+                local anim = self._anim
+                if mode ~= nil and not MODE_SET[mode] then return false end
+                anim.mode = mode or anim.mode
+                if tonumber(speed) then anim.speed = clamp(tonumber(speed), SPEED_MIN, SPEED_MAX) end
+                second = second and toColor(second)
+                if second then anim.color = second end
+                local on = anim.mode ~= "static"
+                track(self, on)
+                if not on and (Util.toHex(self.Value) ~= Util.toHex(self._base) or self._alpha ~= self._baseA) then
+                    self:_apply(self._base, self._baseA)
+                else
+                    self:_paint()
+                end
+                return true
+            end,
             Set = function(self, value, silent)
                 local color = toColor(value)
                 if not color then return false end
@@ -5125,6 +5326,10 @@ do
                 alpha = tonumber(alpha)
                 if not alpha or alpha ~= alpha then return false end
                 alpha = self.Opts.opaque and 1 or round2(alpha)
+                if not self._ticking then
+                    local base = toColor(color)
+                    if base then self._base, self._baseA = base, alpha end
+                end
                 if alpha ~= self._alpha then
                     self._alpha = alpha
                     self.Value = false
@@ -7486,6 +7691,14 @@ do
         function handle:Fit(pad, yaw)
             local spec = type(pad) == "table" and pad or { pad = pad, yaw = yaw }
             local center, reach = spec.center, spec.reach
+            local dummy = handle._dummy
+            if not center and not reach and dummy and not dummy.Destroyed then return dummy:Fit(spec.pad, spec.yaw) end
+            handle._fitBy = nil
+            if spec.dist and center then
+                handle._view = { center = center, dist = spec.dist, yaw = num(spec.yaw, 0) }
+                place()
+                return true
+            end
             if not (center and reach) then
                 local ok, cf, size = pcall(function() return handle.World:GetBoundingBox() end)
                 if not ok or not size or size.Magnitude == 0 then return false end
@@ -7525,50 +7738,14 @@ do
     Dummy.__index = Dummy
     Scene.DummyClass = Dummy
 
-    local function strip(model)
-        for _, d in ipairs(model:GetDescendants()) do
-            local ok, junk = pcall(function()
-                return d:IsA("BaseScript") or d:IsA("ModuleScript") or d:IsA("ForceField") or d:IsA("Sound")
-            end)
-            if ok and junk then pcall(function() d:Destroy() end) end
-        end
-        return model
+    local function viewSize(handle)
+        local ok, size = pcall(function() return handle.Viewport.AbsoluteSize end)
+        if ok and size and size.X > 0 and size.Y > 0 then return size.X, size.Y end
+        local s = handle.Size
+        if s and s.X > 0 and s.Y > 0 then return s.X, s.Y end
+        return 1, 1
     end
-
-    local function isR6(model)
-        return model ~= nil and bodyPart(model, "Torso") ~= nil and bodyPart(model, "Head") ~= nil
-    end
-
-    local function fromCharacter()
-        local char = LocalPlayer and LocalPlayer.Character
-        if not char then return nil end
-        local old
-        pcall(function()
-            old = char.Archivable
-            char.Archivable = true
-        end)
-        local ok, copy = pcall(function() return char:Clone() end)
-        pcall(function() char.Archivable = old end)
-        if ok and isR6(copy) then return strip(copy) end
-        if ok and copy then pcall(function() copy:Destroy() end) end
-        return nil
-    end
-
-    local function fromUser(id)
-        id = id or (LocalPlayer and LocalPlayer.UserId)
-        if not id then return nil end
-        local ok, model = pcall(function()
-            local desc = Players:GetHumanoidDescriptionFromUserId(id)
-            return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R6)
-        end)
-        if not (ok and isR6(model)) then
-            if ok and model then pcall(function() model:Destroy() end) end
-            ok, model = pcall(function() return Players:CreateHumanoidModelFromUserId(id) end)
-        end
-        if ok and isR6(model) then return strip(model) end
-        if ok and model then pcall(function() model:Destroy() end) end
-        return nil
-    end
+    Scene._viewSize = viewSize
 
     local function fromParts(skin)
         local model = Instance.new("Model")
@@ -7596,22 +7773,7 @@ do
     end
 
     local function build(opts)
-        local source = opts.source or "auto"
-        local model, from
-        if source == "auto" or source == "character" then
-            model = fromCharacter()
-            from = model and "character"
-        end
-        if not model and (source == "auto" or source == "user") then
-            model = fromUser(opts.userId)
-            from = model and "user"
-        end
-        if not model then
-            model = fromParts(color(opts.color, Color3.fromRGB(163, 162, 165)))
-            from = "parts"
-        end
-        model.Name = "Dummy"
-        return model, from
+        return fromParts(color(opts.color, Color3.fromRGB(163, 162, 165))), "parts"
     end
 
     local function rig(dummy)
@@ -7670,6 +7832,12 @@ do
         if handle then
             attach(handle)
             model.Parent = handle.World
+            handle._dummy = dummy
+            local function refit()
+                if handle._fitBy == dummy and not dummy.Destroyed then dummy:Fit() end
+            end
+            handle.Maid:Add(handle.Resized:Connect(refit))
+            pcall(function() handle.Maid:Add(handle.Viewport:GetPropertyChangedSignal("AbsoluteSize"):Connect(refit)) end)
             if opts.fit ~= false then dummy:Fit() end
             dummy._loop = handle:Loop(function(dt)
                 if dummy._paused then return end
@@ -7681,20 +7849,35 @@ do
         return dummy
     end
 
-    function Dummy:Fit(pad)
+    function Dummy:Fit(pad, yaw)
         local handle = self.Handle
         if not handle then return false end
         if pad then self._pad = pad end
-        local base = self._base.Position
-        local h = self.Height
-        local reach = 3.2 * h
-        local cx = base.X
+        local size, mid = self:Extents()
         if self.Motion == "walk" then
-            reach = math.max(reach, (self.Walk.to - self.Walk.from) / 2 + 1.5)
-            cx = base.X + (self.Walk.from + self.Walk.to) / 2
+            local base = self._base.Position
+            local r = math.max(size.X, size.Z) / 2
+            local lo, hi = base.X + self.Walk.from - r, base.X + self.Walk.to + r
+            size = Vector3.new(hi - lo, size.Y, 2 * r)
+            mid = Vector3.new((lo + hi) / 2, mid.Y, base.Z)
         end
-        local yaw = handle._view and handle._view.yaw or 0
-        return handle:Fit({ center = Vector3.new(cx, base.Y + 2.5 * h - 2.9, base.Z), reach = reach, pad = self._pad or 1.15, yaw = yaw })
+        yaw = num(yaw, handle._view and handle._view.yaw or 0)
+        local w, h = viewSize(handle)
+        local tanV = math.tan(math.rad(handle.Camera.FieldOfView) / 2)
+        local tanH = tanV * w / h
+        local k = self._pad or 1.4
+        local a = math.rad(yaw)
+        local rx, rz, bx, bz = math.cos(a), -math.sin(a), math.sin(a), math.cos(a)
+        local half = size / 2
+        local dist = 0
+        for i = 0, 7 do
+            local ox, oy, oz = i % 2 == 0 and -half.X or half.X, i % 4 < 2 and -half.Y or half.Y, i < 4 and -half.Z or half.Z
+            local z = ox * bx + oz * bz
+            dist = math.max(dist, z + math.abs(ox * rx + oz * rz) * k / tanH, z + math.abs(oy) * k / tanV)
+        end
+        local ok = handle:Fit({ center = mid, dist = math.max(dist, 0.5), yaw = yaw })
+        handle._fitBy = self
+        return ok
     end
 
     function Dummy:_resize()
@@ -7738,8 +7921,8 @@ do
     function Dummy:SetMotion(motion)
         self.Motion = motion or "none"
         self._t = 0
-        self:Fit()
         self:Pose(0)
+        self:Fit()
     end
 
     function Dummy:SetRoot(cf)
@@ -7822,6 +8005,7 @@ do
         if self.Destroyed then return end
         self.Destroyed = true
         if self._loop then self._loop.Stop() end
+        if self.Handle and self.Handle._dummy == self then self.Handle._dummy = nil end
         pcall(function() self.Model:Destroy() end)
     end
 
@@ -8355,14 +8539,8 @@ do
 
     function Esp:_name()
         local cfg = self.Cfg
-        if cfg.name == "user" then
-            if cfg.user then return tostring(cfg.user) end
-            local ok, n = pcall(function() return LocalPlayer.Name end)
-            return ok and n and tostring(n) or "dummy"
-        end
-        if cfg.display then return tostring(cfg.display) end
-        local ok, n = pcall(function() return LocalPlayer.DisplayName or LocalPlayer.Name end)
-        return ok and n and tostring(n) or "Dummy"
+        if cfg.name == "user" then return cfg.user and tostring(cfg.user) or "dummy" end
+        return cfg.display and tostring(cfg.display) or "Dummy"
     end
 
     function Esp:Update()
@@ -9004,13 +9182,12 @@ do
     end
 
     function H.ring(body)
-        local white = Color3.new(1, 1, 1)
         local sides = {
             { UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 1) }, { UDim2.new(0, 0, 1, -1), UDim2.new(1, 0, 0, 1) },
             { UDim2.fromOffset(0, 0), UDim2.new(0, 1, 1, 0) }, { UDim2.new(1, -1, 0, 0), UDim2.new(0, 1, 1, 0) },
         }
         for index, side in ipairs(sides) do
-            Util.new("Frame", { Name = "Ring" .. index, BackgroundColor3 = white, BackgroundTransparency = 0.955, ZIndex = 2, Position = side[1], Size = side[2], Parent = body })
+            Util.new("Frame", { Name = "Ring" .. index, Theme = { BackgroundColor3 = "white" }, BackgroundTransparency = 0.955, ZIndex = 2, Position = side[1], Size = side[2], Parent = body })
         end
     end
 
@@ -9373,7 +9550,7 @@ do
         p.Root, p.Body = H.card(Aster.Gui.Hud, title:sub(1, 1):upper() .. title:sub(2), PANELW, 50, { gradient = true })
         H.label(p.Body, { Name = "Title", Text = title, Position = UDim2.fromOffset(8, 2), Size = UDim2.new(1, -16, 0, HEAD - 2) }, "bold", "tx")
         Util.new("Frame", { Name = "Line", ZIndex = 3, Position = UDim2.fromOffset(0, HEAD), Size = UDim2.new(1, 0, 0, 1), Theme = { BackgroundColor3 = "edge" }, Parent = p.Body })
-        Util.new("Frame", { Name = "Hl", ZIndex = 3, BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.975, Position = UDim2.fromOffset(0, HEAD + 1), Size = UDim2.new(1, 0, 0, 1), Parent = p.Body })
+        Util.new("Frame", { Name = "Hl", ZIndex = 3, Theme = { BackgroundColor3 = "white" }, BackgroundTransparency = 0.975, Position = UDim2.fromOffset(0, HEAD + 1), Size = UDim2.new(1, 0, 0, 1), Parent = p.Body })
         p.Rows = Util.new("Frame", { Name = "Rows", BackgroundTransparency = 1, Position = UDim2.fromOffset(0, HEAD + 3), Size = UDim2.new(1, 0, 1, -(HEAD + 3)), Parent = p.Body })
         return p
     end
@@ -10211,7 +10388,7 @@ end
 
 -- [src] 68_themes.lua
 do
-    local TM = { Folder = "themes", Custom = {}, Changed = Util.Signal.new(), _memory = {} }
+    local TM = { Folder = "themes", Custom = {}, Changed = Util.Signal.new(), _memory = {}, _files = {} }
     Aster.ThemeManager = TM
     Aster._maid:Add(TM.Changed)
     TM.Groups = {
@@ -10271,7 +10448,7 @@ do
         if Exec.hasFs then
             ensure()
             local ok, files = pcall(function() return Exec.fs.list and Exec.fs.list(folder()) or {} end)
-            for _, path in ipairs(ok and files or {}) do
+            for _, path in ipairs(ok and type(files) == "table" and files or {}) do
                 local name = string.match(string.gsub(tostring(path), "\\", "/"), "([^/]+)%.json$")
                 if name then out[#out + 1] = name end
             end
@@ -10311,11 +10488,19 @@ do
         return Theme.PresetData(name) ~= nil
     end
 
+    local function stored(name)
+        return file(TM._files[name] or name)
+    end
+
     function TM:ReloadCustomThemes()
-        self.Custom = {}
-        for _, name in ipairs(names()) do
-            local data = TM.fix(Util.unjson(read(file(name))))
-            if data and next(data) and not self:IsBuiltIn(name) then self.Custom[name] = data end
+        self.Custom, self._files = {}, {}
+        for _, raw in ipairs(names()) do
+            local name = TM.name(raw)
+            local data = name ~= "" and TM.fix(Util.unjson(read(file(raw))))
+            if data and next(data) and not self:IsBuiltIn(name) and not self.Custom[name] then
+                self.Custom[name] = data
+                self._files[name] = raw
+            end
         end
         local list = {}
         for name in pairs(self.Custom) do list[#list + 1] = name end
@@ -10369,8 +10554,15 @@ do
     function TM:ApplyTheme(name)
         local data = self:GetTheme(name)
         if not data then return false end
+        if self:IsBuiltIn(name) then self.Builtin = name end
         Theme:Set(data)
         return true
+    end
+
+    function TM:Reset(name)
+        name = name and TM.name(name) or ""
+        if not self:IsBuiltIn(name) then name = self.Builtin or Theme.Presets[1] end
+        return self:ApplyTheme(name) and name or nil
     end
 
     function TM:SaveCustomTheme(name)
@@ -10378,16 +10570,17 @@ do
         if name == "" then return false, "type a name first" end
         if self:IsBuiltIn(name) then return false, name .. " is a built-in theme" end
         local text = Util.json(Theme:Export())
-        if not text or not write(file(name), text) then return false, "could not write " .. name end
+        local existed = self.Custom[name] ~= nil
+        if not text or not write(stored(name), text) then return false, "could not write " .. name end
         self:ReloadCustomThemes()
         self.Changed:Fire("save", name)
-        return true, name
+        return true, name, existed
     end
 
     function TM:DeleteCustomTheme(name)
         name = TM.name(name)
         if not self.Custom[name] then return false end
-        if not remove(file(name)) then return false end
+        if not remove(stored(name)) then return false end
         if self:GetDefault() == name then remove(folder() .. "/default.txt") end
         self:ReloadCustomThemes()
         self.Changed:Fire("delete", name)
@@ -10471,9 +10664,9 @@ do
             return nil
         end
         local function save()
-            local ok, why = TM:SaveCustomTheme(target() or "")
+            local ok, why, existed = TM:SaveCustomTheme(target() or "")
             if ok then h.Name:Set("") end
-            notify(ok and ("saved " .. why) or why, ok and "ok" or "warn")
+            notify(ok and ((existed and "overwrote " or "saved ") .. why) or why, ok and "ok" or "warn")
         end
         h.Name.Opts.enter = save
         local armed
@@ -10506,6 +10699,11 @@ do
                 local name = target() or TM:Match()
                 if not TM:SaveDefault(name) then return notify("save the theme first", "warn") end
                 notify(name .. " loads on inject", "ok")
+            end },
+            { name = "Reset", callback = function()
+                local picked = h.List.Value
+                local name = TM:Reset(TM:IsBuiltIn(picked) and picked or nil)
+                notify("reset to " .. tostring(name), "ok")
             end },
             { name = "Refresh", callback = function()
                 TM:ReloadCustomThemes()

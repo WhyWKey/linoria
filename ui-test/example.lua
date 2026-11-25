@@ -1,11 +1,14 @@
 -- aster v2 example: every widget, the built-in settings pages and the engine previews (Aster.Scene)
 -- Set getgenv().ASTER2_LOCAL to a loaded library table, a Lua source string or a file path to skip the download.
-local URL = "https://raw.githubusercontent.com/WhyWKey/linoria/main/ui-test/Library.lua"
+local URL = "https://raw.githubusercontent.com/WhyWKey/linoria/main/ui-test/library.lua"
 local env = (getgenv and getgenv()) or _G
 local compile = loadstring or load
 
-local function fromSource(src)
-    if type(src) ~= "string" or #src < 64 then error("bad download: " .. tostring(src), 0) end
+local function fromSource(src, from)
+    from = from or URL
+    if type(src) ~= "string" or #src < 64 then
+        error("bad download from " .. from .. " (" .. (type(src) == "string" and (#src .. " bytes: " .. string.sub(src, 1, 80)) or tostring(src)) .. ")", 0)
+    end
     local fn, err = compile(src, "=aster2")
     if not fn then error("compile failed: " .. tostring(err), 0) end
     return fn()
@@ -15,8 +18,8 @@ local function loadAster()
     local loc = rawget(env, "ASTER2_LOCAL")
     if type(loc) == "table" then return loc end
     if type(loc) == "string" then
-        if string.find(loc, "\n", 1, true) then return fromSource(loc) end
-        if readfile and isfile and isfile(loc) then return fromSource(readfile(loc)) end
+        if string.find(loc, "\n", 1, true) then return fromSource(loc, "ASTER2_LOCAL") end
+        if readfile and isfile and isfile(loc) then return fromSource(readfile(loc), loc) end
     end
     local ok, lib = pcall(function()
         local got, body = pcall(function() return game:HttpGet(URL) end)
@@ -25,10 +28,10 @@ local function loadAster()
         if not req then return fromSource(body) end
         local sent, reply = pcall(req, { Url = URL, Method = "GET" })
         if sent and type(reply) == "table" and type(reply.Body) == "string" then return fromSource(reply.Body) end
-        error("HttpGet failed (" .. tostring(body) .. "), request failed (" .. tostring(type(reply) == "table" and reply.StatusCode or reply) .. ")", 0)
+        error("GET " .. URL .. ": HttpGet failed (" .. tostring(body) .. "), request failed (" .. tostring(type(reply) == "table" and reply.StatusCode or reply) .. ")", 0)
     end)
     if ok and lib then return lib end
-    if readfile and isfile and isfile("aster2/Library.lua") then return fromSource(readfile("aster2/Library.lua")) end
+    if readfile and isfile and isfile("aster2/Library.lua") then return fromSource(readfile("aster2/Library.lua"), "aster2/Library.lua") end
     error("[aster example] could not load Library.lua: " .. tostring(lib))
 end
 
@@ -187,7 +190,7 @@ g:Dropdown({ name = "Shown flags", flag = "esp.fl", options = FLAGS, default = {
 row(g, "Colour per flag", "esp.flpc", { def = true })
 g:Color({ name = "Single colour", flag = "esp.flags.c0", default = "#c6c6cf" })
 
--- chams are Classic only: a visible and an occluded layer, switched by the preview wall
+-- chams are Classic only: the occluded layer shows where the sweeping preview wall covers the dummy, the visible layer elsewhere
 _, g = row(espCard, "Chams", "ch.on", { key = true, gear = "chams" })
 g:Color({ name = "Visible colour", flag = "ch.vis", default = "#c9a96e80" })
 row(g, "Through walls", "ch.xq", { def = true })
@@ -219,7 +222,7 @@ local function espCfg()
         skeleton = F("esp.skel"), skeletonColor = F("esp.skel.c0"),
         weapon = F("esp.wpn") and weaponText() or false, weaponColor = F("esp.wpn.c0"),
         distance = F("esp.dist"), distanceColor = F("esp.dist.c0"), flags = flags,
-        flagColors = F("esp.flpc") and FLAGC or nil, flagColor = F("esp.flags.c0"),
+        flagColors = F("esp.flpc") and FLAGC or false, flagColor = F("esp.flags.c0"),
         boxThickness = F("esp.boxt"), healthSide = F("esp.hps"), barWidth = F("esp.hpw"), nameSize = F("esp.namez"), nameOutline = F("esp.nameo"),
         skeletonThickness = F("esp.skelt"), skeletonOutline = F("esp.skelo"), joints = F("esp.skelj"), weaponMode = F("esp.wpnm"), distanceUnit = F("esp.distu"),
     }
@@ -233,8 +236,8 @@ end
 
 local espScene = {}
 if Scene then
-    local dummy = Scene.Dummy(espView, { motion = "walk", walk = { from = -5, to = 5, speed = 4 } })
-    local wall = Scene.Wall(espView, {})
+    local dummy = Scene.Dummy(espView, { motion = "none" })
+    local wall = Scene.Wall(espView, { cframe = CFrame.new(0, 2.5, 3), sweep = { from = -6.5, to = 6.5, move = 1.6, hold = 0.7 } })
     espScene.dummy, espScene.wall = dummy, wall
     espScene.chams = Scene.Chams(espView, dummy.Model, chamsCfg(wall))
     espScene.esp = Scene.Esp(espView, dummy.Model, espCfg())
@@ -799,14 +802,17 @@ local function dress()
     end
 end
 if Scene then
-    avScene.dummy = Scene.Dummy(avView, { motion = "idle" })
-    avView:Fit()
+    avScene.dummy = Scene.Dummy(avView, { motion = "idle", height = (F("av.h") or 100) / 100, width = (F("av.w") or 100) / 100 })
+    avScene.dummy:Fit(1)
     avView:Orbit(true, 18)
     avView:Loop(function()
         local hat, head = avScene.hat, avScene.dummy.Parts.Head
         if hat and head then hat.CFrame = head.CFrame * CFrame.new(0, head.Size.Y / 2 + hat.Size.Y / 2, 0) end
     end)
     avView.Maid:Add(follow({ "av.c." }, dress))
+    avView.Maid:Add(follow({ "av.h", "av.w" }, function()
+        avScene.dummy:SetScale((F("av.h") or 100) / 100, (F("av.w") or 100) / 100)
+    end))
 else
     follow({ "av.c." }, dress)
 end

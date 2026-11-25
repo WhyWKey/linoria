@@ -1,38 +1,48 @@
 -- aster v2 example: every widget, the built-in settings pages and the engine previews (Aster.Scene)
--- Set getgenv().ASTER2_LOCAL to a loaded library table, a Lua source string or a file path to skip the download.
-local URL = "https://raw.githubusercontent.com/WhyWKey/linoria/main/ui-test/library.lua"
-local env = (getgenv and getgenv()) or _G
+local URLS = {
+    "https://raw.githubusercontent.com/WhyWKey/linoria/main/ui-test/library.lua",
+    "https://cdn.jsdelivr.net/gh/WhyWKey/linoria@main/ui-test/library.lua",
+}
 local compile = loadstring or load
 
-local function fromSource(src, from)
-    from = from or URL
-    if type(src) ~= "string" or #src < 64 then
-        error("bad download from " .. from .. " (" .. (type(src) == "string" and (#src .. " bytes: " .. string.sub(src, 1, 80)) or tostring(src)) .. ")", 0)
-    end
-    local fn, err = compile(src, "=aster2")
-    if not fn then error("compile failed: " .. tostring(err), 0) end
-    return fn()
+-- nil plus a reason unless the body looks like a real download
+local function usable(body)
+    if type(body) ~= "string" then return nil, tostring(body) end
+    if #body < 64 then return nil, #body .. " bytes: " .. string.sub(body, 1, 80) end
+    return body
+end
+
+local function viaHttpGet(url)
+    local ok, body = pcall(function() return game:HttpGet(url) end)
+    if not ok then return nil, tostring(body) end
+    return usable(body)
+end
+
+local function viaRequest(url)
+    local req = request or http_request or (syn and syn.request) or (http and http.request)
+    if not req then return nil, "no request function" end
+    local ok, reply = pcall(req, { Url = url, Method = "GET" })
+    if not ok then return nil, tostring(reply) end
+    if type(reply) ~= "table" then return nil, "reply " .. tostring(reply) end
+    local body, why = usable(reply.Body)
+    if not body then return nil, "status " .. tostring(reply.StatusCode) .. ", " .. why end
+    return body
 end
 
 local function loadAster()
-    local loc = rawget(env, "ASTER2_LOCAL")
-    if type(loc) == "table" then return loc end
-    if type(loc) == "string" then
-        if string.find(loc, "\n", 1, true) then return fromSource(loc, "ASTER2_LOCAL") end
-        if readfile and isfile and isfile(loc) then return fromSource(readfile(loc), loc) end
+    local tried = {}
+    for _, url in ipairs(URLS) do
+        for _, way in ipairs({ { "HttpGet", viaHttpGet }, { "request", viaRequest } }) do
+            local body, why = way[2](url)
+            if body then
+                local fn, err = compile(body, "=aster2")
+                if fn then return fn() end
+                why = "compile failed: " .. tostring(err)
+            end
+            tried[#tried + 1] = "  " .. way[1] .. " " .. url .. ": " .. why
+        end
     end
-    local ok, lib = pcall(function()
-        local got, body = pcall(function() return game:HttpGet(URL) end)
-        if got and type(body) == "string" and #body >= 64 then return fromSource(body) end
-        local req = request or http_request or (syn and syn.request) or (http and http.request)
-        if not req then return fromSource(body) end
-        local sent, reply = pcall(req, { Url = URL, Method = "GET" })
-        if sent and type(reply) == "table" and type(reply.Body) == "string" then return fromSource(reply.Body) end
-        error("GET " .. URL .. ": HttpGet failed (" .. tostring(body) .. "), request failed (" .. tostring(type(reply) == "table" and reply.StatusCode or reply) .. ")", 0)
-    end)
-    if ok and lib then return lib end
-    if readfile and isfile and isfile("aster2/Library.lua") then return fromSource(readfile("aster2/Library.lua"), "aster2/Library.lua") end
-    error("[aster example] could not load Library.lua: " .. tostring(lib))
+    error("[aster example] could not load Library.lua:\n" .. table.concat(tried, "\n"), 0)
 end
 
 local Aster = loadAster()

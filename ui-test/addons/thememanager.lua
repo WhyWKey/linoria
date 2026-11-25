@@ -1,4 +1,18 @@
 local ThemeManager = { Custom = {}, _memory = {}, _files = {}, _built = {} }
+ThemeManager.BuiltInThemes = {
+    gold = { 1, { accent = "#c9a96e", bg = "#0c0c0e", panel = "#15151a", border = "#2a2a31", text = "#ededf2", style = "gradient",
+        btnBg = "#1e1e23", btnBd = "#000000", btnTx = "#c4c4cd", btnHv = "#26262c", ddBg = "#1c1c21", ddBd = "#000000", ddTx = "#c4c4cd", ddlBg = "#111114", ddHl = "#c9a96e" } },
+    midnight = { 2, { accent = "#5b8def", bg = "#0a0b0f", panel = "#13151c", border = "#2a2e3b", text = "#e8ebf3", style = "gradient" } },
+    crimson = { 3, { accent = "#e5484d", bg = "#0d0a0b", panel = "#171315", border = "#2f2629", text = "#f0e9ea", style = "gradient" } },
+    emerald = { 4, { accent = "#2fbf7f", bg = "#090c0b", panel = "#121715", border = "#26302c", text = "#e7efeb", style = "gradient" } },
+    amethyst = { 5, { accent = "#a27cf0", bg = "#0c0a0f", panel = "#15131a", border = "#2c2735", text = "#ece9f3", style = "gradient" } },
+    amber = { 6, { accent = "#f0a03c", bg = "#0d0b09", panel = "#171411", border = "#2f2a24", text = "#f1ece5", style = "gradient" } },
+    rose = { 7, { accent = "#ec6a9a", bg = "#0d0a0c", panel = "#171316", border = "#30272c", text = "#f1e9ed", style = "gradient" } },
+    cyan = { 8, { accent = "#38c6e0", bg = "#090c0d", panel = "#121618", border = "#262e32", text = "#e6eef0", style = "gradient" } },
+    mono = { 9, { accent = "#f2f2f2", bg = "#0b0b0b", panel = "#161616", border = "#2e2e2e", text = "#ededed", style = "flat" } },
+    lime = { 10, { accent = "#a6e23a", bg = "#0a0c09", panel = "#131612", border = "#282d23", text = "#ebf0e6", style = "gradient" } },
+}
+ThemeManager.DefaultTheme = "gold"
 ThemeManager.Groups = {
     { "colours", "th.cols", { { "bg", "Background" }, { "panel", "Main" }, { "accent", "Accent" }, { "border", "Outline" }, { "text", "Font" } } },
     { "buttons", "th.btns", { { "btnBg", "Button background" }, { "btnBd", "Button border" }, { "btnTx", "Button text" }, { "btnHv", "Button hover" } } },
@@ -12,8 +26,7 @@ local function need()
 end
 
 local function folder()
-    local root = ThemeManager.Folder and Store.base(ThemeManager.Folder) or Store.Root
-    return root .. "/themes"
+    return Store.Themes or (Store.Root .. "/themes")
 end
 
 local function file(name)
@@ -113,14 +126,52 @@ function ThemeManager.name(v)
     return Store.cfgName(v)
 end
 
+local function complete(p)
+    local function mix(a, b, t) return Util.toHex(Util.mix(p[a], p[b], t)) end
+    p.btnBg = p.btnBg or mix("panel", "text", 0.05)
+    p.btnBd = p.btnBd or "#000000"
+    p.btnTx = p.btnTx or mix("text", "bg", 0.2)
+    p.btnHv = p.btnHv or mix("panel", "text", 0.1)
+    p.ddBg = p.ddBg or mix("panel", "text", 0.04)
+    p.ddBd = p.ddBd or "#000000"
+    p.ddTx = p.ddTx or p.btnTx
+    p.ddlBg = p.ddlBg or mix("panel", "bg", 0.5)
+    p.ddHl = p.ddHl or p.accent
+    return p
+end
+
+function ThemeManager:BuiltInNames()
+    local out = {}
+    for name, entry in pairs(self.BuiltInThemes) do
+        if type(entry) == "table" and type(entry[2]) == "table" then out[#out + 1] = name end
+    end
+    table.sort(out, function(a, b)
+        local x, y = tonumber(self.BuiltInThemes[a][1]) or math.huge, tonumber(self.BuiltInThemes[b][1]) or math.huge
+        if x ~= y then return x < y end
+        return a < b
+    end)
+    return out
+end
+
+function ThemeManager:GetBuiltInTheme(name)
+    need()
+    local entry = type(name) == "string" and self.BuiltInThemes[name]
+    if type(entry) ~= "table" or type(entry[2]) ~= "table" then return nil end
+    return complete(Util.copy(entry[2]))
+end
+
 function ThemeManager:SetFolder(name)
-    if type(name) == "string" and name ~= "" then self.Folder = name end
+    if type(name) == "string" and name ~= "" then
+        self.Folder = name
+        if Store and Store.migrate then pcall(Store.migrate, name) end
+    end
     if Library then self:ReloadCustomThemes() end
 end
 
 function ThemeManager:IsBuiltIn(name)
     need()
-    return Theme.PresetData(name) ~= nil
+    local entry = type(name) == "string" and self.BuiltInThemes[name]
+    return type(entry) == "table" and type(entry[2]) == "table"
 end
 
 local function stored(name)
@@ -151,14 +202,14 @@ end
 
 function ThemeManager:GetTheme(name)
     need()
-    return Theme.PresetData(name) or self:GetCustomTheme(name)
+    return self:GetBuiltInTheme(name) or self:GetCustomTheme(name)
 end
 
 function ThemeManager:List()
     need()
     local default = self:GetDefault()
     local out = {}
-    for _, name in ipairs(Theme.Presets) do
+    for _, name in ipairs(self:BuiltInNames()) do
         out[#out + 1] = { key = name, text = name, meta = "built-in", marker = name == default and "default" or nil }
     end
     local custom = {}
@@ -179,8 +230,9 @@ end
 
 function ThemeManager:Match()
     need()
-    local builtin = Theme:Name()
-    if builtin ~= "custom" then return builtin end
+    for _, name in ipairs(self:BuiltInNames()) do
+        if same(self:GetBuiltInTheme(name)) then return name end
+    end
     local list = {}
     for name in pairs(self.Custom) do list[#list + 1] = name end
     table.sort(list)
@@ -202,7 +254,7 @@ end
 function ThemeManager:Reset(name)
     need()
     name = name and self.name(name) or ""
-    if not self:IsBuiltIn(name) then name = self.Builtin or Theme.Presets[1] end
+    if not self:IsBuiltIn(name) then name = self.Builtin or self.DefaultTheme end
     return self:ApplyTheme(name) and name or nil
 end
 
@@ -285,25 +337,43 @@ function ThemeManager:Animations()
     return out
 end
 
-function ThemeManager:ApplyToCard(card)
+function ThemeManager:ApplyToCard(card, editor)
     self:Init()
     local TM = self
-    local h = { Card = card, Colours = {} }
+    editor = editor or card
+    local h = { Card = card, Editor = editor, Colours = {} }
     local syncing = false
-    h.List = card:List({ items = function() return TM:List() end, rows = 6, empty = "no themes", default = self:Match(), save = false, callback = function(v)
+    local function tiles()
+        local out = {}
+        for _, item in ipairs(TM:List()) do
+            local data = TM:GetTheme(item.key) or {}
+            out[#out + 1] = { key = item.key, name = item.text, sub = item.marker or item.meta, color = Util.hex(data.bg), swatch = Util.hex(data.accent), fav = item.marker == "default" }
+        end
+        return out
+    end
+    h.Tiles = card:Tiles({ mode = "list", items = tiles, maxHeight = #TM:BuiltInNames() * 28, empty = "no themes",
+        isOn = function(item) return item.key == h.List.Value end,
+        click = function(item) h.List:Set(item.key) end,
+        fav = function(item)
+            if TM:SaveDefault(item.key) then notify(item.key .. " loads on inject", "ok") end
+        end,
+    })
+    h.List = card:List({ items = function() return TM:List() end, rows = 6, empty = "no themes", default = self:Match(), save = false, visible = false, callback = function(v)
         if not syncing and v ~= "" and v ~= "custom" then TM:ApplyTheme(v) end
+        if not h.Tiles.Destroyed then h.Tiles:Refresh() end
     end })
     h.Preset = h.List
-    h.Style = card:Dropdown({ name = "Fill style", options = { "flat", "gradient" }, default = Theme.Base.style, save = false, callback = function(v)
+    h.Tiles:Refresh()
+    h.Style = editor:Dropdown({ name = "Fill style", options = { "flat", "gradient" }, default = Theme.Base.style, save = false, callback = function(v)
         if not syncing then Theme:Set({ style = v }) end
     end })
     if Icons.SetShown and Icons.shown then
-        h.Icons = card:Dropdown({ name = "Strip icons", options = { "on", "off" }, default = Icons.shown() and "on" or "off", save = false, callback = function(v)
+        h.Icons = editor:Dropdown({ name = "Strip icons", options = { "on", "off" }, default = Icons.shown() and "on" or "off", save = false, callback = function(v)
             Icons.SetShown(v == "on")
         end })
     end
     for _, group in ipairs(self.Groups) do
-        local section = card:Section({ name = group[1], key = group[2], open = group[2] == "th.cols" })
+        local section = editor:Section({ name = group[1], key = group[2], open = group[2] == "th.cols" })
         for _, entry in ipairs(group[3]) do
             local key = entry[1]
             h.Colours[key] = section:Color({ name = entry[2], default = Theme.Base[key], opaque = true, gradient = key == "accent" or nil, save = false, callback = function(v, el)
@@ -325,7 +395,7 @@ function ThemeManager:ApplyToCard(card)
         local el = h.Colours[key]
         if el and type(a) == "table" and type(a.mode) == "string" then el:SetAnimation(a.mode, a.speed, a.second, a.min) end
     end
-    h.Name = card:Input({ placeholder = "theme name", max = 24 })
+    h.Name = editor:Input({ placeholder = "theme name", max = 24 })
     local function target()
         local typed = TM.name(h.Name.Value)
         if typed ~= "" then return typed end
@@ -345,7 +415,7 @@ function ThemeManager:ApplyToCard(card)
         armed = nil
         if h.Actions and not h.Actions.Destroyed then h.Actions:SetText(3, "Delete") end
     end
-    h.Actions = card:Buttons({ items = {
+    h.Actions = editor:Buttons({ items = {
         { name = "Save", primary = true, callback = save },
         { name = "Load", callback = function()
             local name = target()
@@ -364,7 +434,7 @@ function ThemeManager:ApplyToCard(card)
             if TM:DeleteCustomTheme(name) then notify("deleted " .. name, "warn") end
         end },
     } })
-    h.Extra = card:Buttons({ items = {
+    h.Extra = editor:Buttons({ items = {
         { name = "Set as default", callback = function()
             local name = target() or TM:Match()
             if not TM:SaveDefault(name) then return notify("save the theme first", "warn") end
@@ -388,6 +458,7 @@ function ThemeManager:ApplyToCard(card)
         end
         if not h.Style.Destroyed then h.Style:Set(Theme.Base.style, true) end
         if not h.List.Destroyed then h.List:Set(TM:Match(), true) end
+        if not h.Tiles.Destroyed then h.Tiles:Refresh() end
         syncing = false
     end
     h.List._maid:Add(Theme.Changed:Connect(sync))
@@ -422,11 +493,13 @@ function ThemeManager:ApplyToTab(target, opts)
     if not page then error("[aster] ApplyToTab needs a page or a tab", 2) end
     local h = self._built[page]
     if not h or h.List.Destroyed then
-        local card = page:Card({ name = opts.name or "theme", side = opts.side or "left" })
-        h = self:ApplyToCard(card)
+        local side = opts.side or "left"
+        local card = page:Card({ name = opts.name or "themes", side = side })
+        local editor = page:Card({ name = "theme editor", side = side == "left" and "right" or "left" })
+        h = self:ApplyToCard(card, editor)
         self._built[page] = h
     end
-    if b then b.Theme, b.Cards.theme = h, h.Card end
+    if b then b.Theme, b.Cards.theme, b.Cards.themeEditor = h, h.Card, h.Editor end
     return h, h.Card
 end
 ThemeManager.ApplyToPage = ThemeManager.ApplyToTab

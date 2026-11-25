@@ -7634,7 +7634,8 @@ do
                     if okJ and other and body[other] then anchor = other end
                 end
                 local ok, offset = pcall(function() return anchor.CFrame:ToObjectSpace(d.CFrame) end)
-                followers[#followers + 1] = { part = d, anchor = anchor, offset = ok and offset or CFrame.new() }
+                offset = ok and offset or CFrame.new()
+                followers[#followers + 1] = { part = d, anchor = anchor, offset = offset, scaled = offset }
             end
             local okJoint, isJoint = pcall(function() return d:IsA("JointInstance") or d:IsA("WeldConstraint") end)
             if okJoint and isJoint then joints[#joints + 1] = d end
@@ -7661,8 +7662,10 @@ do
             Model = model, Source = from, Motion = opts.motion or "idle", Handle = handle,
             Walk = { from = num(walk.from, -5), to = num(walk.to, 5), speed = num(walk.speed, 4) },
             _base = opts.cframe or (CFrame.new(0, 3, 0) * CFrame.Angles(0, math.pi, 0)), _t = 0, _paused = false,
+            Height = 1, Width = 1,
         }, Dummy)
         rig(dummy)
+        if opts.height or opts.width then dummy:SetScale(opts.height, opts.width, true) end
         dummy:Pose(0)
         if handle then
             attach(handle)
@@ -7681,14 +7684,55 @@ do
     function Dummy:Fit(pad)
         local handle = self.Handle
         if not handle then return false end
+        if pad then self._pad = pad end
         local base = self._base.Position
-        local reach = 3.2
+        local h = self.Height
+        local reach = 3.2 * h
         local cx = base.X
         if self.Motion == "walk" then
             reach = math.max(reach, (self.Walk.to - self.Walk.from) / 2 + 1.5)
             cx = base.X + (self.Walk.from + self.Walk.to) / 2
         end
-        return handle:Fit({ center = Vector3.new(cx, base.Y - 0.4, base.Z), reach = reach, pad = pad or 1.15 })
+        local yaw = handle._view and handle._view.yaw or 0
+        return handle:Fit({ center = Vector3.new(cx, base.Y + 2.5 * h - 2.9, base.Z), reach = reach, pad = self._pad or 1.15, yaw = yaw })
+    end
+
+    function Dummy:_resize()
+        local h, w = self.Height, self.Width
+        for p, o in pairs(self._orig) do
+            pcall(function() p.Size = Vector3.new(o.Size.X * w, o.Size.Y * h, o.Size.Z * w) end)
+        end
+        for _, f in ipairs(self._followers) do
+            local o = f.offset
+            f.scaled = CFrame.new(o.X * w, o.Y * h, o.Z * w) * (o - o.Position)
+        end
+    end
+
+    function Dummy:SetScale(h, w, noFit)
+        h = math.max(0.25, math.min(3, num(h, self.Height)))
+        w = math.max(0.25, math.min(3, num(w, self.Width)))
+        if h == self.Height and w == self.Width then return self end
+        self.Height, self.Width = h, w
+        self:_resize()
+        self:Pose()
+        if not noFit then self:Fit() end
+        return self
+    end
+
+    function Dummy:Extents()
+        local lo, hi
+        for _, p in pairs(self.Parts) do
+            if p.Name ~= "HumanoidRootPart" then
+                local cf, s = p.CFrame, p.Size / 2
+                for i = 0, 7 do
+                    local v = cf * Vector3.new(i % 2 == 0 and -s.X or s.X, i % 4 < 2 and -s.Y or s.Y, i < 4 and -s.Z or s.Z)
+                    lo = lo and Vector3.new(math.min(lo.X, v.X), math.min(lo.Y, v.Y), math.min(lo.Z, v.Z)) or v
+                    hi = hi and Vector3.new(math.max(hi.X, v.X), math.max(hi.Y, v.Y), math.max(hi.Z, v.Z)) or v
+                end
+            end
+        end
+        if not lo then return Vector3.new(), Vector3.new() end
+        return hi - lo, (hi + lo) / 2
     end
 
     function Dummy:SetMotion(motion)
@@ -7735,21 +7779,22 @@ do
             bob = math.sin(t * 2.8) * 0.03
             look = math.sin(t * 0.7) * 0.15
         end
-        local torso = root * CFrame.new(0, bob, 0)
+        local h, w = self.Height, self.Width
+        local torso = root * CFrame.new(0, bob + 3 * (h - 1), 0)
         local p = self.Parts
         local cfs = {
             Torso = torso, HumanoidRootPart = torso,
-            Head = torso * CFrame.new(0, 1, 0) * CFrame.Angles(0, look, 0) * CFrame.new(0, 0.5, 0),
-            ["Left Arm"] = torso * CFrame.new(-1.5, 0.5, 0) * CFrame.Angles(swing, 0, 0) * CFrame.new(0, -0.5, 0),
-            ["Right Arm"] = torso * CFrame.new(1.5, 0.5, 0) * CFrame.Angles(-swing, 0, 0) * CFrame.new(0, -0.5, 0),
-            ["Left Leg"] = torso * CFrame.new(-0.5, -1, 0) * CFrame.Angles(-swing, 0, 0) * CFrame.new(0, -1, 0),
-            ["Right Leg"] = torso * CFrame.new(0.5, -1, 0) * CFrame.Angles(swing, 0, 0) * CFrame.new(0, -1, 0),
+            Head = torso * CFrame.new(0, h, 0) * CFrame.Angles(0, look, 0) * CFrame.new(0, 0.5 * h, 0),
+            ["Left Arm"] = torso * CFrame.new(-1.5 * w, 0.5 * h, 0) * CFrame.Angles(swing, 0, 0) * CFrame.new(0, -0.5 * h, 0),
+            ["Right Arm"] = torso * CFrame.new(1.5 * w, 0.5 * h, 0) * CFrame.Angles(-swing, 0, 0) * CFrame.new(0, -0.5 * h, 0),
+            ["Left Leg"] = torso * CFrame.new(-0.5 * w, -h, 0) * CFrame.Angles(-swing, 0, 0) * CFrame.new(0, -h, 0),
+            ["Right Leg"] = torso * CFrame.new(0.5 * w, -h, 0) * CFrame.Angles(swing, 0, 0) * CFrame.new(0, -h, 0),
         }
         for name, cf in pairs(cfs) do
             if p[name] then p[name].CFrame = cf end
         end
         for _, f in ipairs(self._followers) do
-            pcall(function() f.part.CFrame = f.anchor.CFrame * f.offset end)
+            pcall(function() f.part.CFrame = f.anchor.CFrame * f.scaled end)
         end
         self.Root = torso
         return torso
@@ -7759,7 +7804,8 @@ do
         local spec = JOINTS[name]
         local p = spec and self.Parts[spec[1]]
         if not p then return nil end
-        return p.CFrame * spec[2]
+        local o = spec[2]
+        return p.CFrame * Vector3.new(o.X * self.Width, o.Y * self.Height, o.Z * self.Width)
     end
 
     function Dummy:Reset()
@@ -7768,6 +7814,7 @@ do
                 p.Size, p.Transparency, p.Color, p.Material = o.Size, o.Transparency, o.Color, o.Material
             end)
         end
+        self:_resize()
         self:Pose()
     end
 

@@ -1,12 +1,12 @@
 -- aster v2 example: every widget, the built-in settings pages and the engine previews (Aster.Scene)
 -- the GitHub API first: raw.githubusercontent and Fastly are blocked on some networks, api.github and the
 -- gcore/testingcf jsDelivr hosts are not; cdn.jsdelivr can serve a copy up to 12 h old
-local API = "https://api.github.com/repos/WhyWKey/linoria/contents/ui-test/library.lua"
+local API = "https://api.github.com/repos/WhyWKey/linoria/contents/ui-test/"
 local MIRRORS = {
-    "https://gcore.jsdelivr.net/gh/WhyWKey/linoria@main/ui-test/library.lua",
-    "https://testingcf.jsdelivr.net/gh/WhyWKey/linoria@main/ui-test/library.lua",
-    "https://cdn.jsdelivr.net/gh/WhyWKey/linoria@main/ui-test/library.lua",
-    "https://raw.githubusercontent.com/WhyWKey/linoria/main/ui-test/library.lua",
+    "https://gcore.jsdelivr.net/gh/WhyWKey/linoria@main/ui-test/",
+    "https://testingcf.jsdelivr.net/gh/WhyWKey/linoria@main/ui-test/",
+    "https://cdn.jsdelivr.net/gh/WhyWKey/linoria@main/ui-test/",
+    "https://raw.githubusercontent.com/WhyWKey/linoria/main/ui-test/",
 }
 local compile = loadstring or load
 local clock = os.clock or tick
@@ -63,8 +63,8 @@ local function viaRequest(url, headers)
 end
 
 -- the API answers HttpGet (no headers) with JSON whose .content is the file in base64
-local function viaApiJson()
-    local json, why = httpGet(API)
+local function viaApiJson(api)
+    local json, why = httpGet(api)
     if not json then return nil, why end
     local content = string.match(json, '"content"%s*:%s*"(.-)"')
     if not content then return nil, "no content in " .. #json .. " bytes: " .. string.sub(json, 1, 80) end
@@ -73,12 +73,15 @@ local function viaApiJson()
     return usable(src)
 end
 
-local function loadAster()
+-- path under ui-test/, e.g. "library.lua" or "addons/thememanager.lua"; returns what the chunk returns
+local function fetch(path)
+    local api = API .. path
     local ways = {
-        { "request " .. API .. " (raw)", function() return viaRequest(API, { Accept = "application/vnd.github.raw", ["User-Agent"] = "aster" }) end },
-        { "HttpGet " .. API .. " (json)", viaApiJson },
+        { "request " .. api .. " (raw)", function() return viaRequest(api, { Accept = "application/vnd.github.raw", ["User-Agent"] = "aster" }) end },
+        { "HttpGet " .. api .. " (json)", function() return viaApiJson(api) end },
     }
-    for _, url in ipairs(MIRRORS) do
+    for _, base in ipairs(MIRRORS) do
+        local url = base .. path
         ways[#ways + 1] = { "HttpGet " .. url, function()
             local body, why = httpGet(url)
             if not body then return nil, why end
@@ -91,19 +94,19 @@ local function loadAster()
         local t0 = clock()
         local body, why = way[2]()
         if body then
-            local fn, err = compile(body, "=aster2")
+            local fn, err = compile(body, "=" .. path)
             if fn then
-                print("[aster example] Library.lua from " .. way[1] .. ", " .. #body .. " bytes")
+                print("[aster example] " .. path .. " from " .. way[1] .. ", " .. #body .. " bytes")
                 return fn()
             end
             why = "compile failed: " .. tostring(err)
         end
         tried[#tried + 1] = "  " .. way[1] .. ": " .. tostring(why) .. " (" .. math.floor((clock() - t0) * 1000) .. " ms)"
     end
-    error("[aster example] could not load Library.lua:\n" .. table.concat(tried, "\n"), 0)
+    error("[aster example] could not load " .. path .. ":\n" .. table.concat(tried, "\n"), 0)
 end
 
-local Aster = loadAster()
+local Aster = fetch("library.lua")
 local Scene = Aster.Scene
 local Players = game:GetService("Players")
 local me = Players.LocalPlayer
@@ -112,6 +115,24 @@ pcall(function() gameName = game:GetService("MarketplaceService"):GetProductInfo
 
 local loader = Aster:Loader({ title = "aster", game = gameName, build = "b2211" })
 loader:Stage("loading library", 0.25)
+
+-- Linoria-style addons: theme picker/presets and config files live outside the library
+local missing = {}
+local function addon(path)
+    local ok, mod = pcall(function()
+        local m = fetch(path)
+        m:SetLibrary(Aster)
+        m:SetFolder("example")
+        return m
+    end)
+    if ok then return mod end
+    print(tostring(mod))
+    missing[#missing + 1] = path
+    return nil
+end
+local ThemeManager = addon("addons/thememanager.lua")
+local SaveManager = addon("addons/savemanager.lua")
+if SaveManager then SaveManager:IgnoreThemeSettings() end
 
 local function F(flag) return Aster.Flags[flag] end
 local function alpha(flag)
@@ -260,9 +281,9 @@ g:Color({ name = "Single colour", flag = "esp.flags.c0", default = "#c6c6cf" })
 
 -- chams are Classic only: the occluded layer shows where the sweeping preview wall covers the dummy, the visible layer elsewhere
 _, g = row(espCard, "Chams", "ch.on", { key = true, gear = "chams" })
-g:Color({ name = "Visible colour", flag = "ch.vis", default = "#c9a96e80" })
+g:Color({ name = "Visible colour", flag = "ch.vis", default = "#c9a96e80", gradient = true })
 row(g, "Through walls", "ch.xq", { def = true })
-g:Color({ name = "Occluded colour", flag = "ch.occ", default = "#8f9bf0aa", depends = "ch.xq" })
+g:Color({ name = "Occluded colour", flag = "ch.occ", default = "#8f9bf0aa", depends = "ch.xq", gradient = true })
 row(g, "Round head", "ch.round", { def = true })
 g:Slider({ name = "Grow", flag = "ch.grow", min = 0, max = 0.3, step = 0.01, default = 0.1, fmt = function(v) return string.format("%.2f studs", v) end })
 
@@ -286,7 +307,7 @@ local function espCfg()
         health = F("esp.hp"), hp = espHp, maxHp = 100, healthMode = F("esp.hpm"),
         low = F("esp.hp.c0"), mid = F("esp.hp.c1"), high = F("esp.hp.c2"), healthNumber = F("esp.hpn"),
         name = F("esp.name") and (F("esp.namet") == "username" and "user" or "display") or false, nameColor = F("esp.name.c0"),
-        display = me and me.DisplayName, user = me and me.Name,
+        display = "Dummy", user = "dummy",
         skeleton = F("esp.skel"), skeletonColor = F("esp.skel.c0"),
         weapon = F("esp.wpn") and weaponText() or false, weaponColor = F("esp.wpn.c0"),
         distance = F("esp.dist"), distanceColor = F("esp.dist.c0"), flags = flags,
@@ -871,7 +892,7 @@ local function dress()
 end
 if Scene then
     avScene.dummy = Scene.Dummy(avView, { motion = "idle", height = (F("av.h") or 100) / 100, width = (F("av.w") or 100) / 100 })
-    avScene.dummy:Fit(1)
+    avScene.dummy:Fit(1.2)
     avView:Orbit(true, 18)
     avView:Loop(function()
         local hat, head = avScene.hat, avScene.dummy.Parts.Head
@@ -929,7 +950,11 @@ local settings = win:Builtins({
         end
     end,
 })
+if ThemeManager then ThemeManager:ApplyToTab(settings.Tab) end
+if SaveManager then SaveManager:BuildConfigSection(settings.Tab) end
 
 loader:Done()
+if SaveManager then SaveManager:LoadAutoloadConfig() end
+for _, path in ipairs(missing) do notify("aster", "could not load " .. path .. ", continuing without it", "warn") end
 notify("aster", "loaded, press insert to toggle the menu", "ok")
-return { Aster = Aster, Window = win, Settings = settings, Esp = espScene, Effects = fxViews, Avatar = avScene, Views = { esp = espView, avatar = avView } }
+return { Aster = Aster, Window = win, Settings = settings, ThemeManager = ThemeManager, SaveManager = SaveManager, Esp = espScene, Effects = fxViews, Avatar = avScene, Views = { esp = espView, avatar = avView } }

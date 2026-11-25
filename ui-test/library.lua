@@ -108,7 +108,8 @@ do
     function Util.hex(value)
         if typeof(value) == "Color3" then return value end
         if type(value) ~= "string" then return nil end
-        local digits = string.match(string.lower(value), "^#?(%x%x%x%x%x%x)")
+        value = string.lower(value)
+        local digits = string.match(value, "^#?(%x%x%x%x%x%x)$") or string.match(value, "^#?(%x%x%x%x%x%x)%x%x$")
         if not digits then return nil end
         return Color3.fromRGB(tonumber(string.sub(digits, 1, 2), 16), tonumber(string.sub(digits, 3, 4), 16), tonumber(string.sub(digits, 5, 6), 16))
     end
@@ -318,9 +319,29 @@ do
             btnBg = "#1c1c1c", btnBd = "#000000", btnTx = "#c9c9c9", btnHv = "#262626", ddBg = "#1a1a1a", ddBd = "#000000", ddTx = "#c9c9c9", ddlBg = "#121212", ddHl = "#e8e4dc" } },
         { "ember", { accent = "#e0794a", bg = "#0e0b0a", panel = "#1a1412", border = "#33271f", text = "#f1e8e3", style = "gradient",
             btnBg = "#251b17", btnBd = "#060403", btnTx = "#d9cac2", btnHv = "#30231d", ddBg = "#221915", ddBd = "#060403", ddTx = "#d9cac2", ddlBg = "#16100e", ddHl = "#e0794a" } },
+        { "classic", { accent = "#0055ff", bg = "#141414", panel = "#1c1c1c", border = "#323232", text = "#ffffff", style = "flat" } },
+        { "violet", { accent = "#7e48a3", bg = "#232323", panel = "#1e1e1e", border = "#141414", text = "#ffffff", style = "flat" } },
+        { "rift", { accent = "#c50754", bg = "#191335", panel = "#1e1842", border = "#3c355d", text = "#ffffff", style = "gradient" } },
+        { "jest", { accent = "#db4467", bg = "#1c1c1c", panel = "#242424", border = "#373737", text = "#ffffff", style = "gradient" } },
+        { "mint", { accent = "#3db488", bg = "#1c1c1c", panel = "#242424", border = "#373737", text = "#ffffff", style = "flat" } },
     }
     local BASE = PRESETS[1][2]
     local KEYS = { "accent", "bg", "panel", "border", "text", "btnBg", "btnBd", "btnTx", "btnHv", "ddBg", "ddBd", "ddTx", "ddlBg", "ddHl" }
+    local function complete(p)
+        local function mix(a, b, t) return Util.toHex(Util.mix(p[a], p[b], t)) end
+        p.btnBg = p.btnBg or mix("panel", "text", 0.05)
+        p.btnBd = p.btnBd or "#000000"
+        p.btnTx = p.btnTx or mix("text", "bg", 0.2)
+        p.btnHv = p.btnHv or mix("panel", "text", 0.1)
+        p.ddBg = p.ddBg or mix("panel", "text", 0.04)
+        p.ddBd = p.ddBd or "#000000"
+        p.ddTx = p.ddTx or p.btnTx
+        p.ddlBg = p.ddlBg or mix("panel", "bg", 0.5)
+        p.ddHl = p.ddHl or p.accent
+        return p
+    end
+    for _, preset in ipairs(PRESETS) do complete(preset[2]) end
+    Theme.Keys = KEYS
     local STYLES = { flat = true, gradient = true }
     local STOCK = {
         bg = { bg = "#0c0c0e", side = "#09090b", well = "#08080a" },
@@ -340,7 +361,11 @@ do
     Theme.Base = Util.copy(BASE)
     Theme.T = {}
     Theme.Changed = Util.Signal.new()
-    local registry = setmetatable({}, { __mode = "k" })
+    local registry = {}
+    local watched = setmetatable({}, { __mode = "k" })
+    Aster._maid:Add(function()
+        for obj in pairs(registry) do registry[obj] = nil end
+    end)
 
     local function derive()
         local base, T = Theme.Base, {}
@@ -371,12 +396,23 @@ do
     end
 
     function Theme.bind(obj, prop, token)
+        if watched[obj] == "dead" then return obj end
         local props = registry[obj]
         if not props then
             props = {}
             registry[obj] = props
+            if not watched[obj] then
+                watched[obj] = true
+                pcall(function()
+                    obj.Destroying:Connect(function()
+                        registry[obj] = nil
+                        watched[obj] = "dead"
+                    end)
+                end)
+            end
         end
         props[prop] = token
+        if Anim.running and Anim.running(obj, prop) then Anim.stop(obj, prop) end
         paint(obj, prop, token)
         return obj
     end
@@ -402,6 +438,28 @@ do
 
     function Theme:Get(token)
         return resolve(token)
+    end
+
+    function Theme.bound(obj)
+        local props = registry[obj]
+        return props and Util.copy(props) or nil
+    end
+
+    function Theme.dead(obj)
+        return watched[obj] == "dead"
+    end
+
+    function Theme.count()
+        local n = 0
+        for _ in pairs(registry) do n = n + 1 end
+        return n
+    end
+
+    function Theme.PresetData(name)
+        for _, preset in ipairs(PRESETS) do
+            if preset[1] == name then return Util.copy(preset[2]) end
+        end
+        return nil
     end
 
     function Theme:Set(partial)
@@ -1490,6 +1548,8 @@ do
     local function apply(track, e)
         if track.obj then
             for prop, goal in pairs(track.to) do
+                local token = track.tokens and track.tokens[prop]
+                if token ~= nil then goal = Theme:Get(token) or goal end
                 local value = lerp(track.from[prop], goal, e)
                 pcall(function() track.obj[prop] = value end)
             end
@@ -1502,6 +1562,11 @@ do
         if track.dead then return end
         apply(track, 1)
         release(track)
+        if track.tokens and not Theme.dead(track.obj) then
+            for prop, token in pairs(track.tokens) do
+                if track.to[prop] ~= nil then Theme.bind(track.obj, prop, token) end
+            end
+        end
         if track.done then Util.guard(track.done) end
     end
 
@@ -1594,18 +1659,29 @@ do
 
     function Anim.to(obj, goals, kind, done, ease)
         local duration = Anim.time(kind)
-        for prop in pairs(goals) do Anim.stop(obj, prop) end
+        local tokens
+        for prop, goal in pairs(goals) do
+            Anim.stop(obj, prop)
+            if type(goal) == "string" or type(goal) == "function" then
+                tokens = tokens or {}
+                tokens[prop] = goal
+                Theme.unbind(obj, prop)
+            end
+        end
         if duration <= 0 then
-            for prop, goal in pairs(goals) do pcall(function() obj[prop] = goal end) end
+            for prop, goal in pairs(goals) do
+                if tokens and tokens[prop] then Theme.bind(obj, prop, goal) else pcall(function() obj[prop] = goal end) end
+            end
             return dead(done)
         end
-        local track = setmetatable({ obj = obj, from = {}, to = {}, elapsed = 0, duration = duration, ease = ease or Anim.ease, done = done }, Handle)
+        local track = setmetatable({ obj = obj, from = {}, to = {}, tokens = tokens, elapsed = 0, duration = duration, ease = ease or Anim.ease, done = done }, Handle)
         local map = props[obj]
         if not map then
             map = {}
             props[obj] = map
         end
         for prop, goal in pairs(goals) do
+            if tokens and tokens[prop] then goal = Theme:Get(goal) end
             local ok, now = pcall(function() return obj[prop] end)
             track.from[prop] = ok and now or goal
             track.to[prop] = goal
@@ -1681,6 +1757,52 @@ do
         return start(f)
     end
     Anim.lerpFollow = Anim.follow
+
+    function Anim.coalesce(apply)
+        local pending, loop
+        local c = {}
+        local function run()
+            if pending == nil then return end
+            local value = pending
+            pending = nil
+            Util.guard(apply, value)
+        end
+        function c.Push(value)
+            pending = value
+            if loop or Aster.Unloaded then return end
+            loop = Anim.loop(function()
+                if pending == nil then
+                    loop = nil
+                    return false
+                end
+                run()
+                return true
+            end)
+        end
+        function c.Flush()
+            if loop then
+                loop:Stop()
+                loop = nil
+            end
+            run()
+        end
+        function c.Cancel()
+            pending = nil
+            if loop then
+                loop:Stop()
+                loop = nil
+            end
+        end
+        return c
+    end
+
+    function Anim.count()
+        local n = 0
+        for _, track in ipairs(tracks) do
+            if not track.dead then n = n + 1 end
+        end
+        return n
+    end
 
     function Anim.flush()
         for _ = 1, 50 do
@@ -2303,13 +2425,17 @@ do
             Anim.to(self.Thumb, { BackgroundTransparency = 0 }, "fade")
             Anim.to(self.Rail, { BackgroundTransparency = 0.965 }, "fade")
         end
-        if self._hide then self._hide:Stop() end
-        self._hide = Anim.after(0.9, function()
+        self._left = 0.9
+        if self._hide and self._hide:Running() then return end
+        self._hide = Anim.loop(function(dt)
+            self._left = self._left - dt
+            if self._left > 0 then return true end
             self._hide = nil
-            if self._hot or self._drag then return end
+            if self._hot or self._drag then return false end
             self._shown = false
             Anim.to(self.Thumb, { BackgroundTransparency = 1 }, "move")
             Anim.to(self.Rail, { BackgroundTransparency = 1 }, "move")
+            return false
         end)
     end
 
@@ -2392,6 +2518,26 @@ do
         props.TextTruncate = props.TextTruncate or Enum.TextTruncate.AtEnd
         props.Theme = props.Theme or { TextColor3 = token or "tx" }
         return Util.new("TextLabel", props)
+    end
+
+    local function tint(obj, token, transparency)
+        if not obj then return end
+        if Icons.tint then return Icons.tint(obj, token, transparency) end
+        Theme.bind(obj, "ImageColor3", token)
+        if transparency then obj.ImageTransparency = transparency end
+    end
+
+    local function hasIcon(name)
+        if type(name) ~= "string" then return false end
+        if Icons.has then return Icons.has(name) end
+        return Icons.get ~= nil and Icons.get(name) ~= nil
+    end
+
+    local function makeIcon(parent, name, props)
+        if not hasIcon(name) then return nil end
+        if Icons.make then return Icons.make(parent, name, props) end
+        props.Name, props.Image, props.Parent = "Icon", Icons.get(name), parent
+        return Util.new("ImageLabel", props)
     end
 
     local function dots(parent, props, base, token)
@@ -2499,7 +2645,7 @@ do
     function Window:_build()
         local main = Aster.Gui.Main
         local rig = Util.new("Frame", { Name = "Rig", BackgroundTransparency = 0, Active = true, Theme = { BackgroundColor3 = "ln2" }, Parent = main })
-        Util.new("UIStroke", { Thickness = 1, Color = Util.hex("#040405"), Parent = rig })
+        Util.new("UIStroke", { Thickness = 1, Theme = { Color = "edge" }, Parent = rig })
         self.Frame = rig
         self._maid:Add(rig)
         local frame = Util.new("Frame", { Name = "Win", ClipsDescendants = true, Position = UDim2.fromOffset(1, 1), Size = UDim2.new(1, -2, 1, -2), Theme = { BackgroundColor3 = "bg" }, Parent = rig })
@@ -2563,24 +2709,46 @@ do
     function Window:_iconButton(parent, name, icon, text, pos, fn)
         local btn = Util.new("TextButton", { Name = name, BackgroundTransparency = 1, Position = pos, Size = UDim2.fromOffset(24, 24), Theme = { BackgroundColor3 = "hi" }, Parent = parent })
         local stroke = Util.new("UIStroke", { Thickness = 1, Transparency = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Theme = { Color = "ln2" }, Parent = btn })
-        local image = Icons.get and Icons.get(icon)
-        local glyph
-        if image then
-            glyph = Util.new("ImageLabel", { Name = "Icon", Image = image, Position = UDim2.fromOffset(5, 5), Size = UDim2.fromOffset(14, 14), Theme = { ImageColor3 = "tx3" }, Parent = btn })
-        else
-            glyph = label(btn, { Name = "Icon", Text = Text.caps("small", text), Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, TextTruncate = Enum.TextTruncate.None }, "small", "tx3")
-        end
-        local prop = image and "ImageColor3" or "TextColor3"
-        local function paint(hot)
+        local hot = false
+        local slot
+        local function paint(on)
+            hot = on
             btn.BackgroundTransparency = hot and 0 or 1
             stroke.Transparency = hot and 0 or 1
-            Theme.bind(glyph, prop, hot and "tx" or "tx3")
+            if slot.Obj then tint(slot.Obj, hot and "tx" or "tx3") else Theme.bind(slot.Text, "TextColor3", hot and "tx" or "tx3") end
         end
+        slot = self:_iconSlot(btn, icon, { Position = UDim2.fromOffset(5, 5), Size = UDim2.fromOffset(14, 14) }, function() if slot then paint(hot) end end)
+        if not slot.Obj then
+            slot.Text = label(btn, { Name = "Icon", Text = Text.caps("small", text), Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, TextTruncate = Enum.TextTruncate.None }, "small", "tx3")
+        end
+        paint(false)
         btn.MouseEnter:Connect(function() paint(true) end)
         btn.MouseLeave:Connect(function() paint(btn:GetAttribute("open") == true) end)
         btn.MouseButton1Click:Connect(fn)
         btn:SetAttribute("paint", true)
         return btn
+    end
+
+    function Window:_iconSlot(parent, name, props, paint, owner)
+        local slot = {}
+        function slot.Build()
+            if slot.Obj then slot.Obj:Destroy() end
+            slot.Obj = makeIcon(parent, name, Util.copy(props))
+            if slot.Obj and Icons.watch then Icons.watch(slot.Obj, owner) end
+            if paint and slot.Text == nil then paint(slot.Obj) end
+            return slot.Obj
+        end
+        slot.Build()
+        if slot.Obj then
+            self._iconSlots = self._iconSlots or {}
+            self._iconSlots[#self._iconSlots + 1] = slot
+            if not self._iconConn and Icons.Changed then
+                self._iconConn = self._maid:Add(Icons.Changed:Connect(function()
+                    for _, s in ipairs(self._iconSlots) do s.Build() end
+                end))
+            end
+        end
+        return slot
     end
 
     function Window:_who()
@@ -2626,7 +2794,9 @@ do
         x = Util.snap(Util.clamp(x, 8, vw - 8 - w))
         y = Util.snap(Util.clamp(y, 8, vh - 8 - h))
         self.Pos = { x, y }
-        self.Frame.Position = UDim2.fromOffset(x, y)
+        local goal = UDim2.fromOffset(x, y)
+        if self.Frame.Position == goal then return end
+        self.Frame.Position = goal
     end
 
     function Window:_reflow()
@@ -2643,9 +2813,11 @@ do
             local m0 = Input.mouse()
             local x0, y0 = self.Pos[1], self.Pos[2]
             Layer.closeAll()
-            Input.capture(function(pos)
+            local move = Anim.coalesce(function(pos)
                 self:_move(x0 + pos.X - m0.X, y0 + pos.Y - m0.Y)
-            end, function()
+            end)
+            Input.capture(move.Push, function()
+                move.Flush()
                 Store.put("pos", self.Pos)
             end)
         end))
@@ -2675,12 +2847,19 @@ do
                 self._sizing = true
                 state.on = true
                 repaint()
+                local size = Anim.coalesce(function(pair)
+                    if pair[1] ~= self.Size[1] or pair[2] ~= self.Size[2] then self:_resize(pair[1], pair[2]) end
+                end)
                 Input.capture(function(pos)
                     local w, h = w0 + pos.X - m0.X, h0 + pos.Y - m0.Y
-                    state.lim = (axis ~= "y" and (w < MINW - 2 or w > maxW + 2)) or (axis ~= "x" and (h < MINH - 2 or h > maxH + 2))
-                    repaint()
-                    self:_resize(axis == "y" and w0 or Util.clamp(w, MINW, maxW), axis == "x" and h0 or Util.clamp(h, MINH, maxH))
+                    local lim = (axis ~= "y" and (w < MINW - 2 or w > maxW + 2)) or (axis ~= "x" and (h < MINH - 2 or h > maxH + 2))
+                    if lim ~= state.lim then
+                        state.lim = lim
+                        repaint()
+                    end
+                    size.Push({ Util.snap(axis == "y" and w0 or Util.clamp(w, MINW, maxW)), Util.snap(axis == "x" and h0 or Util.clamp(h, MINH, maxH)) })
                 end, function()
+                    size.Flush()
                     self._sizing = false
                     state.on, state.lim = false, false
                     repaint()
@@ -2753,12 +2932,12 @@ do
         local btn = Util.new("TextButton", { Name = "Tab_" .. tab.Id, BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, TABH), Parent = content })
         tab.Button = btn
         tab.HoverBar = Util.new("Frame", { Name = "Hover", Visible = false, Size = UDim2.new(0, 2, 1, 0), Theme = { BackgroundColor3 = "ln3" }, Parent = btn })
-        local image = opts.icon and Icons.get and Icons.get(opts.icon)
         local x = 12
-        if image then
-            tab.IconImage = Util.new("ImageLabel", { Name = "Icon", Image = image, Position = UDim2.fromOffset(12, 7), Size = UDim2.fromOffset(14, 14), Parent = btn })
-            x = 34
-        end
+        local slot = self:_iconSlot(btn, opts.icon, { Position = UDim2.fromOffset(12, 7), Size = UDim2.fromOffset(14, 14) }, function(obj)
+            tab.IconImage = obj
+            if tab.Label then tab:_paint() end
+        end, tab)
+        if slot.Obj then x = 34 end
         tab.Label = label(btn, { Name = "Label", Text = name, Position = UDim2.fromOffset(x, 0), Size = UDim2.new(1, -(x + 8), 1, 0) }, "body", "tx3")
         tab.PageX = opts.icon and 34 or 24
         tab.List = Util.new("Frame", { Name = "Pages_" .. tab.Id, BackgroundTransparency = 1, ClipsDescendants = true, Size = UDim2.new(1, 0, 0, 0), Parent = content })
@@ -2784,10 +2963,7 @@ do
         self.HoverBar.Visible = self._hot and not active
         Text.style(self.Label, active and "bold" or "body")
         Theme.bind(self.Label, "TextColor3", (active or self._hot) and "tx" or "tx3")
-        if self.IconImage then
-            Theme.bind(self.IconImage, "ImageColor3", active and "accent" or ((self._hot) and "tx" or "tx3"))
-            self.IconImage.ImageTransparency = (active or self._hot) and 0 or 0.3
-        end
+        tint(self.IconImage, active and "accent" or (self._hot and "tx" or "tx3"), (active or self._hot) and 0 or 0.3)
         for _, page in ipairs(self.Pages) do page:_paintButton() end
     end
 
@@ -2807,10 +2983,10 @@ do
             Position = UDim2.fromOffset(0, (#self.Pages - 1) * STH), Size = UDim2.new(1, 0, 0, STH), Parent = self.List })
         page.Button = btn
         local x = self.PageX
-        local image = opts.icon and Icons.get and Icons.get(opts.icon)
-        if image then
-            page.IconImage = Util.new("ImageLabel", { Name = "Icon", Image = image, ImageTransparency = 0.3, Position = UDim2.fromOffset(x - 16, 5), Size = UDim2.fromOffset(10, 10), Theme = { ImageColor3 = "tx3" }, Parent = btn })
-        end
+        win:_iconSlot(btn, opts.icon, { Position = UDim2.fromOffset(x - 16, 5), Size = UDim2.fromOffset(10, 10) }, function(obj)
+            page.IconImage = obj
+            if page.Label then page:_paintButton() else tint(obj, "tx3", 0.3) end
+        end)
         page.Label = label(btn, { Name = "Label", Text = string.lower(name), TextTransparency = self._open > 0.5 and 0 or 1, Position = UDim2.fromOffset(x, 0), Size = UDim2.new(1, -(x + 8), 1, 0) }, "body", "tx3")
         btn.MouseButton1Click:Connect(function() win:Go(page) end)
         btn.MouseEnter:Connect(function()
@@ -2948,6 +3124,7 @@ do
         Theme.bind(btn, "BackgroundColor3", active and "accent" or "white")
         btn.BackgroundTransparency = active and 0.96 or (self._hot and 0.98 or 1)
         Theme.bind(self.Label, "TextColor3", active and "accent" or (self._hot and "tx" or "tx3"))
+        tint(self.IconImage, active and "accent" or (self._hot and "tx" or "tx3"), (active or self._hot) and 0 or 0.3)
     end
 
     function Page:_current()
@@ -3294,7 +3471,7 @@ do
         local head = Util.new("Frame", { Name = "Head", Active = true, BackgroundTransparency = 1, ZIndex = 3, Position = UDim2.fromOffset(1, 1), Size = UDim2.new(1, -2, 0, 24), Parent = frame })
         local titleLabel = label(head, { Name = "Title", Text = title, ZIndex = 3, Position = UDim2.fromOffset(8, 2), Size = UDim2.new(1, -40, 0, 22) }, "bold", "tx")
         local fold = Util.new("TextButton", { Name = "Fold", BackgroundTransparency = 1, ZIndex = 4, Position = UDim2.new(1, -24, 0, 5), Size = UDim2.fromOffset(20, 16), Parent = head })
-        local shade1 = Util.new("Frame", { Name = "Shade", ZIndex = 3, Position = UDim2.fromOffset(1, 25), Size = UDim2.new(1, -2, 0, 1), BackgroundColor3 = Util.hex("#050506"), Parent = frame })
+        local shade1 = Util.new("Frame", { Name = "Shade", ZIndex = 3, Position = UDim2.fromOffset(1, 25), Size = UDim2.new(1, -2, 0, 1), Theme = { BackgroundColor3 = "edge" }, Parent = frame })
         local shade2 = Util.new("Frame", { Name = "Shine", ZIndex = 3, BackgroundTransparency = 0.975, BackgroundColor3 = Color3.new(1, 1, 1), Position = UDim2.fromOffset(1, 26), Size = UDim2.new(1, -2, 0, 1), Parent = frame })
         local scroll = Scroll.new(frame, { name = "Body", position = UDim2.fromOffset(1, 25), size = UDim2.new(1, -2, 0, 0), endGap = 10, wheel = false, zindex = 2 })
         local path = table.move(self.Path, 1, #self.Path, 1, {})
@@ -3640,7 +3817,9 @@ do
                 return true
             end)
         end
+        local queued = Anim.coalesce(function(pos) place(pos) end)
         local function drop(cancelled)
+            queued.Cancel()
             follow:Stop()
             loop:Stop()
             if cancelled and homeRows then set.Rows = homeRows end
@@ -3677,8 +3856,9 @@ do
                 lift()
                 if not lifted or not follow then return end
             end
-            place(pos)
+            queued.Push(pos)
         end, function(_, cancelled)
+            if lifted and follow and not cancelled then queued.Flush() end
             if lifted and follow then drop(cancelled) end
         end)
     end
@@ -5596,15 +5776,196 @@ end
 -- [src] 52_strip.lua
 do
     local PAD = Element.PAD
+    local ICON_DATA = {
+        combat = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAACP0lEQVR4nN2VjW3TUBSFz50AdwLcCUgnoBskTIA9QcsEdSYAJkgyAWEC0gnqToA7QbOB+a5f/HASx8FFQqKfdHQU358Tv6c2phdQAyYDbBSjBxzyXmEgGQk2RamkQoFCUiXpO9lb/CyGBiEolfQZzdAQa/SJ4EoDDAYSlklaoJYnVEl6j5x7lEp6i1pyM1vqBIZ6IWyBZQo8ooxFJe61GhOfm3k+TrClpHfIWVLK8SMMHcGCTL/f7CvDt3iEeo2J53GeRwlWSLpBTm49bxoHWhhMJf1EzlGYQ0+N7QW2UPqCtaGXdnCnfQPfsBl6pHmCj4L5BNsoHO+aHR/wyF7grvkZOVc0l/ho2DPBHpBzwZ4t3nAYmCnc3ZOZpfoL2OUhb1Bunbs0FKGpkHSH7s3sWj3sem5QgnLrLOtC30bhz2duZoV2GIUaH4SB+MVof8Y8rIFSt3Z+Fz3nmwBroH2vn9LJWh+x2aG/0PkjzRTu2clt7JGiCE2ZwrKKpkv8xbCrPfrcOl/KUIQmb/BG54rGEh8NeybYA3Iu2LPFG/YCHZrX2BSVNF7ho2A+wX6gCVqZWaYOfYGp9A//tTkMZQp36fiCuXWOhXqNiWdxnkcJdodukZNb5+5a4sAhLFhK+oicEuW2u1NqNRYD+TjBFsjdWdnBUbY0A6dgUaawqGWLSnStwEYhJEEtufW8WctgoENoqnCsUzTEChWEVRrA0B9BcILNUKpwV84cVQo/Q1v8LIZGQ3iNiZDR86MHHPL+n8BfDuoLJAsTGIcAAAAASUVORK5CYII=", px = "6,0,2,2,4,2,6,1,3,3,2,1,6,3,2,1,9,3,2,1,2,4,2,1,10,4,2,1,2,5,1,1,11,5,1,1,0,6,4,2,6,6,2,2,10,6,4,2,2,8,1,1,11,8,1,1,2,9,2,1,10,9,2,1,3,10,2,1,6,10,2,1,9,10,2,1,4,11,6,1,6,12,2,2" },
+        players = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAACwklEQVR4nO2U23GbUBRF96kguILgCoQqCFQQp4KgCixXYLkCyxWYVBClgqAKjCswriCkAmVdXcAgQBr96CtrZs9mzhMEuqYL83+hdrvdLRZLClCFcjN7wluoCQXES51gciFDIuwZOT+kQAszc+5qM0nfUS7promPMbqQAQH2gkJJW7RBBQolpZK+oFLSnOEV9Wuub5GjQgsz2+ADDA3oDPhhZqkOIL/BvqIn8kvcxSIskzRDJfFrfIChATS/YaH8ExR4D/KxpN+oN5h4KOkNORIzy3WAoQE07jDRMJp3UDJaQ9jdoHvKhZllOqBX3EDTfhhc0VThPUiHqp+EfG8GORcPJX0jtcF7GBpAUy7/YSxs5C7Jp/Jf8NbMYtUQD1XfCMzJFXiPqYWx6nckvzRXTZ37iQKUWJ0jfoM9owBtrXMjXUYXOhiwxm6Ro5RXhALkeGLoEne1ufwv4viLYnIFPmByoYNBN1gm6RNqcANTBm7wPdStsVT+/7oiV2qCowsbGBhhAaoYVuA9yAfEKy5PcnKhG4bNUCj/s76eGu56pmoMjULTPbZEATqkQmuGPuA96EslPaLRvKEeNMTyX1uoD16RWxKgGWoo0B2Dc9XQn8kf5A6XT6zztIZaKI6wF+R4R0uKN3gP6m6wNfqMHHPqCnxPnc/kP7acXILvMdRC4QsWoV8opbDCR6E2wDL5Q7ygdo63kI+wXH7pwuoDpF1IwUrSPXpHEQUVfhR6AqyUH/pgZit1IL+Sn5mTS/Dewjcs1MQZOAV9qfw7L+m7xlvIhfo46q6N/6dx4RIB9geJ4D52DvTvMMcV7RXeQqrAZigxPq79cIKx/Nn5SjDCz4L+Uv4DSoyh6kAulz/2EiPXLFxij2hrE4fuMejP5Yfe0b/GWzq5B+MdNwtjceDKv4dMZ0J/KimU/zhydTjMGRcX5eIL/wGKZjwsQgV1IwAAAABJRU5ErkJggg==", px = "3,2,4,1,9,2,1,1,2,3,2,2,7,3,1,2,3,5,1,1,6,5,2,1,10,3,1,3,3,6,4,1,8,6,2,1,2,8,6,1,10,8,2,1,1,9,2,1,7,9,2,1,11,9,2,1,8,10,2,2,1,10,1,3,9,12,1,1,12,10,1,3" },
+        visuals = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAACZUlEQVR4nO2U4VHiYBCG363gchUYKzBXgVjBhQoMFUAHhx1gBYYKiBVcqMBYwcUOYgXcs34hEoigM46/fGYeX4bdZZOPiOmL+V746bx74WazSYjfGCvo1Arem1lFnsTwKCy6JuaSYh3HFy5YvCTfxHAQFsWS7nCkV+7RP9h1kla/8y2lpImZ1RpgcCHLRpJWGOEzLlw+pCEPoD8iZq0/sMEx/aX2OFjIcKZwZ84jpgzWegfMxpIKvEBnYma5dugtZCAlVugszSzTDm19iiMFSkm39BVkB325pGt0xrv1biFNCfEXI1za4bI7ItMwOf0TsoP+XGFpg1fWPsWGXoyIB4wlrc1spB2op8QKnRvMFcgk/UGndycOcxVxgbWkX9Qb44UXFsQUnzDxAtlBvZR0iTdmNtcO1OYKS9d2eKERUeEZ3hizxpuxpH/ojHmzIHvQsyGcc9t7gCjFauepGdGDekqs0Dn/6MKf1Buyg1Ksdp7a6YX88TcXxBRrtWdNdlAvFY50YnuPObW5jh/pA8baHikvtoUKz7CkcEV2UE+JFTY4w3uM8BrnCoyZK8gO5h6IBJ/w5dkwXrxA0Qulwi9FTnFCdlDPFRYMsbS3/42ecUS9ImXYQVNKrNDJaZqQHW19hpforHFBX0F20HdHZAr07tywB82ZXn/aKvSBWu+A2VjhghN0Jrb3nR8sdBj0gVLheBtc4C3DDXkA/RExxRlG2DvGXQYXOnxILI5Vr8fnFFi1OklrilvWmLGs1gCGR2FxpnDlF3iMR/TvM9cRTi7cwuKESDFW0KkVLFhUkScx/FK+F346/wGf+A9m24VFswAAAABJRU5ErkJggg==", px = "5,2,4,1,3,3,3,1,8,3,3,1,2,4,2,1,6,4,2,1,10,4,2,1,1,5,2,1,5,5,4,1,11,5,2,1,0,6,2,2,4,6,2,2,8,6,2,2,12,6,2,2,1,8,2,1,5,8,4,1,11,8,2,1,2,9,2,1,6,9,2,1,10,9,2,1,3,10,2,1,9,10,2,1,4,11,6,1" },
+        misc = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAA/ElEQVR4nO2Ui23CQBQE93WQVJCUkBLsTighqSDnCqAEOoESKAEqgA6O4SeMeQc+85OAkVYrnawd6WTbdGfewiQxxh+qT1zMrKSOMNIJhIWkEXFB6G67h22oCWdkqD3/5LyQgaDtw5ks2P6k17ATqSaVmQXB44S5sFtoc6VTHV5pECBwt93DNtSELvjcbfewDQhXn8WAuOAr5NBZ2JW38Oq8sJDXPvmNwR+v/YTO5pQwUilKMxurA22EFdnRk/RFSrtUyH6Q8/NmuP7MnPoguVTW/HkzFnRPYRPGI7UiaE9P0reucaVN8O2EHqXdQDhWml+EEzqbpPBWPL9wCftPYh0ve9AbAAAAAElFTkSuQmCC", px = "7,2,4,1,1,3,8,1,10,3,3,1,7,4,4,1,3,9,4,1,1,10,3,1,5,10,8,1,3,11,4,1" },
+        gear = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAACs0lEQVR4nN2U4XHaQBCF304KiNyBKzAiDXCqwKSBWG4gdiqI0wFOAxGpACpANGCLVEAHlgvIkG85wIAECZ78Sd7MN0+3t3sP30g2vUKLxaKHycym2EkyOFkELjAPPHn+5AEXef9wIGflkm4gM7Mab4ieo4FsJ9gE7mkptKXGAM0V1gH3zFah1K+wICld4apWlPQNce9LsAmkMKPuvpHBjlYDpV5Cr+Aego6rVLyZIaQwg0BgjW9k0NBe6E94A89QSBpBBa4U+pBLegvr3hk0wlytgS5CL7AH8AOmkHPAXC2i91zxx/TAQ9/R+wNvyKBVHDLBgggzs6CVqPewoKiSvSm+FHulYqjXM7whg4YYzCV9g2dIGZ5TS3j2Wh+2NYJr4/roOVe8br/ea9t7Q12HAgutXhaGbnGvTbCgqDHU0Ac/fETfe9z7BtgNDM0s154OBT5iKWRmVrIOiq+664xajYt6ipWKoZnt9lasu/iObKuhTcvD6bmT9BnGrPv4RuwVirfxxczuWCc8P0Gbsr8ROMIu4RN7A9YJz0/QpuzQlVZYBzLbvSbXGbUaF/UEewJXl3pFLSj2zlin+I4OBRaK13TP0C3utRF2CS5/dvXBNaZv+UzfALuBoZ3w0uSKn0ANXQbn1BKeC72ErjWGnJ6annNJj+C91/ann4WL4VItHzH1oJfPY8RehS/F3gQL2vtnsS2DVjF8gT3AGygVf/FcLaL3XPFGgl7zr40DEmwCKfgBHlpDIf4qmIGrA33IFa9x3VtBZlwzvqNG4F6YH/wBvkIPjmkKH+E7+A+pILO9UIMdEfiIpeBhYT1APRdrxb0OuLyngpK+Qoi+BCsVeyrqXXyjtsBc0i0Emmu8IXoWmNhvzLvYTrBS0oCWQltqHfidOPBo4DGdPOAi7/8PDELklTpRvwBfV1OmYXcDnwAAAABJRU5ErkJggg==", px = "2,2,1,1,6,0,2,3,10,2,2,1,3,3,8,1,3,4,2,1,9,4,2,1,3,5,1,1,5,5,4,1,10,5,1,1,0,6,4,2,5,6,1,2,8,6,1,2,10,6,4,2,3,8,1,1,5,8,4,1,10,8,1,1,3,9,2,1,9,9,2,1,3,10,8,1,2,11,1,1,11,11,1,1,6,11,2,3" },
+        theme = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAACXUlEQVR4nL2Ui3HaQBRF76vASgVWKgiuIKIDUkFEBZAKIioIVBBSAXRgUQGkAi8VRK6AnM3GZEEfJGfGZ+bORdp9e/cnTG/MqwJPp9Mck5ktsUEMDiRshO2R54HQA96bQYGEJZgPSxVwCqEV3gtDvSFwg03QEXnu0ZrAKd4LQ70gLJf0HXkekGePPFMzW6sHvQIJSxUGT9DCzAoB7wtJX1GF/NY63aBv4COWSdqZWaYI2kpJH1FJ2xjvxFAnDDjBNugZjRjUKYL2VNIT8nyifYu30hnIYAm2R6mirbyGfoXC1jqFra3wRgy1Eg10NLNUHdDXKdzahbVMzGOoEQZIsF/IMzazUh3QP5P0iDzv6F/hNboCC4XV7ezqorRBTalwgRbWssquwCcs1YBvjJpc4Vt11LzHaxiqERUezSzVAKh1Cmc5tYaJGqpB0RKboRVFc7w3t2rbAkuFs5hawyy7oDZX2J2dNZx9W6BT2JaxcTt5ziV9Rj/sxgTomync1qOZpbrCUA2KSkUr5LlQuLGN2xRD31yvWGGhKIDnCb83qPX2vUDfJTZDC2v4NAzVoChXmKUTf1XI4yTdoVJSIWDAHXaGugTbo1Qt/6uGavwtPKB7tKLQrzKTtEV36A+8v6inzxKboZ8oo7nCL7goiKF4hO2RZ07xinepwup82wfenetpm2FL5Hmg6YDXOBc0wSCFwll6Sklfrgeizwj7hjIFFtZwdi90BnoYcIKtFW0llApk+sczygnb4q3cDPQQmmBrhYA42OODSoWwCu+kV2AM4anCGXoOhDgNYHDg//Iboe0BLOm2khoAAAAASUVORK5CYII=", px = "6,1,2,1,5,2,4,1,5,3,1,1,8,3,1,1,4,4,2,1,8,4,2,1,3,5,2,1,9,5,2,1,3,6,1,2,10,6,1,2,2,8,2,1,10,8,2,1,5,9,1,1,3,9,1,2,5,10,2,1,10,9,1,2,3,11,2,1,9,11,2,1,5,12,4,1" },
+        search = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAACBElEQVR4nO2V323aUByFz2+CegNgAm4mKAxQiUxQeK8UbxBH6ntggpIJClLf60yAswGZIGYC+t3arbBz/Qcp5Cmf9OlE4Z57EjkQ0zvzMfiX4/HoiAH6HErKSp/MLCd7Y9hIOfQDfTYRM7oie9E4yNgNkUiK8IBZaY6udICeVNLCzPbqIDjIWEzco2eLcy7LyQqcmxFrSZ9wL+kqdO6UV4Nc4ojfGOHCzNZqgfP+XCppjCvOx2QjocEd4XBLeUZ2QscRvue5prchg1QGT4oHHFLMyV7QXRI3+GBmczVQH5wRP/HRzCY6A7oTFY8io3tFBqkPJpJucUUpJntDNyJeUHQr955SeYHSWtJXvDOzRGdC/0h4RtbwFqkPxsQ9binMyN7QdcQOD3QjMkh9cKLiOewpjcje0J2r+FR6tJbnb/gfSv4ne0HPNcUN2Qu6O8LhnbU8jsqgh2Ki4g8nx5H1eGucdJ7RtXUMX8EFqaTPmOHCzHwG4ewtkajgC2d/kY00DQ5VfFwN0LPEDT5xYc7rjq/HGKPDf2Q4Nc6QQYKDHi6NiETFp0cbz/gNv+MYM5xaw6hhKwzPCK9Df6HngBmm4rf3l3Mu4utUxZkMp8b3yQqdg3W4eMhFewXgtYhI1TJ69mAXXaNvPuhpG73IoKc2+mDlv6yLDXrK0SXGDObkZQdDvPvgHypH1h3/azltAAAAAElFTkSuQmCC", px = "3,2,6,1,2,3,2,1,8,3,2,1,9,4,1,1,9,5,2,2,2,4,1,4,9,7,1,1,2,8,2,1,8,8,2,1,3,9,7,1,5,10,2,1,10,10,1,1,11,11,1,1,12,12,1,1" },
+        save = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAABYUlEQVR4nO2WwU3DMBiF37sjceUYCe50g6aTUDYIE+BsUDZoJ8HeoAOAlCNXJO7huU4iA26UNiUH6Cd9cmP9r0+KIsvExPyzwrquV1puZcuFvJEf8kWmuGp8a9ySfNCa5HuhBTCXY1mr9F7rDyg7okInLYAMwJ2sAGxkirnMEeadLOSlTJZSdkSFJUmj5xzAs3QkcyTQjAHwKEuGzEy/LfaUUnZo2GJkIYT24tIn7Rdad/xKoSfad4yyQwsr6PUgTY5gSWXQoKzBiMIhlFQGDcoaHFGYAVhiGFYZiwZlDQ4txAj0XwbnQg1ZRIV6zhBOmkPYkKyUNTiiMMfwr7RlQX08yhqMKHyXW9nHTPqTZcETFDpGoRSatQjZBc+FLRqyCKGSExdaBDOEo63C/sO7ZYkwv0aYzxF0HFB4Shx7CldaZrLFX6Kupb9Evco+/Jyf93N+vsVfqgqtO74UTsHfL/wErCc6LP6vouAAAAAASUVORK5CYII=", px = "4,1,1,1,8,1,1,1,2,2,9,1,10,3,2,1,4,3,1,2,8,3,1,2,4,5,5,1,4,8,6,1,2,3,1,8,4,9,1,2,9,9,1,2,11,4,1,7,2,11,10,1,4,12,1,1,9,12,1,1" },
+        friend = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAACTElEQVR4nO2V7XHaUBBF71YQuYLIFURUkEcFcSqIXAFQgU0FERVEqSCkgogKLCpAriBKBeQ8noUtJD4zw6+cmcOd0b7dNVgC05X5v1Dr9XpEOEkR1liY2Yy8iL0LWZQQ39DnLiXem5nPs+hdyLKIeMJY0gLnWGIsKZX0EStJA5bW5MkYdmBhRozwu5ml2oH6nPiEM+pjcgs1J+kXilpnfueCh6YVESu8g5JsQd0pDK2o35Jb3tREzYgWnQsemtZEb0MDR3rPcNnp0oVwQ09NtqAcS1phZyg1pwsWFgo3xr2Z5dqBeqpwBy8wl/QFGyJM0FOozcR46cBAp/BXVgpLC73wUvuBEQ7RSXrAUxgaL70wOCNG6KkUTDBCz4w/ZMw5p7C0IdbrO57iW3LjZS8MuyNySe+w4Q+mLJuTHehxCp+OONOZ37nQB0MSIsKaGSW5F846/ctCBkTEB4wVPtYlc2qyF847XbKQxgdijBHuUmPGvCnZgr6EyNAvdNrBsAUNTuGWj/XKEmuM0L/bhhInDC50IoZbWJYQT+h5xjHD5mQLzt0RGb5Hz4BzJXkUwy0M8ssS/IkpQ2qyF85GRK7wJV5ydkAeZbuQAY8KD/AzJgyoyYPQExGVwmMzNbNHHcFwA80rIpb0mcY5eRL0pQr/84q+W/Ighr4pIn6jaNpcOwf614Tnhvaa3MtmOOedwrOzpCEhz4L+SuEGGtqRO7ZZOCa+4sJ6np1j0F8o/LpM6M/IvTQLncIXcEVDrjOhP5UUi58j+gsdwPCqXH3hX1pc7qRYkOUyAAAAAElFTkSuQmCC", px = "3,2,4,1,2,3,2,2,7,3,1,2,10,3,2,2,3,5,1,1,6,5,8,1,3,6,4,1,10,6,2,2,2,8,6,1,1,9,2,1,7,9,2,1,8,10,2,2,1,10,1,3,9,12,1,1" },
+        target = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAACDElEQVR4nN2V0XGbQBRF7+uADkQqiFKBUQd2BVEqkFKBUQVBFUSpwO4gUIFJBUEd0AE5q8VIEBaJzMQfPjPHd8Ty9s4iSzL9A03T3BEys4KYheFsKGwIVzh7fvaAg753WEhHLOkjLjGVJ5VU4i+6K93A1UKKIuIRtzhFhjszq8kgk4WUJZK+YyxPgSVu0LHHJd6ho5L0xcxyBTAcpS37iY4jrl83Yq0hxGsj3OtE0kHSAh0ra+8dchoYwgYR8YKxpB+4ZYOaPMF6Q3SFDi5FRIafsZL0ieWa7NENXMJwRmzwiMvhIOu5gOuJLuB6RJS4wD3rW7KHYQ+GYkm/0bGywKMJwXyi81vxwQb/vWOF98QTFjY4wa2wRy7/j/TAHs9kx1hhKv8x2HPzlpwNe2TEBndmluoCYzHR+RGEKOzKadknlz/VFKu3L+RPDwZT/c9Hij24+Z54wsKunCoEe+Typ31gj2eyY6wwlt7wY+FgKCM2WGnkG4P104ZcXxEdXI+IF4wVeEsM/6IdLHGBB0lfGa7JE6w3hCvs5rkUEd9wrcA3lMNwFDZIdH40lS5+BVhriK6Ql4n6vyora+8dYhik3eggf1JHLn/yLToyXGIizxHXoTKH4SSURkQq/55O4X4bU8pqMsjVwlcojuVP43xExw5LJ0WVbsBwNpQ3hCiZPT97wEHf+y9MBPTlmskfkID2lx/3H6sAAAAASUVORK5CYII=", px = "6,0,2,2,5,2,4,1,3,3,8,1,3,4,1,1,6,4,2,1,10,4,1,1,2,5,2,1,10,5,2,1,0,6,5,2,9,6,5,2,2,8,2,1,10,8,2,1,3,9,1,1,6,9,2,1,10,9,1,1,3,10,8,1,5,11,4,1,6,12,2,2" },
+        ignore = { w = 14, h = 14, png = "iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAACR0lEQVR4nO2VwXHaUBRF76sg34usLSqwvMgumZAKIBVEqiBOBcYVxKkAqCC4AuFJdlkYVxBYZ2E6IOfxERYgBGy8yOTMnLm2eP9fS5+RTS/M/8I1i8UiEB1MFHWmit6Z2Zw8iGEjFCWSvmIXmxjhF4qnaqCxkLJMUh9LZjiVNFakLSmRdI4luZkNtAfDWijrE5kij5ix0YTcgdmUGEi6QOcns+/IHWoL2SDT8519Y/EV2Qhrzolf+Bqd3GrudKeQhYmk3+gcWxaIAlP8g2Vpy7bOtK7wO9HFR4ZTshHmA1GW+aPv4B1e4Ig9PpJrNgpXi5/QuWR4Qu5lNV8ta7NmznX//QGdM79GLtkuzBTPbmZmiRpgNhAFprguI5fwuf/8CnOrnKXhGoZ6kq7x3sza2gNzgSgwxZ0yh5mxpPd4Y2Y9rdguHEj6hDdWGarCTCAKTLG2zGGup/jHD80s04qTCvk8EAWmuLfMYbanIwp7ikP3tvVI+SwQBabYWOYwP9YRjzRT/NJMGWqRS7geiAJTPFjmsOaJCJhbw5fGB3zQuWRwsrp2allKPKBzVp3fKHQYHhEdnOAHPLUsEOWaoVXOzzHcgAWJnl9t5WvqqDKH9bfEZ3RadujV5rAoUzxLx0vfsHBG7oU1gbjGK3Ryq5xdiWEtbPCDeIvOBHPjTMkdmE2JPno6Q9t6lCV7Cx02yhQ3KpnjBMeKtBVLApbkVnNnJY2FDqWJpFvsYBND7FE2VQOGR0FxILqYKOpMFfV/Q3PyIIYvyr9f+BfSaQUsM2o+IAAAAABJRU5ErkJggg==", px = "4,2,6,1,3,3,2,1,9,3,2,1,2,4,2,1,9,4,3,1,8,5,1,1,7,6,1,1,6,7,1,1,2,5,1,4,5,8,1,1,11,5,1,4,2,9,3,1,10,9,2,1,3,10,2,1,9,10,2,1,4,11,6,1" },
+        pistols = { w = 29, h = 16, png = "iVBORw0KGgoAAAANSUhEUgAAADsAAAAgCAYAAACsNADrAAAB2UlEQVR4nO2Xj03bQBhHf98ENRt4hGxQZ4N0giYTNBvUtwGdoDABZYLaE2AmIEwQMwG8kx1AwX8OCRuT5ElPn+SLo3txclJMR8Qp9lA5xXbxCAxPbmaJJgRb69xbayz3LSX9xH0SVZRY4JRIVFFigSWuzMzP5tg69C8eAgXOjeC22EzSdzwUroldHEtsbvyGT7Gn2K9NbkcS+4AJsUVb7FLSOX7DMbjECw3DhtCNwLARgmNVGxjjCTszSzUwrbE7iF4zUg37lJ1NIdZDcKawJ+ys3jT3JJL+46WZLbUH6+eMX5gbh4dGIDR2y4iwD2dvY53V117D+g1jhs4a1oegN5ZNxZLuMARn9ca5L1EVOzezTK9gzUf6WM/c9taHIiR2wbjCEJy9xEaMGRZcK5nPsOY/hETSPc7214fCsBM2lkr6jSE4q2Ob4L1iVf+mElX84PX/mKMQEpsp7HDybFTZRKzKHX8IXTNHw7ATYreMCD+KW1wTmmlkOmMJjRV+OO3IMdVbSgIL5qdh2AqxC8YVvoeVmV1ogvTFpgo/nHacEVsyJ0dfbKbww8lzTeiCOUn6YreMCENZ2US/wp7WWEJjvf9wOiO2ZE6SrtiIMcNQPv207aM19hA5qtgnNLjDIdmxhDUAAAAASUVORK5CYII=", px = "6,2,1,1,25,2,1,1,3,3,25,4,4,7,13,1,15,8,1,1,11,8,1,2,14,9,2,1,4,8,6,3,13,10,2,1,4,11,10,1,4,12,6,1,3,13,7,1,3,14,6,1" },
+        smgs = { w = 32, h = 16, png = "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAYAAACinX6EAAABgElEQVR4nO2YgW3CMBBF7yYoI7QTkA2wJ+goTTfoBmSEdpLaG4QNGKFMkD4LRYIoJgmkVRT7SU8fgXzYX0SJUEmcXAAmTS4Ak2a2ApqmKYg9xjioakkuirsL4MAbYostBVYYo8YS/wwK9sQkFMNhKuLyMO8Mq8korDEi8o1L4igiH+z9ixyFYjiME5EdtlhVdXID1hhZXgFT8KpqcgG8CIdxcl1ACnjNBay3AKsDl3BLLgD7CrA6MIA1BVFhl8s5MWo8YR9PWOAPHjCwxQ12qfGEXUr2Hz4b5O4CYjCrIYawGpnPciPnu4tXrlEB3nNyvb8Wq5E5Y8kFYN8XWL1zMLMaYgirkfksN/LfBcwJm22IIUqssY8CK/S64gLG4HWlBXgcQ83hSjLMdLKWAtjw5O9kpJNcQC5gh12sJlJARbxhlxdVPcoDTN5MDDZZEHs0chsnI/5xuoTZz3K+Nb5iIDz+fjKjJB9izgKMnB9gxmD1wZ/uXOQCMGlyAZg0yRfwC/Ne5SEqhqBWAAAAAElFTkSuQmCC", px = "7,3,19,1,1,4,2,1,7,4,24,1,1,5,30,1,1,6,26,1,1,7,2,2,10,7,5,2,18,7,1,2,10,9,9,1,21,7,3,5,10,10,4,3,21,12,2,1,9,13,6,1" },
+        rifles = { w = 43, h = 16, png = "iVBORw0KGgoAAAANSUhEUgAAAFUAAAAgCAYAAABjGjQoAAACXUlEQVR4nO2YwXHaUBRF76sgeJddcAUhFQRW2ZIKolSAXUGgA6ggogLDMquIDkQFUXbZoVRAzh8NiSMkbEDfFuN/Zs7chc2b96+FhDEFGieU6oFQqgdCqR4IpXoglOqBUKoHQqkeuIhSt9ttIuk93mdiZmO1EGPhIfkJU9yR6B9rls/JZ4MdE+2XmqmwKeZmFqsGdohU9HTL76VkLa7UDdnBx5Cp0JFjio5IUleXzcQOXPn0NJb0BQdmlugArtQtGQilnk1fxxOp8AZTdPRwijtWZtZ/qaX6YmWh1MZZ2QsudYA+yCk1baLUJS6cDMzJvzB6SNxhHROreDjwOrfTL3yNZVbG1aAWc2qptUXeh9FjFU/MOiZWX+o3/IBlcl5zRbaWY0pd4sLJoXLyQRidaP9Du2ONb3Fi9aXOcIRVXJtZppbyUKlLXDg5RE4eBaM3RAfLzHCEsQrLJKJw7Kv6jzJjnxuylbhSM0lvcMcSF04Wz8mTYG5X0g+s4iPGkl5hHa7URNJ3LJOz2xXZSlypHbKHjpRlc/JsmDsk7rCKa3R0VU/GLhlzYhX/c5e55edTsnUYeoEyxqp+SP00s64eCXO6Uu0V/45ZKdkqDL1AGYmq74dzM4t0BMyKJH3FMq7QgTX07moKn6VuiA6W+WwHvmKrg3lTYoRlUhxYi4r1UioFdOXhLcvcWNX3VzdvYC0p1lepfVU/tX9z8A55MsyOtV/sGvvMzslnx1epPSLR/x+Z3MEjDp6SZ8H8SMVXbm7+3I68R/vGS6lPAcX2iB6FxmoZF1tqmwmleiCU6oE/2RfzIYfgquAAAAAASUVORK5CYII=", px = "21,4,3,1,0,5,34,1,38,5,1,1,0,6,42,2,0,8,8,1,0,9,5,1,12,8,4,2,19,8,4,2,0,10,2,1,16,10,3,1,20,10,3,1,11,10,4,2,21,11,3,1,22,12,3,1,11,12,3,2,23,13,2,1" },
+        snipers = { w = 51, h = 16, png = "iVBORw0KGgoAAAANSUhEUgAAAGUAAAAgCAYAAAAL6bYQAAACX0lEQVR4nO2YMY7TUBRF7+uQKBhqGhf04x1gV7SzA7IDMisgWQHZAZ4VUFPhrGDMCsgUSJRBAokunDiJ+HHsJJ5xJn+Sf6SjFzn2s/+7shzHFPCOEIqHnGwos9ksprzAOr6Z2ZTqJUcJhYGNKJfocmNmmTqA/j1Jn7CJ1MxyecqxQsklvcFjkVoIZZ0QynZCKB7iUyg3mEnqSXqHLtdYYB09be7/Bd9iE6n5Hoo7JC623HZION+IEqNLxqkzvhtI+oAuqTUMsWl/vMIY6+jTr6B6ieF8YbkeMZRtcC0D1QzZWoZiDfs/BcoAWFiuZSiQ6PC8xt/4E6v0tNCljwXW0dNClz4W2IT/7ymVUM6BAqe4i3l4fepBYO6R1p+Hd2aWnWsovjI2s2TfULb9+nGJ8SMG7sfYWoSS2o4HJz0iSbd4gafCLyzwUFzgJa4YW1ehcPy8+VeM8ZQYG0PSI9NVKJ8pV9iGiaQf+Bz/4CuM1MxEPAixC57We0oD8wVMsY4LjHEX11jgiomkSIs7LMVEm+8bLkMzG+gMMNwnlC5IrXK3cd5EIZQNDOfDyfWwUO7wOyba5C8+w9RCKHthOB9OrmUoLLzc1hZ6DFQ/1ImkSPy3pcVnl0iLt/EUE9Ufv2JoIZR2uD0qTCRF2k6KiUIoJYZrA2Xh5ba2uD0qDG2PYXJ8T4u7pomMPpnOgDIABpJrOVAWXm5ri9ujwtD2CCXwn3sFUMeWUFKrPOAD2+kylFtKjFVSC6G0ostQZpQ6XhLKlBrYky5DGVHe4xoE0tk5zoUwMA8JoXhICMVDQige8g8QPPkh0Y8mOAAAAABJRU5ErkJggg==", px = "27,1,4,1,15,2,16,2,1,4,1,1,18,4,3,1,24,4,3,1,1,5,30,1,1,6,49,1,9,7,27,1,49,7,1,1,1,7,4,2,8,8,14,1,1,9,12,1,16,9,6,1,9,10,13,1,1,10,1,2,9,11,3,3" },
+        shotguns = { w = 41, h = 16, png = "iVBORw0KGgoAAAANSUhEUgAAAFMAAAAgCAYAAABuBERvAAABrElEQVR4nO2Wy03DUBAAd88gQQeECkgH2J1QAnQSOoBKeO7A6SAcuRlxRmbWGClKnkNsFimQHWm0jp6/E0eKSuBGxHQkYjoSMR2JmI5ETEcipiMR05EuZtu2c8YZrrNU1YYZ7MlXzCQi15jDgtZo2Gx6azSOOjrtFowrvNsn5r40WKNh8xxvxJcH+fSQWOAcS8+Yx07EdCRiZrjDGsdSR8xtSlVNMoGIuU2pBxjzDd/xHBtc4ib2l8LIrW1yiif4gsYZzvEnVLjJLTFr5mgUfytmqXzDnLtlu1LVQjZgKQnk1r6DYwsRecLJcN3u+b3oTsaNJRkX8xmNC8xRaR+Ic7eMSvvP67CUBHJr+8DxDcPe0ClUOvG6QyjaTSUZjmk/wRpXIpKEbW6i4ZgntgvJUypvpQD7tYxdVDrxoTj1TERmMo3uOZhuKNpNLRhzNOreFRdLkoH9Cxn+iT2q6o30sG+S3dhD3TL/PF3MsRDIQhaS51JVV3KEjI5JyEKG38p7Qv6Lt2wKU2JayEK2ecUZMRvmUTI6ZjBMxHQkYjoSMR2JmI5ETEcipiMR05EPUcyhEickClMAAAAASUVORK5CYII=", px = "1,4,4,1,1,5,40,2,1,7,33,1,12,8,1,1,15,8,1,1,23,8,8,1,1,8,10,2,12,9,4,1,24,9,7,1,7,10,3,1,6,11,4,1" },
+        heavy = { w = 44, h = 16, png = "iVBORw0KGgoAAAANSUhEUgAAAFgAAAAgCAYAAACW5L+YAAAClklEQVR4nO2X4W3aQBhAv0/qz0phhGwQd4LaE3SErkA3CBPABmWEdoKeJ4jZADYwUn9Wct9hLKjxmQu9a4Hck54+Bfnu7BeUgEoiKilwZFLgyKTAkbmLwE3TGBH5iL4UqmrkH5ACR+beAhc6Es73upBEC8zDZIw5BoUwBeMPOMuIRzjf60KieHywfYDda5fCXrt9wAZeYGhyOcWek2GhI+G4NyPtcxY6cl1IdjGPDg4RuGH8D35ihb/QxXt8h/ba/nUrHn3KDMouJk2M7APvqbHCDiMH7Os1WjaqupYj2Kth3CKlquZyITz2hPGEHVv2q1yBL6HGCnO5TWqs8FImmGFHqfzCxgJvsUIfMnzAxIFSzwQulQvEA8f6t06p9PvrwKy1796vaOctU6rH87rYd1hgR8V+U+/AXDNhPGHW816osUIXK3pMma9iLPBaRJbSRrQ+yjDd32oj7Rr7m7M/231zEfmBLmaq+iw9WNcw7B4Z+lDo/nMtS+3aGJR69IbzRdHelJHTwENscC1tzMrKoWtxwL5TxhxdzDR84FziUHNGxXwVivamjJwG3qDd0GqEyQE10xv2XYrIZ+xj3/UPaKS1z7NwHmboQ6H7wNeGog1h5BC40EA3y74vjKFI3/ETjlFhhj4UGuieQ3MSmBvdvRYC9m0YQ3zhmAXTCUtzGf/7fUyhVx44Y0zQBjYSAPbMxR3oA+dUTCdn1vcpNNB9h2YXOAYEmjLmeAIxzp7L+lxSYDcEWsrwP7hSPT7usD6XFNgNgV4YGfaZ6cBHsz6szyUFdkOghjFEoR4xWD5hGGm/PY6xwpw9a+bVESUwcXIZfvdt8fFaY8QgVuCMYaT9MtGxwSlxvzHfDIqJiKTAkUmBI5MCR+Y3MdIqMO0hhtwAAAAASUVORK5CYII=", px = "25,2,6,1,25,3,1,1,1,4,1,1,10,4,16,1,30,3,1,2,1,5,32,1,41,5,2,1,9,6,34,1,1,6,2,2,7,7,26,1,1,8,7,1,12,8,4,1,18,8,7,1,26,8,11,1,1,9,2,1,12,9,13,1,1,10,1,1,11,10,4,1,19,10,6,3,11,11,3,3" },
+        shoot = { w = 21, h = 16, png = "iVBORw0KGgoAAAANSUhEUgAAACsAAAAgCAYAAACLmoEDAAABL0lEQVR4nO2U3U3DMBRG790oGxBGYAPYgA1CJiBs4G4QJkjZoGzQEcIE5twIlz+lcRXZbSUf6ejrQxyf9qEqV0SJTUWJTUWJTUWJTUV0rPe+Yp7R2Kiqk8woETfsLES9MRZbi8iAa2ixwcAOnYi8cs9eFrBYz87CS5RJFfuTEL5R1ZH9h8Vu5QgcrAV4rpa0sQEL7fCFu0f2gGIUGWMDFvqgqj07oRjFGWID9gs/st+xETE7rHANLTZ4KncE98qHiauKXSLiy8TQYoOn0Krqk4BiFGeI/cB7Qnt2wv66BnYWHr5lcsZaZGdy98gesFjPzsIBZXLEvqMT5MpfkQGLreUIHNwKfD034Br+xobAnnv2soBiFMRWTIeG4+VOMhMdewmU2FSU2FSU2FSU2FR8Ap2ReiF+vS5PAAAAAElFTkSuQmCC", px = "0,5,4,1,5,5,12,1,5,6,14,1,2,7,18,2,5,9,14,1,0,10,4,1,5,10,12,1" },
+        hit = { w = 16, h = 16, png = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAByklEQVR4nO2W23HbMBRE91YQlOBUEHQQsQOnA6kDp5K4A6mDuAPCHSgVxCUwFSjnjoDEEkkR5CR+zOjM7Kw/gMX5kG2ZXpmrwNsUOBwOgfpOvprZnl4MW5H6Rr6w1dEn9AS4EKiWRNKRxhZKsBUp3wpkTxo7kxgSSJI+k4JfaGymBDuRakkghUczW+kZQwKRSpI+kEJHGquUyBvnj/8iq/ONnoCTB5IWSOS7VY87gwJOHkqaIZHvVD/ujAo4eTCpL/HRzj5MnA3UT+JduPi4c1HAYThSSX8lNma20wCcXUvaEmfycWdSwGE4UknSHYM7XYCza0n3ZPJxp0rAYTgw2PHjJHPOVgv8L64C70eAD9YNH6wnVTDnbJUAg5FqyQPDG3oUzm6pW9LYv/g1ZDBSLQnE2TG8oXtwdkutdaQjjU1IGBmFwUi1JJCC/4WLDD/pGZy90fF/fvmL6XSksQsSowIMRmro8dXYYL6TNENiUCAPzXq8kO8mVUr0BPLAoscLeSOpQmJIIOn0K9msxwvsRCrpVOLRKr6SBSpJ+kQWPV5gK1JJR4kfxLc6+g89AYeLgXogd1zY04thK1L35Jatjj5hUOAluQq8usBvLx/cIVMZ7QIAAAAASUVORK5CYII=", px = "3,2,1,1,12,2,1,1,2,3,3,1,11,3,3,1,3,4,3,1,10,4,3,1,4,5,2,1,10,5,2,1,5,9,1,1,10,9,1,1,4,10,3,1,9,10,3,1,3,11,3,1,10,11,3,1,2,12,3,1,11,12,3,1,3,13,1,1,12,13,1,1" },
+        kill = { w = 15, h = 16, png = "iVBORw0KGgoAAAANSUhEUgAAAB0AAAAgCAYAAADud3N8AAABp0lEQVR4nO2V4W3aUBRGv28DOkGdDegEtSdIuwHdoBtgb9ANmm6QTFAzQdmg7gZs4B5jP/JsjImIUSIlRzq6P7jywXoPYb0Arzda1/UtI5W0xEStgUqtWyxtPzAnMZ6E2JrxHRf4VHb4g3jBHMV4BLEl4yc281K2+JV4pQFHUYILxh9M9HwqSZ8I75gHjD2I/makmo/mnDPmAeMBgqmkJjo3me1SHcPoPeMW5+aX7ZU6htG/jETzUxG9Ye4x7iGYSGqi1+LG3U2Oo6muc56BzN25notm7hYD7OWS1hgobOeKYCfVxLPeZjTR8UXK3C0G2Mt1WfQDezvmY7SB5XtG/DvNPE/0gZ0vzD3DaKr+8hZ3GJOoNVCpNWaBSwxkjr68sQfhldp/mHMUuMZzfLN9pwjjEYRTSXeSPuIYG9spe6WkzzjGP1yxV2qAcRQemOv0m2TmYeyk6h9HTOHBWQcuiW7MW6qDvVLjb1t4xuhTKfwexVGIJpISXU5FtNIIxkmI14zABnP1b2yGuaLLRMyMk0x+2ECzZgQ2mOs92kHTjJNMfngtXiT6H09E4SGm6PAfAAAAAElFTkSuQmCC", px = "4,1,7,1,3,2,9,1,2,3,11,2,1,5,13,1,1,6,3,1,11,6,3,1,2,7,2,2,6,6,3,3,11,7,2,2,3,9,9,1,3,10,4,1,8,10,4,1,3,11,9,1,4,12,7,1,4,13,2,2,7,13,1,2,9,13,2,2" },
+        atmosphere = { w = 20, h = 16, png = "iVBORw0KGgoAAAANSUhEUgAAACgAAAAgCAYAAABgrToAAAAB8UlEQVR4nO2WjVHbQBhE90sDuAS5gtgVRKoAdxC7ApMKoIMoDYRzB04FERVEqQCV4FTgvENgGNDPyZIMzPBmdtay5uaepTvJpo7s9/sZdUb+mtmOHpVjBDNJX0hiZplG5n0KIrEUIOD0DM5lahDk/CX1g3OD3P4XgkwQS/pNPCurkKyDsdfUUlLOuDndmxeCHiZykr4Sz9TMCrXAmCtJl8Szsg4/rIlKQQ8TOknZw0Qcx5LWZEE8haQt8bez4PyEz5mklGOngagVfAqTX1NLVbMjKzPb0oPTKohcSvkr18YcyZwelEZB5CJJtyQEvxwSelCM1ILgBfWdhDI11qMG5E4QkUzls81zY2axgO+dHndzCIlVPBv78D4E60Cw6y3+ST6RQuXu3ljPN0qbYKTwTVKHk/TtWNFGQQ+SKbUmfchJYkdItgp6kHTqthar2JjZUh0JEvQgGUu6IOfkWPwfiM8kkjQjOdmRjdVcXSPBIDmhzonTsOyIX6dOzwgSRCxSuZsXZEzmSOb0gVbBe7k/ZELG5heCC/pAiKBT/w0SSo6gX6cHQgRvqUinY45kTt9hpBEE99SpKVRumm2IYKbH9/SpmYYIptSavAZJiOCEylQ+YE/JPzJrFXwA0StJsRhEzsiY3JDUQtbga/Mh2Jc3L/gfoW+/mPHuzeoAAAAASUVORK5CYII=", px = "6,0,1,2,2,2,2,1,9,2,2,1,5,3,3,1,4,4,5,1,1,5,1,2,4,5,6,2,4,7,9,1,5,8,8,1,6,9,11,1,4,10,14,2,4,12,16,1,5,13,14,1" },
+    }
 
     Icons.Assets = Icons.Assets or {}
+    Icons.Data = ICON_DATA
+    Icons.Folder = "aster2/icons"
+    Icons.broken = false
+    Icons._made = {}
+    Icons._rects = {}
     Icons.Changed = Util.Signal.new()
     Aster._maid:Add(Icons.Changed)
+
+    local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local DEC = {}
+    for i = 1, 64 do DEC[string.byte(B64, i)] = i - 1 end
+
+    function Icons.decode(text)
+        local out = {}
+        local bits, count = 0, 0
+        for i = 1, #text do
+            local v = DEC[string.byte(text, i)]
+            if v then
+                bits = bits * 64 + v
+                count = count + 1
+                if count == 4 then
+                    out[#out + 1] = string.char(math.floor(bits / 65536), math.floor(bits / 256) % 256, bits % 256)
+                    bits, count = 0, 0
+                end
+            end
+        end
+        if count == 3 then
+            bits = bits * 64
+            out[#out + 1] = string.char(math.floor(bits / 65536), math.floor(bits / 256) % 256)
+        elseif count == 2 then
+            bits = bits * 4096
+            out[#out + 1] = string.char(math.floor(bits / 65536))
+        end
+        return table.concat(out)
+    end
+
+    local function folder(path)
+        local built = ""
+        for piece in string.gmatch(path, "[^/]+") do
+            built = built == "" and piece or built .. "/" .. piece
+            if not (Exec.fs.isfolder and Exec.fs.isfolder(built)) then Exec.fs.makefolder(built) end
+        end
+    end
+
+    local function asset(name)
+        local made = Icons._made[name]
+        if made ~= nil then return made or nil end
+        Icons._made[name] = false
+        local data = ICON_DATA[name]
+        if not (data and Exec.customasset and Exec.hasFs) or Icons.broken then return nil end
+        local file = Icons.Folder .. "/" .. name .. "-" .. #data.png .. ".png"
+        local ok, id = pcall(function()
+            if not Exec.fs.isfile(file) then
+                folder(Icons.Folder)
+                Exec.fs.write(file, Icons.decode(data.png))
+            end
+            return Exec.customasset(file)
+        end)
+        if ok and type(id) == "string" and id ~= "" then
+            Icons._made[name] = id
+            return id
+        end
+        return nil
+    end
 
     function Icons.get(name)
         if type(name) ~= "string" or name == "" then return nil end
         if string.match(name, "^rbxasset") or string.match(name, "^rbxthumb") or string.match(name, "^http") then return name end
-        return Icons.Assets[name]
+        return Icons.Assets[name] or asset(name)
+    end
+
+    function Icons.bitmap(name)
+        local data = type(name) == "string" and ICON_DATA[name]
+        if not data then return nil end
+        local rects = Icons._rects[name]
+        if not rects then
+            local nums = {}
+            for n in string.gmatch(data.px, "%d+") do nums[#nums + 1] = tonumber(n) end
+            rects = {}
+            for i = 1, #nums - 3, 4 do rects[#rects + 1] = { nums[i], nums[i + 1], nums[i + 2], nums[i + 3] } end
+            Icons._rects[name] = rects
+        end
+        return { w = data.w, h = data.h, rects = rects }
+    end
+
+    function Icons.has(name)
+        return Icons.get(name) ~= nil or Icons.bitmap(name) ~= nil
+    end
+
+    function Icons.aspect(name)
+        local data = type(name) == "string" and ICON_DATA[name]
+        if not data then return 1 end
+        return data.w / data.h
+    end
+
+    function Icons.draw(parent, name, props)
+        local map = Icons.bitmap(name)
+        if not map then return nil end
+        local box = Util.new("Frame", { Name = "Icon", BackgroundTransparency = 1, Size = UDim2.fromOffset(map.w, map.h), Parent = parent })
+        for k, v in pairs(props or {}) do box[k] = v end
+        for _, r in ipairs(map.rects) do
+            Util.new("Frame", {
+                Name = "Px", BorderSizePixel = 0, BackgroundColor3 = Color3.new(1, 1, 1),
+                Position = UDim2.fromScale(r[1] / map.w, r[2] / map.h), Size = UDim2.fromScale(r[3] / map.w, r[4] / map.h), Parent = box,
+            })
+        end
+        box:SetAttribute("bitmap", name)
+        return box
+    end
+
+    function Icons.make(parent, name, props)
+        local image = Icons.get(name)
+        if image then
+            local icon = Util.new("ImageLabel", { Name = "Icon", Image = image, BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Fit, Parent = parent })
+            for k, v in pairs(props or {}) do icon[k] = v end
+            return icon
+        end
+        return Icons.draw(parent, name, props)
+    end
+
+    function Icons.tint(icon, token, transparency, kind)
+        if not icon then return end
+        if icon:IsA("ImageLabel") then
+            Theme.bind(icon, "ImageColor3", token)
+            if transparency then Anim.to(icon, { ImageTransparency = transparency }, kind or 0) end
+            return
+        end
+        for _, px in ipairs(icon:GetChildren()) do
+            Theme.bind(px, "BackgroundColor3", token)
+            if transparency then px.BackgroundTransparency = transparency end
+        end
+    end
+
+    function Icons.watch(icon, owner)
+        if not (icon and icon:IsA("ImageLabel")) or Icons.broken then return end
+        local name
+        for k, id in pairs(Icons._made) do
+            if id and id == icon.Image then name = k end
+        end
+        if not name then return end
+        local function onScreen()
+            if owner and owner.IsShown and not owner:IsShown() then return false end
+            local ok, seen = pcall(function()
+                if not icon.Visible then return false end
+                local pos, size = icon.AbsolutePosition, icon.AbsoluteSize
+                local view = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+                if size.X <= 0 or size.Y <= 0 then return false end
+                return not view or (pos.X + size.X > 0 and pos.Y + size.Y > 0 and pos.X < view.X and pos.Y < view.Y)
+            end)
+            return not ok or seen
+        end
+        local function check(seen)
+            Anim.after(4, function()
+                if Icons.broken or not icon.Parent or icon.Image ~= Icons._made[name] then return end
+                local now = onScreen()
+                if not (seen and now) then return check(now) end
+                local ok, loaded = pcall(function() return icon.IsLoaded end)
+                if ok and loaded == false then
+                    Icons.broken = true
+                    Icons._made = {}
+                    Icons.Changed:Fire(Icons.shown())
+                end
+            end)
+        end
+        check(onScreen())
     end
 
     function Icons.register(name, asset)
@@ -5659,10 +6020,7 @@ do
         Theme.bind(cell.Label, "TextColor3", token)
         Anim.to(cell.Tint, { BackgroundTransparency = act and 0.94 or 1 }, kind)
         Anim.to(cell.Hit, { BackgroundTransparency = (over and not act) and 0.985 or 1 }, kind)
-        if cell.Icon then
-            Theme.bind(cell.Icon, "ImageColor3", token)
-            Anim.to(cell.Icon, { ImageTransparency = (act or over) and 0 or 0.25 }, kind)
-        end
+        Icons.tint(cell.Icon, token, (act or over) and 0 or 0.25, kind)
     end
 
     local function slide(el, kind)
@@ -5705,7 +6063,7 @@ do
         local show = Icons.shown()
         local anyIcon = false
         for _, item in ipairs(list) do
-            if show and Icons.get(item.icon) then anyIcon = true end
+            if show and Icons.has(item.icon) then anyIcon = true end
         end
         el.TextOnly = not anyIcon
         local h = cellHeight(el)
@@ -5716,25 +6074,26 @@ do
             local label
             local icon
             if anyIcon and not el.Opts.small then
-                local image = show and Icons.get(item.icon)
                 local top = Util.snap((h - 30) / 2)
-                if image then
-                    icon = Util.new("ImageLabel", { Name = "Icon", Image = image, ScaleType = Enum.ScaleType.Fit, Position = UDim2.new(0, 4, 0, top), Size = UDim2.new(1, -8, 0, 16), Parent = hit })
+                if Icons.get(item.icon) then
+                    icon = Icons.make(hit, item.icon, { Position = UDim2.new(0, 4, 0, top), Size = UDim2.new(1, -8, 0, 16) })
+                elseif Icons.bitmap(item.icon) then
+                    local w = Util.snap(16 * Icons.aspect(item.icon))
+                    icon = Icons.draw(hit, item.icon, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, top), Size = UDim2.fromOffset(w, 16) })
                 end
                 label = Util.new("TextLabel", {
                     Name = "Label", Text = Text.caps("small", item.label), TextStyle = "small", TextTruncate = Enum.TextTruncate.AtEnd,
                     Position = UDim2.new(0, 2, 0, top + 20), Size = UDim2.new(1, -4, 0, 10), Parent = hit,
                 })
             else
-                if el.Opts.small and show then
-                    local image = Icons.get(item.icon)
-                    if image then
-                        icon = Util.new("ImageLabel", { Name = "Icon", Image = image, ScaleType = Enum.ScaleType.Fit, Position = UDim2.fromOffset(6, Util.snap((h - 14) / 2)), Size = UDim2.fromOffset(14, 14), Parent = hit })
-                    end
+                local iw = 0
+                if el.Opts.small and show and Icons.has(item.icon) then
+                    iw = math.max(14, Util.snap(14 * Icons.aspect(item.icon)))
+                    icon = Icons.make(hit, item.icon, { Position = UDim2.fromOffset(6, Util.snap((h - 14) / 2)), Size = UDim2.fromOffset(iw, 14) })
                 end
                 label = Util.new("TextLabel", {
                     Name = "Label", Text = item.label, TextStyle = "body", TextTruncate = Enum.TextTruncate.AtEnd,
-                    Position = UDim2.fromOffset(icon and 22 or 4, 0), Size = UDim2.new(1, icon and -26 or -8, 1, 0), Parent = hit,
+                    Position = UDim2.fromOffset(icon and iw + 8 or 4, 0), Size = UDim2.new(1, icon and -(iw + 12) or -8, 1, 0), Parent = hit,
                 })
             end
             local cell = { Item = item, Hit = hit, Tint = tint, Line = line, Label = label, Icon = icon, Over = false, X = 0, W = 0 }
@@ -5752,6 +6111,7 @@ do
             end)
             el._cells[#el._cells + 1] = cell
             paintCell(el, cell, 0)
+            Icons.watch(icon, el)
         end
         layout(el)
     end
@@ -7424,13 +7784,15 @@ do
     function Scene.Wall(handle, opts)
         attach(handle)
         opts = opts or {}
-        local wall = setmetatable({ Handle = handle, Visible = true }, Wall)
+        local wall = setmetatable({ Handle = handle, Visible = true, Offset = 0, _t = 0 }, Wall)
+        wall.Base = opts.cframe or CFrame.new(2.5, 2.5, 3)
         wall.Part = part({
-            Name = "Wall", Size = opts.size or Vector3.new(5, 6, 0.4), CFrame = opts.cframe or CFrame.new(2.5, 2.5, 3),
+            Name = "Wall", Size = opts.size or Vector3.new(5, 6, 0.4), CFrame = wall.Base,
             Color = color(opts.color, Color3.fromRGB(70, 70, 78)), Transparency = num(opts.transparency, 0),
             Material = material(opts.material or "SmoothPlastic"), Parent = handle.World,
         })
         handle.Maid:Add(wall)
+        if opts.sweep then wall:Sweep(opts.sweep) end
         return wall
     end
 
@@ -7446,6 +7808,49 @@ do
     end
     Wall.IsOccluded = Wall.isOccluded
 
+    function Wall:SetOffset(x)
+        self.Offset = x
+        self.Part.CFrame = self.Base * CFrame.new(x, 0, 0)
+    end
+
+    function Wall:SweepAt(t)
+        local s = self._sweep
+        if not s then return self.Offset end
+        local stops = { s.from, s.center, s.to, s.center }
+        local leg = s.hold + s.move
+        t = t % (leg * 4)
+        local i = math.floor(t / leg)
+        local into = t - i * leg
+        local a, b = stops[i + 1], stops[(i + 1) % 4 + 1]
+        if into < s.hold then return a end
+        local k = (into - s.hold) / s.move
+        return lerp(a, b, k * k * (3 - 2 * k))
+    end
+
+    function Wall:Sweep(spec)
+        if self._loop then
+            self._loop.Stop()
+            self._loop = nil
+        end
+        if spec == false then
+            self._sweep = nil
+            self:SetOffset(0)
+            return self
+        end
+        spec = type(spec) == "table" and spec or {}
+        self._sweep = {
+            from = num(spec.from, -6.5), to = num(spec.to, 6.5), center = num(spec.center, 0),
+            move = math.max(num(spec.move, 1.6), 0.05), hold = math.max(num(spec.hold, 0.7), 0),
+        }
+        self._t = 0
+        self:SetOffset(self:SweepAt(0))
+        self._loop = self.Handle:Loop(function(dt)
+            self._t = self._t + dt
+            self:SetOffset(self:SweepAt(self._t))
+        end)
+        return self
+    end
+
     function Wall:SetVisible(on)
         self.Visible = on ~= false
         self.Part.Transparency = self.Visible and 0 or 1
@@ -7454,6 +7859,7 @@ do
     function Wall:Destroy()
         if self.Destroyed then return end
         self.Destroyed = true
+        if self._loop then self._loop.Stop() end
         pcall(function() self.Part:Destroy() end)
     end
 
@@ -7461,8 +7867,15 @@ do
     Chams.__index = Chams
     local CHAM_DEFAULTS = {
         enabled = true, visColor = WHITE, visAlpha = 0.5, occColor = WHITE, occAlpha = 0.5, walls = true,
-        grow = 0.1, round = true, head = 1.15, glow = false, glowSize = 1.75, material = "Neon",
+        grow = 0.1, round = true, head = 1.15, glow = false, glowSize = 1.75, material = "SmoothPlastic",
     }
+    local REGIONS = { "behind", "left", "right", "top", "bottom" }
+    local CUBE = {}
+    for _, sx in ipairs({ -0.5, 0.5 }) do
+        for _, sy in ipairs({ -0.5, 0.5 }) do
+            for _, sz in ipairs({ -0.5, 0.5 }) do CUBE[#CUBE + 1] = Vector3.new(sx, sy, sz) end
+        end
+    end
 
     local function roundClass()
         if Scene._round == nil then
@@ -7505,69 +7918,82 @@ do
 
     function Chams:_overlay()
         if self.Overlay then return self.Overlay end
-        local handle = self.Handle
-        local view = Util.new("ViewportFrame", {
-            Name = "ChamsBehind", BackgroundTransparency = 1, ZIndex = 2, Size = UDim2.fromScale(1, 1), Parent = handle.Frame,
-        })
-        local cam = Instance.new("Camera")
-        cam.Parent = view
-        pcall(function() view.CurrentCamera = cam end)
-        self.Overlay, self.OverlayCamera = view, cam
-        return view
+        local root = Util.new("Frame", { Name = "Chams", BackgroundTransparency = 1, ZIndex = 2, Size = UDim2.fromScale(1, 1), Parent = self.Handle.Frame })
+        local views = {}
+        for _, key in ipairs(REGIONS) do
+            local clip = Util.new("Frame", { Name = "Clip_" .. key, BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 2, Size = UDim2.fromOffset(0, 0), Parent = root })
+            local view = Util.new("ViewportFrame", { Name = "View", BackgroundTransparency = 1, ZIndex = 2, Size = UDim2.fromOffset(0, 0), Parent = clip })
+            pcall(function()
+                view.Ambient, view.LightColor = WHITE, BLACK
+            end)
+            local cam = Instance.new("Camera")
+            cam.Parent = view
+            pcall(function() view.CurrentCamera = cam end)
+            views[key] = { key = key, clip = clip, view = view, camera = cam }
+        end
+        self.Root, self.Views = root, views
+        self.Overlay, self.OverlayCamera = views.behind.view, views.behind.camera
+        return self.Overlay
     end
 
-    function Chams:_layer(round, behind)
-        local mode = self.Mode
-        if mode == "adorn" then
-            local class = round and roundClass() or "BoxHandleAdornment"
-            local ok, a = pcall(Instance.new, class)
-            if not (ok and a) then return nil end
-            pcall(function() a.AdornCullingMode = Enum.AdornCullingMode.Never end)
-            if class == "CylinderHandleAdornment" then a.CFrame = CFrame.new(Vector3.new(0, 0, 0), Vector3.new(0, 90, 0)) end
-            a.AlwaysOnTop = behind
-            a.ZIndex = behind and 1 or -1
-            a.Name = behind and "Behind" or "Visible"
-            a.Parent = self.Handle.Viewport
-            return a
-        end
-        local parent = behind and self:_overlay() or self.Handle.World
+    function Chams:_adorn(round, behind)
+        local class = round and roundClass() or "BoxHandleAdornment"
+        local ok, a = pcall(Instance.new, class)
+        if not (ok and a) then return nil end
+        pcall(function() a.AdornCullingMode = Enum.AdornCullingMode.Never end)
+        if class == "CylinderHandleAdornment" then a.CFrame = CFrame.new(Vector3.new(0, 0, 0), Vector3.new(0, 90, 0)) end
+        a.AlwaysOnTop = behind
+        a.ZIndex = behind and 1 or -1
+        a.Name = behind and "Behind" or "Visible"
+        a.Parent = self.Handle.Viewport
+        return a
+    end
+
+    function Chams:_piece(round, view, name)
         return part({
-            Name = behind and "Behind" or "Visible", Shape = round and Enum.PartType.Cylinder or Enum.PartType.Block,
-            Size = Vector3.new(1, 1, 1), Transparency = 1, Material = material(self.Cfg.material), Parent = parent,
+            Name = name, Shape = round and Enum.PartType.Cylinder or Enum.PartType.Block,
+            Size = Vector3.new(1, 1, 1), Transparency = 1, Material = material(self.Cfg.material), Parent = view,
         })
     end
 
     function Chams:_drop()
         for _, slot in pairs(self.slots) do
             for _, layer in pairs(slot.layers) do pcall(function() layer:Destroy() end) end
+            for _, layer in ipairs(slot.copies or {}) do pcall(function() layer:Destroy() end) end
         end
         self.slots = {}
-        if self.Overlay then
-            pcall(function() self.Overlay:Destroy() end)
-            self.Overlay, self.OverlayCamera = nil, nil
-        end
+        if self.Root then pcall(function() self.Root:Destroy() end) end
+        self.Root, self.Views, self.Overlay, self.OverlayCamera = nil, nil, nil, nil
     end
 
     function Chams:_rebuild()
         self:_drop()
         self.Mode = self:_pick()
         if not self.Cfg.enabled then return end
+        local parts = self.Mode == "parts"
+        if parts then self:_overlay() end
         for _, name in ipairs(R6) do
             local p = bodyPart(self.Model, name)
             if p then
                 local round = name == "Head" and self.Cfg.round == true
-                local behind, visible = self:_layer(round, true), self:_layer(round, false)
-                if behind and visible then
-                    self.slots[name] = { name = name, part = p, round = round, layers = { behind = behind, visible = visible } }
-                    self:_style(self.slots[name])
+                local slot = { name = name, part = p, round = round, cover = 0, state = "visible" }
+                if parts then
+                    slot.layers = { behind = self:_piece(round, self.Views.behind.view, "Behind") }
+                    slot.copies = {}
+                    for i = 2, #REGIONS do slot.copies[i - 1] = self:_piece(round, self.Views[REGIONS[i]].view, "Visible") end
+                    slot.layers.visible = slot.copies[1]
                 else
-                    if behind then behind:Destroy() end
-                    if visible then visible:Destroy() end
-                    if self.Mode == "adorn" then
+                    local behind, visible = self:_adorn(round, true), self:_adorn(round, false)
+                    if not (behind and visible) then
+                        if behind then behind:Destroy() end
+                        if visible then visible:Destroy() end
                         self._force = "parts"
                         return self:_rebuild()
                     end
+                    slot.layers = { behind = behind, visible = visible }
                 end
+                self.slots[name] = slot
+                self:_style(slot)
             end
         end
         self:Update()
@@ -7582,11 +8008,12 @@ do
         pcall(function()
             if typeof(p.Size) == "Vector3" and math.min(p.Size.X, p.Size.Y, p.Size.Z) >= 0.05 then size = p.Size end
         end)
+        local behindSize, visibleSize
         if slot.round then
             local radius, height = (SIZES.Head.X / 2 - 0.4) * headScale, SIZES.Head.Y * headScale
             if parts then
-                layers.behind.Size = Vector3.new(height, radius * 2, radius * 2)
-                layers.visible.Size = Vector3.new(height + grow, radius * 2 + grow, radius * 2 + grow)
+                behindSize = Vector3.new(height, radius * 2, radius * 2)
+                visibleSize = Vector3.new(height + grow, radius * 2 + grow, radius * 2 + grow)
             elseif layers.behind.ClassName == "SphereHandleAdornment" then
                 radius = math.max(radius, height / 2)
                 layers.behind.Radius, layers.visible.Radius = radius, radius + grow / 2
@@ -7595,8 +8022,7 @@ do
                 layers.visible.Radius, layers.visible.Height = radius + grow / 2, height + grow
             end
         else
-            layers.behind.Size = size
-            layers.visible.Size = size + Vector3.new(grow, grow, grow)
+            behindSize, visibleSize = size, size + Vector3.new(grow, grow, grow)
         end
         local visT = 1 - num(cfg.visAlpha, 0.5)
         local visColor = cfg.visColor
@@ -7607,51 +8033,126 @@ do
             visT = visT / strength
         end
         slot.visColor, slot.visT = visColor, visT
-        for _, layer in pairs(layers) do
-            if parts then
-                layer.Color = layer == layers.behind and slot.behindColor or visColor
-            else
-                layer.Color3 = layer == layers.behind and slot.behindColor or visColor
-                layer.Adornee = p
+        if parts then
+            layers.behind.Size, layers.behind.Color, layers.behind.Transparency = behindSize, slot.behindColor, slot.behindT
+            for _, copy in ipairs(slot.copies) do
+                copy.Size, copy.Color, copy.Transparency = visibleSize, visColor, visT
             end
+            slot.cf = nil
+            return
         end
-        if not parts then layers.visible.AlwaysOnTop = cfg.glow == true and cfg.walls ~= false end
+        if behindSize then layers.behind.Size, layers.visible.Size = behindSize, visibleSize end
+        layers.behind.Color3, layers.visible.Color3 = slot.behindColor, visColor
+        layers.behind.Adornee, layers.visible.Adornee = p, p
+        layers.visible.AlwaysOnTop = cfg.glow == true and cfg.walls ~= false
     end
 
     function Chams:_sync()
-        if not (self.Mode == "parts" and self.OverlayCamera) then return end
-        local handle, cam = self.Handle, self.OverlayCamera
-        cam.CFrame, cam.FieldOfView = handle.Camera.CFrame, handle.Camera.FieldOfView
-        pcall(function()
-            self.Overlay.Ambient, self.Overlay.LightColor = handle.Viewport.Ambient, handle.Viewport.LightColor
-            self.Overlay.LightDirection = handle.Viewport.LightDirection
-        end)
+        local main = self.Handle.Camera
+        local cf, fov = main.CFrame, main.FieldOfView
+        for _, v in pairs(self.Views) do
+            if v.cf ~= cf or v.fov ~= fov then
+                v.cf, v.fov = cf, fov
+                v.camera.CFrame, v.camera.FieldOfView = cf, fov
+            end
+        end
+    end
+
+    local function rectOf(handle, cf, size)
+        local x0, y0, x1, y1 = math.huge, math.huge, -math.huge, -math.huge
+        for _, c in ipairs(CUBE) do
+            local x, y, depth = handle:Project(cf * Vector3.new(c.X * size.X, c.Y * size.Y, c.Z * size.Z))
+            if depth <= 1e-3 then return nil end
+            x0, y0, x1, y1 = math.min(x0, x), math.min(y0, y), math.max(x1, x), math.max(y1, y)
+        end
+        return { x0 = x0, y0 = y0, x1 = x1, y1 = y1 }
+    end
+    Scene._rectOf = rectOf
+
+    function Chams:Cover()
+        local wall, handle = self.Cfg.wall, self.Handle
+        if not wall or wall.Destroyed or not wall.Visible then return nil end
+        local r = rectOf(handle, wall.Part.CFrame, wall.Part.Size)
+        if not r then return nil end
+        local _, _, depth = handle:Project(wall.Part.CFrame.Position)
+        r.depth = depth
+        return r
+    end
+
+    local function region(v, x, y, w, h, W, H, on)
+        x, y = Util.clamp(x, 0, W), Util.clamp(y, 0, H)
+        w, h = Util.clamp(w, 0, W - x), Util.clamp(h, 0, H - y)
+        local key = x .. ":" .. y .. ":" .. w .. ":" .. h .. ":" .. W .. ":" .. H .. ":" .. tostring(on)
+        if v.key == key then return end
+        v.key = key
+        v.x, v.y, v.w, v.h = x, y, w, h
+        v.clip.Visible = on and w > 0 and h > 0
+        v.clip.Position, v.clip.Size = UDim2.fromOffset(x, y), UDim2.fromOffset(w, h)
+        v.view.Position, v.view.Size = UDim2.fromOffset(-x, -y), UDim2.fromOffset(W, H)
+    end
+
+    function Chams:_clip(r)
+        local W, H = self.Handle.Size.X, self.Handle.Size.Y
+        local v = self.Views
+        local x0, y0, x1, y1 = W, 0, W, 0
+        if r then x0, y0, x1, y1 = r.x0, r.y0, r.x1, r.y1 end
+        x0, x1 = Util.clamp(x0, 0, W), Util.clamp(x1, 0, W)
+        y0, y1 = Util.clamp(y0, 0, H), Util.clamp(y1, 0, H)
+        region(v.behind, x0, y0, x1 - x0, y1 - y0, W, H, self.Cfg.walls ~= false)
+        region(v.left, 0, 0, x0, H, W, H, true)
+        region(v.right, x1, 0, W - x1, H, W, H, true)
+        region(v.top, x0, 0, x1 - x0, y0, W, H, true)
+        region(v.bottom, x0, y1, x1 - x0, H - y1, W, H, true)
     end
 
     local UPRIGHT = CFrame.Angles(0, 0, math.pi / 2)
 
     function Chams:Update()
         if self.Destroyed then return end
-        self:_sync()
         local cfg = self.Cfg
         local wall = cfg.wall
-        local parts = self.Mode == "parts"
-        for _, slot in pairs(self.slots) do
-            local behind, visible = slot.layers.behind, slot.layers.visible
-            local occluded = wall ~= nil and wall:isOccluded(slot.part) or false
-            slot.occluded = occluded
-            local showBehind = occluded and cfg.walls ~= false
-            local showVisible = not occluded
-            if parts then
-                local cf = slot.part.CFrame
-                if slot.round then cf = cf * UPRIGHT end
-                behind.CFrame, visible.CFrame = cf, cf
-                behind.Transparency = showBehind and slot.behindT or 1
-                visible.Transparency = showVisible and slot.visT or 1
-            else
-                behind.Transparency, visible.Transparency = slot.behindT, slot.visT
-                behind.Visible, visible.Visible = showBehind, showVisible
+        if self.Mode ~= "parts" then
+            for _, slot in pairs(self.slots) do
+                local occluded = wall ~= nil and wall:isOccluded(slot.part) or false
+                slot.occluded = occluded
+                slot.state = occluded and "occluded" or "visible"
+                slot.cover = occluded and 1 or 0
+                slot.layers.behind.Transparency, slot.layers.visible.Transparency = slot.behindT, slot.visT
+                slot.layers.behind.Visible = occluded and cfg.walls ~= false
+                slot.layers.visible.Visible = not occluded
             end
+            return
+        end
+        if not self.Views then return end
+        local handle = self.Handle
+        self:_sync()
+        local cover = self:Cover()
+        local torso = self.slots.Torso
+        if cover and torso then
+            local _, _, depth = handle:Project(torso.part.CFrame.Position)
+            if cover.depth >= depth then cover = nil end
+        end
+        self.Covered = cover
+        self:_clip(cover)
+        for _, slot in pairs(self.slots) do
+            local cf = slot.part.CFrame
+            if slot.round then cf = cf * UPRIGHT end
+            if slot.cf ~= cf then
+                slot.cf = cf
+                slot.layers.behind.CFrame = cf
+                for _, copy in ipairs(slot.copies) do copy.CFrame = cf end
+            end
+            local f = 0
+            local r = cover and rectOf(handle, slot.part.CFrame, slot.part.Size)
+            if r then
+                local area = math.max(1, (r.x1 - r.x0) * (r.y1 - r.y0))
+                local w = math.max(0, math.min(r.x1, cover.x1) - math.max(r.x0, cover.x0))
+                local h = math.max(0, math.min(r.y1, cover.y1) - math.max(r.y0, cover.y0))
+                f = Util.clamp(w * h / area, 0, 1)
+            end
+            slot.cover = f
+            slot.state = f <= 0 and "visible" or (f >= 1 and "occluded" or "partial")
+            slot.occluded = f >= 1
         end
     end
 
@@ -7664,6 +8165,7 @@ do
             return self
         end
         for _, slot in pairs(self.slots) do self:_style(slot) end
+        if self.Views then self.Views.behind.key = nil end
         self:Update()
         return self
     end
@@ -7677,7 +8179,7 @@ do
 
     function Chams:Layers()
         local out = {}
-        for name, slot in pairs(self.slots) do out[name] = { behind = slot.layers.behind, visible = slot.layers.visible } end
+        for name, slot in pairs(self.slots) do out[name] = { behind = slot.layers.behind, visible = slot.layers.visible, copies = slot.copies, state = slot.state, cover = slot.cover } end
         return out
     end
 
@@ -7700,13 +8202,24 @@ do
 
     local Esp = {}
     Esp.__index = Esp
-    local ESP_COLORS = { boxColor = true, fillColor = true, low = true, mid = true, high = true, nameColor = true, skeletonColor = true, infoColor = true, tracerColor = true }
+    local ESP_COLORS = { boxColor = true, fillColor = true, low = true, mid = true, high = true, nameColor = true, skeletonColor = true, infoColor = true, tracerColor = true, weaponColor = true, distanceColor = true, flagColor = true }
     local ESP_DEFAULTS = {
-        box = "full", boxColor = WHITE, outline = true, fill = false, fillColor = nil, fillAlpha = 0.2,
+        box = "full", boxColor = WHITE, boxThickness = 1, outline = true, fill = false, fillColor = nil, fillAlpha = 0.2,
         health = true, hp = 72, maxHp = 100, healthMode = "gradient", low = "#ff3c3c", mid = "#ffc83c", high = "#78e03c", healthNumber = true,
-        name = "display", nameColor = WHITE, skeleton = false, skeletonColor = WHITE,
-        weapon = "AK-47", distance = true, infoColor = WHITE, flags = {}, tracer = false, tracerColor = WHITE,
+        healthSide = "left", barWidth = 2,
+        name = "display", nameColor = WHITE, nameSize = nil, nameOutline = true,
+        skeleton = false, skeletonColor = WHITE, skeletonThickness = 1, skeletonOutline = false, joints = false,
+        weapon = "AK-47", weaponMode = "text", distance = true, distanceUnit = "studs", infoColor = WHITE,
+        flags = {}, flagColors = false, tracer = false, tracerColor = WHITE,
     }
+    local JOINT_KEYS = {}
+    for key in pairs(JOINTS) do
+        if key ~= "gun" then JOINT_KEYS[#JOINT_KEYS + 1] = key end
+    end
+    table.sort(JOINT_KEYS)
+    local function px(v, default, lo, hi)
+        return Util.clamp(math.floor((tonumber(v) or default) + 0.5), lo, hi)
+    end
     local CORNERS = {}
     for _, sx in ipairs({ -0.5, 0.5 }) do
         for _, sy in ipairs({ -0.5, 0.5 }) do
@@ -7752,7 +8265,16 @@ do
         esp.Hp = label(root, "Hp", "tiny")
         esp.Name = label(root, "Name", "body")
         esp.Info = { weapon = label(root, "Weapon", "tiny"), distance = label(root, "Distance", "tiny") }
-        for i = 1, #BONES do esp._bones[i] = line(root, "Bone", 2) end
+        esp._boneOut, esp._joints = {}, {}
+        for i = 1, #BONES do
+            esp._boneOut[i] = line(root, "BoneOutline", 1)
+            esp._boneOut[i].BackgroundColor3 = BLACK
+            esp._bones[i] = line(root, "Bone", 2)
+        end
+        for _, key in ipairs(JOINT_KEYS) do
+            esp._joints[key] = line(root, "Joint", 3)
+            esp._joints[key].AnchorPoint = Vector2.new(0.5, 0.5)
+        end
         esp.Tracer = line(root, "Tracer", 2)
         esp._loop = handle:Loop(function() esp:Update() end)
         handle.Maid:Add(esp)
@@ -7831,14 +8353,15 @@ do
             self.Fill.BackgroundTransparency = 1 - num(cfg.fillAlpha, 0.2)
         end
         local rects = {}
+        local t = px(cfg.boxThickness, 1, 1, 6)
         if cfg.box == "corner" then
-            local lx, ly = math.max(2, Util.snap(w / 4)), math.max(2, Util.snap(h / 5))
+            local lx, ly = math.max(2 * t, Util.snap(w / 4)), math.max(2 * t, Util.snap(h / 5))
             rects = {
-                { x, y, lx, 1 }, { x, y, 1, ly }, { x + w - lx, y, lx, 1 }, { x + w - 1, y, 1, ly },
-                { x, y + h - 1, lx, 1 }, { x, y + h - ly, 1, ly }, { x + w - lx, y + h - 1, lx, 1 }, { x + w - 1, y + h - ly, 1, ly },
+                { x, y, lx, t }, { x, y, t, ly }, { x + w - lx, y, lx, t }, { x + w - t, y, t, ly },
+                { x, y + h - t, lx, t }, { x, y + h - ly, t, ly }, { x + w - lx, y + h - t, lx, t }, { x + w - t, y + h - ly, t, ly },
             }
         elseif cfg.box ~= false then
-            rects = { { x, y, w, 1 }, { x, y + h - 1, w, 1 }, { x, y, 1, h }, { x + w - 1, y, 1, h } }
+            rects = { { x, y, w, t }, { x, y + h - t, w, t }, { x, y, t, h }, { x + w - t, y, t, h } }
         end
         for i, seg in ipairs(self._segs) do
             local r = rects[i]
@@ -7856,12 +8379,14 @@ do
         local showBar = cfg.health ~= false
         self.BarBack.Visible, self.Bar.Visible = showBar, showBar
         self.Hp.Visible = false
+        local bw = px(cfg.barWidth, 2, 1, 8)
+        local right = cfg.healthSide == "right"
+        local bx = right and x + w + 1 or x - bw - 3
         if showBar then
-            local bx = x - 5
-            placeRect(self.BarBack, bx, y - 1, 4, h + 2)
+            placeRect(self.BarBack, bx, y - 1, bw + 2, h + 2)
             self.BarBack.BackgroundTransparency = 0.2
             local fh = Util.snap(h * frac)
-            placeRect(self.Bar, bx + 1, y + h - fh, 2, fh)
+            placeRect(self.Bar, bx + 1, y + h - fh, bw, fh)
             if cfg.healthMode == "solid" then
                 self.BarGradient.Enabled = false
                 self.Bar.BackgroundColor3 = healthColor(cfg, frac)
@@ -7874,49 +8399,89 @@ do
                 })
             end
             if cfg.healthNumber ~= false and hp < maxHp then
-                setText(self.Hp, tostring(math.floor(hp + 0.5)), "tiny", bx - 1, y + h - fh - 5, "right")
+                if right then
+                    setText(self.Hp, tostring(math.floor(hp + 0.5)), "tiny", bx + bw + 3, y + h - fh - 5, "left")
+                else
+                    setText(self.Hp, tostring(math.floor(hp + 0.5)), "tiny", bx - 1, y + h - fh - 5, "right")
+                end
             end
         end
 
         if cfg.name then
-            setText(self.Name, self:_name(), "body", x + w / 2, y - 15, "center")
+            local base = Text.Styles.body.size
+            local size = px(cfg.nameSize, base, 6, 32)
+            local text = self:_name()
+            local tw, th = Text.size(text, "body").X, Text.size(text, "body").Y
+            if size ~= base then tw, th = math.ceil(tw * size / base), math.ceil(th * size / base) end
+            self.Name.Text = text
+            self.Name.TextSize = size
+            placeRect(self.Name, x + Util.snap((w - tw) / 2), y - th - 3, tw, th)
+            self.Name.Visible = true
             self.Name.TextColor3 = cfg.nameColor
+            self.Name.TextStrokeTransparency = cfg.nameOutline == false and 1 or 0.4
         else
             self.Name.Visible = false
         end
 
         local below = y + h + 2
         local weapon = self.Info.weapon
-        if cfg.weapon then
+        local wcol = cfg.weaponColor or cfg.infoColor
+        local icon = nil
+        if cfg.weapon and cfg.weaponMode == "icon" then
+            if self.WeaponIcon == nil then
+                self.WeaponIcon = Icons.make(self.Root, "rifles", { Name = "WeaponIcon", ZIndex = 4, Visible = false }) or false
+            end
+            icon = self.WeaponIcon or nil
+        end
+        if icon then
+            weapon.Visible = false
+            local ih = 10
+            local iw = math.max(1, Util.snap(ih * Icons.aspect("rifles")))
+            placeRect(icon, x + Util.snap((w - iw) / 2), below, iw, ih)
+            icon.Visible = true
+            if icon:IsA("ImageLabel") then
+                icon.ImageColor3 = wcol
+            else
+                for _, p in ipairs(icon:GetChildren()) do p.BackgroundColor3 = wcol end
+            end
+            below = below + ih + 1
+        elseif cfg.weapon then
             local _, th = setText(weapon, tostring(cfg.weapon), "tiny", x + w / 2, below, "center")
-            weapon.TextColor3 = cfg.infoColor
+            weapon.TextColor3 = wcol
             below = below + th
         else
             weapon.Visible = false
         end
+        if self.WeaponIcon and not icon then self.WeaponIcon.Visible = false end
         local dist = self.Info.distance
         local torso = bodyPart(self.Model, "Torso")
         if cfg.distance ~= false and torso then
             local studs = (handle.Camera.CFrame.Position - torso.CFrame.Position).Magnitude
-            setText(dist, tostring(math.floor(studs + 0.5)) .. " studs", "tiny", x + w / 2, below, "center")
-            dist.TextColor3 = cfg.infoColor
+            local u = cfg.distanceUnit
+            local text = (u == "meters" or u == "m" or u == "meter") and (tostring(math.floor(studs * 0.28 + 0.5)) .. "m") or (tostring(math.floor(studs + 0.5)) .. " studs")
+            setText(dist, text, "tiny", x + w / 2, below, "center")
+            dist.TextColor3 = cfg.distanceColor or cfg.infoColor
         else
             dist.Visible = false
         end
 
         local flags = type(cfg.flags) == "table" and cfg.flags or {}
+        local fx = (right and showBar) and bx + bw + 4 or x + w + 3
         for i, text in ipairs(flags) do
             local l = self._flags[i]
             if not l then
                 l = label(self.Root, "Flag", "tiny")
                 self._flags[i] = l
             end
-            setText(l, tostring(text), "tiny", x + w + 3, y + (i - 1) * 10, "left")
-            l.TextColor3 = cfg.infoColor
+            setText(l, tostring(text), "tiny", fx, y + (i - 1) * 10, "left")
+            local per = type(cfg.flagColors) == "table" and cfg.flagColors[text]
+            l.TextColor3 = (per and color(per, nil)) or cfg.flagColor or cfg.infoColor
         end
         for i = #flags + 1, #self._flags do self._flags[i].Visible = false end
 
         local points = {}
+        local st = px(cfg.skeletonThickness, 1, 1, 6)
+        local so = cfg.skeleton == true and cfg.skeletonOutline == true
         if cfg.skeleton then
             for key, spec in pairs(JOINTS) do
                 local p = bodyPart(self.Model, spec[1])
@@ -7928,10 +8493,26 @@ do
         end
         for i, bone in ipairs(BONES) do
             local f, a, b = self._bones[i], points[bone[1]], points[bone[2]]
+            local o = self._boneOut[i]
             f.Visible = cfg.skeleton == true and a ~= nil and b ~= nil
+            o.Visible = f.Visible and so
             if f.Visible then
-                placeLine(f, a[1], a[2], b[1], b[2])
+                placeLine(f, a[1], a[2], b[1], b[2], st)
                 f.BackgroundColor3 = cfg.skeletonColor
+                if so then
+                    placeLine(o, a[1], a[2], b[1], b[2], st + 2)
+                    o.Size = UDim2.fromOffset(f.Size.X.Offset + 2, st + 2)
+                end
+            end
+        end
+        local js = st + 2
+        for key, dot in pairs(self._joints) do
+            local p = points[key]
+            dot.Visible = cfg.skeleton == true and cfg.joints == true and p ~= nil
+            if dot.Visible then
+                dot.Position = UDim2.fromOffset(Util.snap(p[1]), Util.snap(p[2]))
+                dot.Size = UDim2.fromOffset(js, js)
+                dot.BackgroundColor3 = cfg.skeletonColor
             end
         end
 
@@ -9458,7 +10039,7 @@ do
 
         local vw, vh = Hud._.viewport()
         local root = Util.new("CanvasGroup", {
-            Name = "Loader", BorderSizePixel = 0, GroupTransparency = 1, BackgroundColor3 = Util.hex("#040405"),
+            Name = "Loader", BorderSizePixel = 0, GroupTransparency = 1, Theme = { BackgroundColor3 = "edge" },
             Position = UDim2.fromOffset(Util.snap((vw - W) / 2) - 1, Util.snap((vh - H) / 2) - 1), Size = UDim2.fromOffset(W + 2, H + 2), Parent = Aster.Gui.Toast,
         })
         self.Root = root
@@ -9466,7 +10047,7 @@ do
         local frame = Util.new("Frame", { Name = "Border", Position = UDim2.fromOffset(1, 1), Size = UDim2.fromOffset(W, H), Theme = { BackgroundColor3 = "ln2" }, Parent = root })
         local body = Util.new("Frame", { Name = "Body", Position = UDim2.fromOffset(1, 1), Size = UDim2.fromOffset(BODYW, H - 2), Theme = { BackgroundColor3 = "bg" }, Parent = frame })
         self.Body = body
-        local tileRing = Util.new("Frame", { Name = "TileRing", BackgroundColor3 = Util.hex("#040405"), Position = UDim2.fromOffset(9, 7), Size = UDim2.fromOffset(34, 34), Parent = body })
+        local tileRing = Util.new("Frame", { Name = "TileRing", Theme = { BackgroundColor3 = "edge" }, Position = UDim2.fromOffset(9, 7), Size = UDim2.fromOffset(34, 34), Parent = body })
         local tile = Util.new("Frame", { Name = "Tile", Position = UDim2.fromOffset(1, 1), Size = UDim2.fromOffset(32, 32), Theme = { BackgroundColor3 = "ln2" }, Parent = tileRing })
         local well = Util.new("Frame", { Name = "Well", Position = UDim2.fromOffset(1, 1), Size = UDim2.fromOffset(30, 30), Theme = { BackgroundColor3 = "well" }, Parent = tile })
         local logo = Hud.Logo(well, 18, "accent")
@@ -9581,17 +10162,348 @@ do
     end
 end
 
+-- [src] 68_themes.lua
+do
+    local TM = { Folder = "themes", Custom = {}, Changed = Util.Signal.new(), _memory = {} }
+    Aster.ThemeManager = TM
+    Aster._maid:Add(TM.Changed)
+    TM.Groups = {
+        { "colours", "th.cols", { { "bg", "Background" }, { "panel", "Main" }, { "accent", "Accent" }, { "border", "Outline" }, { "text", "Font" } } },
+        { "buttons", "th.btns", { { "btnBg", "Button background" }, { "btnBd", "Button border" }, { "btnTx", "Button text" }, { "btnHv", "Button hover" } } },
+        { "dropdowns", "th.dds", { { "ddBg", "Box background" }, { "ddBd", "Box border" }, { "ddTx", "Box text" }, { "ddlBg", "List background" }, { "ddHl", "Highlighted option" } } },
+    }
+
+    local function folder()
+        return Store.Root .. "/" .. TM.Folder
+    end
+
+    local function file(name)
+        return folder() .. "/" .. name .. ".json"
+    end
+
+    local function ensure()
+        local built = ""
+        for part in string.gmatch(folder(), "[^/]+") do
+            built = built == "" and part or built .. "/" .. part
+            pcall(function()
+                if not (Exec.fs.isfolder and Exec.fs.isfolder(built)) then Exec.fs.makefolder(built) end
+            end)
+        end
+    end
+
+    local function read(path)
+        if not Exec.hasFs then return TM._memory[path] end
+        local ok, text = pcall(function()
+            if Exec.fs.isfile(path) then return Exec.fs.read(path) end
+            return nil
+        end)
+        if ok and type(text) == "string" then return text end
+        return nil
+    end
+
+    local function write(path, text)
+        if not Exec.hasFs then
+            TM._memory[path] = text
+            return true
+        end
+        ensure()
+        return (pcall(Exec.fs.write, path, text))
+    end
+
+    local function remove(path)
+        if not Exec.hasFs then
+            local had = TM._memory[path] ~= nil
+            TM._memory[path] = nil
+            return had
+        end
+        return Exec.fs.delete ~= nil and (pcall(Exec.fs.delete, path))
+    end
+
+    local function names()
+        local out = {}
+        if Exec.hasFs then
+            ensure()
+            local ok, files = pcall(function() return Exec.fs.list and Exec.fs.list(folder()) or {} end)
+            for _, path in ipairs(ok and files or {}) do
+                local name = string.match(string.gsub(tostring(path), "\\", "/"), "([^/]+)%.json$")
+                if name then out[#out + 1] = name end
+            end
+        else
+            local prefix = folder() .. "/"
+            for path in pairs(TM._memory) do
+                if string.sub(path, 1, #prefix) == prefix then
+                    local name = string.match(string.sub(path, #prefix + 1), "^([^/]+)%.json$")
+                    if name then out[#out + 1] = name end
+                end
+            end
+        end
+        table.sort(out)
+        return out
+    end
+
+    function TM.fix(v)
+        if type(v) ~= "table" then return nil end
+        local out = {}
+        for _, key in ipairs(Theme.Keys) do
+            if type(v[key]) == "string" and Util.hex(v[key]) then out[key] = Util.toHex(Util.hex(v[key])) end
+        end
+        if v.style == "flat" or v.style == "gradient" then out.style = v.style end
+        return out
+    end
+
+    function TM.name(v)
+        return Store.cfgName(v)
+    end
+
+    function TM:SetFolder(name)
+        if type(name) == "string" and name ~= "" then self.Folder = name end
+        self:ReloadCustomThemes()
+    end
+
+    function TM:IsBuiltIn(name)
+        return Theme.PresetData(name) ~= nil
+    end
+
+    function TM:ReloadCustomThemes()
+        self.Custom = {}
+        for _, name in ipairs(names()) do
+            local data = TM.fix(Util.unjson(read(file(name))))
+            if data and next(data) and not self:IsBuiltIn(name) then self.Custom[name] = data end
+        end
+        local list = {}
+        for name in pairs(self.Custom) do list[#list + 1] = name end
+        table.sort(list)
+        return list
+    end
+
+    function TM:GetCustomTheme(name)
+        name = TM.name(name)
+        return self.Custom[name] and Util.copy(self.Custom[name]) or nil
+    end
+
+    function TM:GetTheme(name)
+        return Theme.PresetData(name) or self:GetCustomTheme(name)
+    end
+
+    function TM:List()
+        local default = self:GetDefault()
+        local out = {}
+        for _, name in ipairs(Theme.Presets) do
+            out[#out + 1] = { key = name, text = name, meta = "built-in", marker = name == default and "default" or nil }
+        end
+        local custom = {}
+        for name in pairs(self.Custom) do custom[#custom + 1] = name end
+        table.sort(custom)
+        for _, name in ipairs(custom) do
+            out[#out + 1] = { key = name, text = name, meta = "custom", marker = name == default and "default" or nil }
+        end
+        return out
+    end
+
+    local function same(data)
+        for _, key in ipairs(Theme.Keys) do
+            if data[key] and Util.toHex(Util.hex(data[key])) ~= Util.toHex(Util.hex(Theme.Base[key])) then return false end
+        end
+        return (data.style or Theme.Base.style) == Theme.Base.style
+    end
+
+    function TM:Match()
+        local builtin = Theme:Name()
+        if builtin ~= "custom" then return builtin end
+        local list = {}
+        for name in pairs(self.Custom) do list[#list + 1] = name end
+        table.sort(list)
+        for _, name in ipairs(list) do
+            if same(self.Custom[name]) then return name end
+        end
+        return "custom"
+    end
+
+    function TM:ApplyTheme(name)
+        local data = self:GetTheme(name)
+        if not data then return false end
+        Theme:Set(data)
+        return true
+    end
+
+    function TM:SaveCustomTheme(name)
+        name = TM.name(name)
+        if name == "" then return false, "type a name first" end
+        if self:IsBuiltIn(name) then return false, name .. " is a built-in theme" end
+        local text = Util.json(Theme:Export())
+        if not text or not write(file(name), text) then return false, "could not write " .. name end
+        self:ReloadCustomThemes()
+        self.Changed:Fire("save", name)
+        return true, name
+    end
+
+    function TM:DeleteCustomTheme(name)
+        name = TM.name(name)
+        if not self.Custom[name] then return false end
+        if not remove(file(name)) then return false end
+        if self:GetDefault() == name then remove(folder() .. "/default.txt") end
+        self:ReloadCustomThemes()
+        self.Changed:Fire("delete", name)
+        return true
+    end
+
+    function TM:SaveDefault(name)
+        name = TM.name(name)
+        if not self:GetTheme(name) then return false end
+        if not write(folder() .. "/default.txt", name) then return false end
+        self.Changed:Fire("default", name)
+        return true
+    end
+
+    function TM:GetDefault()
+        local name = read(folder() .. "/default.txt")
+        name = name and TM.name(name) or ""
+        if name == "" then return nil end
+        return name
+    end
+
+    function TM:LoadDefault()
+        local name = self:GetDefault()
+        if not name then return false end
+        return self:ApplyTheme(name)
+    end
+
+    function TM:Init()
+        if self._init then return end
+        self._init = true
+        self:ReloadCustomThemes()
+        if not self:LoadDefault() then
+            local saved = Store.get("theme", nil, TM.fix)
+            if saved and next(saved) then Theme:Set(saved) end
+        end
+        local pending
+        Aster._maid:Add(Theme.Changed:Connect(function()
+            if pending then pending:Stop() end
+            pending = Anim.after(0.4, function()
+                pending = nil
+                Store.put("theme", Theme:Export())
+            end)
+        end))
+    end
+
+    local function notify(text, kind)
+        if Aster.Notify then Aster:Notify("theme", text, kind) end
+    end
+
+    function TM:ApplyToCard(card)
+        self:Init()
+        local h = { Card = card, Colours = {} }
+        local syncing = false
+        h.List = card:List({ items = function() return TM:List() end, rows = 6, empty = "no themes", default = self:Match(), save = false, callback = function(v)
+            if not syncing and v ~= "" and v ~= "custom" then TM:ApplyTheme(v) end
+        end })
+        h.Preset = h.List
+        h.Style = card:Dropdown({ name = "Fill style", options = { "flat", "gradient" }, default = Theme.Base.style, save = false, callback = function(v)
+            if not syncing then Theme:Set({ style = v }) end
+        end })
+        if Icons.SetShown and Icons.shown then
+            h.Icons = card:Dropdown({ name = "Strip icons", options = { "on", "off" }, default = Icons.shown() and "on" or "off", save = false, callback = function(v)
+                Icons.SetShown(v == "on")
+            end })
+        end
+        for _, group in ipairs(self.Groups) do
+            local section = card:Section({ name = group[1], key = group[2], open = group[2] == "th.cols" })
+            for _, entry in ipairs(group[3]) do
+                local key = entry[1]
+                h.Colours[key] = section:Color({ name = entry[2], default = Theme.Base[key], opaque = true, save = false, callback = function(v)
+                    if not syncing then Theme:Set({ [key] = v }) end
+                end })
+            end
+        end
+        h.Name = card:Input({ placeholder = "theme name", max = 24 })
+        local function target()
+            local typed = TM.name(h.Name.Value)
+            if typed ~= "" then return typed end
+            local picked = h.List.Value
+            if picked ~= "" and picked ~= "custom" then return picked end
+            return nil
+        end
+        local function save()
+            local ok, why = TM:SaveCustomTheme(target() or "")
+            if ok then h.Name:Set("") end
+            notify(ok and ("saved " .. why) or why, ok and "ok" or "warn")
+        end
+        h.Name.Opts.enter = save
+        local armed
+        local function disarm()
+            if armed then armed:Stop() end
+            armed = nil
+            if h.Actions and not h.Actions.Destroyed then h.Actions:SetText(3, "Delete") end
+        end
+        h.Actions = card:Buttons({ items = {
+            { name = "Save", primary = true, callback = save },
+            { name = "Load", callback = function()
+                local name = target()
+                if not name or not TM:ApplyTheme(name) then return notify("pick a theme first", "warn") end
+                notify("loaded " .. name, "ok")
+            end },
+            { name = "Delete", callback = function()
+                local name = target()
+                if not name or not TM.Custom[name] then return notify("pick a custom theme", "warn") end
+                if not armed then
+                    h.Actions:SetText(3, "Confirm")
+                    armed = Anim.after(2.5, disarm)
+                    return
+                end
+                disarm()
+                if TM:DeleteCustomTheme(name) then notify("deleted " .. name, "warn") end
+            end },
+        } })
+        h.Extra = card:Buttons({ items = {
+            { name = "Set as default", callback = function()
+                local name = target() or TM:Match()
+                if not TM:SaveDefault(name) then return notify("save the theme first", "warn") end
+                notify(name .. " loads on inject", "ok")
+            end },
+            { name = "Refresh", callback = function()
+                TM:ReloadCustomThemes()
+                h.List:Refresh()
+                notify(#TM:List() .. " themes found")
+            end },
+        } })
+        local function sync()
+            syncing = true
+            for key, el in pairs(h.Colours) do
+                if not el.Destroyed then el:Set(Theme.Base[key], true) end
+            end
+            if not h.Style.Destroyed then h.Style:Set(Theme.Base.style, true) end
+            if not h.List.Destroyed then h.List:Set(TM:Match(), true) end
+            syncing = false
+        end
+        h.List._maid:Add(Theme.Changed:Connect(sync))
+        h.List._maid:Add(TM.Changed:Connect(function()
+            disarm()
+            if h.List.Destroyed then return end
+            h.List:Refresh()
+            sync()
+        end))
+        h.Sync = sync
+        return h
+    end
+
+    function TM:ApplyToTab(target, opts)
+        opts = opts or {}
+        local page = target
+        if type(target) == "table" and not target.Card and target.Page then
+            page = target:Page({ name = opts.page or "theme", icon = opts.icon or "theme" })
+        end
+        if type(page) ~= "table" or not page.Card then error("[aster] ApplyToTab needs a page or a tab") end
+        local card = page:Card({ name = opts.name or "theme", side = opts.side or "left" })
+        return self:ApplyToCard(card), card
+    end
+    TM.ApplyToPage = TM.ApplyToTab
+end
+
 -- [src] 70_builtins.lua
 do
     local Builtins = {}
     Builtins.__index = Builtins
     Aster._.Builtins = Builtins
-    local THEME_KEYS = { "accent", "bg", "panel", "border", "text", "btnBg", "btnBd", "btnTx", "btnHv", "ddBg", "ddBd", "ddTx", "ddlBg", "ddHl" }
-    local COLOURS = {
-        { "colours", "th.cols", { { "accent", "Accent" }, { "bg", "Background" }, { "panel", "Panels" }, { "border", "Borders" }, { "text", "Text" } } },
-        { "buttons", "th.btns", { { "btnBg", "Button background" }, { "btnBd", "Button border" }, { "btnTx", "Button text" }, { "btnHv", "Button hover" } } },
-        { "dropdowns", "th.dds", { { "ddBg", "Box background" }, { "ddBd", "Box border" }, { "ddTx", "Box text" }, { "ddlBg", "List background" }, { "ddHl", "Highlighted option" } } },
-    }
     local WMSEG = { "user", "game", "fps", "ping", "time" }
     local NPOS = { "top left", "top right", "bottom left", "bottom right", "top centre" }
     local CORNERS = { "top left", "top right", "bottom left", "bottom right", "custom" }
@@ -9611,20 +10523,8 @@ do
         return false
     end
 
-    local function fixTheme(v)
-        if type(v) ~= "table" then return nil end
-        local out = {}
-        for _, key in ipairs(THEME_KEYS) do
-            if type(v[key]) == "string" and Util.hex(v[key]) then out[key] = v[key] end
-        end
-        if v.style == "flat" or v.style == "gradient" then out.style = v.style end
-        return out
-    end
-
     function Builtins.loadTheme()
-        local saved = Store.get("theme", nil, fixTheme)
-        if saved and next(saved) then Theme:Set(saved) end
-        return saved
+        Aster.ThemeManager:Init()
     end
 
     function Builtins:_configs(page)
@@ -9897,56 +10797,8 @@ do
 
     function Builtins:_theming(page)
         local card = page:Card({ name = "theme", side = "left" })
-        local syncing = false
-        local presets = table.move(Theme.Presets, 1, #Theme.Presets, 1, {})
-        presets[#presets + 1] = "custom"
-        local colours = {}
-        local preset = card:Dropdown({ name = "Preset", options = presets, default = Theme:Name(), save = false, callback = function(v)
-            if syncing then return end
-            if v ~= "custom" then Theme:Preset(v) end
-        end })
-        local style = card:Dropdown({ name = "Fill style", options = { "flat", "gradient" }, default = Theme.Base.style, save = false, callback = function(v)
-            if not syncing then Theme:Set({ style = v }) end
-        end })
-        local icons = card:Dropdown({ name = "Strip icons", options = { "on", "off" }, default = Icons.shown() and "on" or "off", save = false, callback = function(v)
-            Icons.SetShown(v == "on")
-        end })
-        for _, group in ipairs(COLOURS) do
-            local section = card:Section({ name = group[1], key = group[2], open = true })
-            for _, entry in ipairs(group[3]) do
-                local key = entry[1]
-                colours[key] = section:Color({ name = entry[2], default = Theme.Base[key], opaque = true, save = false, callback = function(v)
-                    if not syncing then Theme:Set({ [key] = v }) end
-                end })
-            end
-        end
-        card:Button({ name = "Reset theme", callback = function()
-            Theme:Preset(Theme.Presets[1])
-            notify("theme", "reset to " .. Theme.Presets[1], "ok")
-        end })
-        local function sync()
-            syncing = true
-            for key, el in pairs(colours) do
-                if not el.Destroyed then el:Set(Theme.Base[key], true) end
-            end
-            if not preset.Destroyed then preset:Set(Theme:Name(), true) end
-            if not style.Destroyed then style:Set(Theme.Base.style, true) end
-            syncing = false
-        end
-        local pending
-        self._maid:Add(Theme.Changed:Connect(function()
-            sync()
-            if pending then pending:Stop() end
-            pending = Anim.after(0.4, function()
-                pending = nil
-                Store.put("theme", Theme:Export())
-            end)
-        end))
-        local sample = page:Card({ name = "preview", side = "right" })
-        sample:Button({ name = "Button", callback = function() notify("theme", "button sample") end })
-        sample:Dropdown({ options = { "first", "second", "third", "fourth" }, default = "second", save = false })
-        self.Theme = { Preset = preset, Style = style, Icons = icons, Colours = colours }
-        self.Cards.theme, self.Cards.sample = card, sample
+        self.Theme = Aster.ThemeManager:ApplyToCard(card)
+        self.Cards.theme = card
     end
 
     function Aster:Builtins(win, opts)

@@ -1,3 +1,5 @@
+local AsterBootClock = os.clock
+local AsterBootMarks, AsterBootT = {}, AsterBootClock()
 -- [src] 00_head.lua
 local Env = (type(getgenv) == "function" and getgenv()) or _G
 local warn = warn or function(...) print(...) end
@@ -307,7 +309,10 @@ do
         if Env.Aster2 == self then Env.Aster2 = nil end
     end
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "head", (AsterBootClock() - AsterBootT) * 1000 }
+Aster.Boot = AsterBootMarks
 
+AsterBootT = AsterBootClock()
 -- [src] 05_theme.lua
 do
     local BASE = { accent = "#c9a96e", bg = "#0c0c0e", panel = "#15151a", border = "#2a2a31", text = "#ededf2", style = "gradient",
@@ -363,9 +368,33 @@ do
         Theme.T = T
     end
 
+    local real, active = nil, {}
+    local proxy = setmetatable({}, { __index = function(_, key)
+        for i = 1, #active do active[i][key] = true end
+        return (real or Theme.T)[key]
+    end })
+
     local function resolve(token)
-        if type(token) == "function" then return token(Theme.T) end
-        return Theme.T[token]
+        if type(token) ~= "function" then return Theme.T[token] end
+        local found = deps[token]
+        if not found then
+            found = {}
+            deps[token] = found
+        end
+        local outer = #active == 0
+        if outer then
+            real = Theme.T
+            Theme.T = proxy
+        end
+        active[#active + 1] = found
+        local ok, value = pcall(token, proxy)
+        active[#active] = nil
+        if outer then
+            Theme.T = real
+            real = nil
+        end
+        if not ok then error(value, 0) end
+        return value
     end
 
     local function paint(obj, prop, token)
@@ -420,18 +449,8 @@ do
     end
 
     local function depsOf(fn)
-        local found = deps[fn]
-        if found then return found end
-        found = {}
-        local real = Theme.T
-        Theme.T = setmetatable({}, { __index = function(_, key)
-            found[key] = true
-            return real[key]
-        end })
-        pcall(fn, Theme.T)
-        Theme.T = real
-        deps[fn] = found
-        return found
+        if not deps[fn] then pcall(resolve, fn) end
+        return deps[fn] or {}
     end
 
     function Theme:Live(key, color)
@@ -536,7 +555,9 @@ do
 
     derive()
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "theme", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 06_text.lua
 do
     Text.Styles = {
@@ -578,7 +599,9 @@ do
         return Text.size(text, style).X
     end
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "text", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 08_input.lua
 do
     local MOUSE = {
@@ -588,6 +611,7 @@ do
     }
     local keyHandlers = Util.Signal.new()
     local captured
+    local marks, markConn = {}, nil
 
     local GuiService = Exec.service("GuiService")
 
@@ -657,6 +681,20 @@ do
         return keyHandlers:Connect(fn)
     end
 
+    function Input.mark(tag)
+        marks[tag] = true
+        if markConn then return end
+        markConn = RunService.Heartbeat:Connect(function()
+            if markConn then markConn:Disconnect() end
+            markConn = nil
+            marks = {}
+        end)
+    end
+
+    function Input.marked(tag)
+        return marks[tag] == true
+    end
+
     function Input.capture(move, up)
         if captured then captured(true) end
         local maid = Util.Maid.new()
@@ -686,10 +724,14 @@ do
     Aster._maid:Add(UserInputService.InputEnded:Connect(relay(false)))
     Aster._maid:Add(function()
         if captured then captured(true) end
+        if markConn then markConn:Disconnect() end
+        markConn = nil
         keyHandlers:Destroy()
     end)
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "input", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 10_store.lua
 do
     local data
@@ -1132,7 +1174,9 @@ do
         return Store.load(name)
     end
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "store", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 12_element.lua
 do
     local LINE, PAD, GAP, INDENT, LEAD = 20, 8, 4, 16, 8
@@ -1602,7 +1646,9 @@ do
         self.Shown:Destroy()
     end
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "element", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 15_anim.lua
 do
     Anim.Times = { fade = 0.14, move = 0.18, intro = 0.2, bar = 0.24, trail = 0.4 }
@@ -1954,8 +2000,6 @@ do
         Anim.Changed:Fire(on)
     end
 
-    Anim.calm = Store.get("calm", false, function(v) if type(v) == "boolean" then return v end return nil end)
-
     Aster._maid:Add(function()
         for _, track in ipairs(tracks) do track.dead = true end
         tracks = {}
@@ -1965,7 +2009,9 @@ do
         end
     end)
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "anim", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 20_layer.lua
 do
     local stack = {}
@@ -2311,10 +2357,36 @@ do
         return b
     end
 
+    function Layer.hideTip()
+        if tipLabel then tipLabel.Visible = false end
+    end
+
     function Layer.closeAll()
+        Layer.hideTip()
         for index = #stack, 1, -1 do
             if stack[index] then stack[index].Close() end
         end
+    end
+
+    function Layer.holds(gui)
+        for _, handle in ipairs(stack) do
+            if within(gui, handle.Frame) then return true end
+        end
+        return false
+    end
+
+    function Layer.hovered()
+        for _, handle in ipairs(stack) do
+            if Input.over(handle.Frame) then return true end
+        end
+        return false
+    end
+
+    function Layer.anchoredIn(gui)
+        for _, handle in ipairs(stack) do
+            if within(handle.Anchor, gui) or (handle.Opts.by and within(handle.Opts.by, gui)) then return true end
+        end
+        return false
     end
 
     function Layer.active()
@@ -2346,18 +2418,15 @@ do
             tipLabel.Position = UDim2.fromOffset(Util.snap(clamp(x + 12, 4, vp.X - w - 4)), Util.snap(clamp(y + 16, 4, vp.Y - 24)))
             tipLabel.Visible = true
         end))
-        maid:Add(gui.MouseLeave:Connect(function()
-            if tipLabel then tipLabel.Visible = false end
-        end))
-        maid:Add(function()
-            if tipLabel then tipLabel.Visible = false end
-        end)
+        maid:Add(gui.MouseLeave:Connect(Layer.hideTip))
+        maid:Add(Layer.hideTip)
         return maid
     end
 
     Aster._maid:Add(Input.onKey(function(name, down)
         if not down or #stack == 0 then return end
         if name == "escape" then
+            if Kinds.keybind.Listening() or Kinds.slider.Editing() then return end
             stack[#stack].Close()
         elseif name == "m1" or name == "m2" then
             for index = #stack, 1, -1 do
@@ -2369,7 +2438,9 @@ do
         end
     end))
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "layer", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 22_scroll.lua
 do
     Scroll.__index = Scroll
@@ -2523,11 +2594,13 @@ do
 
     function Scroll:_wheel(z)
         if not self.Wheel or z == 0 or Input.shift() then return end
+        if Layer.active() and not Layer.holds(self.Frame) and Layer.hovered() then return end
         local dir = z > 0 and -1 or 1
         for other in pairs(live) do
             if other ~= self and other.Wheel and other.Frame:IsDescendantOf(self.Frame) and Input.over(other.Frame) and other:CanScroll(dir) then return end
         end
         if not self:CanScroll(dir) then return end
+        self:_user()
         self:By(dir * Scroll.STEP * math.abs(z), true)
     end
 
@@ -2573,7 +2646,12 @@ do
         end)
     end
 
+    function Scroll:_user()
+        if Layer.active() and not Layer.holds(self.Frame) and Layer.anchoredIn(self.Frame) then Layer.closeAll() end
+    end
+
     function Scroll:_grab()
+        self:_user()
         if self._glide then
             self._glide:Stop()
             self._glide = nil
@@ -2594,6 +2672,7 @@ do
     function Scroll:_page()
         local _, ty = Input.rect(self.Thumb)
         local dir = Input.mouse().Y < ty and -1 or 1
+        self:_user()
         self:To(self:Aim() + dir * self:View() * 0.9)
     end
 
@@ -2604,7 +2683,9 @@ do
         self.Frame:Destroy()
     end
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "scroll", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 30_window.lua
 do
     local SIDE, BAR, WHO, TABH, STH = 152, 40, 56, 28, 20
@@ -2759,7 +2840,7 @@ do
         win._maid:Add(Aster.Gui.Main:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() win:_fit() end))
         win._maid:Add(Input.onKey(function(name, down)
             if not down or name ~= win.Key then return end
-            if UserInputService:GetFocusedTextBox() then return end
+            if UserInputService:GetFocusedTextBox() or Kinds.keybind.Listening() or (Aster.Hud and Aster.Hud.Booting) then return end
             win:Toggle()
         end))
         local first
@@ -2768,7 +2849,7 @@ do
                 first:Disconnect()
                 first = nil
             end
-            win:_ready()
+            if not (Aster.Hud and Aster.Hud.Booting) then win:_ready() end
         end)
         win._maid:Add(function()
             if first then first:Disconnect() end
@@ -3034,6 +3115,7 @@ do
         if visible == self.Visible then return end
         self.Visible = visible
         self.Frame.Visible = visible
+        Layer.hideTip()
         if not visible then Layer.closeAll() end
         self.Toggled:Fire(visible)
     end
@@ -4338,6 +4420,11 @@ do
     end
 
     function Window:_prune()
+        local built = {}
+        for _, tab in ipairs(self.Tabs) do built[tostring(tab.Id)] = true end
+        local function owned(key)
+            return built[string.match(key, "^([^/]*)/") or ""] == true
+        end
         local stale = {}
         for key, L in pairs(self.Layout) do
             local set = self._sets[key]
@@ -4349,7 +4436,7 @@ do
                     end
                 end
             end
-            if not ok then stale[#stale + 1] = key end
+            if not ok and owned(key) then stale[#stale + 1] = key end
         end
         for _, key in ipairs(stale) do
             self.Layout[key] = nil
@@ -4362,7 +4449,7 @@ do
             for k in pairs(map) do
                 local pk, id = string.match(k, "^(.*):([^:]*)$")
                 local set = pk and self._sets[pk]
-                if not (set and set.Cards[id]) then
+                if not (set and set.Cards[id]) and owned(k) then
                     map[k] = nil
                     dirty = true
                 end
@@ -4371,7 +4458,7 @@ do
         end
         local dirty = false
         for k in pairs(self.Subs) do
-            if not self._subKeys[k] then
+            if not self._subKeys[k] and owned(k) then
                 self.Subs[k] = nil
                 dirty = true
             end
@@ -4410,7 +4497,9 @@ do
         if self.Page then self.Page:_relayout(true) end
     end
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "window", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 40_toggle.lua
 do
     local LINE, BOX = Element.LINE, 12
@@ -4490,11 +4579,14 @@ do
         end,
     }
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "toggle", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 41_slider.lua
 do
     local LINE, PAD = Element.LINE, Element.PAD
     local HEIGHT, TOP, TRACK_Y, STEP_W, EDIT_W = 36, 4, 24, 14, 52
+    local editing = 0
 
     local function tween(obj, props, kind)
         return Anim.to(obj, props, kind or 0)
@@ -4574,7 +4666,12 @@ do
     local function edit(el)
         if el._edit or el.Disabled then return end
         local maid = Util.Maid.new()
-        el._maid:Add(maid)
+        el._editMaid = maid
+        editing = editing + 1
+        maid:Add(function()
+            editing = editing - 1
+            Input.mark("edit")
+        end)
         local cancelled, done = false, false
         local box = maid:Add(Util.new("TextBox", {
             Name = "Edit", Text = format(el, el.Value), TextStyle = "body", TextXAlignment = Enum.TextXAlignment.Right,
@@ -4587,6 +4684,7 @@ do
             done = true
             local text = box.Text
             el._edit = nil
+            el._editMaid = nil
             maid:Clean()
             local value = tonumber((string.gsub(string.match(text, "^%s*(%-?[%d%.,]+)") or "", ",", ".")))
             if not cancelled and value then el:Set(value) end
@@ -4677,6 +4775,7 @@ do
             end))
             el._maid:Add(function()
                 if el._stopDrag then el._stopDrag() end
+                if el._editMaid then el._editMaid:Clean() end
             end)
         end,
         paint = function(el)
@@ -4717,8 +4816,11 @@ do
             Edit = function(self) edit(self) end,
         },
     }
+    Kinds.slider.Editing = function() return editing > 0 or Input.marked("edit") end
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "slider", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 42_keybind.lua
 do
     local SLOT, PULSE = 44, 1.1
@@ -4831,6 +4933,7 @@ do
         if listening then
             if not down then return end
             local el = listening
+            Input.mark("bind")
             if name == "escape" then
                 stopListen()
                 return
@@ -4998,9 +5101,12 @@ do
         },
     }
     Kinds.keybind.List = list
+    Kinds.keybind.Listening = function() return listening ~= nil or Input.marked("bind") end
     Kinds.keybind.Changed = Aster._maid:Add(Util.Signal.new())
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "keybind", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 43_color.lua
 do
     local LINE = Element.LINE
@@ -5595,7 +5701,7 @@ do
             el._maid:Add(el.Hit.MouseButton2Click:Connect(function()
                 if el.Disabled then return end
                 el._menu = Layer.menu(el.Hit, {
-                    { text = "Copy", hint = string.upper(Util.toHex(el._base)), callback = function() el:Copy() end },
+                    { text = "Copy", hint = string.upper(full(el._base, el._baseA, el.Opts.opaque)), callback = function() el:Copy() end },
                     { text = "Paste", callback = function() el:Paste() end },
                 })
             end))
@@ -5644,7 +5750,7 @@ do
                 if self._popup then self._popup.Close() end
             end,
             Copy = function(self)
-                local text = string.upper(Util.toHex(self._base))
+                local text = string.upper(full(self._base, self._baseA, self.Opts.opaque))
                 clip = text
                 if Exec.clipboard then pcall(Exec.clipboard, text) end
                 return text
@@ -5707,7 +5813,9 @@ do
         },
     }
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "color", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 44_basic.lua
 do
     local LINE, PAD = Element.LINE, Element.PAD
@@ -5937,7 +6045,9 @@ do
         end,
     }
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "basic", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 50_dropdown.lua
 do
     local LINE, PAD = Element.LINE, Element.PAD
@@ -6218,7 +6328,9 @@ do
         },
     }
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "dropdown", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 51_settings.lua
 do
     local LINE = Element.LINE
@@ -6346,7 +6458,9 @@ do
         },
     }
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "settings", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 52_strip.lua
 do
     local PAD = Element.PAD
@@ -6412,12 +6526,15 @@ do
         return table.concat(out)
     end
 
+    local folders = {}
     local function folder(path)
+        if folders[path] then return end
         local built = ""
         for piece in string.gmatch(path, "[^/]+") do
             built = built == "" and piece or built .. "/" .. piece
             if not (Exec.fs.isfolder and Exec.fs.isfolder(built)) then Exec.fs.makefolder(built) end
         end
+        folders[path] = true
     end
 
     local function variant(name, h)
@@ -6554,7 +6671,22 @@ do
             end)
             return not ok or seen
         end
-        local function check(seen)
+        local tries, wake = 0, nil
+        local check
+        local function sleep()
+            local shown = owner and type(owner.Shown) == "table" and owner.Shown.Connect and owner.Shown
+            if wake or not shown then return end
+            wake = shown:Connect(function(on)
+                if not on or not wake then return end
+                wake:Disconnect()
+                wake = nil
+                tries = 0
+                check(onScreen())
+            end)
+        end
+        check = function(seen)
+            tries = tries + 1
+            if tries > 3 then return sleep() end
             Anim.after(4, function()
                 if Icons.broken or not icon.Parent or icon.Image ~= Icons._made[name] then return end
                 local now = onScreen()
@@ -6774,7 +6906,9 @@ do
         },
     }
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "strip", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 53_list.lua
 do
     local LINE, PAD = Element.LINE, Element.PAD
@@ -7183,12 +7317,102 @@ do
     Aster._maid:Add(RelationChanged)
     Aster.Relations = Relations
 
+    local Ids, Saved = {}, nil
+
+    local function savedRelations()
+        if not Saved then
+            Saved = Store.get("relations", {}, function(v)
+                if type(v) ~= "table" then return nil end
+                local out = {}
+                for id, rel in pairs(v) do
+                    if type(id) == "string" and REL_TOKEN[rel] then out[id] = rel end
+                end
+                return out
+            end)
+        end
+        return Saved
+    end
+
+    local function userKey(id)
+        id = tonumber(id)
+        if not id or id <= 0 or id ~= id or id == math.huge then return nil end
+        return string.format("%.0f", id)
+    end
+
+    local function remember(name, rel)
+        local key = userKey(Ids[name])
+        if not key then return false end
+        local map = savedRelations()
+        if map[key] == rel then return false end
+        map[key] = rel
+        return true
+    end
+
     local function setRelation(name, rel)
         name = tostring(name)
         if rel == "" or rel == "none" then rel = nil end
         if Relations[name] == rel then return end
         Relations[name] = rel
+        if remember(name, rel) then Store.put("relations", savedRelations()) end
         RelationChanged:Fire(name, rel)
+    end
+
+    local function syncRelations(data)
+        local map, restored, dirty = savedRelations(), {}, false
+        for _, p in ipairs(data) do
+            local name, key = tostring(p.name), userKey(p.id)
+            if key and not p.me then
+                Ids[name] = p.id
+                if Relations[name] == nil and map[key] then
+                    Relations[name] = map[key]
+                    restored[#restored + 1] = name
+                elseif Relations[name] ~= nil and remember(name, Relations[name]) then
+                    dirty = true
+                end
+            end
+        end
+        if dirty then Store.put("relations", map) end
+        return restored
+    end
+
+    local Thumbs, Heads, Checks = {}, setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
+
+    local function thumbUrl(id)
+        return "rbxthumb://type=AvatarHeadShot&id=" .. string.format("%.0f", id) .. "&w=48&h=48"
+    end
+
+    local function fetchThumb(id)
+        if Thumbs[id] ~= nil then return end
+        Thumbs[id] = false
+        task.spawn(function()
+            local ok, url = pcall(function() return Players:GetUserThumbnailAsync(id, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48) end)
+            if not ok or type(url) ~= "string" or url == "" then return end
+            Thumbs[id] = url
+            for label, hid in pairs(Heads) do
+                if hid == id then label.Image = url end
+            end
+        end)
+    end
+
+    local function setHead(label, id, fallback)
+        id = tonumber(id)
+        if not id or id <= 0 or id ~= id then
+            Heads[label] = nil
+            fallback = fallback or ""
+            if label.Image ~= fallback then label.Image = fallback end
+            return
+        end
+        Heads[label] = id
+        local image = Thumbs[id] or thumbUrl(id)
+        if label.Image ~= image then label.Image = image end
+        if Thumbs[id] ~= nil or Checks[label] == id then return end
+        Checks[label] = id
+        Anim.after(3, function()
+            Checks[label] = nil
+            if Heads[label] ~= id or Thumbs[id] ~= nil then return end
+            local ok, loaded = pcall(function() return label.IsLoaded end)
+            if ok and loaded == false then fetchThumb(id) end
+        end)
     end
 
     local function defaultSource()
@@ -7361,12 +7585,10 @@ do
         return e
     end
 
-    local function playerRow(el, index)
+    local function playerRow(el)
         local st = el._pl
-        local r = st.rows[index]
-        if r then return r end
         local hit = Util.new("TextButton", { Name = "Player", BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 1, Parent = st.scroll.Content })
-        r = { Hit = hit, Over = false }
+        local r = { Hit = hit, Over = false }
         r.Tint = Util.new("Frame", { Name = "Tint", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Theme = { BackgroundColor3 = "accent" }, Parent = hit })
         r.Bar = Util.new("Frame", { Name = "Bar", Visible = false, Size = UDim2.new(0, 2, 1, 0), Theme = { BackgroundColor3 = "accent" }, Parent = hit })
         r.Pic = Util.new("Frame", { Name = "Pic", Size = UDim2.fromOffset(20, 20), Theme = { BackgroundColor3 = "well" }, Parent = hit })
@@ -7398,7 +7620,6 @@ do
             if el.Disabled or not r.Data then return end
             if st.selected == r.Data.name then el:Select(nil) else el:Select(r.Data.name) end
         end)
-        st.rows[index] = r
         return r
     end
 
@@ -7406,8 +7627,7 @@ do
         r.Data = p
         local studsW = Text.width(" studs", "tiny")
         r.Pic.Position = UDim2.fromOffset(xs[1][1], 4)
-        local pid = tonumber(p.id)
-        r.Head.Image = (pid and pid > 0) and ("rbxthumb://type=AvatarHeadShot&id=" .. string.format("%.0f", pid) .. "&w=48&h=48") or ""
+        setHead(r.Head, p.id)
         r.Display.Text = tostring(p.display or p.name)
         r.Display.Position = UDim2.fromOffset(xs[2][1], 2)
         r.Display.Size = UDim2.fromOffset(xs[2][2], 13)
@@ -7525,6 +7745,7 @@ do
                     st.data = ok and type(list) == "table" and list or {}
                     st.fetched = true
                 end
+                local restored = syncRelations(st.data)
                 local mine
                 for _, p in ipairs(st.data) do
                     if p.me then mine = p.team end
@@ -7548,17 +7769,38 @@ do
                 end)
                 st.list = list
                 playersLayout(self)
+                local owned, taken, spare, rows = {}, {}, {}, {}
+                for _, r in ipairs(st.rows) do
+                    if r.Key then owned[r.Key] = r end
+                end
                 for i, p in ipairs(list) do
-                    local r = playerRow(self, i)
+                    local r = owned[tostring(p.name)]
+                    if r then
+                        rows[i] = r
+                        taken[r] = true
+                    end
+                end
+                for _, r in ipairs(st.rows) do
+                    if not taken[r] then spare[#spare + 1] = r end
+                end
+                for i, p in ipairs(list) do
+                    local r = rows[i]
+                    if not r then
+                        r = table.remove(spare, 1) or playerRow(self)
+                        rows[i] = r
+                    end
+                    r.Key = tostring(p.name)
                     r.Hit.Visible = true
                     r.Hit.Position = UDim2.fromOffset(0, (i - 1) * PROW)
                     r.Hit.Size = UDim2.new(1, 0, 0, PROW)
                     fillRow(self, r, p, st.xs)
                 end
-                for i = #list + 1, #st.rows do
-                    st.rows[i].Data = nil
-                    st.rows[i].Hit.Visible = false
+                for _, r in ipairs(spare) do
+                    r.Data = nil
+                    r.Hit.Visible = false
+                    rows[#rows + 1] = r
                 end
+                st.rows = rows
                 st.none.Visible = #list == 0
                 st.none.Text = st.query ~= "" and "no matches" or ("no " .. st.filter)
                 local found = false
@@ -7571,6 +7813,7 @@ do
                 if st.selected and not found then self:Select(nil) end
                 if self.Opts.onUpdate and st.selectedData then Util.guard(self.Opts.onUpdate, st.selectedData, self) end
                 self:_relayout()
+                for _, name in ipairs(restored) do RelationChanged:Fire(name, Relations[name]) end
             end,
             Select = function(self, name)
                 local st = self._pl
@@ -7602,9 +7845,12 @@ do
     Kinds.players.Relations = Relations
     Kinds.players.RelationChanged = RelationChanged
     Kinds.players.SetRelation = setRelation
+    Kinds.players.SetHead = setHead
     Kinds.players.source = defaultSource
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "list", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 54_tiles.lua
 do
     local PAD = Element.PAD
@@ -7805,7 +8051,9 @@ do
         },
     }
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "tiles", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 55_preview.lua
 do
     local PAD = Element.PAD
@@ -7919,7 +8167,9 @@ do
         end,
     }
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "preview", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 56_scene.lua
 do
     local Scene = {}
@@ -9726,7 +9976,9 @@ do
         pcall(function() self.Fog:Destroy() end)
     end
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "scene", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 60_hud.lua
 do
     local Hud = { Booting = false, Entered = false }
@@ -9750,7 +10002,7 @@ do
             return out
         end)
     end
-    H.saved = readSaved()
+    H.saved = {}
 
     function H.save()
         Store.put("hud", H.saved)
@@ -9941,12 +10193,15 @@ do
     local SEPW = 6 + Text.width("|", "body") + 6
 
     do
-        local root, body = H.card(Aster.Gui.Hud, "Watermark", 40, 20)
-        Watermark.Root, Watermark.Body = root, body
         local ok, display = pcall(function() return LocalPlayer.DisplayName or LocalPlayer.Name end)
         Watermark.User = ok and display and tostring(display) or ""
         local named, name = pcall(function() return game.Name end)
         Watermark.Game = named and type(name) == "string" and name ~= "Game" and name or ""
+    end
+
+    function H.buildWatermark()
+        local root, body = H.card(Aster.Gui.Hud, "Watermark", 40, 20)
+        Watermark.Root, Watermark.Body = root, body
 
         local function seg(key)
             local frame = Util.new("CanvasGroup", {
@@ -10153,13 +10408,16 @@ do
     end
 
     local function listPanel(key, title, nameToken)
-        local p = { Key = key, Title = title, Enabled = true, HideEmpty = false, W = PANELW, H = 0, Sig = nil, Items = {}, NameToken = nameToken }
+        return { Key = key, Title = title, Enabled = true, HideEmpty = false, W = PANELW, H = 0, Sig = nil, Items = {}, NameToken = nameToken }
+    end
+
+    function H.buildPanel(p)
+        local title = p.Title
         p.Root, p.Body = H.card(Aster.Gui.Hud, title:sub(1, 1):upper() .. title:sub(2), PANELW, 50, { gradient = true })
         H.label(p.Body, { Name = "Title", Text = title, Position = UDim2.fromOffset(8, 2), Size = UDim2.new(1, -16, 0, HEAD - 2) }, "bold", "tx")
         Util.new("Frame", { Name = "Line", ZIndex = 3, Position = UDim2.fromOffset(0, HEAD), Size = UDim2.new(1, 0, 0, 1), Theme = { BackgroundColor3 = "edge" }, Parent = p.Body })
         Util.new("Frame", { Name = "Hl", ZIndex = 3, Theme = { BackgroundColor3 = "white" }, BackgroundTransparency = 0.975, Position = UDim2.fromOffset(0, HEAD + 1), Size = UDim2.new(1, 0, 0, 1), Parent = p.Body })
         p.Rows = Util.new("Frame", { Name = "Rows", BackgroundTransparency = 1, Position = UDim2.fromOffset(0, HEAD + 3), Size = UDim2.new(1, 0, 1, -(HEAD + 3)), Parent = p.Body })
-        return p
     end
 
     function H.rows(p, items, glide)
@@ -10228,7 +10486,7 @@ do
 
     function Spectators:_spot()
         if H.saved.sp then return H.saved.sp[1], H.saved.sp[2] end
-        if Keybinds.Root.Visible and Keybinds.X then return Keybinds.X, Keybinds.Y + Keybinds.H + 8 end
+        if Keybinds.Root and Keybinds.Root.Visible and Keybinds.X then return Keybinds.X, Keybinds.Y + Keybinds.H + 8 end
         return Keybinds:_spot()
     end
 
@@ -10313,7 +10571,7 @@ do
     Hud.Target = Target
     local BARW = 157
 
-    do
+    function H.buildTarget()
         local root, body = H.card(Aster.Gui.Hud, "Target", Target.W, Target.H, { gradient = true })
         Target.Root, Target.Body = root, body
         root.Visible = false
@@ -10580,7 +10838,7 @@ do
         local top = string.sub(pos, 1, 3) == "top"
         local left, right = string.find(pos, "left") ~= nil, string.find(pos, "right") ~= nil
         local wx, wy = 8, 0
-        if Watermark.Enabled and Watermark.Root.Visible and Watermark.X then
+        if Watermark.Enabled and Watermark.Root and Watermark.Root.Visible and Watermark.X then
             local x, y = Watermark.LiveX or Watermark.X, Watermark.LiveY or Watermark.Y
             local c0, c1 = vw / 2 - 120, vw / 2 + 120
             if left then c0, c1 = 8, 248 elseif right then c0, c1 = vw - 248, vw - 8 end
@@ -10635,6 +10893,7 @@ do
             opts = { text = a }
         end
         if not self.Enabled or Aster.Unloaded then return nil end
+        H.run()
         local text = tostring(opts.text or opts.Text or opts[1] or "")
         local source = opts.source or opts.src or opts.title
         local kind = KIND[opts.kind] and opts.kind or "info"
@@ -10719,7 +10978,6 @@ do
     end
 
     H.widgets = { Watermark, Keybinds, Spectators, Target }
-    for _, widget in ipairs(H.widgets) do H.drag(widget) end
 
     do
         local okStats, Stats = pcall(Exec.service, "Stats")
@@ -10737,14 +10995,15 @@ do
         return { fps = tostring(Util.snap(fps or 0)), ping = tostring(Util.snap(H.ping())), time = ok and tostring(clock) or "00:00" }
     end
 
-    do
+    function H.run()
+        if Hud._loop or Aster.Unloaded then return end
         local frames, elapsed = 0, 0
         Hud._loop = Anim.loop(function(dt)
             if Aster.Unloaded then return false end
             frames = frames + 1
             elapsed = elapsed + dt
             if elapsed >= 1 then
-                Watermark:_tick(H.sample(frames / elapsed))
+                if H.built then Watermark:_tick(H.sample(frames / elapsed)) end
                 frames, elapsed = 0, 0
             end
             H.tickToasts(dt)
@@ -10752,9 +11011,49 @@ do
         end)
     end
 
+    function H.build()
+        if H.built or Aster.Unloaded then return false end
+        H.built = true
+        if not H.win then H.saved = readSaved() end
+        H.buildWatermark()
+        H.buildPanel(Keybinds)
+        H.buildPanel(Spectators)
+        H.buildTarget()
+        for _, widget in ipairs(H.widgets) do H.drag(widget) end
+        if Watermark.Game == "" then
+            task.spawn(function()
+                local ok, info = pcall(function() return Exec.service("MarketplaceService"):GetProductInfo(game.PlaceId) end)
+                if ok and type(info) == "table" and type(info.Name) == "string" and Watermark.Game == "" and not Aster.Unloaded then
+                    Watermark:SetGame(info.Name)
+                end
+            end)
+        end
+        Watermark:_tick(H.sample(0))
+        Watermark:_layout(false)
+        Keybinds:Refresh(false)
+        Spectators.Sig = nil
+        H.rows(Spectators, Spectators.List, false)
+        H.put(Target, false)
+        H.active(H.menuOpen())
+        H.run()
+        return true
+    end
+
+    for _, widget in ipairs(H.widgets) do
+        for key, fn in pairs(widget) do
+            if type(fn) == "function" then
+                widget[key] = function(...)
+                    if Aster.Unloaded and not H.built then return end
+                    H.build()
+                    return fn(...)
+                end
+            end
+        end
+    end
+
     function Hud:Place(glide)
         for _, widget in ipairs(H.widgets) do
-            if widget.Root.Visible or widget == Target then H.put(widget, glide) end
+            if widget.Root and (widget.Root.Visible or widget == Target) then H.put(widget, glide) end
         end
         H.toasts(glide)
     end
@@ -10768,6 +11067,7 @@ do
     end
 
     function Hud:Enter(delay)
+        H.build()
         Hud.Booting = false
         Aster.Gui.Hud.Enabled = true
         Hud.Entered = true
@@ -10786,6 +11086,7 @@ do
     end
 
     function H.attach(win)
+        H.win = win
         H.saved = readSaved()
         local opts = win.Opts or {}
         Watermark.Title = tostring(opts.title or Watermark.Title)
@@ -10796,9 +11097,11 @@ do
         win._maid:Add(win.Toggled:Connect(function(visible) H.active(visible) end))
         H.active(win.Visible)
         if Hud.Booting then win.Frame.Visible = false end
-        Watermark:_layout(false)
-        Keybinds:Refresh(false)
-        Hud:Place(false)
+        if H.built then
+            Watermark:_layout(false)
+            Keybinds:Refresh(false)
+            Hud:Place(false)
+        end
     end
 
     do
@@ -10832,28 +11135,16 @@ do
     end
 
     if Kinds.keybind and Kinds.keybind.Changed then
-        Aster._maid:Add(Kinds.keybind.Changed:Connect(function() Keybinds:Refresh(true) end))
+        Aster._maid:Add(Kinds.keybind.Changed:Connect(function()
+            if H.built then Keybinds:Refresh(true) end
+        end))
     end
     Aster._maid:Add(Aster.Gui.Hud:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() Hud:Place(false) end))
-
-    if Watermark.Game == "" then
-        task.spawn(function()
-            local ok, info = pcall(function() return Exec.service("MarketplaceService"):GetProductInfo(game.PlaceId) end)
-            if ok and type(info) == "table" and type(info.Name) == "string" and Watermark.Game == "" and not Aster.Unloaded then
-                Watermark:SetGame(info.Name)
-            end
-        end)
-    end
-
-    Watermark:_tick(H.sample(0))
-    Watermark:_layout(false)
-    Keybinds:Refresh(false)
-    Spectators:Set({})
-    H.put(Target, false)
-    H.active(false)
     Aster.Gui.Hud.Enabled = false
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "hud", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 65_loader.lua
 do
     local Hud = Aster.Hud
@@ -10862,18 +11153,26 @@ do
     Hud.LoaderClass = Loader
     local W, H, BODYW = 220, 56, 218
 
+    local function ready()
+        local win = Aster._window
+        if win and not win.Destroyed then Util.guard(win._ready, win) end
+    end
+
     local function unhide()
         local win = Aster._window
         if win and not win.Destroyed then
             win.Frame.Visible = win.Visible
             Hud:Enter(0)
+            ready()
         end
     end
 
+    local gen = 0
     local function watchdog(seconds)
-        local grace = false
+        gen = gen + 1
+        local mine, grace = gen, false
         local function check()
-            if not Hud.Booting or Aster.Unloaded then return end
+            if mine ~= gen or not Hud.Booting or Aster.Unloaded then return end
             local loader = Hud.ActiveLoader
             if loader and loader.Finished and not grace then
                 grace = true
@@ -10918,7 +11217,7 @@ do
     function Aster:Window(opts)
         local existed = self._window and not self._window.Destroyed
         local win = makeWindow(self, opts)
-        if win and not existed then watchdog(15) end
+        if win and not existed and Hud.Booting then watchdog(20) end
         return win
     end
 
@@ -10928,6 +11227,7 @@ do
         Aster._maid:Add(self._maid)
         Hud.Booting = true
         Aster.Gui.Hud.Enabled = false
+        if not Anim.calm then Anim.calm = Store.get("calm", false, Store.fix.bool) end
         local win = Aster._window
         if win and not win.Destroyed then win.Frame.Visible = false end
 
@@ -10983,6 +11283,7 @@ do
 
     function Loader:Stage(text, progress)
         if self.Finished then return self end
+        if Hud.ActiveLoader == self then watchdog(20) end
         if text ~= nil then self.StageLabel.Text = tostring(text) end
         progress = tonumber(progress)
         if progress then
@@ -11000,6 +11301,7 @@ do
     end
 
     function Loader:_bootIn()
+        ready()
         local win = Aster._window
         if win and not win.Destroyed then
             if not win.Visible then win:Toggle(true) end
@@ -11036,6 +11338,7 @@ do
         if self.Finished then return end
         self.Finished = true
         self._named = true
+        ready()
         local opts = self.Opts
         self.Progress = 1
         Anim.to(self.Fill, { Size = UDim2.fromOffset(BODYW, 2) }, "bar")
@@ -11055,7 +11358,9 @@ do
         if instant or Anim.calm then finish() else Anim.after(0.7, finish) end
     end
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "loader", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 70_builtins.lua
 do
     local Builtins = {}
@@ -11185,6 +11490,9 @@ do
         local info = page:Card({ name = "player", side = "right" })
         local current, spectating, paintPlayer
         local nameStat = info:Stat({ name = "Player", default = "-" })
+        local head = Util.new("ImageLabel", { Name = "Headshot", Visible = false, Size = UDim2.fromOffset(16, 16), Theme = { BackgroundColor3 = "well" }, Parent = nameStat.Row })
+        Util.new("UIStroke", { Thickness = 1, Theme = { Color = "ln3" }, Parent = head })
+        local blank = Icons.get and Icons.get("players")
         local hpStat = info:Stat({ name = "Health", default = "-" })
         local distStat = info:Stat({ name = "Distance", default = "-" })
         local idStat = info:Stat({ name = "User id", default = "-" })
@@ -11231,6 +11539,10 @@ do
         paintPlayer = function()
             local p = current
             nameStat:Set(p and tostring(p.display or p.name) or "-")
+            Kinds.players.SetHead(head, p and p.id, blank)
+            head.Visible = p ~= nil
+            Theme.bind(head, "ImageColor3", blank and head.Image == blank and "tx4" or "white")
+            head.Position = UDim2.new(1, nameStat._value.Position.X.Offset - 20, 0, 2)
             hpStat:Set(p and (tostring(p.hp or 0) .. " hp") or "-")
             distStat:Set(p and (p.me and "-" or (tostring(p.dist or 0) .. " studs")) or "-")
             idStat:Set(p and string.format("%.0f", tonumber(p.id) or 0) or "-")
@@ -11257,7 +11569,7 @@ do
         friends:Toggle({ name = "Treat Roblox friends as friends", flag = "pl.rbx", default = true })
         friends:Toggle({ name = "Hide friends from esp", flag = "pl.fesp" })
         friends:Color({ name = "Friend colour", flag = "pl.fcol", default = "#6fd69a" })
-        self.Players, self.PlayerInfo = list, { Name = nameStat, Health = hpStat, Distance = distStat, Id = idStat, Relation = relation, Moves = moves, Links = links }
+        self.Players, self.PlayerInfo = list, { Name = nameStat, Health = hpStat, Distance = distStat, Id = idStat, Relation = relation, Moves = moves, Links = links, Head = head }
         self.Cards.players, self.Cards.player, self.Cards.targets, self.Cards.friends = card, info, targets, friends
     end
 
@@ -11296,7 +11608,10 @@ do
         end
     end
 end
+AsterBootMarks[#AsterBootMarks + 1] = { "builtins", (AsterBootClock() - AsterBootT) * 1000 }
 
+AsterBootT = AsterBootClock()
 -- [src] 99_tail.lua
 if Kinds.keybind then Aster.Keybinds = Kinds.keybind.List end
+AsterBootMarks[#AsterBootMarks + 1] = { "tail", (AsterBootClock() - AsterBootT) * 1000 }
 return Aster

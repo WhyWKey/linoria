@@ -10,6 +10,9 @@ local MIRRORS = {
 }
 local compile = loadstring or load
 local clock = os.clock or tick
+local function ms(t0, t1) return math.floor(((t1 or clock()) - t0) * 1000 + 0.5) end
+-- boot timings per fetched path: download (all attempts), compile (loadstring alone), run (the chunk)
+local timings = {}
 
 local B64 = {}
 for i = 1, 64 do B64[string.byte("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", i)] = i - 1 end
@@ -90,14 +93,19 @@ local function fetch(path)
         ways[#ways + 1] = { "request " .. url, function() return viaRequest(url) end }
     end
     local tried = {}
+    local start = clock()
     for _, way in ipairs(ways) do
         local t0 = clock()
         local body, why = way[2]()
         if body then
+            local t1 = clock()
             local fn, err = compile(body, "=" .. path)
             if fn then
+                local t2 = clock()
                 print("[aster example] " .. path .. " from " .. way[1] .. ", " .. #body .. " bytes")
-                return fn()
+                local result = fn()
+                timings[path] = { download = ms(start, t1), compile = ms(t1, t2), run = ms(t2) }
+                return result
             end
             why = "compile failed: " .. tostring(err)
         end
@@ -107,14 +115,20 @@ local function fetch(path)
 end
 
 local Aster = fetch("library.lua")
+-- the loader goes up first; everything below runs under it, yielding a frame between big stages so it keeps animating
+local loaderOpts = { title = "aster", game = "Prison Life", build = "b2211" }
+local loader = Aster:Loader(loaderOpts)
+local function breathe()
+    if task and task.wait then pcall(task.wait) end
+end
+loader:Stage("loading game info", 0.1)
+breathe()
 local Scene = Aster.Scene
 local Players = game:GetService("Players")
 local me = Players.LocalPlayer
-local gameName = "Prison Life"
+local gameName = loaderOpts.game
 pcall(function() gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name end)
-
-local loader = Aster:Loader({ title = "aster", game = gameName, build = "b2211" })
-loader:Stage("loading library", 0.25)
+loaderOpts.game = gameName
 
 -- Linoria-style addons: theme picker/presets and config files live outside the library
 local missing = {}
@@ -130,9 +144,15 @@ local function addon(path)
     missing[#missing + 1] = path
     return nil
 end
+local addonsAt = clock()
+loader:Stage("loading theme manager", 0.2)
+breathe()
 local ThemeManager = addon("addons/thememanager.lua")
+loader:Stage("loading save manager", 0.3)
+breathe()
 local SaveManager = addon("addons/savemanager.lua")
 if SaveManager then SaveManager:IgnoreThemeSettings() end
+local addonsMs = ms(addonsAt)
 
 local function F(flag) return Aster.Flags[flag] end
 local function alpha(flag)
@@ -168,7 +188,9 @@ local function follow(prefixes, fn)
     end)
 end
 
-loader:Stage("building menu", 0.5)
+local menuAt = clock()
+loader:Stage("building menu", 0.4)
+breathe()
 local win = Aster:Window({
     title = "aster", folder = "example", key = "insert", game = gameName,
     user = { id = me and me.UserId or 0, display = me and me.DisplayName or "", name = me and me.Name or "" },
@@ -236,6 +258,8 @@ rage:Variants(rageStrip, function(cls, page)
 end)
 
 -- visuals / esp ---------------------------------------------------------------------------------
+loader:Stage("building visuals", 0.5)
+breathe()
 local visuals = win:Tab({ name = "visuals", icon = "visuals" })
 local espPage = visuals:Page({ name = "esp" })
 local espCard = espPage:Card({ name = "esp", side = "left" })
@@ -633,6 +657,8 @@ hitLink:Stat({ name = "Hit marker", default = "effects / hit", click = function(
 end })
 
 -- misc ------------------------------------------------------------------------------------------
+loader:Stage("building misc", 0.7)
+breathe()
 local misc = win:Tab({ name = "misc", icon = "misc" })
 local movement = misc:Page({ name = "movement" })
 local mv = movement:Card({ name = "movement", id = "mv", side = "left" })
@@ -942,7 +968,8 @@ row(chr, "Instant interact", "ex.inter")
 row(chr, "Camera noclip", "ex.cam", { key = true })
 
 -- settings: the built-in configs, players and theming pages ----------------------------------------
-loader:Stage("starting hud", 0.85)
+loader:Stage("building settings", 0.85)
+breathe()
 local settings = win:Builtins({
     onPanic = function()
         for flag, v in pairs(Aster.Flags) do
@@ -953,7 +980,18 @@ local settings = win:Builtins({
 if ThemeManager then ThemeManager:ApplyToTab(settings.Tab) end
 if SaveManager then SaveManager:BuildConfigSection(settings.Tab) end
 
+local menuMs = ms(menuAt)
 loader:Done()
+do
+    local lib = timings["library.lua"] or {}
+    local parts = {}
+    for _, mark in ipairs(Aster.Boot or {}) do parts[#parts + 1] = mark end
+    table.sort(parts, function(a, b) return a[2] > b[2] end)
+    local top = {}
+    for i = 1, math.min(4, #parts) do top[i] = parts[i][1] .. " " .. math.floor(parts[i][2] + 0.5) end
+    print("[aster example] boot: download " .. tostring(lib.download) .. "ms, compile " .. tostring(lib.compile) .. "ms, library " .. tostring(lib.run)
+        .. "ms (" .. table.concat(top, ", ") .. "), addons " .. addonsMs .. "ms, menu " .. menuMs .. "ms")
+end
 if SaveManager then SaveManager:LoadAutoloadConfig() end
 for _, path in ipairs(missing) do notify("aster", "could not load " .. path .. ", continuing without it", "warn") end
 notify("aster", "loaded, press insert to toggle the menu", "ok")

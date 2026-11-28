@@ -948,26 +948,33 @@ do
         return out
     end
 
-    function fix.layouts(v)
-        if not isMap(v) then return nil end
-        local out = {}
-        for k, cols in pairs(v) do
-            local good = type(cols) == "table" and #cols == 2
-            if good then
-                for _, ids in ipairs(cols) do
-                    if type(ids) ~= "table" then
-                        good = false
-                    else
-                        for _, id in ipairs(ids) do
-                            if type(id) ~= "string" then good = false end
+    local function layoutsOf(count)
+        return function(v)
+            if not isMap(v) then return nil end
+            local out = {}
+            for k, cols in pairs(v) do
+                local good = type(cols) == "table" and #cols == count
+                if good then
+                    for _, ids in ipairs(cols) do
+                        if type(ids) ~= "table" then
+                            good = false
+                        else
+                            for _, id in ipairs(ids) do
+                                if type(id) ~= "string" then good = false end
+                            end
                         end
                     end
                 end
+                if good then
+                    local copy = {}
+                    for i = 1, count do copy[i] = Util.copy(cols[i]) end
+                    out[k] = copy
+                end
             end
-            if good then out[k] = { Util.copy(cols[1]), Util.copy(cols[2]) } end
+            return out
         end
-        return out
     end
+    fix.layouts, fix.layouts3 = layoutsOf(2), layoutsOf(3)
 
     function Store.cfgName(v)
         v = string.lower(tostring(v or ""))
@@ -2690,7 +2697,7 @@ AsterBootT = AsterBootClock()
 do
     local SIDE, BAR, WHO, TABH, STH = 152, 40, 56, 28, 20
     local MINW, MINH, W0, H0 = 560, 380, 704, 480
-    local PAD, GAP, HEADH, CARDMIN, STACK, COLMIN = 8, 8, 26, 48, 440, 64
+    local PAD, GAP, HEADH, CARDMIN, STACK, TRIPLE, COLMIN = 8, 8, 26, 48, 520, 900, 64
     local Window, Tab, Page, Card, Set = {}, {}, {}, {}, {}
     Window.__index = Window
     Tab.__index = Tab
@@ -2698,7 +2705,7 @@ do
     Card.__index = Card
     setmetatable(Card, { __index = Container })
     Aster._.Window = { Window = Window, Tab = Tab, Page = Page, Card = Card, Set = Set }
-    Window.MINW, Window.MINH, Window.W0, Window.H0, Window.STACK, Window.CARDMIN = MINW, MINH, W0, H0, STACK, CARDMIN
+    Window.MINW, Window.MINH, Window.W0, Window.H0, Window.STACK, Window.TRIPLE, Window.CARDMIN = MINW, MINH, W0, H0, STACK, TRIPLE, CARDMIN
 
     local function kindMethod(key)
         if type(key) ~= "string" or string.sub(key, 1, 1) == "_" then return false end
@@ -2819,6 +2826,7 @@ do
             Toggled = Util.Signal.new(), PageChanged = Util.Signal.new(), _nav = {}, _sets = {}, _subKeys = {}, _maid = Util.Maid.new(),
         }, Window)
         win.Layout = Store.get("layout", {}, Store.fix.layouts)
+        win.Layout3 = Store.get("layout3", {}, Store.fix.layouts3)
         win.Folds = Store.get("fold", {}, Store.fix.flags)
         win.Sizes = Store.get("csize", {}, Store.fix.sizes)
         win.Subs = Store.get("subs", {}, Store.fix.flags)
@@ -3379,9 +3387,10 @@ do
     end
 
     function Page:_inner()
-        local width = self.Window.Body.Frame.AbsoluteSize.X
+        local win = self.Window
+        local width = win.Shown and (win.Shown[1] - 2 - SIDE) or win.Body.Frame.AbsoluteSize.X
         if width <= 0 then width = W0 - SIDE - 2 end
-        return width - 2 * PAD, width <= STACK
+        return width - 2 * PAD, width <= STACK and 1 or (width >= TRIPLE and 3 or 2)
     end
 
     function Page:_topBox()
@@ -3452,7 +3461,7 @@ do
 
     function Set.new(page, variant)
         local key = page.Base .. (variant ~= nil and ("." .. tostring(variant)) or "")
-        local set = setmetatable({ Page = page, Window = page.Window, Variant = variant, Key = key, Cards = {}, Order = {}, Rows = {}, _geo = nil }, Set)
+        local set = setmetatable({ Page = page, Window = page.Window, Variant = variant, Key = key, Cards = {}, Order = {}, Rows = {}, N = 2, Cols = 2, _geo = nil }, Set)
         page.Window._sets[key] = set
         return set
     end
@@ -3465,42 +3474,77 @@ do
         self._showing = on
     end
 
+    function Set:_stored()
+        if self.N == 3 then return self.Window.Layout3[self.Key] end
+        return self.Window.Layout[self.Key]
+    end
+
     function Set:_build(saved)
-        saved = saved or self.Window.Layout[self.Key] or { {}, {} }
+        local n, win = self.N, self.Window
         local byId, used = self.Cards, {}
-        local inSecond = {}
-        for _, id in ipairs(saved[2]) do inSecond[id] = true end
-        local fl, fullSet = {}, {}
-        for _, id in ipairs(saved[1]) do
-            if byId[id] and inSecond[id] then fl[#fl + 1] = id end
+        saved = saved or self:_stored()
+        local derive = false
+        if not saved then
+            derive = n == 3
+            saved = {}
+            for i = 1, n do saved[i] = {} end
+            local base = derive and win.Layout[self.Key]
+            if base then
+                local placed = {}
+                for i = 1, 2 do
+                    for _, id in ipairs(base[i]) do
+                        if byId[id] and not placed[id] then
+                            placed[id] = true
+                            table.insert(saved[i], id)
+                        end
+                    end
+                end
+            end
         end
-        local isFl = {}
-        for _, id in ipairs(fl) do isFl[id] = true end
-        local second = {}
-        for _, id in ipairs(saved[2]) do
-            if isFl[id] then second[#second + 1] = id end
+        local lists, seen = {}, {}
+        for i = 1, n do
+            local list, mark = {}, {}
+            for _, id in ipairs(saved[i] or {}) do
+                if byId[id] and not mark[id] then
+                    mark[id] = true
+                    list[#list + 1] = id
+                    seen[id] = (seen[id] or 0) + 1
+                end
+            end
+            lists[i] = list
         end
-        if table.concat(fl, "\0") == table.concat(second, "\0") then
+        local fl, ref, same = {}, nil, true
+        for i = 1, n do
+            local seq = {}
+            for _, id in ipairs(lists[i]) do
+                if seen[id] == n then seq[#seq + 1] = id end
+            end
+            local joined = table.concat(seq, "\0")
+            if i == 1 then fl, ref = seq, joined elseif joined ~= ref then same = false end
+        end
+        local fullSet = {}
+        if same then
             for _, id in ipairs(fl) do fullSet[id] = true end
         else
             fl = {}
         end
         local segs = {}
-        for i = 1, 2 do
+        for i = 1, n do
             local list = { {} }
-            for _, id in ipairs(saved[i]) do
+            for _, id in ipairs(lists[i]) do
                 if fullSet[id] then list[#list + 1] = {} else table.insert(list[#list], id) end
             end
             segs[i] = list
         end
         local rows, band = {}, nil
         local function open()
-            band = { cols = { {}, {} } }
+            band = { cols = {} }
+            for i = 1, n do band.cols[i] = {} end
             rows[#rows + 1] = band
         end
         open()
         for k = 1, #fl + 1 do
-            for i = 1, 2 do
+            for i = 1, n do
                 for _, id in ipairs(segs[i][k] or {}) do
                     local card = byId[id]
                     if card and not used[id] then
@@ -3525,13 +3569,53 @@ do
             end
         end
         self.Rows = rows
+        self._derive = derive
+        self._seed = nil
+        if derive then
+            self._seed = {}
+            for i = 1, n do self._seed[i] = Util.copy(band.cols[i]) end
+        end
+    end
+
+    function Set:_balance()
+        local row = self.Rows[1]
+        if not (row and row.cols and self._seed and #self.Rows == 1) then return end
+        local lists, sums = {}, {}
+        local function height(card) return HEADH + card.Height end
+        for i = 1, 3 do
+            lists[i], sums[i] = Util.copy(self._seed[i]), 0
+            for _, card in ipairs(lists[i]) do sums[i] = sums[i] + height(card) end
+        end
+        for _ = 1, #self.Order do
+            local hi, lo = 1, 1
+            for i = 2, 3 do
+                if sums[i] > sums[hi] then hi = i end
+                if sums[i] <= sums[lo] then lo = i end
+            end
+            local card = lists[hi][#lists[hi]]
+            if not card or hi == lo or sums[lo] + height(card) >= sums[hi] then break end
+            table.remove(lists[hi])
+            table.insert(lists[lo], 1, card)
+            sums[hi], sums[lo] = sums[hi] - height(card), sums[lo] + height(card)
+        end
+        row.cols = lists
+    end
+
+    function Set:_fitCols(count)
+        if count == self.Cols then return end
+        self.Cols = count
+        local n = count == 3 and 3 or 2
+        if n ~= self.N then
+            self.N = n
+            self:_build()
+        end
     end
 
     function Set:_find(item)
         for r, row in ipairs(self.Rows) do
             if row.full == item then return r, nil, nil end
             if row.cols then
-                for ci = 1, 2 do
+                for ci = 1, #row.cols do
                     for idx, x in ipairs(row.cols[ci]) do
                         if x == item then return r, ci, idx end
                     end
@@ -3553,33 +3637,42 @@ do
     end
 
     function Set:_serialize()
-        local L = { {}, {} }
+        local n = self.N
+        local L = {}
+        for i = 1, n do L[i] = {} end
         for _, row in ipairs(self.Rows) do
             if row.full then
                 local card = row.full
                 if not card.ghost then
                     L[1][#L[1] + 1] = card.Id
-                    if card.Full then L[2][#L[2] + 1] = card.Id end
+                    if card.Full then
+                        for i = 2, n do L[i][#L[i] + 1] = card.Id end
+                    end
                 end
             else
-                local ids = { {}, {} }
-                for i = 1, 2 do
+                local ids = {}
+                for i = 1, n do
+                    ids[i] = {}
                     for _, item in ipairs(row.cols[i]) do
                         if not item.ghost then ids[i][#ids[i] + 1] = item.Id end
                     end
                 end
-                for i = 1, 2 do
+                for i = 1, n do
                     for _, item in ipairs(row.cols[i]) do
                         if not item.ghost and item.Full then
-                            local count = 0
-                            for _, other in ipairs(row.cols[3 - i]) do
-                                if not other.ghost and (other.RestY or 0) < (item.RestY or 0) then count = count + 1 end
+                            for j = 1, n do
+                                if j ~= i then
+                                    local count = 0
+                                    for _, other in ipairs(row.cols[j]) do
+                                        if not other.ghost and (other.RestY or 0) < (item.RestY or 0) then count = count + 1 end
+                                    end
+                                    table.insert(ids[j], math.min(count + 1, #ids[j] + 1), item.Id)
+                                end
                             end
-                            table.insert(ids[3 - i], math.min(count + 1, #ids[3 - i] + 1), item.Id)
                         end
                     end
                 end
-                for i = 1, 2 do
+                for i = 1, n do
                     for _, id in ipairs(ids[i]) do L[i][#L[i] + 1] = id end
                 end
             end
@@ -3589,14 +3682,30 @@ do
 
     function Set:_save(L)
         L = L or self:_serialize()
-        self.Window.Layout[self.Key] = L
-        Store.put("layout", self.Window.Layout)
+        local win = self.Window
+        if self.N == 3 then
+            win.Layout3[self.Key] = L
+            Store.put("layout3", win.Layout3)
+        else
+            win.Layout[self.Key] = L
+            Store.put("layout", win.Layout)
+        end
         return L
     end
 
     function Set:_place(animate)
         local page, win = self.Page, self.Window
-        local inner, stacked = page:_inner()
+        local inner, want = page:_inner()
+        local dragging = win._drag ~= nil and win._drag.set == self
+        if not dragging then
+            self:_fitCols(want)
+            if self._derive then
+                self:_balance()
+                if win._ready_ then self._derive = false end
+            end
+        end
+        local count, n = self.Cols, self.N
+        local stacked = count == 1
         local y = PAD
         local topH = page:_topHeight()
         if page.TopFrame then
@@ -3605,12 +3714,23 @@ do
             page.TopFrame.Size = UDim2.fromOffset(inner, topH)
         end
         if topH > 0 then y = y + topH + GAP end
-        local c1 = inner
-        if not stacked then c1 = math.floor((inner - GAP) * (page.Wide and 1.9 / 2.9 or 0.5)) end
-        local xs = { PAD, stacked and PAD or PAD + c1 + GAP }
-        local ws = { c1, stacked and inner or inner - GAP - c1 }
-        local dragging = win._drag ~= nil and win._drag.set == self
-        local geo = { stacked = stacked, inner = inner, x = xs, w = ws, bands = {} }
+        local xs, ws = {}, {}
+        if stacked then
+            for i = 1, n do xs[i], ws[i] = PAD, inner end
+        else
+            local weights = { 1, 1, 1 }
+            if page.Wide then weights[1] = 1.9 end
+            local total = 0
+            for i = 1, count do total = total + weights[i] end
+            local avail, used, x = inner - GAP * (count - 1), 0, PAD
+            for i = 1, count do
+                local w = i == count and (avail - used) or math.floor(avail * (weights[i] / total))
+                xs[i], ws[i] = x, w
+                used = used + w
+                x = x + w + GAP
+            end
+        end
+        local geo = { stacked = stacked, cols = count, inner = inner, x = xs, w = ws, bands = {} }
         self._geo = geo
         local function put(item, x, top, w)
             item.RestX, item.RestY, item.RestW = x, top, w
@@ -3638,11 +3758,14 @@ do
             if row.full then
                 y = y + put(row.full, PAD, y, inner) + GAP
             else
-                local empty = #row.cols[1] == 0 and #row.cols[2] == 0
+                local empty = true
+                for i = 1, n do
+                    if #row.cols[i] > 0 then empty = false end
+                end
                 if not empty or dragging then
                     local band = { row = row, top = y, cols = {} }
                     if stacked then
-                        for i = 1, 2 do
+                        for i = 1, n do
                             local col = row.cols[i]
                             if #col > 0 or dragging then
                                 local top = y
@@ -3655,7 +3778,7 @@ do
                         band.bottom = y - GAP
                     else
                         local bottom = y + COLMIN
-                        for i = 1, 2 do
+                        for i = 1, n do
                             local cy = y
                             for _, item in ipairs(row.cols[i]) do cy = cy + put(item, xs[i], cy, ws[i]) + GAP end
                             local colBottom = math.max(cy - GAP, y + COLMIN)
@@ -3964,7 +4087,12 @@ do
         local function copyRows()
             local out = {}
             for i, row in ipairs(set.Rows) do
-                if row.full then out[i] = { full = row.full } else out[i] = { cols = { Util.copy(row.cols[1]), Util.copy(row.cols[2]) } } end
+                if row.full then
+                    out[i] = { full = row.full }
+                else
+                    out[i] = { cols = {} }
+                    for c = 1, #row.cols do out[i].cols[c] = Util.copy(row.cols[c]) end
+                end
             end
             return out
         end
@@ -4011,6 +4139,7 @@ do
         end
         local function lift()
             lifted = true
+            set._derive = false
             local x, y = Input.rect(card.Root)
             grab = Vector2.new(m0.X - x, m0.Y - y)
             ghost = { ghost = true, H = card:_outer(), Root = Util.new("Frame", { Name = "Ghost", BackgroundTransparency = 0.96, Theme = { BackgroundColor3 = "accent" }, Parent = page.Frame }) }
@@ -4425,25 +4554,29 @@ do
         local function owned(key)
             return built[string.match(key, "^([^/]*)/") or ""] == true
         end
-        local stale = {}
-        for key, L in pairs(self.Layout) do
-            local set = self._sets[key]
-            local ok = set ~= nil
-            if ok then
-                for _, ids in ipairs(L) do
-                    for _, id in ipairs(ids) do
-                        if not set.Cards[id] then ok = false end
+        local stale, dropped = {}, 0
+        for _, spec in ipairs({ { "layout", self.Layout }, { "layout3", self.Layout3 } }) do
+            local name, map, dead = spec[1], spec[2], {}
+            for key, L in pairs(map) do
+                local set = self._sets[key]
+                local ok = set ~= nil
+                if ok then
+                    for _, ids in ipairs(L) do
+                        for _, id in ipairs(ids) do
+                            if not set.Cards[id] then ok = false end
+                        end
                     end
                 end
+                if not ok and owned(key) then dead[#dead + 1] = key end
             end
-            if not ok and owned(key) then stale[#stale + 1] = key end
+            for _, key in ipairs(dead) do
+                map[key] = nil
+                if self._sets[key] then stale[self._sets[key]] = true end
+            end
+            if #dead > 0 then Store.put(name, map) end
+            dropped = dropped + #dead
         end
-        for _, key in ipairs(stale) do
-            self.Layout[key] = nil
-            local set = self._sets[key]
-            if set then set:_build() end
-        end
-        if #stale > 0 then Store.put("layout", self.Layout) end
+        for set in pairs(stale) do set:_build() end
         for _, pair in ipairs({ { "fold", self.Folds }, { "csize", self.Sizes } }) do
             local map, dirty = pair[2], false
             for k in pairs(map) do
@@ -4465,12 +4598,13 @@ do
         end
         if dirty then Store.put("subs", self.Subs) end
         if self.Page then self.Page:_relayout(false) end
-        return #stale
+        return dropped
     end
 
     function Window:ResetLayout()
-        self.Layout, self.Folds, self.Sizes, self.Subs = {}, {}, {}, {}
+        self.Layout, self.Layout3, self.Folds, self.Sizes, self.Subs = {}, {}, {}, {}, {}
         Store.put("layout", self.Layout)
+        Store.put("layout3", self.Layout3)
         Store.put("fold", self.Folds)
         Store.put("csize", self.Sizes)
         Store.put("subs", self.Subs)
@@ -4498,6 +4632,100 @@ do
     end
 end
 AsterBootMarks[#AsterBootMarks + 1] = { "window", (AsterBootClock() - AsterBootT) * 1000 }
+
+AsterBootT = AsterBootClock()
+-- [src] 31_block.lua
+do
+    local ACTION, PRIORITY = "AsterBlockInput", 10000
+    local KEYS = "A B C D E F G H I J K L M N O P Q R S T U V W X Y Z Zero One Two Three Four Five Six Seven Eight Nine "
+        .. "Up Down Left Right Space Return Backspace Tab LeftShift RightShift LeftControl RightControl LeftAlt RightAlt CapsLock "
+        .. "Home End PageUp PageDown Insert Delete Backquote Minus Equals LeftBracket RightBracket BackSlash Semicolon Quote Comma Period Slash "
+        .. "KeypadZero KeypadOne KeypadTwo KeypadThree KeypadFour KeypadFive KeypadSix KeypadSeven KeypadEight KeypadNine "
+        .. "KeypadPeriod KeypadDivide KeypadMultiply KeypadMinus KeypadPlus KeypadEnter KeypadEquals F1 F2 F3 F4 F5 F6 F7 F8"
+    local POINTER = { "MouseButton1", "MouseButton2", "MouseButton3", "MouseWheel", "MouseMovement" }
+    local bound, service
+
+    local function enum(group, name)
+        local ok, item = pcall(function() return Enum[group][name] end)
+        if ok then return item end
+        return nil
+    end
+
+    local function inputs()
+        local list = {}
+        for name in string.gmatch(KEYS, "%S+") do
+            local key = enum("KeyCode", name)
+            if key ~= nil then list[#list + 1] = key end
+        end
+        for _, name in ipairs(POINTER) do
+            local item = enum("UserInputType", name)
+            if item ~= nil then list[#list + 1] = item end
+        end
+        return list
+    end
+
+    local function sink(_, _, input)
+        if input and input.UserInputType == Enum.UserInputType.Keyboard then
+            local ok, box = pcall(UserInputService.GetFocusedTextBox, UserInputService)
+            if ok and box then return Enum.ContextActionResult.Pass end
+        end
+        return Enum.ContextActionResult.Sink
+    end
+
+    function Input.block(on)
+        on = on and true or false
+        if on == (bound == true) then return bound == true end
+        if on then
+            local found, cas = pcall(Exec.service, "ContextActionService")
+            if not found or not cas then return false end
+            local list = inputs()
+            local done = pcall(function()
+                cas:BindActionAtPriority(ACTION, sink, false, PRIORITY, table.unpack(list))
+            end)
+            if done then
+                service, bound = cas, true
+            end
+            return bound == true
+        end
+        local cas = service
+        service, bound = nil, false
+        pcall(function() cas:UnbindAction(ACTION) end)
+        return false
+    end
+
+    function Input.blocked()
+        return bound == true
+    end
+
+    Aster._maid:Add(function() Input.block(false) end)
+
+    local classes = Aster._.Window
+    local Window = classes and classes.Window
+
+    function Window:_blockSync(gone)
+        local frame = self.Frame
+        local want = not gone and not self.Destroyed and not Aster.Unloaded and self.Visible == true and frame ~= nil and frame.Visible == true
+            and frame:IsDescendantOf(Aster.Gui.Main) and Aster.Flags.menu_block_input ~= false
+        Input.block(want)
+    end
+
+    local makeWindow = Aster.Window
+    function Aster:Window(opts)
+        local existed = self._window and not self._window.Destroyed
+        local win = makeWindow(self, opts)
+        if win and not existed then
+            local frame = win.Frame
+            local function sync() win:_blockSync() end
+            win._maid:Add(frame:GetPropertyChangedSignal("Visible"):Connect(sync))
+            win._maid:Add(frame.AncestryChanged:Connect(sync))
+            win._maid:Add(frame.Destroying:Connect(function() win:_blockSync(true) end))
+            win._maid:Add(function() Input.block(false) end)
+            win:_blockSync()
+        end
+        return win
+    end
+end
+AsterBootMarks[#AsterBootMarks + 1] = { "block", (AsterBootClock() - AsterBootT) * 1000 }
 
 AsterBootT = AsterBootClock()
 -- [src] 40_toggle.lua
@@ -5077,6 +5305,10 @@ do
                 local opts = self.Opts
                 local parent = self.Parent
                 return tostring(opts.hud or opts.name or (parent and (parent.Opts.hud or parent.Opts.name)) or "keybind")
+            end,
+            Listed = function(self)
+                local parent = self.Parent
+                return self.Opts.hud ~= false and not (parent and parent.Opts.hud == false)
             end,
             Listen = function(self) startListen(self) end,
             Menu = function(self)
@@ -10495,7 +10727,7 @@ do
         local kind = Kinds.keybind
         for _, el in ipairs(kind and kind.List or {}) do
             local value = el.Value
-            if not el.Destroyed and type(value) == "table" and value.key and value.key ~= "" then
+            if not el.Destroyed and type(value) == "table" and value.key and value.key ~= "" and el:Listed() then
                 local ok, active = pcall(el.Active, el)
                 active = ok and active == true
                 if active or not self.ActiveOnly then
@@ -11388,7 +11620,7 @@ do
     function Builtins:_menu(page)
         local win, opts = self.Window, self.Opts
         local card = page:Card({ name = "menu", side = "right" })
-        self.MenuKey = card:Keybind({ name = "Menu key", flag = "ui.menu", default = win.Key, callback = function(v)
+        self.MenuKey = card:Keybind({ name = "Menu key", flag = "ui.menu", default = win.Key, hud = false, callback = function(v)
             if v.key ~= "" then win:SetKey(v.key) end
         end })
         self.PanicKey = card:Keybind({ name = "Panic key", flag = "ui.panic", default = opts.panicKey or "end" })
@@ -11398,6 +11630,8 @@ do
             if opts.onPanic then Util.guard(opts.onPanic) end
             notify("panic", "everything disabled", "warn")
         end))
+        self.BlockInput = card:Toggle({ name = "Block game input", flag = "menu_block_input", default = true, tip = "keys, mouse buttons, wheel and camera stay out of the game while the menu is open" })
+        self._maid:Add(self.BlockInput._state:Connect(function() win:_blockSync() end))
         self.Calm = card:Toggle({ name = "Reduce motion", default = Anim.calm == true, save = false, callback = function(v) Anim.setCalm(v) end })
         card:Buttons({ items = {
             { name = "Collapse all", callback = function()

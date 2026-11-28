@@ -5098,6 +5098,7 @@ do
     end
 
     local function parentToggle(el)
+        if el.Opts.sync == false then return nil end
         local parent = el.Parent
         if parent and parent.Kind == "toggle" then return parent end
         return nil
@@ -5110,6 +5111,14 @@ do
             el.ActiveChanged:Fire(active, el)
             Kinds.keybind.Changed:Fire(el)
         end
+    end
+
+    local function setOn(el, on)
+        on = on == true
+        if el._on == on then return end
+        el._on = on
+        sync(el)
+        el:_paint()
     end
 
     local function stopListen()
@@ -5209,7 +5218,15 @@ do
             if key == nil then return nil end
             return { key = key, mode = mode }
         end,
-        encode = function(value) return { key = value.key, mode = value.mode } end,
+        encode = function(value, opts, el)
+            local out = { key = value.key, mode = value.mode }
+            if opts.sync == false and el then out.on = el._on == true end
+            return out
+        end,
+        decode = function(raw, opts, el)
+            if el and opts.sync == false and type(raw) == "table" and type(raw.on) == "boolean" then setOn(el, raw.on) end
+            return raw
+        end,
         build = function(el, slot)
             el.ActiveChanged = el._maid:Add(Util.Signal.new())
             el.Pressed = el._maid:Add(Util.Signal.new())

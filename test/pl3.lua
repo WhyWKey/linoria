@@ -1,8 +1,6 @@
 local PL3BootClock = os.clock or tick
 local PL3BootStart = PL3BootClock()
 local PL3BootT = PL3BootStart
--- [src] 00_boot.lua
--- aster for Prison Life (pl3): the pl modules (repo/pl, GitHub test/pl.lua) on the aster v2 library. Generated from repo/pl3/src by repo/_tools_pl3/bundle.js.
 local BUILD = "pl3-1"
 local FOLDER = "prison life"
 
@@ -24,7 +22,6 @@ local clock = os.clock or tick
 local function ms(t0, t1) return math.floor(((t1 or clock()) - t0) * 1000 + 0.5) end
 local Boot = { at = PL3BootStart or clock(), timings = {}, marks = {}, missing = {} }
 
--- a previous pl3 / pl2 copy, and the old Linoria builds (dev.lua TS_*, pl PL_*), would keep running beside this one
 do
     local rerun = env.TS_Connections ~= nil or env.PL_Connections ~= nil
     for _, key in ipairs({ "AsterPL3", "AsterPL2" }) do
@@ -42,7 +39,6 @@ do
     if type(env.AsterLoader) == "table" and type(env.AsterLoader.destroy) == "function" then pcall(env.AsterLoader.destroy) end
 end
 
--- the GitHub API first: raw.githubusercontent and Fastly are blocked on some networks (same chain as Example.lua)
 do
     local API = "https://api.github.com/repos/WhyWKey/linoria/contents/ui-test/"
     local MIRRORS = {
@@ -110,7 +106,6 @@ do
         return usable(src)
     end
 
-    -- path under ui-test/; returns what the chunk returns
     function fetch(path)
         local api = API .. path
         local ways = {
@@ -266,7 +261,6 @@ Aster:OnUnload(function()
     if env.AsterPL3 and env.AsterPL3.Util == Util then env.AsterPL3 = nil end
 end)
 
--- called by the bundle after every part: timing plus loader progress
 function bootMark(label, started, index, total)
     Boot.marks[#Boot.marks + 1] = { label, (clock() - started) * 1000 }
     if index < total then
@@ -277,10 +271,25 @@ end
 
 Pages = { tabs = {}, strips = {} }
 Shim = {}
-bootMark("boot", PL3BootT, 1, 5)
+
+function Boot.syncSupported()
+    local Keys = Aster._ and Aster._.Kinds and Aster._.Kinds.keybind
+    if not (Keys and type(Keys.encode) == "function") then return false end
+    local ok, out = pcall(Keys.encode, { key = "x", mode = "hold" }, { sync = false }, { _on = false })
+    return ok and type(out) == "table" and out.on == false
+end
+
+function Boot.checkLibrary()
+    if Boot.syncSupported() then return true end
+    if not Boot.syncWarned then
+        Boot.syncWarned = true
+        Util.notify("update ui-test/library.lua (the keybind sync option is missing)", "warn", 12)
+    end
+    return false
+end
+bootMark("boot", PL3BootT, 1, 7)
 
 PL3BootT = PL3BootClock()
--- [src] 15_menu.lua
 do
     Util.stage("building menu", 0.3)
     win = Aster:Window({
@@ -288,7 +297,6 @@ do
         user = { id = LocalPlayer and LocalPlayer.UserId or 0, display = LocalPlayer and LocalPlayer.DisplayName or "", name = LocalPlayer and LocalPlayer.Name or "" },
     })
 
-    -- v2 tab, icon, then { pl "Tab/Sub" key, page name }. The pl Settings tab is the Builtins tab in v2: its Server section lives on misc / server.
     local MENU = {
         { "legit", "combat", { { "Legit/Aim", "aim" }, { "Legit/Silent", "silent" }, { "Legit/Trigger", "trigger" } } },
         { "rage", "kill", { { "Rage/Ragebot", "ragebot" }, { "Rage/Void", "void" }, { "Rage/Gun", "gun" }, { "Rage/Other", "other" } } },
@@ -298,51 +306,71 @@ do
         } },
         { "effects", "shoot", { { "Effects/When I shoot", "shoot" }, { "Effects/When I hit", "hit" }, { "Effects/When I kill", "kill" }, { "Effects/Ambience", "ambience" } } },
         { "misc", "misc", {
-            { "Misc/Movement", "movement" }, { "Misc/Character", "character" }, { "Misc/Combat", "combat" }, { "Misc/Vehicles", "vehicles" }, { "Misc/Avatar", "avatar" },
-            { "Settings/Main", "server" },
+            { "Misc/Movement", "movement" }, { "Misc/Jumps", "jumps & phase" }, { "Misc/Character", "character" }, { "Misc/Combat", "combat" }, { "Misc/Vehicles", "vehicles" },
+            { "Misc/Avatar", "avatar" }, { "Settings/Main", "server" },
         } },
-        { "teleport", "target", { { "Teleport/Main", "teleport" } } },
-        { "players", "players", { { "Players/Main", "players" } } },
+        { "teleport", "target", { { "Teleport/Main", "guns & items" }, { "Teleport/Places", "places" }, { "Teleport/Team", "team" } } },
+        { "players", "players", { { "Players/Main", "list" }, { "Players/Selected", "selected" }, { "Players/Detector", "detector" } } },
     }
 
-    -- pl sub-tabs without a page (Builtins does theme and config); sections of such a page, and the hidden ones below, are accepted and dropped
     local NO_PAGE = { "Settings/Theme", "Settings/Config" }
-    local HIDDEN = { ["Settings/Main/Aster settings"] = true, ["Settings/Main/Layout"] = true, ["Settings/Main/Unload"] = true }
+    local HIDDEN = {
+        ["Settings/Main/Aster settings"] = true, ["Settings/Main/Layout"] = true, ["Settings/Main/Unload"] = true,
+        ["Misc/Avatar/Catalog"] = true, ["Misc/Avatar/Body"] = true, ["Misc/Avatar/By ID"] = true, ["Misc/Avatar/Preview"] = true,
+        ["Misc/Avatar/Outfits"] = true, ["Misc/Avatar/Players"] = true, ["Misc/Avatar/Favorites"] = true,
+    }
 
-    -- pl has 3 columns, v2 cards sit on the left or right and the 3-column view balances them; "auto" takes the side with fewer sections on that page
     local COLUMN = { "left", "right", "auto" }
 
-    Pages.pages, Pages.first, Pages.tabOf, Pages.hidden, Pages.column, Pages.side = {}, {}, {}, HIDDEN, COLUMN, {}
+    local ROUTE = {
+        ["Teleport/Main/Places"] = "Teleport/Places", ["Teleport/Main/Team switch"] = "Teleport/Team", ["Teleport/Main/Settings"] = "Teleport/Team",
+        ["Players/Main/Selected player"] = "Players/Selected", ["Players/Main/Cheat detector"] = "Players/Detector",
+        ["Misc/Movement/High / long jump"] = "Misc/Jumps", ["Misc/Movement/Phase"] = "Misc/Jumps", ["Misc/Movement/Jump mult"] = "Misc/Jumps", ["Misc/Movement/Movement extras"] = "Misc/Jumps",
+    }
+    local SIDE = {
+        ["Players/Main/Target info"] = "right", ["Players/Main/Selected player"] = "left",
+        ["Misc/Movement/Speed"] = "right", ["Misc/Movement/High / long jump"] = "left", ["Misc/Movement/Phase"] = "right", ["Misc/Movement/Jump mult"] = "left", ["Misc/Movement/Movement extras"] = "right",
+    }
+
+    Pages.pages, Pages.first, Pages.tabOf, Pages.hidden, Pages.column, Pages.side = {}, {}, {}, HIDDEN, COLUMN, SIDE
+    Pages.route, Pages.sections, Pages.cards, Pages.names, Pages.order = ROUTE, {}, {}, {}, {}
     for _, key in ipairs(NO_PAGE) do Pages.pages[key] = false end
 
     for _, spec in ipairs(MENU) do
         local tab = win:Tab({ name = spec[1], icon = spec[2] })
         Pages.tabs[spec[1]] = tab
+        local listed = { tab = spec[1], pages = {} }
+        Pages.order[#Pages.order + 1] = listed
         for _, entry in ipairs(spec[3]) do
+            listed.pages[#listed.pages + 1] = entry[1]
             local key, name = entry[1], entry[2]
             local plTab = string.match(key, "^([^/]+)/")
             Pages.pages[key] = tab:Page({ name = name })
+            Pages.names[key] = name
             Pages.tabOf[plTab] = Pages.tabOf[plTab] or tab
             Pages.first[plTab] = Pages.first[plTab] or { key = key, page = Pages.pages[key] }
         end
     end
 end
-bootMark("menu", PL3BootT, 2, 5)
+bootMark("menu", PL3BootT, 2, 7)
 
 PL3BootT = PL3BootClock()
--- [src] 45_shim.lua
--- The pl modules' Library / UI / Options / Toggles surface on aster v2 (CONTRACT.md section 3). Everything lives in this block and ends up in the table Shim,
--- which 99_tail hands to PL_init as `env`. Sections are v2 cards (routes: Pages.* from 15_menu), rows are v2 elements, popups are Settings gears.
 do
     local Elements, Flags = Aster.Elements, Aster.Flags
     local MODES = { Hold = "hold", Toggle = "toggle", Always = "always" }
     local TYPES = { toggle = "Toggle", slider = "Slider", dropdown = "Dropdown", color = "ColorPicker", keybind = "KeyPicker", input = "Input", label = "Label" }
     local WHITE = Color3.new(1, 1, 1)
+    local OPAQUE = {}
+    for _, flag in ipairs({
+        "esp_fill_color2", "esp_hp_mid", "esp_vis_color", "esp_occ_color", "cham_style_color", "cham_style_color2", "cham_toon_outline_color",
+        "trace_glow_color", "trace_grad_start", "trace_grad_end", "trace_smoke_color", "trace_smoke_halo",
+        "dmg_head", "dmg_torso", "dmg_limb", "streak_color", "streak_color2", "rb_void_color",
+    }) do OPAQUE[flag] = true end
+    local plain = {}
     local stats = { pages = 0, subs = 0, sections = 0, hidden = 0, dropped = 0, rows = 0, failed = 0 }
 
     local function noop() end
 
-    -- v2 callbacks also get the element; pl callbacks take the value only (a button none)
     local function unary(fn)
         if type(fn) ~= "function" then return nil end
         return function(value) fn(value) end
@@ -352,13 +380,11 @@ do
         return function() fn() end
     end
 
-    -- Decimals is the step (0.05, 0.5), 1 or more means whole numbers. pl's old toRounding turned 0.05 into 0.1 steps and 0.5 into 1, which v2 would anchor at Min (6 became 6.5)
     local function stepOf(decimals)
         if type(decimals) == "number" and decimals > 0 and decimals < 1 then return decimals end
         return 1
     end
 
-    -- keys: pl names mouse buttons MB1..MB3, v2 m1..m3; v2 stores keys lower case
     local keyNames
     local function keyText(key)
         if key == nil or key == "" then return "None" end
@@ -399,11 +425,8 @@ do
         return map
     end
 
-    -- keys made without Sync keep their own state: they do not follow the parent toggle (hold = key down, always = true); Sync keys flip the toggle
-    local loose = setmetatable({}, { __mode = "k" })
     local synced = setmetatable({}, { __mode = "k" })
     local blocked = {}
-    -- a single dropdown made without a Default reads nil until one is picked (Linoria); v2 would pick the first option on SetOptions
     local blank = setmetatable({}, { __mode = "k" })
     local blankFlags = {}
 
@@ -456,7 +479,6 @@ do
         el:Set(color)
         if type(transparency) == "number" and not el.Opts.opaque then el:SetAlpha(1 - transparency) end
     end
-    -- Linoria kept selected names that left the list (players who left stay whitelisted); v2 SetOptions drops them
     function Option:SetValues(list)
         local el = rawget(self, "_el")
         if el.Kind ~= "dropdown" then return end
@@ -484,19 +506,11 @@ do
     end
     function Option:GetState()
         local el = rawget(self, "_el")
-        if el.Kind == "keybind" then
-            if loose[el] then
-                local mode = el.Value.mode
-                if mode == "hold" then return el.Value.key ~= "" and el._held == true end
-                if mode == "always" then return true end
-            end
-            return el:Active()
-        end
+        if el.Kind == "keybind" then return el:Active() end
         if el.Kind == "toggle" then return el.Value == true end
         return true
     end
 
-    -- Options / Toggles are plain tables (45_fx_menu iterates them), filled as rows are made; other flags (Builtins, addons) resolve through __index
     local objects = setmetatable({}, { __mode = "k" })
     local function wrap(el)
         local object = objects[el]
@@ -524,7 +538,6 @@ do
         if el.Kind == "toggle" then Toggles[flag] = wrap(el) else Options[flag] = wrap(el) end
     end
 
-    -- the flag() hot path: a direct Aster.Flags read; multi dropdowns come back as a name map and keys as their name, cached per stored value
     local converted = {}
     local function convert(name, value)
         local el = Elements[name]
@@ -553,11 +566,13 @@ do
     end
     local function alpha(name, default)
         local el = Elements[name]
-        if el and el.Kind == "color" and not el.Opts.opaque then return 1 - el:Alpha() end
+        if el and el.Kind == "color" and not el.Opts.opaque then
+            if plain[name] and el:Alpha() >= 1 then return default or 0 end
+            return 1 - el:Alpha()
+        end
         return default or 0
     end
 
-    -- Depends: { {flag, value | function(value)}, ... }, every condition must hold. A condition on a flag that does not exist yet is dropped (as the old box did)
     local function satisfied(conds)
         for _, cond in ipairs(conds) do
             local value, want = fastFlag(cond[1]), cond[2]
@@ -570,12 +585,12 @@ do
         end
         return true
     end
-    local function depOf(conds)
-        if #conds == 1 and type(conds[1][2]) ~= "function" then
-            local el = Elements[conds[1][1]]
-            if el and el.Kind ~= "keybind" and not (el.Kind == "dropdown" and el.Opts.multi) then return { conds[1][1], conds[1][2] } end
+    local function follow(el, conds)
+        local function update()
+            pcall(el.SetVisible, el, satisfied(conds))
         end
-        return function() return satisfied(conds) end
+        for _, cond in ipairs(conds) do Util.track(Aster:OnChanged(cond[1], update)) end
+        update()
     end
     local function merge(parent, added)
         local out = {}
@@ -586,7 +601,6 @@ do
         return out
     end
 
-    -- a row's handle: what Toggle / Label / ... return; carries the attachments (swatch, key, gear) of that row
     local Handle = {}
     Handle.__index = Handle
     local Group = {}
@@ -596,12 +610,11 @@ do
         local group = setmetatable({ box = box, conds = conds or (parent and parent.conds) or nil }, Group)
         group.root = parent and parent.root or group
         if not parent then group.count = 0 end
-        if group.conds and #group.conds > 0 then group.dep = depOf(group.conds) end
+        group.dep = group.conds ~= nil and #group.conds > 0
         local root = group.root
         group.raw = group
         group.Outer = box and box.Root or nil
         group.Resize = noop
-        -- 05_menu / Pages.finalize count rows through section.raw.Container:GetChildren()
         group.Container = { GetChildren = function()
             local list = {}
             for index = 1, root.count do list[index] = index end
@@ -616,7 +629,6 @@ do
             stats.dropped = stats.dropped + 1
             return setmetatable({ group = self }, Handle)
         end
-        if self.dep ~= nil then opts.depends = self.dep end
         local ok, el = pcall(self.box[method], self.box, opts)
         if not ok or type(el) ~= "table" then
             stats.failed = stats.failed + 1
@@ -625,7 +637,7 @@ do
         end
         stats.rows = stats.rows + 1
         if flag then register(flag, el) end
-        if self.made then self.made[#self.made + 1] = el end
+        if self.dep then follow(el, self.conds) end
         return setmetatable({ el = el, group = self }, Handle)
     end
 
@@ -641,7 +653,26 @@ do
                 blocked[info.Flag] = { name = info.Name, why = why }
             end
         end
-        return self:_make("Toggle", info.Flag, { name = name, flag = info.Flag, default = default, tip = tip, callback = unary(info.Callback), disabled = disabled })
+        local callback = unary(info.Callback)
+        if disabled and callback then
+            local inner = callback
+            callback = function(value)
+                if not value then inner(value) end
+            end
+        end
+        local handle = self:_make("Toggle", info.Flag, { name = name, flag = info.Flag, default = default, tip = tip, callback = callback, disabled = disabled })
+        local el = handle.el
+        if disabled and el then
+            local set = el.Set
+            el.Set = function(self, value, silent)
+                if value then value = false end
+                return set(self, value, silent)
+            end
+            el.Changed:Connect(function(value)
+                if value then el:Set(false, true) end
+            end)
+        end
+        return handle
     end
     function Group:Slider(info)
         local min, max = info.Min, info.Max
@@ -691,68 +722,21 @@ do
         return child
     end
 
-    -- Linoria's Add* surface (section.raw): the same rows, with the old argument shapes
-    function Group:AddToggle(flag, info)
-        return self:Toggle({ Name = info.Text, Flag = flag, Default = info.Default, Tooltip = info.Tooltip, Callback = info.Callback })
-    end
-    function Group:AddSlider(flag, info)
-        local places = info.Rounding or 0
-        return self:Slider({ Name = info.Text, Flag = flag, Min = info.Min, Max = info.Max, Default = info.Default, Decimals = places > 0 and 10 ^ -places or 1,
-            Suffix = info.Suffix, Tooltip = info.Tooltip, Callback = info.Callback })
-    end
-    function Group:AddDropdown(flag, info)
-        return self:Dropdown({ Name = info.Text, Flag = flag, Items = info.Values, Default = info.Default, Multi = info.Multi, Tooltip = info.Tooltip, Callback = info.Callback })
-    end
-    function Group:AddInput(flag, info)
-        return self:Input({ Name = info.Text, Flag = flag, Default = info.Default, Placeholder = info.Placeholder, Callback = info.Callback })
-    end
-    function Group:AddButton(text, callback)
-        if type(text) == "table" then return self:Button({ Name = text.Text, Callback = text.Func or text.Callback }) end
-        return self:Button({ Name = text, Callback = callback })
-    end
-    function Group:AddLabel(text)
-        return self:Label({ Name = text })
-    end
-    function Group:AddDivider()
-        return self:Divider()
-    end
-    function Group:AddKeyPicker(flag, info)
-        return self:Label({ Name = info.Text or flag }):AddKeyPicker(flag, info)
-    end
-    function Group:AddColorPicker(flag, info)
-        return self:Label({ Name = info.Title or flag }):AddColorPicker(flag, info)
-    end
-    function Group:AddDependencyBox()
-        local box = newGroup(self.box, self)
-        box.made = {}
-        return box
-    end
-    -- Linoria order: rows first, then the conditions; rows already made get the dependency without the indent
-    function Group:SetupDependencies(list)
-        local conds = {}
-        for _, entry in ipairs(list) do
-            local el = type(entry[1]) == "table" and rawget(entry[1], "_el") or nil
-            if el and el.Flag then conds[#conds + 1] = { el.Flag, entry[2] } end
-        end
-        self.conds = merge(self.conds, conds)
-        if #self.conds == 0 then return end
-        self.dep = depOf(self.conds)
-        for _, el in ipairs(self.made or {}) do pcall(el._depends, el, self.dep) end
-    end
-
     function Handle:SetText(text)
         local el = self.el
         if not el then return end
         if el.SetText then el:SetText(text) elseif el.Label then el.Label.Text = tostring(text) end
     end
-    -- Alpha = true (starts opaque) | number (initial Transparency) | nil (no alpha)
     function Handle:Colorpicker(info)
         local el = self.el
         if not el then return self end
-        local alpha01 = nil
-        if info.Alpha then alpha01 = 1 - (type(info.Alpha) == "number" and info.Alpha or 0) end
-        local ok, picker = pcall(el.Color, el, { flag = info.Flag, default = info.Default or WHITE, alpha = alpha01, opaque = alpha01 == nil })
+        local native = info.Alpha ~= nil and info.Alpha ~= false
+        local opaque = OPAQUE[info.Flag] == true or (type(info.Flag) == "string" and string.find(info.Flag, "^world_") ~= nil)
+        local alpha01 = 1
+        if native then alpha01 = 1 - (type(info.Alpha) == "number" and info.Alpha or 0) end
+        local ok, picker = pcall(el.Color, el, { flag = info.Flag, default = info.Default or WHITE, alpha = (not opaque) and alpha01 or nil, opaque = opaque })
         if ok and type(picker) == "table" then
+            if not native and not opaque and info.Flag then plain[info.Flag] = true end
             register(info.Flag, picker)
         else
             stats.failed = stats.failed + 1
@@ -765,9 +749,9 @@ do
         if not el then return self end
         local sync = info.Sync == true
         local mode = sync and "toggle" or MODES[info.Mode or "Toggle"] or "toggle"
-        local ok, key = pcall(el.Keybind, el, { flag = info.Flag, default = keyFix(info.Default) or "", mode = mode, hud = info.Name })
+        local ok, key = pcall(el.Keybind, el, { flag = info.Flag, default = keyFix(info.Default) or "", mode = mode, hud = info.Name, sync = sync })
         if ok and type(key) == "table" then
-            if sync then synced[key] = true else loose[key] = true end
+            if sync then synced[key] = true end
             register(info.Flag, key)
         else
             stats.failed = stats.failed + 1
@@ -786,23 +770,11 @@ do
         end
         return newGroup(inner)
     end
-    function Handle:AddColorPicker(flag, info)
-        info = info or {}
-        return self:Colorpicker({ Flag = flag, Default = info.Default, Alpha = info.Transparency ~= nil and info.Transparency or nil })
-    end
-    function Handle:AddKeyPicker(flag, info)
-        info = info or {}
-        return self:Keybind({ Flag = flag, Default = info.Default, Mode = info.Mode, Name = info.Text, Sync = info.SyncToggleState == true })
-    end
-    function Handle:AddSettings(name, info)
-        return self:Settings(name, info and info.Width)
-    end
-
-    -- surfaces: a page (or one sub-tab of a page); a section is a card made on the spot, so cards keep the menu order
     local Surface = {}
     Surface.__index = Surface
+    local loads = setmetatable({}, { __mode = "k" })
     local function surfaceOf(plTab, key, page)
-        return setmetatable({ tab = plTab, key = key, page = page, load = { 0, 0 } }, Surface)
+        return setmetatable({ tab = plTab, key = key, page = page }, Surface)
     end
 
     function Surface:Section(info)
@@ -810,20 +782,35 @@ do
         local name = tostring(info.Name)
         local key = self.key .. "/" .. name
         if Pages.hidden[key] then stats.hidden = stats.hidden + 1 end
-        if not self.page or Pages.hidden[key] then return newGroup(nil) end
+        local routed = Pages.route[key]
+        local pageKey = routed or self.key
+        local page = routed and Pages.pages[routed] or self.page
+        if not page or Pages.hidden[key] then return newGroup(nil) end
+        local load = loads[page]
+        if not load then
+            load = { 0, 0 }
+            loads[page] = load
+        end
         local side = Pages.side[key] or Pages.column[tonumber(info.Column) or 3] or "auto"
-        if side == "auto" then side = self.load[1] <= self.load[2] and "left" or "right" end
+        if side == "auto" then side = load[1] <= load[2] and "left" or "right" end
         local index = side == "left" and 1 or 2
-        self.load[index] = self.load[index] + 1
-        local ok, card = pcall(self.page.Card, self.page, { name = string.lower(name), side = side })
+        load[index] = load[index] + 1
+        local ok, card = pcall(page.Card, page, { name = string.lower(name), side = side })
         if not ok then
             stats.failed = stats.failed + 1
             Util.note("shim card " .. key, "card", key, "failed:", card)
             return newGroup(nil)
         end
-        return newGroup(card)
+        local group = newGroup(card)
+        Pages.sections[key] = group
+        local made = Pages.cards[pageKey]
+        if not made then
+            made = {}
+            Pages.cards[pageKey] = made
+        end
+        made[#made + 1] = string.lower(name)
+        return group
     end
-    -- the canvas layouts (galleries, previews) are not emulated: nil makes pl draw plain sections
     function Surface:Canvas()
         return nil
     end
@@ -857,7 +844,6 @@ do
         return newGroup(nil)
     end
 
-    -- the target card: Library:CreateInfoCard on Aster.Hud.Target (a placeholder shows while the menu is open and nothing is targeted)
     local CARD_ROWS = { Weapon = "weapon", Distance = "distance", Sight = "visible" }
     local function teamColor(value)
         if typeof(value) == "BrickColor" then return value.Color end
@@ -931,26 +917,897 @@ do
 
     Shim.Library, Shim.Options, Shim.Toggles, Shim.UI = Library, Options, Toggles, UI
     Shim.ThemeManager, Shim.SaveManager = ThemeManager, SaveManager
-    Shim.fastFlag, Shim.stats = fastFlag, stats
+    Shim.fastFlag, Shim.stats, Shim.opaque, Shim.plain = fastFlag, stats, OPAQUE, plain
 end
-bootMark("shim", PL3BootT, 3, 5)
+bootMark("shim", PL3BootT, 3, 7)
 
 PL3BootT = PL3BootClock()
--- [src] 50_pl.lua
--- GENERATED by repo/_tools_pl3/extract_pl.js from repo/pl/*.lua (wave 3). Do not edit: rerun the tool.
--- The blocks marked "-- pl <file> <from>-<to>" are pl lines copied unchanged; "-- gen" blocks are glue to the shim (modules.json).
--- patches (repo/_tools_pl3/pl_patches.js): none
+do
+    local OLD = "Aster/PrisonLife/settings"
+    local MAX = 40
+    local Import = { old = OLD }
+
+    local function hexColor(text)
+        local hex = type(text) == "string" and string.match(text, "^#?(%x%x%x%x%x%x)") or nil
+        if not hex then return nil end
+        local function part(from) return tonumber(string.sub(hex, from, from + 1), 16) / 255 end
+        return Color3.new(part(1), part(3), part(5))
+    end
+
+    local READ = {
+        Toggle = function(object, data)
+            if type(data.value) ~= "boolean" then return false end
+            object:SetValue(data.value)
+        end,
+        Slider = function(object, data)
+            local number = tonumber(data.value)
+            if number == nil then return false end
+            object:SetValue(number)
+        end,
+        Dropdown = function(object, data)
+            local multi = type(object.Value) == "table"
+            if multi and type(data.value) ~= "table" then return false end
+            if not multi and type(data.value) ~= "string" then return false end
+            if not multi then
+                local listed = false
+                for _, name in ipairs(object.Values or {}) do
+                    if name == data.value then listed = true break end
+                end
+                if not listed then return false end
+            end
+            object:SetValue(data.value)
+        end,
+        ColorPicker = function(object, data)
+            local color = hexColor(data.value)
+            if not color then return false end
+            object:SetValueRGB(color, tonumber(data.transparency))
+        end,
+        KeyPicker = function(object, data)
+            if type(data.key) ~= "string" then return false end
+            object:SetValue({ data.key == "None" and "" or data.key, data.mode })
+        end,
+        Input = function(object, data)
+            if type(data.text) ~= "string" then return false end
+            object:SetValue(data.text)
+        end,
+    }
+
+    function Import.decode(text)
+        if type(text) ~= "string" or text == "" then return nil end
+        local ok, config = pcall(function() return HttpService:JSONDecode(text) end)
+        if not ok or type(config) ~= "table" or type(config.objects) ~= "table" then return nil end
+        return config
+    end
+
+    function Import.apply(config)
+        local applied, skipped = 0, 0
+        for _, data in ipairs(config.objects) do
+            local isTable = type(data) == "table"
+            local idx = isTable and data.idx or nil
+            local object = type(idx) == "string" and (Shim.Toggles[idx] or Shim.Options[idx]) or nil
+            local read = isTable and READ[data.type] or nil
+            local ok, result = false, nil
+            if object and read and object.Type == data.type then
+                ok, result = pcall(read, object, data)
+                if not ok then Util.note("import " .. idx, "pl config:", idx, "failed:", result) end
+            end
+            if ok and result ~= false then applied = applied + 1 else skipped = skipped + 1 end
+        end
+        return applied, skipped
+    end
+
+    local function readText(path)
+        local ok, text = pcall(function()
+            if type(isfile) == "function" and type(readfile) == "function" and isfile(path) then return readfile(path) end
+            return nil
+        end)
+        return ok and type(text) == "string" and text or nil
+    end
+
+    function Import.list()
+        local names = {}
+        if type(isfolder) ~= "function" or type(listfiles) ~= "function" then return names end
+        local ok, files = pcall(function()
+            if isfolder(OLD) then return listfiles(OLD) end
+            return {}
+        end)
+        for _, file in ipairs(ok and type(files) == "table" and files or {}) do
+            local name = string.match((string.gsub(tostring(file), "\\", "/")), "([^/]+)%.json$")
+            if name then names[#names + 1] = name end
+        end
+        table.sort(names)
+        return names
+    end
+
+    local function store()
+        local internal = Aster._
+        local found = type(internal) == "table" and internal.Store or nil
+        if type(found) == "table" and type(found.encode) == "function" and type(found.apply) == "function" and type(found.save) == "function" then return found end
+        return nil
+    end
+
+    function Import.load(name)
+        local config = Import.decode(readText(OLD .. "/" .. tostring(name) .. ".json"))
+        if not config then return nil end
+        local applied, skipped = Import.apply(config)
+        local Store = store()
+        local target = Store and Store.cfgName(name) or ""
+        local saved = false
+        if applied > 0 and target ~= "" and not Store.exists(target) then saved = (Store.save(target)) == true end
+        return applied, skipped, saved
+    end
+
+    function Import.all()
+        local Store = store()
+        local names = Import.list()
+        if not Store or #names == 0 then return 0 end
+        local base = Store.encode()
+        local count = 0
+        for index, name in ipairs(names) do
+            local target = Store.cfgName(name)
+            if index <= MAX and target ~= "" and not Store.exists(target) then
+                Store.apply(base)
+                local config = Import.decode(readText(OLD .. "/" .. name .. ".json"))
+                if config and Import.apply(config) > 0 and (Store.save(target)) == true then count = count + 1 end
+            end
+        end
+        Store.apply(base)
+        return count
+    end
+
+    function Import.first()
+        local Store = store()
+        if not Store or type(isfile) ~= "function" or type(writefile) ~= "function" then return 0 end
+        local mark = tostring(Store.Cache) .. "/migrated/prison life pl v1.txt"
+        local ok, done = pcall(isfile, mark)
+        if not ok or done then return 0 end
+        if #Import.list() == 0 then return 0 end
+        local count = Import.all()
+        local auto = readText(OLD .. "/autoload.txt")
+        auto = auto and Store.cfgName(auto) or ""
+        if auto ~= "" and Store.exists(auto) and not Store.getAutoload() then Store.autoload(auto) end
+        pcall(function()
+            Store.ensure(tostring(Store.Cache) .. "/migrated")
+            writefile(mark, tostring(count))
+        end)
+        if count > 0 then Util.notify("imported " .. count .. " pl config(s) from Aster/PrisonLife", "ok", 6) end
+        return count
+    end
+
+    function Import.build(page)
+        local names = Import.list()
+        if #names == 0 or type(page) ~= "table" or type(page.Card) ~= "function" then return nil end
+        local card = page:Card({ name = "import pl configs", side = "right" })
+        Import.card = card
+        local pick = card:Dropdown({ name = "Old config", options = names, default = names[1], save = false })
+        card:Button({ name = "Import", callback = function()
+            local name = pick.Value
+            local applied, skipped, saved = Import.load(name)
+            if applied == nil then
+                Util.notify("could not read " .. tostring(name), "warn")
+            else
+                Util.notify(tostring(name) .. ": " .. applied .. " settings applied, " .. skipped .. " skipped" .. (saved and ", saved as a config" or ", a config of that name exists"), "ok")
+            end
+        end })
+        return card
+    end
+
+    Shim.Import = Import
+end
+bootMark("import", PL3BootT, 4, 7)
+
+PL3BootT = PL3BootClock()
+do
+    local PALETTE = {
+        "#ffffff", "#e5e4df", "#a3a2a5", "#635f62", "#1b2a35", "#111111", "#f5cd30", "#fdea8d", "#da867a", "#c4281c", "#7b2e2f", "#694028",
+        "#cda478", "#eab892", "#cc8e69", "#f0d5a0", "#7c5c46", "#5b402d", "#da8541", "#e29b40", "#ff98dc", "#e976c1", "#aa55ff", "#6225d1",
+        "#0d69ac", "#2154b9", "#74869d", "#04afec", "#80bbdb", "#3d1585", "#287f47", "#4b974b", "#a1c48c", "#348e40", "#008f9c", "#12eed4",
+    }
+    local BODY_PARTS = { { "all parts" }, { "head", "HeadColor" }, { "torso", "TorsoColor" }, { "left arm", "LeftArmColor" }, { "right arm", "RightArmColor" }, { "left leg", "LeftLegColor" }, { "right leg", "RightLegColor" } }
+    local PART_COLOR = { Head = "HeadColor", Torso = "TorsoColor", ["Left Arm"] = "LeftArmColor", ["Right Arm"] = "RightArmColor", ["Left Leg"] = "LeftLegColor", ["Right Leg"] = "RightLegColor" }
+    local CLOTHING = {
+        shirt = true, pants = true, tshirt = true, tshirtaccessory = true, shirtaccessory = true, pantsaccessory = true, jacketaccessory = true,
+        sweateraccessory = true, shortsaccessory = true, leftshoeaccessory = true, rightshoeaccessory = true, dressskirtaccessory = true,
+    }
+    local WORN = { hat = true, hairaccessory = true, faceaccessory = true, neckaccessory = true, shoulderaccessory = true, frontaccessory = true, backaccessory = true, waistaccessory = true }
+    local PAGE, BATCH, MAX_FLIGHT = 24, 8, 3
+
+    local function hex(text)
+        return Color3.fromRGB(tonumber(string.sub(text, 2, 3), 16), tonumber(string.sub(text, 4, 5), 16), tonumber(string.sub(text, 6, 7), 16))
+    end
+    local function idsIn(text)
+        local out = {}
+        for number in string.gmatch(tostring(text or ""), "%d+") do
+            local value = tonumber(number)
+            if value and value > 0 then out[#out + 1] = value end
+        end
+        return out
+    end
+    local function thumb(kind, id)
+        return string.format("rbxthumb://type=%s&id=%d&w=150&h=150", kind, id)
+    end
+    local function say(text, kind)
+        Util.notify(text, kind)
+    end
+    local LOOK_NOTES = { private = "private or hidden", empty = "no outfits", unreachable = "could not reach Roblox", limited = "rate limited, try again later" }
+    local function noteOf(state)
+        if type(state) ~= "table" then return state end
+        return LOOK_NOTES[state.kind] or (type(state.message) == "string" and state.message) or tostring(state.kind or "no outfits")
+    end
+
+    function Shim.buildAvatar(PL)
+        local Avatar = type(PL) == "table" and PL.Avatar or nil
+        local view = Pages.pages["Misc/Avatar"]
+        if type(Avatar) ~= "table" or not view or not Avatar.Builder or not Avatar.Catalog or type(Avatar.store) ~= "table" then return nil end
+        local Builder, Catalog, store = Avatar.Builder, Avatar.Catalog, Avatar.store
+        local Scene = Aster.Scene
+        local A = setmetatable({}, { __index = Avatar })
+        local ui = { previews = {}, token = 0, keys = {} }
+        store.classified = type(store.classified) == "table" and store.classified or {}
+        local stamp = 0
+
+        A.thumb = thumb
+        function A.setFilters(o)
+            Avatar.setCategory(o.category or "All")
+            Avatar.setSort(o.sort or "Relevance")
+            local f = Catalog.F
+            f.keyword = o.keyword or ""
+            f.kind = o.kind or "Any"
+            f.onSale = o.onSale == true
+            local low, high = string.match(tostring(o.price or ""), "^%s*(%d*)%s*%-?%s*(%d*)%s*$")
+            Avatar.setPrice(tonumber(low or ""), tonumber(high or ""))
+        end
+        function A.edit(info)
+            local ok, desc = pcall(function()
+                if info.data then return Avatar.deserialize(info.data) end
+                if info.kind == "outfit" then return Players:GetHumanoidDescriptionFromOutfitId(info.id) end
+                return Players:GetHumanoidDescriptionFromUserIdAsync(info.uid)
+            end)
+            if not (ok and desc) then return say("avatar: could not load " .. tostring(info.name), "warn") end
+            Avatar.setDescription(desc)
+            return true
+        end
+        function A.fetchOutfits(uid, onChunk, alive)
+            return Avatar.fetchOutfits(uid, onChunk, nil, alive)
+        end
+        function A.recordRecent(uid, name, forget)
+            if forget then return Avatar.removeRecent(uid) end
+            return Avatar.recordRecent(uid, name)
+        end
+
+        local function fetchJson(url, alive)
+            local data, status
+            for attempt = 1, 3 do
+                data, status = Avatar.httpJson(url)
+                if data then return data end
+                local retry = status == nil or status == 429 or (type(status) == "number" and status >= 500)
+                if not retry or (alive and not alive()) then break end
+                task.wait(attempt * 1.5)
+            end
+            return nil, status
+        end
+        function A.isFullOutfit(details)
+            if type(details) ~= "table" then return false end
+            local clothing, worn = 0, 0
+            for _, asset in ipairs(type(details.assets) == "table" and details.assets or {}) do
+                local kind = type(asset) == "table" and asset.assetType or nil
+                local name = string.lower((string.gsub(tostring(type(kind) == "table" and kind.name or kind or ""), "[^%a]", "")))
+                if CLOTHING[name] then clothing = clothing + 1 elseif WORN[name] then worn = worn + 1 end
+            end
+            local styled = false
+            for _, group in ipairs({ details.bodyColors or false, details.bodyColor3s or false, details.scale or false }) do
+                if type(group) == "table" and next(group) ~= nil then styled = true end
+            end
+            return clothing >= 1 or worn >= 2 or (styled and worn >= 1)
+        end
+        do
+            local verdicts, queue, flight, dirty = {}, {}, 0, false
+            function A.verdict(id)
+                local ok = verdicts[id]
+                if ok == nil then
+                    ok = store.classified[tostring(id)]
+                    verdicts[id] = ok
+                end
+                return ok
+            end
+            local function record(id, ok)
+                verdicts[id], store.classified[tostring(id)], dirty = ok, ok, true
+            end
+            local function pump()
+                while flight < MAX_FLIGHT and #queue > 0 do
+                    local item = table.remove(queue, 1)
+                    flight = flight + 1
+                    task.spawn(function()
+                        Util.guard("avatar classify", item.job)
+                        flight = flight - 1
+                        if item.after then Util.guard("avatar classify", item.after) end
+                        pump()
+                    end)
+                end
+            end
+            local function submit(job, after)
+                queue[#queue + 1] = { job = job, after = after }
+                pump()
+            end
+            function A.classify(ids, alive, onVerdict, onIdle)
+                local todo, bad = {}, {}
+                for _, id in ipairs(ids) do
+                    if A.verdict(id) == nil then todo[#todo + 1] = id end
+                end
+                local left = #todo
+                if left == 0 then
+                    if onIdle then onIdle() end
+                    return
+                end
+                local function finish()
+                    left = left - 1
+                    if left > 0 then return end
+                    if dirty then
+                        dirty = false
+                        Avatar.save()
+                    end
+                    if onIdle then onIdle() end
+                end
+                submit(function()
+                    if not alive() then return end
+                    local data = fetchJson("https://thumbnails.roblox.com/v1/users/outfits?size=150x150&format=Png&isCircular=false&userOutfitIds=" .. table.concat(todo, ","), alive)
+                    for _, entry in ipairs(type(data) == "table" and type(data.data) == "table" and data.data or {}) do
+                        local target = type(entry) == "table" and tonumber(entry.targetId) or nil
+                        if target and (entry.state == "Blocked" or entry.state == "Error") then bad[target] = true end
+                    end
+                end, function()
+                    for _, id in ipairs(todo) do
+                        submit(function()
+                            if bad[id] then
+                                record(id, false)
+                                return onVerdict(id, false)
+                            end
+                            if not alive() then return end
+                            local details = fetchJson(string.format("https://avatar.roblox.com/v1/outfits/%d/details", id), alive)
+                            if not details then return onVerdict(id, nil) end
+                            local ok = A.isFullOutfit(details)
+                            record(id, ok)
+                            onVerdict(id, ok)
+                        end, finish)
+                    end
+                end)
+            end
+        end
+        Shim.AvatarAdapter = A
+
+        local function assembleModel(model)
+            local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+            if not root then return end
+            local done, joints = { [root] = true }, {}
+            for _, inst in ipairs(model:GetDescendants()) do
+                if inst:IsA("JointInstance") then joints[#joints + 1] = inst end
+            end
+            local progress, rounds = true, 0
+            while progress and rounds < 40 do
+                progress, rounds = false, rounds + 1
+                for _, joint in ipairs(joints) do
+                    local p0, p1 = joint.Part0, joint.Part1
+                    if p0 and p1 and done[p0] and not done[p1] then
+                        p1.CFrame = p0.CFrame * joint.C0 * joint.C1:Inverse()
+                        done[p1], progress = true, true
+                    elseif p0 and p1 and done[p1] and not done[p0] then
+                        p0.CFrame = p1.CFrame * joint.C1 * joint.C0:Inverse()
+                        done[p0], progress = true, true
+                    end
+                end
+            end
+        end
+        local function render(p)
+            p.stamp = stamp
+            local mark, desc = stamp, Builder.desc
+            if not (p.dummy and desc) then return end
+            for name, prop in pairs(PART_COLOR) do
+                local part = p.dummy.Parts[name]
+                local ok, color = pcall(function() return desc[prop] end)
+                if part and ok and typeof(color) == "Color3" then part.Color = color end
+            end
+            task.delay(0.25, function()
+                if p.stamp ~= mark or Util.unloaded then return end
+                local rig = Builder.rig == "R15" and Enum.HumanoidRigType.R15 or Enum.HumanoidRigType.R6
+                local ok, model = pcall(function() return Players:CreateHumanoidModelFromDescription(desc:Clone(), rig) end)
+                if p.stamp ~= mark or Util.unloaded then
+                    if ok and model then pcall(function() model:Destroy() end) end
+                    return
+                end
+                if p.model then pcall(function() p.model:Destroy() end) end
+                p.model = nil
+                if not (ok and model) then
+                    p.dummy.Model.Parent = p.view.World
+                    return p.dummy:Fit(1.2)
+                end
+                pcall(assembleModel, model)
+                for _, d in ipairs(model:GetDescendants()) do
+                    if d:IsA("BasePart") then
+                        d.Anchored = true
+                    elseif d:IsA("LuaSourceContainer") or d:IsA("Sound") then
+                        pcall(function() d:Destroy() end)
+                    end
+                end
+                p.dummy.Model.Parent = nil
+                model.Parent = p.view.World
+                p.model = model
+                local okBox, cf, size = pcall(function() return model:GetBoundingBox() end)
+                if okBox and cf and size then p.view:Fit({ center = cf.Position, reach = math.max(size.X, size.Y, size.Z) / 2, pad = 1.2 }) end
+            end)
+        end
+
+        local strip
+        local function applyInfo(info)
+            if not info then return say("avatar: pick an avatar first", "warn") end
+            if info.data then return task.spawn(Avatar.applyBuilt, Avatar.deserialize(info.data)) end
+            if info.kind == "outfit" then return task.spawn(Avatar.applyOutfit, info.id) end
+            task.spawn(Avatar.applyUser, tostring(info.uid))
+        end
+        local function editInfo(info)
+            if not info then return say("avatar: pick an avatar first", "warn") end
+            task.spawn(function()
+                if A.edit(info) and strip then pcall(function() strip:Set("builder") end) end
+            end)
+        end
+        local function applyBuilder()
+            if not Builder.desc then return say("avatar: the builder is still loading", "warn") end
+            local ok, copy = pcall(function() return Builder.desc:Clone() end)
+            task.spawn(Avatar.applyBuilt, ok and copy or Builder.desc)
+        end
+        ui.applyInfo, ui.editInfo = applyInfo, editInfo
+
+        function ui.boot()
+            if ui.booted then return end
+            ui.booted = true
+            task.spawn(Avatar.loadMine)
+            ui.runSearch(false)
+        end
+
+        local function wornRows()
+            local out = {}
+            for _, w in ipairs(Avatar.wornItems()) do out[#out + 1] = { key = w.label .. w.id, name = w.label, sub = tostring(w.id), image = thumb("Asset", w.id), worn = w } end
+            return out
+        end
+        local function takeOff(it)
+            Util.guard("avatar remove", Avatar.removeItem, it.worn)
+            Avatar.changed()
+        end
+
+        local function previewCard(page, id, full)
+            local card = page:Card({ name = "preview", id = id, side = "right" })
+            local p = { view = card:Preview({ kind = "avatar" }) }
+            p.stat = card:Stat({ name = "Wearing", default = "loading..." })
+            if full then
+                card:Strip({ flag = "avatar_rig", items = { "R6", "R15" }, default = "R6", small = true, save = false })
+                card:Toggle({ name = "Re-apply on respawn", flag = "avatar_respawn", default = store.reapply ~= false, callback = function(value)
+                    store.reapply = value == true
+                    Avatar.save()
+                end })
+            end
+            p.worn = card:Tiles({ items = {}, mode = "list", empty = "nothing worn", click = takeOff })
+            p.view.SetButtons({ { "Apply", applyBuilder }, { "Reset", Avatar.reset }, { "Mine", function() task.spawn(Avatar.loadMine) end } })
+            if Scene then
+                p.dummy = Scene.Dummy(p.view, { motion = "idle" })
+                p.dummy:Fit(1.2)
+                p.view:Orbit(true, 18)
+                p.view:OnShow(function(on)
+                    if not on then return end
+                    ui.boot()
+                    if p.stamp ~= stamp then render(p) end
+                end)
+            end
+            ui.previews[#ui.previews + 1] = p
+            return p
+        end
+
+        local function buildBuilder(page)
+            local card = page:Card({ name = "avatar", id = "avb", side = "left" })
+            local viewStrip = card:Strip({ flag = "avatar_view", items = { "catalog", "body", "by id" }, small = true, save = false })
+            local views = {}
+            local function show(name, el)
+                views[name] = views[name] or {}
+                table.insert(views[name], el)
+                return el
+            end
+            local function catalogRows()
+                local out = {}
+                for _, e in ipairs(Catalog.entries) do
+                    local price = type(e.price) == "number" and (e.price == 0 and "free" or ("R$ " .. e.price)) or (e.isBundle and "bundle" or "off sale")
+                    out[#out + 1] = { key = e.id, name = e.name, sub = price .. (e.limited and " \194\183 limited" or ""), image = thumb(e.isBundle and "BundleThumbnail" or "Asset", e.id), entry = e }
+                end
+                return out
+            end
+            function ui.runSearch(append)
+                if append and (Catalog.busy or Catalog.finished) then return false end
+                ui.status:Set("searching...")
+                return A.search(append, function(_, err)
+                    if err then
+                        ui.status:Set("search failed")
+                        return say("avatar: catalog search failed: " .. string.sub(err, 1, 120), "warn")
+                    end
+                    ui.catalog:SetItems(catalogRows())
+                    ui.status:Set(#Catalog.entries .. " items" .. (Catalog.finished and "" or ", more available"))
+                end)
+            end
+            local function filters()
+                A.setFilters({ keyword = F("avatar_q") or "", category = F("avatar_cat"), sort = F("avatar_sort"), kind = F("avatar_kind"), onSale = F("avatar_sale"), price = F("avatar_price") or "" })
+                if ui.booted then ui.runSearch(false) end
+            end
+            ui.filters = filters
+            show("catalog", card:Input({ flag = "avatar_q", placeholder = "search the catalog, press enter", save = false, enter = filters }))
+            show("catalog", card:Dropdown({ name = "Category", flag = "avatar_cat", options = Avatar.CATEGORY_NAMES, default = Avatar.CATEGORY_NAMES[1], save = false }))
+            local sorts = {}
+            for index, entry in ipairs(Avatar.SORTS) do sorts[index] = entry[1] end
+            show("catalog", card:Dropdown({ name = "Sort", flag = "avatar_sort", options = sorts, default = sorts[1], save = false }))
+            show("catalog", card:Dropdown({ name = "Kind", flag = "avatar_kind", options = Avatar.KIND_NAMES, default = Avatar.KIND_NAMES[1], save = false }))
+            show("catalog", card:Input({ flag = "avatar_price", placeholder = "price range, e.g. 10-200, press enter", save = false, enter = filters }))
+            show("catalog", card:Toggle({ name = "On sale only", flag = "avatar_sale", save = false }))
+            ui.status = show("catalog", card:Stat({ name = "Results", default = "-" }))
+            ui.catalog = show("catalog", card:Tiles({ items = {}, empty = "no items", click = function(it) A.activate(it.entry) end, isOn = function(it) return Avatar.isWorn(it.key) end }))
+            ui.more = show("catalog", card:Buttons({ items = {
+                { name = "Load more", callback = function() ui.runSearch(true) end },
+                { name = "List view", callback = function()
+                    local list = ui.catalog:Mode() ~= "list"
+                    ui.catalog:SetMode(list and "list" or "grid")
+                    ui.more:SetText(2, list and "Grid view" or "List view")
+                end },
+            } }))
+            Util.changed({ "avatar_cat", "avatar_sort", "avatar_kind", "avatar_sale" }, filters)
+
+            local partNames = {}
+            for index, entry in ipairs(BODY_PARTS) do partNames[index] = entry[1] end
+            local function partProp()
+                for _, entry in ipairs(BODY_PARTS) do
+                    if entry[1] == F("avatar_part") then return entry[2] end
+                end
+                return nil
+            end
+            local swatches = {}
+            for index, h in ipairs(PALETTE) do swatches[index] = { key = h, name = h, color = hex(h) } end
+            show("body", card:Dropdown({ name = "Part", flag = "avatar_part", options = partNames, default = "all parts", save = false }))
+            show("body", card:Tiles({ items = swatches, click = function(it) A.setColor(partProp(), it.color) end }))
+            show("body", card:Color({ name = "Custom colour", flag = "avatar_color", default = "#f5cd30", opaque = true, save = false, callback = function(c) A.setColor(partProp(), c) end }))
+            show("body", card:Button({ name = "Reset colours", callback = Avatar.resetColors }))
+
+            local function wearIds(on)
+                local ids, count = idsIn(F("avatar_ids")), 0
+                if #ids == 0 then return say("avatar: type one or more asset ids", "warn") end
+                if not Builder.desc then return say("avatar: the builder is still loading", "warn") end
+                for _, id in ipairs(ids) do
+                    if on then
+                        local typeName = A.typeOf({ id = id })
+                        local ok, worn = false, nil
+                        if typeName then ok, worn = Util.guard("avatar wear", Avatar.wearAsset, id, typeName, true) end
+                        if ok and worn then count = count + 1 end
+                    else
+                        for _, w in ipairs(Avatar.wornItems()) do
+                            if w.id == id then
+                                Avatar.removeItem(w)
+                                count = count + 1
+                            end
+                        end
+                    end
+                end
+                say(string.format("avatar: %s %d of %d", on and "wearing" or "took off", count, #ids), count > 0 and "ok" or "warn")
+                if count > 0 then Avatar.changed() end
+            end
+            ui.wearIds = wearIds
+            show("by id", card:Input({ flag = "avatar_ids", placeholder = "asset ids, comma separated", save = false, enter = function() task.spawn(wearIds, true) end }))
+            show("by id", card:Buttons({ items = {
+                { name = "Wear", primary = true, callback = function() task.spawn(wearIds, true) end },
+                { name = "Take off", callback = function() wearIds(false) end },
+                { name = "Clear all", callback = function()
+                    for _, w in ipairs(Avatar.wornItems()) do Avatar.removeItem(w) end
+                    Avatar.changed()
+                end },
+            } }))
+            ui.views = views
+            function ui.showView(name)
+                for key, list in pairs(views) do
+                    for _, el in ipairs(list) do el:SetVisible(key == name) end
+                end
+            end
+            viewStrip:OnChanged(ui.showView)
+            ui.showView(viewStrip.Value or "catalog")
+            previewCard(page, "avbp", true)
+            Util.changed("avatar_rig", function(_, value)
+                Builder.rig, Builder.rigSet = value == "R15" and "R15" or "R6", true
+                Avatar.changed()
+            end)
+        end
+
+        local function buildOutfits(page)
+            local oc = page:Card({ name = "outfits", id = "avo", side = "left" })
+            local function outfitRows()
+                local out = {}
+                for index, o in ipairs(store.outfits) do
+                    local data = o.data or {}
+                    local n = #(data.acc or {})
+                    for _ in pairs(data.props or {}) do n = n + 1 end
+                    out[#out + 1] = { key = tostring(index), text = tostring(o.name), meta = tostring(o.rig or "R6") .. " \194\183 " .. n .. " items" }
+                end
+                return out
+            end
+            local function picked()
+                return store.outfits[tonumber(F("avatar_outfit") or "") or 0]
+            end
+            local function refresh() ui.outfits:SetItems(outfitRows()) end
+            ui.refreshOutfits = refresh
+            local function delete()
+                local o = picked()
+                if not o then return say("avatar: pick an outfit first", "warn") end
+                table.remove(store.outfits, tonumber(F("avatar_outfit")))
+                Avatar.save()
+                refresh()
+                say("avatar: deleted " .. tostring(o.name))
+            end
+            ui.outfits = oc:List({ flag = "avatar_outfit", items = outfitRows(), rows = 8, empty = "no saved outfits", save = false,
+                callback = function()
+                    local o = picked()
+                    if o then A.edit({ data = o.data, name = o.name }) end
+                end,
+                activate = function()
+                    local o = picked()
+                    if o then applyInfo({ data = o.data }) end
+                end,
+                menu = function(key)
+                    return {
+                        { text = "apply", callback = function() applyInfo({ data = picked().data }) end },
+                        { text = "rename", callback = function()
+                            ui.outfits:Edit(key, function(text)
+                                local o = store.outfits[tonumber(key)]
+                                if o and text ~= "" then o.name = text end
+                                Avatar.save()
+                                refresh()
+                            end)
+                        end },
+                        { text = "delete", callback = delete },
+                    }
+                end })
+            oc:Input({ flag = "avatar_oname", placeholder = "outfit name", save = false })
+            oc:Buttons({ items = {
+                { name = "Save current", primary = true, callback = function()
+                    if A.saveOutfit(F("avatar_oname") or "") then
+                        Aster:Set("avatar_oname", "", true)
+                        refresh()
+                    end
+                end },
+                { name = "Apply", callback = function()
+                    local o = picked()
+                    if not o then return say("avatar: pick an outfit first", "warn") end
+                    applyInfo({ data = o.data })
+                end },
+                { name = "Delete", callback = delete },
+            } })
+            previewCard(page, "avop", false)
+        end
+
+        local function buildPlayers(page)
+            local function selector(key)
+                return function(it)
+                    if ui[key] == it.key then return applyInfo(it.info) end
+                    ui[key], ui[key .. "Info"] = it.key, it.info
+                end
+            end
+            local function personRow(info)
+                local image = info.kind == "outfit" and thumb("Outfit", info.id) or thumb("Avatar", info.uid)
+                return { key = (info.kind == "outfit" and "o" .. tostring(info.id)) or ("u" .. tostring(info.uid)), name = tostring(info.name), sub = info.kind == "outfit" and "outfit" or "current avatar", image = image, info = info }
+            end
+            local function favRows()
+                local out = {}
+                for _, e in ipairs(store.favorites) do out[#out + 1] = personRow({ kind = e.kind, id = e.id, uid = e.uid, name = e.name or "?" }) end
+                return out
+            end
+            local function recentRows()
+                local out = {}
+                for _, e in ipairs(store.recent) do out[#out + 1] = { key = tostring(e.uid), text = tostring(e.name), meta = tostring(e.uid) } end
+                return out
+            end
+            local function star(it)
+                local on = A.toggleFavorite(it.info)
+                say(on and ("avatar: starred " .. tostring(it.info.name)) or ("avatar: unstarred " .. tostring(it.info.name)))
+                ui.favorites:SetItems(favRows())
+                ui.people:Refresh()
+            end
+            local isFav = function(it) return A.favoriteIndex(it.info) ~= nil end
+
+            local lc = page:Card({ name = "lookup", id = "avl", side = "left" })
+            lc:Input({ flag = "avatar_user", placeholder = "user id, username or profile url", enter = function(v) ui.lookup(v) end })
+            lc:Buttons({ items = {
+                { name = "Look up", primary = true, callback = function() ui.lookup(F("avatar_user") or "") end },
+                { name = "Me", callback = function() ui.loadTarget(LocalPlayer.UserId, LocalPlayer.Name) end },
+            } })
+            lc:Toggle({ name = "Only full avatars", flag = "avatar_full", default = true, save = false })
+            ui.lookStat = lc:Stat({ name = "Outfits", default = "-" })
+            ui.people = lc:Tiles({ items = {}, empty = "look someone up", click = selector("sel"), fav = star, isFav = isFav, isOn = function(it) return ui.sel == it.key end })
+            lc:Buttons({ items = {
+                { name = "Apply", primary = true, callback = function() applyInfo(ui.selInfo) end },
+                { name = "Edit in builder", callback = function() editInfo(ui.selInfo) end },
+                { name = "More", callback = function() ui.more_() end },
+            } })
+            local recent = lc:Section({ name = "recent", key = "avatar.recent", open = true })
+            ui.recent = recent:List({ items = recentRows(), rows = 5, empty = "nobody yet", save = false,
+                activate = function(key, row) ui.loadTarget(tonumber(key), row.text) end,
+                menu = function(key, row)
+                    return {
+                        { text = "look up", callback = function() ui.loadTarget(tonumber(key), row.text) end },
+                        { text = "forget", callback = function()
+                            A.recordRecent(tonumber(key), nil, true)
+                            ui.recent:SetItems(recentRows())
+                        end },
+                    }
+                end })
+
+            local fc = page:Card({ name = "favorites", id = "avf", side = "right" })
+            ui.favorites = fc:Tiles({ items = favRows(), empty = "star a player or outfit to keep it here", click = selector("fav"), fav = star, isFav = isFav, isOn = function(it) return ui.fav == it.key end })
+            fc:Buttons({ items = {
+                { name = "Apply", primary = true, callback = function() applyInfo(ui.favInfo) end },
+                { name = "Edit in builder", callback = function() editInfo(ui.favInfo) end },
+                { name = "Remove", callback = function()
+                    if not ui.favInfo then return say("avatar: pick a favourite first", "warn") end
+                    A.toggleFavorite(ui.favInfo)
+                    ui.fav, ui.favInfo = nil, nil
+                    ui.favorites:SetItems(favRows())
+                    ui.people:Refresh()
+                end },
+            } })
+
+            local function passing(look)
+                local count = 0
+                for index = 1, look.horizon do
+                    if A.verdict(look.all[index].id) == true then count = count + 1 end
+                end
+                return count
+            end
+            local function showLook(look)
+                if not look.alive() then return end
+                local strict = F("avatar_full") ~= false
+                local rows = { look.me }
+                for index = 1, strict and look.horizon or #look.all do
+                    local o = look.all[index]
+                    if not strict or A.verdict(o.id) == true then rows[#rows + 1] = personRow({ kind = "outfit", id = o.id, name = o.name }) end
+                end
+                ui.people:SetItems(rows)
+                ui.keys = {}
+                for index, row in ipairs(rows) do ui.keys[index] = row.key end
+                local text
+                if not strict then
+                    text = look.listing and (#look.all .. " loaded...") or look.note or (#look.all .. " outfits")
+                elseif look.listing and #look.all == 0 then
+                    text = "loading..."
+                elseif look.busy or (look.listing and passing(look) < look.want) then
+                    text = "checking..."
+                else
+                    text = look.note or (passing(look) .. " avatars" .. (look.failed > 0 and (" \194\183 " .. look.failed .. " unchecked") or ""))
+                end
+                ui.lookStat:Set(text)
+            end
+            local function advance(look)
+                if look.alive() and not look.busy and F("avatar_full") ~= false then
+                    local pass, batch = passing(look), {}
+                    while pass < look.want and look.horizon < #look.all and #batch < BATCH do
+                        look.horizon = look.horizon + 1
+                        local id = look.all[look.horizon].id
+                        local verdict = A.verdict(id)
+                        if verdict == nil then batch[#batch + 1] = id elseif verdict then pass = pass + 1 end
+                    end
+                    if #batch > 0 then
+                        look.busy = true
+                        A.classify(batch, look.alive, function(_, ok)
+                            if ok == nil then look.failed = look.failed + 1 elseif ok then showLook(look) end
+                        end, function()
+                            look.busy = false
+                            advance(look)
+                        end)
+                    end
+                end
+                showLook(look)
+            end
+
+            function ui.loadTarget(uid, name)
+                if not uid then return end
+                ui.token = ui.token + 1
+                local token = ui.token
+                ui.sel, ui.selInfo = nil, nil
+                if uid ~= LocalPlayer.UserId then
+                    A.recordRecent(uid, name)
+                    ui.recent:SetItems(recentRows())
+                end
+                local look = { me = personRow({ kind = "user", uid = uid, name = name }), all = {}, horizon = 0, want = PAGE, failed = 0, listing = true, busy = false }
+                look.alive = function() return ui.token == token and not Util.unloaded end
+                ui.look = look
+                showLook(look)
+                task.spawn(function()
+                    local list, state = A.fetchOutfits(uid, function(fresh)
+                        for _, o in ipairs(fresh) do look.all[#look.all + 1] = o end
+                        advance(look)
+                    end, look.alive)
+                    look.listing = false
+                    if not (list and #list > 0) then look.note = noteOf(state) end
+                    advance(look)
+                end)
+            end
+
+            function ui.more_()
+                local look = ui.look
+                if not look then return say("avatar: look someone up first", "warn") end
+                if F("avatar_full") == false then return say("avatar: every outfit is already listed") end
+                if look.horizon >= #look.all and not look.listing then return say("avatar: no more outfits") end
+                look.want = passing(look) + PAGE
+                advance(look)
+            end
+            Util.changed("avatar_full", function()
+                if ui.look then advance(ui.look) end
+            end)
+
+            function ui.lookup(value)
+                value = tostring(value or "")
+                local outfitId = tonumber(string.match(value, "[Oo]utfits?[:%s/=]*(%d+)"))
+                if outfitId then
+                    ui.token, ui.look = ui.token + 1, nil
+                    local row = personRow({ kind = "outfit", id = outfitId, name = "outfit " .. outfitId })
+                    ui.people:SetItems({ row })
+                    ui.keys = { row.key }
+                    ui.sel, ui.selInfo = row.key, row.info
+                    return ui.people:Refresh()
+                end
+                task.spawn(function()
+                    local uid = A.resolveUserId(value)
+                    if not uid then return say("avatar: could not find " .. value, "warn") end
+                    local okName, real = pcall(function() return Players:GetNameFromUserIdAsync(uid) end)
+                    ui.loadTarget(uid, (okName and type(real) == "string" and real ~= "") and real or value)
+                end)
+            end
+            ui.people.Shown:Connect(function(on)
+                if on and not ui.peopleBooted then
+                    ui.peopleBooted = true
+                    ui.loadTarget(LocalPlayer.UserId, LocalPlayer.Name)
+                end
+            end)
+        end
+
+        strip = view:Strip({ flag = "avatar_page", items = { "builder", "outfits", "players" }, default = "builder", small = true, save = false })
+        local BUILD = { builder = buildBuilder, outfits = buildOutfits, players = buildPlayers }
+        view:Variants(strip, function(value, scoped) BUILD[value](scoped) end)
+        ui.strip, ui.page = strip, view
+
+        local listener = function()
+            stamp = stamp + 1
+            local rows = wornRows()
+            for _, p in ipairs(ui.previews) do
+                p.worn:SetItems(rows)
+                p.stat:Set(#rows > 0 and (#rows .. " items \194\183 " .. Builder.rig) or "nothing")
+                if p.view.IsShown and p.view:IsShown() then render(p) end
+            end
+            if ui.catalog then ui.catalog:Refresh() end
+        end
+        Avatar.listeners[#Avatar.listeners + 1] = listener
+        Avatar.ui = ui
+
+        Util.onUnload(function()
+            Catalog.gen = Catalog.gen + 1
+            for _, p in ipairs(ui.previews) do
+                p.stamp = -1
+                if p.model then pcall(function() p.model:Destroy() end) end
+                p.model = nil
+            end
+            if Avatar.ui == ui then Avatar.ui = nil end
+            if Shim.AvatarAdapter == A then Shim.AvatarAdapter = nil end
+        end)
+        return ui
+    end
+end
+bootMark("avatar_page", PL3BootT, 5, 7)
+
+PL3BootT = PL3BootClock()
 PL_init = function(env)
--- pl 00_core 6-11: services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local LocalPlayer = Players.LocalPlayer
--- pl 00_core 15-15: getgenv
 local getgenv = (type(getgenv) == "function" and getgenv) or function() return _G end
--- pl 00_core 17-102: Compat
 local Compat = { has = {}, why = {}, blocked = {} }
 do
     local function fn(...)
@@ -1037,20 +1894,15 @@ do
     why.mouseMove = "needs mousemoverel"
     why.customAsset = "needs getcustomasset"
 end
--- gen: Compat for the shim (Requires)
 env.Compat = Compat
--- pl 00_core 104-106: shared locals
 local Util, UI, Library, Options, Toggles, Pages, Game, Entities, Visible, Draw, Loop
 local ThemeManager, SaveManager, LibWindow, flag, wrapPage, wrapGroup, addBox, escapeUnbinds
 local introPlayed = false
--- gen: from the shim
 Library, Options, Toggles, UI, ThemeManager, SaveManager = env.Library, env.Options, env.Toggles, env.UI, env.ThemeManager, env.SaveManager
--- pl 00_core 108-111: connection list
 if type(getgenv().PL_Connections) == "table" then
     for _, connection in ipairs(getgenv().PL_Connections) do pcall(function() connection:Disconnect() end) end
 end
 getgenv().PL_Connections = {}
--- pl 00_core 116-165: Util base, WHITE / BLACK
 Util = { warned = {}, cleanup = {}, compat = Compat }
 
 function Util.track(connection)
@@ -1101,7 +1953,6 @@ function Util.hook(owner, key, build)
 end
 
 local WHITE, BLACK = Color3.new(1, 1, 1), Color3.new(0, 0, 0)
--- pl 00_core 204-211: unload hook
 Library:OnUnload(function()
     for index = #Util.cleanup, 1, -1 do pcall(Util.cleanup[index]) end
     Util.cleanup = {}
@@ -1110,7 +1961,6 @@ Library:OnUnload(function()
     end
     getgenv().PL_Connections = {}
 end)
--- pl 00_core 213-276: Util.flag .. Util.notify
 function Util.flag(name, default)
     local object = Toggles[name]
     if object == nil then object = Options[name] end
@@ -1175,10 +2025,8 @@ function Util.notify(info)
     pcall(function() Library:Notify(text, info.Duration or 5) end)
     return nil
 end
--- gen: flag hot path from the shim
 if env.patchUtil then env.patchUtil(Util) end
 flag = Util.flag
--- pl 00_core 335-344: escapeUnbinds
 function escapeUnbinds(name, fallback, keepBound)
     local picker = Options[name]
     if not picker then return end
@@ -1189,7 +2037,7 @@ function escapeUnbinds(name, fallback, keepBound)
         end
     end)
 end
--- pl 05_menu 1-155
+if env.yield then env.yield("00_core", 1, 18) end
 
 do
     local PLACEHOLDER = "Not built yet"
@@ -1345,7 +2193,7 @@ do
         return empty
     end
 end
--- pl 10_game 1-581
+if env.yield then env.yield("05_menu", 2, 18) end
 
 do
     local Teams = game:GetService("Teams")
@@ -1927,7 +2775,7 @@ do
         Entities.clear()
     end)
 end
--- pl 15_draw 1-127
+if env.yield then env.yield("10_game", 3, 18) end
 
 do
     Draw = { all = {}, hasApi = (type(Drawing) == "table" or type(Drawing) == "userdata") }
@@ -2055,7 +2903,7 @@ do
         Visible.bodies = setmetatable({}, { __mode = "k" })
     end)
 end
--- pl 20_esp 1-1843
+if env.yield then env.yield("15_draw", 4, 18) end
 
 do
     local ESP = { objects = {}, seen = {}, enemy = {}, team = {}, S = {} }
@@ -3899,7 +4747,7 @@ do
         if page.Local then Util.guard("menu esp local", buildLocal, page.Local) end
     end
 end
--- pl 30_world 1-2500
+if env.yield then env.yield("20_esp", 5, 18) end
 
 local World, DynSky
 
@@ -6400,7 +7248,7 @@ do
     Presets:Dropdown({ Name = "Atmosphere preset", Flag = "world_atmos_preset", Items = ATMOS_ORDER, Default = ATMOS_ORDER[1], Tooltip = "Apply copies the preset into World > Post > Atmosphere and turns it on" })
     Presets:Button({ Name = "Apply atmosphere preset", Callback = function() Util.guard("atmos-preset", World.atmosPreset) end })
 end
--- pl 40_fx 1-2018
+if env.yield then env.yield("30_world", 6, 18) end
 
 local Tracers, Impacts, Feedback, Killcam, Streak, HitCham, HitFx, Corpse, KillFx
 local propGet, propSet, assign, SPARK, SMOKE
@@ -6506,6 +7354,19 @@ do
         return nodes
     end
 
+    Tracers.opacity = 1
+
+    function Tracers.dim(a)
+        return 1 - (1 - a) * Tracers.opacity
+    end
+
+    function Tracers.dimSequence(sequence)
+        if Tracers.opacity >= 1 or typeof(sequence) ~= "NumberSequence" or type(sequence.Keypoints) ~= "table" then return sequence end
+        local keys = {}
+        for index, key in ipairs(sequence.Keypoints) do keys[index] = NumberSequenceKeypoint.new(key.Time, Tracers.dim(key.Value), key.Envelope) end
+        return NumberSequence.new(keys)
+    end
+
     function Tracers.spawn(path, color, hit, speed, mine, timing)
         local presets = Tracers.presets()
         local name = flag("trace_texture", "Lightning")
@@ -6574,12 +7435,12 @@ do
                     beam.Parent = terrain
                     record.beams[#record.beams + 1] = beam
                 end
-                local a0 = preset.Alpha + (1 - preset.Alpha) * fade * t0
-                local a1 = preset.Alpha + (1 - preset.Alpha) * fade * t1
+                local a0 = Tracers.dim(preset.Alpha + (1 - preset.Alpha) * fade * t0)
+                local a1 = Tracers.dim(preset.Alpha + (1 - preset.Alpha) * fade * t1)
                 local sequence = colorRange(t0, t1)
                 if layer then
                     local base = 0.9 - 0.06 * strength
-                    local g0, g1 = base + (1 - base) * fade * t0, base + (1 - base) * fade * t1
+                    local g0, g1 = Tracers.dim(base + (1 - base) * fade * t0), Tracers.dim(base + (1 - base) * fade * t1)
                     local halo = Instance.new("Beam")
                     halo.Name = Util.randomName()
                     halo.LightEmission, halo.LightInfluence, halo.FaceCamera = 1, 0, true
@@ -6698,7 +7559,11 @@ do
         if (item.hitPos - item.origin).Magnitude < 0.5 then return false end
         local hit = (item.part ~= nil or Tracers.probe(item) ~= nil) and item.hitPos or nil
         local timing = Tracers.timing(item.behavior)
-        return Tracers.spawn({ item.origin, item.hitPos }, color, hit, timing and math.huge or Tracers.SPEED, item.mine, timing)
+        Tracers.opacity = Util.opacity(item.mine and "trace_color" or item.team and "trace_team_color" or "trace_enemy_color")
+        local ok, made = pcall(Tracers.spawn, { item.origin, item.hitPos }, color, hit, timing and math.huge or Tracers.SPEED, item.mine, timing)
+        Tracers.opacity = 1
+        if not ok then error(made, 0) end
+        return made
     end
 
     function Tracers.drain(now)
@@ -6866,6 +7731,7 @@ do
             Rotation = NumberRange.new(0, 360), Transparency = Tracers.curve(0, 0, 1, 1),
         }
         for key, value in pairs(props) do base[key] = value end
+        base.Transparency = Tracers.dimSequence(base.Transparency)
         local rate = math.min(base.Rate, caps.rate)
         base.Rate = 0
         local life = base.Lifetime
@@ -6953,6 +7819,7 @@ do
     end
 
     function Tracers.core(rec, ctx, points, width, alpha, tint)
+        alpha = Tracers.dim(alpha)
         local list = {}
         for index = 1, #points - 1 do
             local beam = Tracers.make(rec, "Beam", {
@@ -6968,6 +7835,7 @@ do
     end
 
     function Tracers.fadeOut(rec, list, alpha, from, length)
+        alpha = Tracers.dim(alpha)
         rec.ticks[#rec.ticks + 1] = function(age)
             local k = math.clamp((age - from) / length, 0, 1)
             if k > 0 then
@@ -7085,7 +7953,7 @@ do
         for index = 1, #nodes - 1 do
             local ahead = nodes[index + 1] - nodes[index]
             local t0, t1 = ctx.t[index], ctx.t[index + 1]
-            local a0, a1 = alpha + (1 - alpha) * ctx.fade * t0, alpha + (1 - alpha) * ctx.fade * t1
+            local a0, a1 = Tracers.dim(alpha + (1 - alpha) * ctx.fade * t0), Tracers.dim(alpha + (1 - alpha) * ctx.fade * t1)
             local base = Tracers.point(rec, nodes[index], ahead)
             local tip = Tracers.point(rec, opts.instant and nodes[index + 1] or nodes[index], ahead)
             local beam = Tracers.make(rec, "Beam", {
@@ -7123,6 +7991,7 @@ do
     end
 
     function Tracers.reveal(rec, ctx, list, alpha)
+        alpha = Tracers.dim(alpha)
         local shown = 0
         for _, beam in ipairs(list) do beam.Transparency = NumberSequence.new(1) end
         rec.ticks[#rec.ticks + 1] = function(age)
@@ -7501,7 +8370,7 @@ do
     end
 
     function Tracers.layer(rec, a0, a1)
-        local layer = { list = {}, a0 = a0, a1 = a1 or a0 }
+        local layer = { list = {}, a0 = Tracers.dim(a0), a1 = Tracers.dim(a1 or a0) }
         rec.layers[#rec.layers + 1] = layer
         return layer
     end
@@ -8419,7 +9288,7 @@ do
         return ctx.life
     end
 end
--- pl 41_feedback 1-1208
+if env.yield then env.yield("40_fx", 7, 18) end
 
 do
     Feedback = { at = -10, head = false, numbers = {}, texts = {}, spiral = 0, hooked = {} }
@@ -9628,7 +10497,7 @@ do
 
     Util.onUnload(HitFx.clear)
 end
--- pl 42_killfx 1-2120
+if env.yield then env.yield("41_feedback", 8, 18) end
 
 do
     local Body = { materials = { "ForceField", "Plastic", "SmoothPlastic", "Neon", "Glass", "Metal", "Foil", "DiamondPlate", "CorrodedMetal", "Ice", "Glacier", "Marble", "Granite", "Wood", "Fabric", "Leather", "Rubber", "Sand", "Concrete", "Slate" }, names = {}, textures = {} }
@@ -11749,7 +12618,7 @@ do
     Util.onUnload(KillFx.clear)
     KillFx.Body = Body
 end
--- pl 43_gunsounds 1-168
+if env.yield then env.yield("42_killfx", 9, 18) end
 
 do
     local GunSounds = { applied = setmetatable({}, { __mode = "k" }), nextAt = 0, byTool = {} }
@@ -11918,7 +12787,7 @@ do
     Util.systems = Util.systems or {}
     table.insert(Util.systems, { name = "gun_sounds", fn = GunSounds.step, priority = 130 })
 end
--- pl 45_fx_menu 1-406
+if env.yield then env.yield("43_gunsounds", 10, 18) end
 
 do
     local Effects = Pages.Effects
@@ -12325,7 +13194,7 @@ do
     Util.systems = Util.systems or {}
     table.insert(Util.systems, { name = "fx", fn = step, priority = 120 })
 end
--- pl 50_combat 1-3313
+if env.yield then env.yield("45_fx_menu", 11, 18) end
 
 do
     local Combat = { wants = {}, hits = {} }
@@ -14999,12 +15868,336 @@ do
         return flag("wb_ind_c_block", Color3.fromRGB(255, 80, 80))
     end
 
-    local function showText(text, content, position, size, color)
+    local function showText(text, content, position, size, color, opacity)
         text.Text, text.Size, text.Color, text.Position, text.Visible = content, size, color, position, true
+        text.Transparency = opacity or 1
     end
 
     local function hide(object)
         if object then object.Visible = false end
+    end
+
+    local IK = { names = {}, peak = setmetatable({}, { __mode = "k" }), m = {}, marks = {}, EDGE = 28, TAU = math.pi * 2, GREY = Color3.fromRGB(180, 180, 180) }
+    IK.SHORT = { visible = "V", wallbang = "WB", blocked = "X", none = "-" }
+    IK.STATE_FLAGS = { visible = "wb_ind_c_vis", wallbang = "wb_ind_c_wb", blocked = "wb_ind_c_block" }
+
+    local function newKit() return { canvas = {}, stamp = {}, tick = 0, dirty = false } end
+    IK.reload, IK.ammo, IK.wb = newKit(), newKit(), newKit()
+
+    function IK.begin(kit) kit.tick = kit.tick + 1 end
+
+    function IK.at(kit, owner)
+        local c = kit.canvas[owner]
+        if not c then
+            c = { kit = kit, set = {}, seen = 0 }
+            kit.canvas[owner] = c
+        end
+        c.seen = kit.tick
+        kit.dirty = true
+        return c
+    end
+
+    function IK.sweep(kit)
+        local tick = kit.tick
+        for owner, c in pairs(kit.canvas) do
+            if tick - c.seen > 300 then
+                for _, object in pairs(c.set) do
+                    Draw.remove(object)
+                    kit.stamp[object] = nil
+                end
+                kit.canvas[owner] = nil
+            else
+                for _, object in pairs(c.set) do
+                    if kit.stamp[object] ~= tick then object.Visible = false end
+                end
+            end
+        end
+    end
+
+    function IK.hide(kit)
+        if not kit.dirty then return end
+        kit.dirty = false
+        kit.tick = kit.tick + 1
+        for _, c in pairs(kit.canvas) do
+            for _, object in pairs(c.set) do object.Visible = false end
+        end
+    end
+
+    function IK.n(prefix, index)
+        local list = IK.names[prefix]
+        if not list then
+            list = {}
+            IK.names[prefix] = list
+        end
+        local name = list[index]
+        if not name then
+            name = prefix .. index
+            list[index] = name
+        end
+        return name
+    end
+
+    function IK.width(content, size) return math.floor(#content * size * 0.52 + 0.5) end
+
+    local function put(c, slot, kind, z)
+        local object = c.set[slot]
+        if not object then
+            object = kind == "Text" and Draw.text(13, z) or Draw.new(kind, { ZIndex = z, Filled = true, NumSides = 48, Visible = false })
+            c.set[slot] = object
+        end
+        c.kit.stamp[object] = c.kit.tick
+        return object
+    end
+
+    function IK.text(c, slot, content, position, size, color, opacity, z)
+        local object = put(c, slot, "Text", z)
+        object.Text, object.Size, object.Color, object.Transparency, object.Position, object.Visible = content, size, color, opacity, position, true
+    end
+
+    function IK.rect(c, slot, x, y, w, h, color, opacity, z)
+        local object = put(c, slot, "Square", z)
+        object.Position, object.Size, object.Color, object.Transparency, object.Visible = Vector2.new(x, y), Vector2.new(w, h), color, opacity, true
+    end
+
+    function IK.box(c, slot, x, y, w, h, color, opacity, cut, z)
+        x, y, w, h = math.floor(x + 0.5), math.floor(y + 0.5), math.floor(w + 0.5), math.floor(h + 0.5)
+        if w < 1 or h < 1 then return end
+        cut = math.min(cut, math.floor(w / 2), math.floor(h / 2))
+        if cut < 1 then return IK.rect(c, IK.n(slot, 0), x, y, w, h, color, opacity, z) end
+        IK.rect(c, IK.n(slot, 1), x + cut, y, w - cut * 2, cut, color, opacity, z)
+        IK.rect(c, IK.n(slot, 2), x, y + cut, w, h - cut * 2, color, opacity, z)
+        IK.rect(c, IK.n(slot, 3), x + cut, y + h - cut, w - cut * 2, cut, color, opacity, z)
+    end
+
+    function IK.line(c, slot, from, to, thickness, color, opacity, z)
+        local object = put(c, slot, "Line", z)
+        object.From, object.To, object.Thickness, object.Color, object.Transparency, object.Visible = from, to, thickness, color, opacity, true
+    end
+
+    function IK.circle(c, slot, center, radius, color, opacity, filled, thickness, z)
+        local object = put(c, slot, "Circle", z)
+        object.Position, object.Radius, object.Filled, object.Thickness, object.Color, object.Transparency, object.Visible = center, radius, filled, thickness, color, opacity, true
+    end
+
+    function IK.tri(c, slot, a, b, d, color, opacity, z)
+        local object = put(c, slot, "Triangle", z)
+        object.PointA, object.PointB, object.PointC, object.Color, object.Transparency, object.Visible = a, b, d, color, opacity, true
+    end
+
+    function IK.arc(c, slot, center, radius, a0, a1, thickness, color, opacity, z)
+        local step = IK.TAU / 32
+        local count = math.ceil((a1 - a0) / step - 1e-6)
+        for index = 1, count do
+            local from, to = a0 + step * (index - 1), math.min(a0 + step * index, a1)
+            IK.line(c, IK.n(slot, index),
+                Vector2.new(center.X + math.cos(from) * radius, center.Y + math.sin(from) * radius),
+                Vector2.new(center.X + math.cos(to) * radius, center.Y + math.sin(to) * radius), thickness, color, opacity, z)
+        end
+    end
+
+    function IK.stateOpacity(state)
+        local name = IK.STATE_FLAGS[state]
+        return name and Util.opacity(name) or 1
+    end
+
+    function IK.ammoColor(serverAmmo, mismatch, maxAmmo)
+        local name, color
+        if serverAmmo <= 0 then name, color = "ammo_ind_c_empty", Color3.fromRGB(255, 80, 80)
+        elseif mismatch or (type(maxAmmo) == "number" and maxAmmo > 0 and serverAmmo / maxAmmo <= 0.25) then name, color = "ammo_ind_c_diff", Color3.fromRGB(255, 200, 60)
+        else name, color = "ammo_ind_c_ok", WHITE end
+        return flag(name, color), Util.opacity(name)
+    end
+
+    function IK.reloadStyled(style, progress, left)
+        local kit = IK.reload
+        IK.begin(kit)
+        local c = IK.at(kit, kit)
+        local width, height = flag("reload_ind_w", 120), flag("reload_ind_h", 6)
+        local ref = Combat.aimRef()
+        local y = ref.Y + flag("reload_ind_y", 40)
+        local back, backOpacity = flag("reload_ind_back", BLACK), Util.opacity("reload_ind_back")
+        local fill, fillOpacity = flag("reload_ind_fill", WHITE), Util.opacity("reload_ind_fill")
+        if flag("reload_ind_grad", true) then fill = Util.lerpColor(Color3.fromRGB(255, 90, 90), fill, progress) end
+        local secs = string.format("%.1fs", math.max(left, 0))
+        local timed = flag("reload_ind_text", true)
+        local thick = math.max(math.floor(height / 2), 2)
+        if style == "Pill" then
+            local h = math.max(height * 2 + 6, 18)
+            local x = ref.X - width / 2
+            IK.box(c, "back", x - 1, y - 1, width + 2, h + 2, back, backOpacity, math.floor(h / 3), 6)
+            IK.box(c, "fill", x, y, width * progress, h, fill, fillOpacity, math.floor(h / 3), 7)
+            IK.text(c, "label", timed and ("reloading " .. secs) or "reloading", Vector2.new(ref.X, y + h / 2 - 7), 13, WHITE, 1, 8)
+        elseif style == "Ring" then
+            local r = math.max(math.floor(width / 5), 9)
+            local center = Vector2.new(ref.X, y + r)
+            IK.circle(c, "track", center, r, back, backOpacity, false, thick, 6)
+            IK.arc(c, "arc", center, r, -math.pi / 2, -math.pi / 2 + IK.TAU * progress, thick, fill, fillOpacity, 7)
+            if timed then IK.text(c, "label", secs, Vector2.new(center.X, center.Y - 7), 13, WHITE, 1, 8) end
+        elseif style == "Crosshair arc" then
+            local r = math.max(math.floor(width / 4), 14)
+            local a0, span = math.rad(135), math.rad(270)
+            IK.arc(c, "track", ref, r, a0, a0 + span, thick, back, backOpacity, 6)
+            IK.arc(c, "arc", ref, r, a0, a0 + span * progress, thick, fill, fillOpacity, 7)
+            if timed then IK.text(c, "label", secs, Vector2.new(ref.X, ref.Y + r + 4), 13, WHITE, 1, 8) end
+        else
+            IK.text(c, "label", timed and ("reloading " .. secs) or "reloading", Vector2.new(ref.X, y), 14, fill, fillOpacity, 8)
+        end
+        IK.sweep(kit)
+    end
+
+    function IK.ammoStyled(style, tool, serverAmmo, localAmmo, maxAmmo, stored, color, opacity)
+        local kit = IK.ammo
+        IK.begin(kit)
+        local c = IK.at(kit, kit)
+        local size = flag("ammo_ind_size", 16)
+        local ref = Combat.aimRef()
+        local y = ref.Y + flag("ammo_ind_y", 70)
+        local cap = type(maxAmmo) == "number" and maxAmmo > 0 and maxAmmo or math.max(IK.peak[tool] or 0, serverAmmo)
+        if not (type(maxAmmo) == "number" and maxAmmo > 0) then IK.peak[tool] = cap end
+        cap = math.max(cap, 1)
+        local frac = math.clamp(serverAmmo / cap, 0, 1)
+        local counts = tostring(serverAmmo)
+        if type(stored) == "number" then counts = counts .. " | " .. tostring(stored) elseif type(maxAmmo) == "number" then counts = counts .. "/" .. tostring(maxAmmo) end
+        if flag("ammo_ind_local", false) and type(localAmmo) == "number" then counts = counts .. "  (local " .. tostring(localAmmo) .. ")" end
+        local name = flag("ammo_ind_name", true) and tool.Name or nil
+        local line = name and (name .. "  " .. counts) or counts
+        local small = math.max(size - 3, 10)
+        if style == "Bar" then
+            local w, h = math.floor(size * 8), math.max(math.floor(size / 3), 4)
+            local x = ref.X - w / 2
+            IK.rect(c, "back", x - 1, y - 1, w + 2, h + 2, BLACK, 0.55, 6)
+            IK.rect(c, "fill", x, y, w * frac, h, color, opacity, 7)
+            IK.text(c, "label", line, Vector2.new(ref.X, y + h + 3), small, color, opacity, 8)
+        elseif style == "Pips" then
+            local count = math.clamp(math.floor(cap), 1, 20)
+            local lit = serverAmmo > 0 and math.ceil(serverAmmo / cap * count - 1e-6) or 0
+            local s = math.clamp(math.floor(size / 2.2), 5, 12)
+            local h = math.floor(s * 1.7)
+            local x0 = ref.X - (count * s + (count - 1) * 2) / 2
+            for index = 1, count do
+                IK.rect(c, IK.n("pip", index), x0 + (index - 1) * (s + 2), y, s, h, color, index <= lit and opacity or opacity * 0.2, 7)
+            end
+            IK.text(c, "label", line, Vector2.new(ref.X, y + h + 3), small, color, opacity, 8)
+        elseif style == "Ring" then
+            local r = math.floor(size * 1.2)
+            local thick = math.max(math.floor(size / 5), 2)
+            local center = Vector2.new(ref.X, y + r)
+            IK.circle(c, "track", center, r, BLACK, 0.55, false, thick, 6)
+            IK.arc(c, "arc", center, r, -math.pi / 2, -math.pi / 2 + IK.TAU * frac, thick, color, opacity, 7)
+            IK.text(c, "num", tostring(serverAmmo), Vector2.new(center.X, center.Y - size / 2 - 1), size, color, opacity, 8)
+            if name then IK.text(c, "name", name, Vector2.new(center.X, center.Y + r + 3), small, color, opacity, 8) end
+        else
+            local r = 44 + math.floor((size - 16) / 2)
+            local a0, span = math.rad(-50), math.rad(100)
+            local number = tostring(serverAmmo)
+            IK.arc(c, "track", ref, r, a0, a0 + span, 3, BLACK, 0.55, 6)
+            IK.arc(c, "arc", ref, r, a0, a0 + span * frac, 3, color, opacity, 7)
+            IK.text(c, "num", number, Vector2.new(ref.X + r + 8 + IK.width(number, size) / 2, ref.Y - size / 2 - 1), size, color, opacity, 8)
+            if name then IK.text(c, "name", name, Vector2.new(ref.X + r + 8 + IK.width(name, small) / 2, ref.Y + size / 2 + 1), small, color, opacity, 8) end
+        end
+        IK.sweep(kit)
+    end
+
+    function IK.edge(m)
+        local cx, cy, e = m.pw / 2, m.ph / 2, IK.EDGE
+        local dx, dy = m.screen.X - cx, m.screen.Y - cy
+        if not m.onScreen then dx, dy = -dx, -dy end
+        if m.onScreen and math.abs(dx) <= cx - e and math.abs(dy) <= cy - e then
+            m.ex, m.ey, m.pinned, m.ux, m.uy = m.screen.X, m.screen.Y, false, 0, 1
+            return
+        end
+        local len = math.sqrt(dx * dx + dy * dy)
+        if len < 1e-3 then dx, dy, len = 0, -1, 1 end
+        local k = math.min((cx - e) / math.max(math.abs(dx), 1e-3), (cy - e) / math.max(math.abs(dy), 1e-3))
+        m.ex, m.ey, m.pinned, m.ux, m.uy = cx + dx * k, cy + dy * k, true, dx / len, dy / len
+    end
+
+    IK.marks.Pill = function(m)
+        local w, h = IK.width(m.label, m.size) + 14, m.size + 8
+        local x = m.cursor and m.x or m.x - w / 2
+        IK.box(m.c, "pill", x, m.y - h / 2, w, h, m.color, m.opacity * 0.9, math.floor(h / 3), 6)
+        IK.text(m.c, "label", m.label, Vector2.new(x + w / 2, m.y - m.size / 2 - 1), m.size, WHITE, 1, 8)
+    end
+
+    IK.marks["Dot + line"] = function(m)
+        local c, p, size = m.c, m.screen, m.size
+        if m.line and m.cursor then IK.line(c, "line", m.ref, p, 1, m.color, m.opacity * 0.7, 5) end
+        IK.circle(c, "halo", p, 6, BLACK, 0.6, true, 1, 6)
+        IK.circle(c, "dot", p, 4, m.color, m.opacity, true, 1, 7)
+        local at = m.cursor and Vector2.new(p.X + 12 + IK.width(m.label, size) / 2, p.Y - size / 2 - 1) or Vector2.new(p.X, p.Y - size - 12)
+        IK.text(c, "label", m.label, at, size, m.color, m.opacity, 8)
+    end
+
+    IK.marks.Badge = function(m)
+        local w, h = math.max(IK.width(m.short, m.size) + 10, m.size + 8), m.size + 6
+        local x = m.cursor and m.x or m.x - w / 2
+        IK.box(m.c, "badge", x, m.y - h / 2, w, h, m.color, m.opacity * 0.92, 2, 6)
+        IK.text(m.c, "label", m.short, Vector2.new(x + w / 2, m.y - m.size / 2 - 1), m.size, WHITE, 1, 8)
+    end
+
+    IK.marks["Edge marker"] = function(m)
+        local c, size = m.c, m.size
+        if m.cursor then
+            local x, y = m.x, m.y
+            IK.tri(c, "arrow", Vector2.new(x, y), Vector2.new(x + 9, y - 5), Vector2.new(x + 9, y + 5), m.color, m.opacity, 7)
+            IK.text(c, "label", m.label, Vector2.new(x + 13 + IK.width(m.label, size) / 2, y - size / 2 - 1), size, m.color, m.opacity, 8)
+        elseif m.pinned then
+            local x, y, ux, uy = m.ex, m.ey, m.ux, m.uy
+            IK.tri(c, "arrow", Vector2.new(x + ux * 9, y + uy * 9), Vector2.new(x - ux * 3 - uy * 6, y - uy * 3 + ux * 6), Vector2.new(x - ux * 3 + uy * 6, y - uy * 3 - ux * 6), m.color, m.opacity, 7)
+            IK.text(c, "label", m.short, Vector2.new(x - ux * 16, y - uy * 16 - size / 2 - 1), size, m.color, m.opacity, 8)
+        else
+            local x, y = m.ex, m.ey - 6
+            IK.tri(c, "arrow", Vector2.new(x, y), Vector2.new(x - 5, y - 8), Vector2.new(x + 5, y - 8), m.color, m.opacity, 7)
+            IK.text(c, "label", m.short, Vector2.new(x, y - 10 - size), size, m.color, m.opacity, 8)
+        end
+    end
+
+    function IK.mark(kit, style, owner, state, label, cursor)
+        local m = IK.m
+        m.c, m.label, m.short, m.cursor, m.line = IK.at(kit, owner), label, IK.SHORT[state], cursor, state ~= "none"
+        if IK.STATE_FLAGS[state] then m.color, m.opacity = stateColor(state), IK.stateOpacity(state) else m.color, m.opacity = IK.GREY, 1 end
+        if cursor then
+            m.x, m.y = m.ref.X + 22, m.ref.Y + 14 + m.size / 2
+        else
+            m.x, m.y = m.screen.X, m.screen.Y - m.size * 1.7
+        end
+        IK.marks[style](m)
+    end
+
+    function IK.wallbang(style, now, records, cam, root, origin, size, range, everyone, ref)
+        local kit = IK.wb
+        IK.begin(kit)
+        local m = IK.m
+        local port = cam.ViewportSize
+        m.pw, m.ph, m.size, m.ref = port.X, port.Y, size, ref
+        local edge = style == "Edge marker"
+        local best, bestD, bestScreen
+        for _, record in ipairs(records) do
+            if record.head and Game.relations[record.player.UserId] ~= "Friendly" and (record.root.Position - root.Position).Magnitude <= range then
+                local screen, onScreen = Draw.project(cam, record.head.Position)
+                m.screen, m.onScreen = screen, onScreen
+                if edge then IK.edge(m) end
+                if onScreen then
+                    local d = (screen - ref).Magnitude
+                    if not bestD or d < bestD then best, bestD, bestScreen = record, d, screen end
+                end
+                if (everyone and (onScreen or edge)) or (edge and m.pinned) then
+                    local state = Ind.stateOf(record, origin, now, false)
+                    IK.mark(kit, style, record.player, state, IND_LABELS[state], false)
+                end
+            end
+        end
+        if flag("wb_ind_cursor", true) then
+            if best and bestD <= 250 then
+                local state = Ind.stateOf(best, origin, now, true)
+                m.screen, m.onScreen = bestScreen, true
+                IK.mark(kit, style, kit, state, IND_LABELS[state] .. "  " .. Combat.displayName(best.player), true)
+            elseif flag("wb_ind_always", false) then
+                m.screen, m.onScreen = ref, true
+                IK.mark(kit, style, kit, "none", "no target", true)
+            end
+        end
+        IK.sweep(kit)
     end
 
     function Ind.stateOf(record, origin, now, force)
@@ -15021,6 +16214,7 @@ do
         local cam = Game.camera()
         local _, _, root, eye = Combat.localParts()
         if not flag("wb_ind", false) or not cam or not root then
+            IK.hide(IK.wb)
             hide(Ind.cursor)
             for _, text in pairs(Ind.pool) do text.Visible = false end
             return
@@ -15031,6 +16225,13 @@ do
         local everyone = flag("wb_ind_all", false)
         local ref = Combat.aimRef()
         Ind.budget = 3
+        local style = flag("wb_ind_style", "Text")
+        if style ~= "Text" then
+            hide(Ind.cursor)
+            for _, text in pairs(Ind.pool) do text.Visible = false end
+            return IK.wallbang(style, now, records, cam, root, origin, size, range, everyone, ref)
+        end
+        IK.hide(IK.wb)
         local used, best, bestD = {}, nil, nil
         for _, record in ipairs(records) do
             if record.head and Game.relations[record.player.UserId] ~= "Friendly" and (record.root.Position - root.Position).Magnitude <= range then
@@ -15042,7 +16243,7 @@ do
                         local state = Ind.stateOf(record, origin, now, false)
                         local text = Ind.pool[record.player] or Draw.text(size, 7)
                         Ind.pool[record.player] = text
-                        showText(text, IND_LABELS[state], Vector2.new(screen.X, screen.Y - size * 2.2), size, stateColor(state))
+                        showText(text, IND_LABELS[state], Vector2.new(screen.X, screen.Y - size * 2.2), size, stateColor(state), IK.stateOpacity(state))
                         used[record.player] = true
                     end
                 end
@@ -15062,7 +16263,7 @@ do
         local at = Vector2.new(ref.X + 24, ref.Y + 14)
         if best and bestD <= 250 then
             local state = Ind.stateOf(best, origin, now, true)
-            showText(Ind.cursor, IND_LABELS[state] .. "  " .. Combat.displayName(best.player), at, size, stateColor(state))
+            showText(Ind.cursor, IND_LABELS[state] .. "  " .. Combat.displayName(best.player), at, size, stateColor(state), IK.stateOpacity(state))
         elseif flag("wb_ind_always", false) then
             showText(Ind.cursor, "no target", at, size, Color3.fromRGB(180, 180, 180))
         else
@@ -15074,6 +16275,7 @@ do
         local tool = Combat.gun()
         local session = tool and tool:GetAttribute("Local_ReloadSession")
         if not flag("reload_ind", false) or type(session) ~= "number" or session <= 0 then
+            IK.hide(IK.reload)
             hide(Ind.back)
             hide(Ind.fill)
             hide(Ind.label)
@@ -15083,6 +16285,14 @@ do
         local duration = math.max(tonumber(info.ReloadTime) or RELOAD_FALLBACK[tool.Name] or 2.5, 0.1)
         local elapsed = (tick and tick() or os.time()) - session
         local progress = math.clamp(elapsed / duration, 0, 1)
+        local style = flag("reload_ind_style", "Bar")
+        if style ~= "Bar" then
+            hide(Ind.back)
+            hide(Ind.fill)
+            hide(Ind.label)
+            return IK.reloadStyled(style, progress, duration - elapsed)
+        end
+        IK.hide(IK.reload)
         local width, height = flag("reload_ind_w", 120), flag("reload_ind_h", 6)
         local ref = Combat.aimRef()
         local x, y = ref.X - width / 2, ref.Y + flag("reload_ind_y", 40)
@@ -15105,7 +16315,10 @@ do
     function Ind.ammo()
         local tool = Combat.gun()
         local serverAmmo = tool and tool:GetAttribute("CurrentAmmo")
-        if not flag("ammo_ind", false) or type(serverAmmo) ~= "number" then return hide(Ind.ammoLabel) end
+        if not flag("ammo_ind", false) or type(serverAmmo) ~= "number" then
+            IK.hide(IK.ammo)
+            return hide(Ind.ammoLabel)
+        end
         local localAmmo = tool:GetAttribute("Local_CurrentAmmo")
         local maxAmmo, stored = tool:GetAttribute("MaxAmmo"), tool:GetAttribute("StoredAmmo")
         local text = tostring(serverAmmo)
@@ -15113,14 +16326,16 @@ do
         local mismatch = type(localAmmo) == "number" and localAmmo ~= serverAmmo
         if flag("ammo_ind_local", false) and type(localAmmo) == "number" then text = text .. "  (local " .. tostring(localAmmo) .. ")" end
         if flag("ammo_ind_name", true) then text = tool.Name .. "  " .. text end
-        local color
-        if serverAmmo <= 0 then color = flag("ammo_ind_c_empty", Color3.fromRGB(255, 80, 80))
-        elseif mismatch then color = flag("ammo_ind_c_diff", Color3.fromRGB(255, 200, 60))
-        elseif type(maxAmmo) == "number" and maxAmmo > 0 and serverAmmo / maxAmmo <= 0.25 then color = flag("ammo_ind_c_diff", Color3.fromRGB(255, 200, 60))
-        else color = flag("ammo_ind_c_ok", WHITE) end
+        local color, alpha = IK.ammoColor(serverAmmo, mismatch, maxAmmo)
+        local style = flag("ammo_ind_style", "Text")
+        if style ~= "Text" then
+            hide(Ind.ammoLabel)
+            return IK.ammoStyled(style, tool, serverAmmo, localAmmo, maxAmmo, stored, color, alpha)
+        end
+        IK.hide(IK.ammo)
         Ind.ammoLabel = Ind.ammoLabel or Draw.text(16, 8)
         local ref = Combat.aimRef()
-        showText(Ind.ammoLabel, text, Vector2.new(ref.X, ref.Y + flag("ammo_ind_y", 70)), flag("ammo_ind_size", 16), color)
+        showText(Ind.ammoLabel, text, Vector2.new(ref.X, ref.Y + flag("ammo_ind_y", 70)), flag("ammo_ind_size", 16), color, alpha)
     end
 
     function Ind.step(_, now, records)
@@ -15585,6 +16800,7 @@ do
         Orb:Toggle({ Name = "Show orbit ring", Flag = "orbit_ring" }):Colorpicker({ Name = "Ring", Flag = "orbit_ring_color", Default = Color3.fromRGB(180, 120, 255), Alpha = 0.3 })
 
         local WbInd = Indic:Toggle({ Name = "Wallbang indicator", Flag = "wb_ind", Tooltip = "Visible / wallbangable / blocked for the player nearest your cursor" }):Settings("Wallbang indicator", 230)
+        WbInd:Dropdown({ Name = "Style", Flag = "wb_ind_style", Items = { "Text", "Pill", "Dot + line", "Badge", "Edge marker" }, Default = "Text", Tooltip = "Pill and Badge are coloured tags, Dot + line puts a dot on the head and a line from the crosshair, Edge marker also points at players off screen" })
         WbInd:Toggle({ Name = "At cursor", Flag = "wb_ind_cursor", Default = true })
         WbInd:Toggle({ Name = "Above every player", Flag = "wb_ind_all" })
         WbInd:Toggle({ Name = "Show without target", Flag = "wb_ind_always" })
@@ -15594,6 +16810,7 @@ do
         pickColor(WbInd, "Wallbangable", "wb_ind_c_wb", Color3.fromRGB(255, 200, 60))
         pickColor(WbInd, "Blocked", "wb_ind_c_block", Color3.fromRGB(255, 80, 80))
         local Reload = Indic:Toggle({ Name = "Reload bar", Flag = "reload_ind" }):Settings("Reload bar", 220)
+        Reload:Dropdown({ Name = "Style", Flag = "reload_ind_style", Items = { "Bar", "Ring", "Pill", "Minimal text", "Crosshair arc" }, Default = "Bar", Tooltip = "Ring and Crosshair arc take their size from Width, thickness from Height; Ring and Minimal text sit at the Offset" })
         Reload:Slider({ Name = "Width", Flag = "reload_ind_w", Min = 40, Max = 400, Default = 120, Decimals = 1, Suffix = " px" })
         Reload:Slider({ Name = "Height", Flag = "reload_ind_h", Min = 2, Max = 20, Default = 6, Decimals = 1, Suffix = " px" })
         Reload:Slider({ Name = "Offset", Flag = "reload_ind_y", Min = -300, Max = 300, Default = 40, Decimals = 1, Suffix = " px" })
@@ -15602,6 +16819,7 @@ do
         pickColor(Reload, "Fill", "reload_ind_fill", WHITE, 0)
         pickColor(Reload, "Background", "reload_ind_back", BLACK, 0.5)
         local Ammo = Indic:Toggle({ Name = "Ammo counter", Flag = "ammo_ind", Tooltip = "Server ammo with the client count when they differ" }):Settings("Ammo counter", 220)
+        Ammo:Dropdown({ Name = "Style", Flag = "ammo_ind_style", Items = { "Text", "Bar", "Pips", "Ring", "Crosshair arc" }, Default = "Text", Tooltip = "Pips draw one per round (up to 20), Crosshair arc sits on the right of the crosshair and ignores the Offset" })
         Ammo:Toggle({ Name = "Weapon name", Flag = "ammo_ind_name", Default = true })
         Ammo:Toggle({ Name = "Show local count", Flag = "ammo_ind_local" })
         Ammo:Slider({ Name = "Text size", Flag = "ammo_ind_size", Min = 10, Max = 28, Default = 16, Decimals = 1, Suffix = " px" })
@@ -15639,7 +16857,7 @@ do
     local players = Pages and Pages.Players and Pages.Players.Main
     if players and players["Target info"] then Util.guard("menu target info", buildTargetInfo, players["Target info"]) end
 end
--- pl 60_player 1-901
+if env.yield then env.yield("50_combat", 12, 18) end
 
 do
     local Player = {
@@ -16541,7 +17759,7 @@ do
         if Util.player == Player then Util.player = nil end
     end)
 end
--- pl 65_misc_combat 1-281
+if env.yield then env.yield("60_player", 13, 18) end
 
 do
     local MC = { active = {}, acc = { melee = 0, arrest = 0, taze = 0 }, arrestUntil = 0, cooldown = 0, job = nil, warned = false, tasedUntil = 0, lastSpeed = 16, lastJump = 7.2 }
@@ -16823,7 +18041,7 @@ do
         if Util.miscCombat == MC then Util.miscCombat = nil end
     end)
 end
--- pl 70_map 1-1264
+if env.yield then env.yield("65_misc_combat", 14, 18) end
 
 do
     local Map = { givers = {}, giversAt = -math.huge, queue = {}, job = nil, listed = {}, names = {}, listSig = nil, listAt = 0, infoAt = 0, seats = {}, orbit = { cars = {}, list = {}, angle = 0, scanAt = 0 }, spectating = false, syncing = false, hopping = false }
@@ -18088,7 +19306,7 @@ do
         if Util.map == Map then Util.map = nil end
     end)
 end
--- pl 80_avatar 1-2417
+if env.yield then env.yield("70_map", 15, 18) end
 
 do
     local HttpService = game:GetService("HttpService")
@@ -18101,7 +19319,8 @@ do
 
     local HEADLESS_IDS = { [15093053680] = true, [134082579] = true, [4562128874] = true }
     local KORBLOX_LEFT, KORBLOX_RIGHT = 139607673, 139607718
-    local STORE_PATH = "Aster/spoofer.json"
+    local STORE_PATH = "AsterV2/games/prison life/avatar.json"
+    local OLD_STORE_PATH = "Aster/spoofer.json"
 
     local function notify(message)
         pcall(function() Library:Notify(message, 4) end)
@@ -18807,7 +20026,10 @@ do
     local store = Avatar.store
     do
         local ok, data = pcall(function()
-            if isfile and readfile and isfile(STORE_PATH) then return HttpService:JSONDecode(readfile(STORE_PATH)) end
+            if isfile and readfile then
+                if isfile(STORE_PATH) then return HttpService:JSONDecode(readfile(STORE_PATH)) end
+                if isfile(OLD_STORE_PATH) then return HttpService:JSONDecode(readfile(OLD_STORE_PATH)) end
+            end
         end)
         if ok and type(data) == "table" then
             if type(data.recent) == "table" then store.recent = data.recent end
@@ -18815,13 +20037,18 @@ do
             if type(data.outfits) == "table" then store.outfits = data.outfits end
             if data.reapply ~= nil then store.reapply = data.reapply end
             if type(data.proxy) == "string" then store.proxy = data.proxy end
+            if type(data.classified) == "table" then store.classified = data.classified end
         end
     end
 
     function Avatar.save()
         if not writefile then return end
         pcall(function()
-            if makefolder and isfolder and not isfolder("Aster") then makefolder("Aster") end
+            if makefolder and isfolder then
+                for _, folder in ipairs({ "AsterV2", "AsterV2/games", "AsterV2/games/prison life" }) do
+                    if not isfolder(folder) then makefolder(folder) end
+                end
+            end
             writefile(STORE_PATH, HttpService:JSONEncode(store))
         end)
     end
@@ -20506,7 +21733,7 @@ do
 
     Util.avatar = Avatar
 end
--- pl 85_effects 1-941
+if env.yield then env.yield("80_avatar", 16, 18) end
 
 do
     local HttpService = game:GetService("HttpService")
@@ -21448,7 +22675,7 @@ do
     Util.systems = Util.systems or {}
     table.insert(Util.systems, { name = "fx_preview", fn = Preview.step, priority = 150 })
 end
--- pl 99_loop 2-74: Loop
+if env.yield then env.yield("85_effects", 17, 18) end
 do
     Loop = { last = os.clock(), frames = 0, fpsAt = os.clock(), fps = 60, systems = {}, records = {} }
 
@@ -21522,24 +22749,29 @@ do
         if getgenv().Library == Library then getgenv().Library = nil end
     end)
 end
--- pl 99_loop 195-195: Pages.finalize
 Pages.finalize()
--- pl 99_loop 203-208: AsterPL export
 getgenv().AsterPL = {
     Game = Game, Entities = Entities, Loop = Loop, Pages = Pages, Util = Util, UI = UI,
     World = World, Fx = Util.fx, Combat = Util.combat, Map = Util.map, Player = Util.player,
     Avatar = Util.avatar, EffectsPreview = Util.effectsPreview, Visuals = Util.visuals,
 }
 Util.onUnload(function() getgenv().AsterPL = nil end)
+if env.yield then env.yield("99_loop", 18, 18) end
 end
-bootMark("pl", PL3BootT, 4, 5)
+bootMark("pl", PL3BootT, 6, 7)
 
 PL3BootT = PL3BootClock()
--- [src] 99_tail.lua
 do
-    -- the pl modules, unchanged, on the shim; if they fail the menu and the settings keep working
     Util.stage("pl modules", 0.4)
     local started = clock()
+    local lastYield = started
+    function Shim.yield(label, index, total)
+        Util.stage("pl modules: " .. label, 0.4 + 0.44 * index / total)
+        if clock() - lastYield >= 0.02 then
+            breathe()
+            lastYield = clock()
+        end
+    end
     local ok, err = xpcall(PL_init, function(problem) return debug.traceback(tostring(problem), 2) end, Shim)
     Boot.marks[#Boot.marks + 1] = { "pl init", (clock() - started) * 1000 }
     if not ok then
@@ -21547,12 +22779,50 @@ do
         Util.notify("pl modules failed to load, the rest keeps working: " .. string.sub(tostring(err), 1, 160), "warn", 8)
     end
 
+    if ok then Util.guard("avatar page", Shim.buildAvatar, env.AsterPL) end
+
+    Util.stage("importing pl configs", 0.86)
+    Util.guard("pl config import", Shim.Import.first)
+
     Util.stage("building settings", 0.88)
-    local players = {}
-    local export = env.AsterPL
-    if type(export) == "table" and type(export.Avatar) == "table" and type(export.Avatar.copy) == "function" then players.copyAvatar = export.Avatar.copy end
+    Util.guard("players bridge", function()
+        local PL = env.AsterPL
+        local relations = Aster._ and Aster._.Kinds and Aster._.Kinds.players
+        local Map = type(PL) == "table" and PL.Map or nil
+        if not (relations and type(relations.SetRelation) == "function" and type(relations.Relations) == "table" and Map and type(PL.Game) == "table" and type(PL.Game.relations) == "table") then return end
+        local TO_PL = { friend = "Friendly", target = "Priority", ignore = "Friendly" }
+        local TO_LIB = { Friendly = "friend", Priority = "target" }
+        local function pull(player)
+            local mark = TO_PL[relations.Relations[player.Name]]
+            if mark and PL.Game.relations[player.UserId] == nil then PL.Game.relations[player.UserId] = mark end
+        end
+        for _, player in ipairs(Players:GetPlayers()) do pull(player) end
+        Util.track(Players.PlayerAdded:Connect(pull))
+        local option = Shim.Options.pl_relation
+        if option then
+            option:OnChanged(function(value)
+                local player = not Map.syncing and Map.selectedPlayer() or nil
+                if player then relations.SetRelation(player.Name, TO_LIB[value] or "none") end
+            end)
+        end
+        local box = Pages.sections["Players/Main/Selected player"]
+        if box and type(PL.Avatar) == "table" and type(PL.Avatar.applyUser) == "function" then
+            box:Button({ Name = "Copy avatar", Callback = function()
+                local player = Map.selectedPlayer()
+                if player then task.spawn(PL.Avatar.applyUser, tostring(player.UserId)) else Util.notify("select a player first", "warn") end
+            end })
+            box:Button({ Name = "Copy profile link", Callback = function()
+                local player = Map.selectedPlayer()
+                if not player then return Util.notify("select a player first", "warn") end
+                local url = "https://www.roblox.com/users/" .. string.format("%.0f", player.UserId) .. "/profile"
+                if type(setclipboard) == "function" then pcall(setclipboard, url) end
+                Util.notify(url)
+            end })
+        end
+    end)
+
     Pages.settings = win:Builtins({
-        players = players,
+        players = false,
         onPanic = function()
             for flag, value in pairs(Aster.Flags) do
                 local element = Aster.Elements[flag]
@@ -21563,6 +22833,7 @@ do
     Pages.tabs.settings = Pages.settings.Tab
     if ThemeManager then ThemeManager:ApplyToTab(Pages.settings.Tab) end
     if SaveManager then SaveManager:BuildConfigSection(Pages.settings.Tab) end
+    Util.guard("pl config card", function() Shim.Import.build(Pages.settings.Pages and Pages.settings.Pages.configs) end)
 
     env.AsterPL3 = {
         Aster = Aster, Window = win, ThemeManager = ThemeManager, SaveManager = SaveManager, Util = Util, Shim = Shim, Boot = Boot, Pages = Pages,
@@ -21571,6 +22842,7 @@ do
     }
 
     loader:Done()
+    Util.guard("library check", Boot.checkLibrary)
     local lib = Boot.timings["library.lua"] or {}
     local parts = {}
     for _, mark in ipairs(Boot.marks) do parts[#parts + 1] = mark[1] .. " " .. math.floor(mark[2] + 0.5) end
@@ -21580,4 +22852,4 @@ do
     for _, path in ipairs(Boot.missing) do Util.notify("could not load " .. path .. ", continuing without it", "warn") end
     Util.notify("loaded, press insert to toggle the menu", "ok")
 end
-bootMark("tail", PL3BootT, 5, 5)
+bootMark("tail", PL3BootT, 7, 7)
